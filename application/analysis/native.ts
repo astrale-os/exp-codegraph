@@ -8,6 +8,7 @@ export interface TtscApplicationSessionOptions {
   readonly cacheDirectory?: string
   readonly environment?: NodeJS.ProcessEnv
   readonly maximumFrameBytes?: number
+  readonly maximumTransactionBytes?: number
 }
 
 /** Lazily resolve the qualified ttsc plugin when the first implementation project is analyzed. */
@@ -27,7 +28,12 @@ export function createTtscApplicationSessionFactory(
       openOptions?.signal?.throwIfAborted()
       return createProcessNativeAnalysisSessionFactory({
         command: native.command,
-        maximumFrameBytes: options.maximumFrameBytes ?? 256 * 1_024 * 1_024,
+        ...(options.maximumFrameBytes !== undefined
+          ? { maximumFrameBytes: options.maximumFrameBytes }
+          : {}),
+        ...(options.maximumTransactionBytes !== undefined
+          ? { maximumTransactionBytes: options.maximumTransactionBytes }
+          : {}),
         ...(options.environment
           ? { environment: definedEnvironment(options.environment) }
           : {}),

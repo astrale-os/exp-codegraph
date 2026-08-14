@@ -6,6 +6,8 @@ export default defineLayout({
     'cfg.go',
     'dependency.go',
     'extract.go',
+    'framing.go',
+    'framing_test.go',
     'go.mod',
     'identity.go',
     'main.go',

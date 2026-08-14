@@ -39,6 +39,7 @@ func run(arguments []string) int {
 
 type commandOptions struct {
 	cwd, config, universe, capabilitiesJSON, modulesJSON string
+	maximumFrameBytes, maximumTransactionBytes           int
 }
 
 func parseOptions(command string, arguments []string) (commandOptions, error) {
@@ -49,6 +50,8 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	universe := flags.String("universe", "", "portable project universe identity")
 	capabilities := flags.String("capabilities-json", "[]", "sorted native capability JSON")
 	modules := flags.String("modules-json", "[]", "portable module boundary JSON")
+	maximumFrameBytes := flags.Int("maximum-frame-bytes", 64*1024*1024, "maximum JSONL frame bytes")
+	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", 256*1024*1024, "maximum assembled transaction bytes")
 	_ = flags.String("plugins-json", "", "ttsc compatibility")
 	_ = flags.Bool("emit", false, "ttsc compatibility")
 	_ = flags.Bool("noEmit", false, "ttsc compatibility")
@@ -68,7 +71,14 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	if *universe == "" {
 		*universe = deriveID("project-universe", "typescript.native.default", map[string]any{"config": *config})
 	}
-	return commandOptions{cwd: *cwd, config: *config, universe: *universe, capabilitiesJSON: *capabilities, modulesJSON: *modules}, nil
+	if *maximumFrameBytes < 1024 || *maximumTransactionBytes < 1024 {
+		return commandOptions{}, fmt.Errorf("native frame and transaction limits must be at least 1024 bytes")
+	}
+	return commandOptions{
+		cwd: *cwd, config: *config, universe: *universe,
+		capabilitiesJSON: *capabilities, modulesJSON: *modules,
+		maximumFrameBytes: *maximumFrameBytes, maximumTransactionBytes: *maximumTransactionBytes,
+	}, nil
 }
 
 func decodeCapabilities(value string) ([]string, error) {
@@ -151,20 +161,39 @@ func runServe(arguments []string) int {
 	defer analyzer.close()
 
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 64*1024), 128*1024*1024)
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetEscapeHTML(false)
+	scanner.Buffer(make([]byte, 64*1024), options.maximumFrameBytes)
+	output := bufio.NewWriterSize(os.Stdout, 64*1024)
+	flush := func() error {
+		if err := output.Flush(); err != nil {
+			return fmt.Errorf("flush native protocol output: %w", err)
+		}
+		return nil
+	}
 	for scanner.Scan() {
 		var input request
-		if err := json.Unmarshal(scanner.Bytes(), &input); err != nil {
-			_ = encoder.Encode(errorResponse(1, "FRAME_INVALID", err))
+		if err := decodeRequest(scanner.Bytes(), &input); err != nil {
+			if writeErr := writeFrame(output, errorResponse(1, "FRAME_INVALID", err), options.maximumFrameBytes); writeErr != nil {
+				fmt.Fprintln(os.Stderr, writeErr)
+				return 2
+			}
+			if err := flush(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
 			continue
 		}
 		if input.Kind == "dispose" {
 			return 0
 		}
 		if input.ID < 1 || input.Kind != "refresh" {
-			_ = encoder.Encode(errorResponse(input.ID, "REQUEST_INVALID", errors.New("expected a positive refresh request")))
+			if err := writeFrame(output, errorResponse(input.ID, "REQUEST_INVALID", errors.New("expected a positive refresh request")), options.maximumFrameBytes); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			if err := flush(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
 			continue
 		}
 		transaction, unchanged, err := analyzer.refresh(input)
@@ -174,24 +203,53 @@ func runServe(arguments []string) int {
 			if errors.As(err, &native) {
 				code = native.code
 			}
-			_ = encoder.Encode(errorResponse(input.ID, code, err))
+			if writeErr := writeFrame(output, errorResponse(input.ID, code, err), options.maximumFrameBytes); writeErr != nil {
+				fmt.Fprintln(os.Stderr, writeErr)
+				return 2
+			}
+			if err := flush(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
 			continue
 		}
 		if unchanged != "" {
-			_ = encoder.Encode(response{
+			if err := writeFrame(output, response{
 				ID: input.ID, ProtocolVersion: protocolVersion, Kind: "unchanged", Generation: unchanged,
-			})
+			}, options.maximumFrameBytes); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			if err := flush(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
 			continue
 		}
-		_ = encoder.Encode(response{
-			ID: input.ID, ProtocolVersion: protocolVersion, Kind: "transaction", Transaction: transaction,
-		})
+		if err := writeTransactionResponse(
+			output,
+			input.ID,
+			transaction,
+			options.maximumFrameBytes,
+			options.maximumTransactionBytes,
+		); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
+		if err := flush(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 2
+		}
 	}
 	if err := scanner.Err(); err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 	return 0
+}
+
+func decodeRequest(encoded []byte, target *request) error {
+	return json.Unmarshal(encoded, target)
 }
 
 func errorResponse(id int, code string, err error) response {

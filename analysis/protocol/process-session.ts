@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -19,16 +20,72 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly arguments?: readonly string[]
   readonly environment?: Readonly<Record<string, string>>
   readonly maximumFrameBytes?: number
+  readonly maximumTransactionBytes?: number
   readonly maximumErrorBytes?: number
 }
+
+export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
+  maximumFrameBytes: 64 * 1_024 * 1_024,
+  maximumTransactionBytes: 256 * 1_024 * 1_024,
+  maximumErrorBytes: 1 * 1_024 * 1_024,
+})
+
+interface TransactionAssembly {
+  readonly bytes: number
+  readonly chunks: number
+  readonly sha256: string
+  readonly parts: Uint8Array[]
+  nextSequence: number
+  receivedBytes: number
+}
+
+interface PendingRequest {
+  resolve(value: NativeAnalysisResponse): void
+  reject(error: Error): void
+  removeAbort?(): void
+  assembly?: TransactionAssembly
+}
+
+type NativeAnalysisWireFrame =
+  | NativeAnalysisResponse
+  | {
+      readonly id: number
+      readonly protocolVersion: number
+      readonly kind: 'transaction-start'
+      readonly encoding: 'base64-json'
+      readonly bytes: number
+      readonly chunks: number
+      readonly sha256: string
+    }
+  | {
+      readonly id: number
+      readonly protocolVersion: number
+      readonly kind: 'transaction-chunk'
+      readonly sequence: number
+      readonly data: string
+    }
+  | {
+      readonly id: number
+      readonly protocolVersion: number
+      readonly kind: 'transaction-end'
+      readonly bytes: number
+      readonly chunks: number
+      readonly sha256: string
+    }
 
 export function createProcessNativeAnalysisSessionFactory(
   options: ProcessNativeAnalysisSessionFactoryOptions,
 ): NativeAnalysisSessionFactory {
   if (!options.command) throw new TypeError('Native analysis command is required.')
-  const maximumFrameBytes = options.maximumFrameBytes ?? 64 * 1_024 * 1_024
-  const maximumErrorBytes = options.maximumErrorBytes ?? 1 * 1_024 * 1_024
+  const maximumFrameBytes =
+    options.maximumFrameBytes ?? DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumFrameBytes
+  const maximumTransactionBytes =
+    options.maximumTransactionBytes ??
+    DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumTransactionBytes
+  const maximumErrorBytes =
+    options.maximumErrorBytes ?? DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumErrorBytes
   validateLimit(maximumFrameBytes, 'maximumFrameBytes')
+  validateLimit(maximumTransactionBytes, 'maximumTransactionBytes')
   validateLimit(maximumErrorBytes, 'maximumErrorBytes')
   return {
     async open(project, openOptions = {}) {
@@ -49,6 +106,10 @@ export function createProcessNativeAnalysisSessionFactory(
           JSON.stringify(
             [...(project.modules ?? [])].sort((left, right) => left.id.localeCompare(right.id)),
           ),
+          '--maximum-frame-bytes',
+          String(maximumFrameBytes),
+          '--maximum-transaction-bytes',
+          String(maximumTransactionBytes),
         ],
         {
           cwd: project.root,
@@ -59,6 +120,7 @@ export function createProcessNativeAnalysisSessionFactory(
       return await ProcessNativeAnalysisSession.open(
         child,
         maximumFrameBytes,
+        maximumTransactionBytes,
         maximumErrorBytes,
         openOptions.signal,
       )
@@ -67,27 +129,23 @@ export function createProcessNativeAnalysisSessionFactory(
 }
 
 class ProcessNativeAnalysisSession implements NativeAnalysisSession {
-  readonly #pending = new Map<
-    number,
-    {
-      resolve(value: NativeAnalysisResponse): void
-      reject(error: Error): void
-      removeAbort?(): void
-    }
-  >()
+  readonly #pending = new Map<number, PendingRequest>()
   #stderr = ''
   #disposed = false
   #failure: Error | undefined
   readonly #child: ChildProcessWithoutNullStreams
   readonly #maximumFrameBytes: number
+  readonly #maximumTransactionBytes: number
 
   private constructor(
     child: ChildProcessWithoutNullStreams,
     maximumFrameBytes: number,
+    maximumTransactionBytes: number,
     maximumErrorBytes: number,
   ) {
     this.#child = child
     this.#maximumFrameBytes = maximumFrameBytes
+    this.#maximumTransactionBytes = maximumTransactionBytes
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
       if (this.#stderr.length < maximumErrorBytes) {
@@ -111,10 +169,16 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   static async open(
     child: ChildProcessWithoutNullStreams,
     maximumFrameBytes: number,
+    maximumTransactionBytes: number,
     maximumErrorBytes: number,
     signal?: AbortSignal,
   ): Promise<ProcessNativeAnalysisSession> {
-    const session = new ProcessNativeAnalysisSession(child, maximumFrameBytes, maximumErrorBytes)
+    const session = new ProcessNativeAnalysisSession(
+      child,
+      maximumFrameBytes,
+      maximumTransactionBytes,
+      maximumErrorBytes,
+    )
     if (signal) {
       if (signal.aborted) {
         child.kill('SIGTERM')
@@ -134,11 +198,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     if (this.#pending.has(request.id)) throw new Error(`Duplicate native request id ${request.id}.`)
     options.signal?.throwIfAborted()
     return new Promise((resolve, reject) => {
-      const entry: {
-        resolve(value: NativeAnalysisResponse): void
-        reject(error: Error): void
-        removeAbort?(): void
-      } = { resolve, reject }
+      const entry: PendingRequest = { resolve, reject }
       if (options.signal) {
         const abort = () => void this.abort(options.signal!.reason)
         options.signal.addEventListener('abort', abort, { once: true })
@@ -180,19 +240,135 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       this.fail(new Error('Native analysis response exceeds the configured frame limit.'))
       return
     }
-    let response: NativeAnalysisResponse
+    let frame: NativeAnalysisWireFrame
     try {
-      response = validateResponse(JSON.parse(line))
+      frame = validateWireFrame(JSON.parse(line))
     } catch (error) {
       this.fail(new Error('Native analysis returned an invalid protocol frame.', { cause: error }))
       return
     }
-    const pending = this.#pending.get(response.id)
+    const pending = this.#pending.get(frame.id)
     if (!pending) {
-      this.fail(new Error(`Native analysis returned unexpected response id ${response.id}.`))
+      this.fail(new Error(`Native analysis returned unexpected response id ${frame.id}.`))
       return
     }
-    this.#pending.delete(response.id)
+    try {
+      if (frame.kind === 'transaction-start') {
+        this.startTransaction(pending, frame)
+        return
+      }
+      if (frame.kind === 'transaction-chunk') {
+        this.appendTransaction(pending, frame)
+        return
+      }
+      if (frame.kind === 'transaction-end') {
+        this.finishTransaction(pending, frame)
+        return
+      }
+      if (pending.assembly) {
+        throw new TypeError('A streamed transaction was interrupted by a terminal response.')
+      }
+      if (
+        frame.kind === 'transaction' &&
+        Buffer.byteLength(JSON.stringify(frame.transaction)) > this.#maximumTransactionBytes
+      ) {
+        throw new RangeError('Native analysis transaction exceeds the configured transaction limit.')
+      }
+      this.resolve(frame.id, pending, frame)
+    } catch (error) {
+      this.fail(new Error('Native analysis returned an invalid protocol frame.', { cause: error }))
+    }
+  }
+
+  private startTransaction(
+    pending: PendingRequest,
+    frame: Extract<NativeAnalysisWireFrame, { readonly kind: 'transaction-start' }>,
+  ): void {
+    if (pending.assembly) throw new TypeError('A transaction stream is already active.')
+    if (frame.bytes > this.#maximumTransactionBytes) {
+      throw new RangeError('Native analysis transaction exceeds the configured transaction limit.')
+    }
+    if (frame.chunks > frame.bytes) {
+      throw new TypeError('Transaction chunk count exceeds its announced byte length.')
+    }
+    pending.assembly = {
+      bytes: frame.bytes,
+      chunks: frame.chunks,
+      sha256: frame.sha256,
+      parts: [],
+      nextSequence: 0,
+      receivedBytes: 0,
+    }
+  }
+
+  private appendTransaction(
+    pending: PendingRequest,
+    frame: Extract<NativeAnalysisWireFrame, { readonly kind: 'transaction-chunk' }>,
+  ): void {
+    const assembly = pending.assembly
+    if (!assembly) throw new TypeError('A transaction chunk arrived before its start frame.')
+    if (assembly.nextSequence >= assembly.chunks) {
+      throw new TypeError('Transaction stream contains more chunks than announced.')
+    }
+    if (frame.sequence !== assembly.nextSequence) {
+      throw new TypeError(
+        `Transaction chunk order is invalid: expected ${assembly.nextSequence}, received ${frame.sequence}.`,
+      )
+    }
+    const part = decodeBase64(frame.data)
+    if (part.byteLength < 1) throw new TypeError('A transaction chunk must not be empty.')
+    if (assembly.receivedBytes + part.byteLength > assembly.bytes) {
+      throw new TypeError('Transaction chunks exceed the announced byte length.')
+    }
+    assembly.parts.push(part)
+    assembly.receivedBytes += part.byteLength
+    assembly.nextSequence++
+  }
+
+  private finishTransaction(
+    pending: PendingRequest,
+    frame: Extract<NativeAnalysisWireFrame, { readonly kind: 'transaction-end' }>,
+  ): void {
+    const assembly = pending.assembly
+    if (!assembly) throw new TypeError('A transaction end arrived before its start frame.')
+    if (
+      frame.bytes !== assembly.bytes ||
+      frame.chunks !== assembly.chunks ||
+      frame.sha256 !== assembly.sha256
+    ) {
+      throw new TypeError('Transaction end metadata does not match its start frame.')
+    }
+    if (assembly.nextSequence !== assembly.chunks) {
+      throw new TypeError(
+        `Transaction stream is incomplete: expected ${assembly.chunks} chunks, received ${assembly.nextSequence}.`,
+      )
+    }
+    if (assembly.receivedBytes !== assembly.bytes) {
+      throw new TypeError(
+        `Transaction stream byte length is invalid: expected ${assembly.bytes}, received ${assembly.receivedBytes}.`,
+      )
+    }
+    const serialized = Buffer.concat(assembly.parts, assembly.bytes)
+    const digest = createHash('sha256').update(serialized).digest('hex')
+    if (digest !== assembly.sha256) throw new TypeError('Transaction stream digest is invalid.')
+    let transaction: FactTransaction
+    try {
+      transaction = validateTransaction(JSON.parse(serialized.toString('utf8')))
+    } catch (error) {
+      throw new TypeError('Transaction stream does not contain a valid transaction.', {
+        cause: error,
+      })
+    }
+    this.resolve(frame.id, pending, {
+      id: frame.id,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'transaction',
+      transaction,
+    })
+  }
+
+  private resolve(id: number, pending: PendingRequest, response: NativeAnalysisResponse): void {
+    this.#pending.delete(id)
     pending.removeAbort?.()
     pending.resolve(response)
   }
@@ -261,7 +437,7 @@ function validateRequest(request: NativeAnalysisRequest): void {
   }
 }
 
-function validateResponse(input: unknown): NativeAnalysisResponse {
+function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
   if (!input || typeof input !== 'object') throw new TypeError('Response must be an object.')
   const value = input as Record<string, unknown>
   if (!Number.isSafeInteger(value.id) || (value.id as number) < 1) {
@@ -270,8 +446,48 @@ function validateResponse(input: unknown): NativeAnalysisResponse {
   if (value.protocolVersion !== NATIVE_ANALYSIS_PROTOCOL_VERSION) {
     throw new TypeError(`Unsupported native protocol ${String(value.protocolVersion)}.`)
   }
-  if (!['transaction', 'unchanged', 'error'].includes(String(value.kind))) {
+  if (
+    ![
+      'transaction',
+      'transaction-start',
+      'transaction-chunk',
+      'transaction-end',
+      'unchanged',
+      'error',
+    ].includes(String(value.kind))
+  ) {
     throw new TypeError('Response kind is invalid.')
+  }
+  if (value.kind === 'transaction-start') {
+    if (value.encoding !== 'base64-json') throw new TypeError('Transaction encoding is invalid.')
+    return {
+      id: value.id as number,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'transaction-start',
+      encoding: 'base64-json',
+      bytes: requiredInteger(value.bytes, 'bytes', 1),
+      chunks: requiredInteger(value.chunks, 'chunks', 1),
+      sha256: requiredDigest(value.sha256, 'sha256'),
+    }
+  }
+  if (value.kind === 'transaction-chunk') {
+    return {
+      id: value.id as number,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'transaction-chunk',
+      sequence: requiredInteger(value.sequence, 'sequence', 0),
+      data: requiredString(value.data, 'data'),
+    }
+  }
+  if (value.kind === 'transaction-end') {
+    return {
+      id: value.id as number,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'transaction-end',
+      bytes: requiredInteger(value.bytes, 'bytes', 1),
+      chunks: requiredInteger(value.chunks, 'chunks', 1),
+      sha256: requiredDigest(value.sha256, 'sha256'),
+    }
   }
   if (value.kind === 'transaction') {
     return {
@@ -305,6 +521,24 @@ function validateResponse(input: unknown): NativeAnalysisResponse {
     message: value.message as string,
     retryable: value.retryable as boolean,
   }
+}
+
+function requiredDigest(input: unknown, path: string): string {
+  if (typeof input !== 'string' || !/^[a-f0-9]{64}$/u.test(input)) {
+    throw new TypeError(`${path} must be a lowercase SHA-256 digest.`)
+  }
+  return input
+}
+
+function decodeBase64(value: string): Uint8Array {
+  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+    throw new TypeError('Transaction chunk data is not canonical base64.')
+  }
+  const decoded = Buffer.from(value, 'base64')
+  if (decoded.toString('base64') !== value) {
+    throw new TypeError('Transaction chunk data is not canonical base64.')
+  }
+  return decoded
 }
 
 function validateTransaction(input: unknown): FactTransaction {

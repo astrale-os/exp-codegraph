@@ -60,6 +60,7 @@ export interface TtscApplicationSessionOptions {
   readonly cacheDirectory?: string
   readonly environment?: Readonly<Record<string, string | undefined>>
   readonly maximumFrameBytes?: number
+  readonly maximumTransactionBytes?: number
 }
 
 export function resolveApplicationModuleBoundaries(

@@ -8,6 +8,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
+  DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS,
   deriveAnalysisId,
   createProcessNativeAnalysisSessionFactory,
   createNodeSourceTextReader,
@@ -67,6 +68,15 @@ afterEach(async () => {
 })
 
 describe('TypeSpec V2 generic analysis foundation', () => {
+  it('publishes bounded native transport defaults', () => {
+    expect(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS).toEqual({
+      maximumFrameBytes: 64 * 1_024 * 1_024,
+      maximumTransactionBytes: 256 * 1_024 * 1_024,
+      maximumErrorBytes: 1 * 1_024 * 1_024,
+    })
+    expect(Object.isFrozen(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS)).toBe(true)
+  })
+
   it('publishes and validates the effective bounded-value evaluator budget', () => {
     expect(DEFAULT_BOUNDED_VALUE_LIMITS).toEqual({
       maximumDepth: 12,
@@ -337,6 +347,129 @@ lines.on('line', (line) => {
       malformed.request({ id: 1, kind: 'refresh', changed: ['malformed'] }),
     ).rejects.toThrow('invalid protocol frame')
     await malformed.dispose()
+  })
+
+  it('assembles bounded native transaction frames and rejects unsafe stream sequences', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-native-framing-'))
+    temporary.push(root)
+    const sidecar = join(root, 'sidecar.mjs')
+    const transaction = buildTransaction({
+      sequence: 1,
+      values: [`bounded-${'payload'.repeat(900)}`],
+    })
+    const serialized = JSON.stringify(transaction)
+    const digest = createHash('sha256').update(serialized).digest('hex')
+    await writeFile(
+      sidecar,
+      `
+import { createInterface } from 'node:readline'
+const encoded = Buffer.from(${JSON.stringify(serialized)}, 'utf8')
+const digest = ${JSON.stringify(digest)}
+const chunkBytes = 256
+const chunks = Math.ceil(encoded.length / chunkBytes)
+const frame = (value) => process.stdout.write(JSON.stringify(value) + '\\n')
+const start = (id, overrides = {}) => ({
+  id,
+  protocolVersion: 1,
+  kind: 'transaction-start',
+  encoding: 'base64-json',
+  bytes: encoded.length,
+  chunks,
+  sha256: digest,
+  ...overrides,
+})
+const lines = createInterface({ input: process.stdin })
+lines.on('line', (line) => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+  const mode = request.changed?.[0]
+  if (mode === 'oversized-frame') {
+    process.stdout.write('x'.repeat(1025) + '\\n')
+    return
+  }
+  if (mode === 'transaction-limit') {
+    frame(start(request.id, { bytes: 40000 }))
+    return
+  }
+  frame(start(request.id))
+  if (mode === 'incomplete') {
+    process.stdout.write('', () => process.exit(0))
+    return
+  }
+  if (mode === 'out-of-order') {
+    frame({
+      id: request.id,
+      protocolVersion: 1,
+      kind: 'transaction-chunk',
+      sequence: 1,
+      data: encoded.subarray(chunkBytes, chunkBytes * 2).toString('base64'),
+    })
+    return
+  }
+  for (let sequence = 0; sequence < chunks; sequence++) {
+    frame({
+      id: request.id,
+      protocolVersion: 1,
+      kind: 'transaction-chunk',
+      sequence,
+      data: encoded.subarray(sequence * chunkBytes, (sequence + 1) * chunkBytes).toString('base64'),
+    })
+  }
+  frame({
+    id: request.id,
+    protocolVersion: 1,
+    kind: 'transaction-end',
+    bytes: encoded.length,
+    chunks,
+    sha256: digest,
+  })
+})
+`,
+    )
+    const factory = createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+      maximumFrameBytes: 1_024,
+      maximumTransactionBytes: 32 * 1_024,
+    })
+    const project = {
+      root,
+      config: 'tsconfig.json',
+      capabilities: ['fixture.values'],
+    }
+
+    const successful = await factory.open(project)
+    await expect(successful.request({ id: 1, kind: 'refresh' })).resolves.toEqual({
+      id: 1,
+      protocolVersion: 1,
+      kind: 'transaction',
+      transaction,
+    })
+    await successful.dispose()
+
+    const outOfOrder = await factory.open(project)
+    await expect(
+      outOfOrder.request({ id: 1, kind: 'refresh', changed: ['out-of-order'] }),
+    ).rejects.toThrow('invalid protocol frame')
+    await outOfOrder.dispose()
+
+    const incomplete = await factory.open(project)
+    await expect(
+      incomplete.request({ id: 1, kind: 'refresh', changed: ['incomplete'] }),
+    ).rejects.toThrow('exited')
+    await incomplete.dispose()
+
+    const oversized = await factory.open(project)
+    await expect(
+      oversized.request({ id: 1, kind: 'refresh', changed: ['oversized-frame'] }),
+    ).rejects.toThrow('exceeds the configured frame limit')
+    await oversized.dispose()
+
+    const transactionLimit = await factory.open(project)
+    await expect(
+      transactionLimit.request({ id: 1, kind: 'refresh', changed: ['transaction-limit'] }),
+    ).rejects.toThrow('invalid protocol frame')
+    await transactionLimit.dispose()
   })
 
   it('validates semantic shard digests without a cyclic enclosing-generation hash', () => {
