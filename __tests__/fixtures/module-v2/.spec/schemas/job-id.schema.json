@@ -1,0 +1,10 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.astrale.test/fixture/job-id",
+  "title": "JobId",
+  "description": "Fixture job identifier.",
+  "type": "string",
+  "minLength": 1,
+  "maxLength": 255,
+  "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+}

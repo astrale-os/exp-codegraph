@@ -1,0 +1,5 @@
+{
+  "name": "@fixture/typespec-sdk-analysis",
+  "private": true,
+  "type": "module"
+}

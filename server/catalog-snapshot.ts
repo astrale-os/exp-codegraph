@@ -1,0 +1,326 @@
+import type { ApiModelV2, ApiSource, ApiToken } from '../api/model.ts'
+import type { DeclarationResource, MarkdownResource, PortResource } from '../specification/resource/index.ts'
+import type { ViewerCatalog, ViewerSpecification } from '../viewer-host/specification.ts'
+import type {
+  CatalogIndex,
+  CatalogSourcePayload,
+  CatalogSpecEntry,
+  CatalogSpecPayload,
+  CatalogSemanticReference,
+  PackedApiModel,
+  PackedDeclarationResource,
+  PackedPortResource,
+  PackedSpec,
+  PackedSpecModule,
+} from '../viewer-host/catalog.ts'
+import type { ViewerAdapterManifest } from '../viewer-host/manifest.ts'
+
+import { indexCatalogApis } from '../api/ownership.ts'
+import { sourceRevision } from '../source/file.ts'
+import {
+  CATALOG_INDEX_FORMAT,
+  CATALOG_SOURCE_FORMAT,
+  CATALOG_SPEC_FORMAT,
+  CATALOG_TRANSPORT_VERSION,
+  catalogSpecMetrics,
+} from '../viewer-host/catalog.ts'
+import { projectMarkdownHtml } from './catalog-markdown.ts'
+import { catalogReferenceProjection } from './catalog-references.ts'
+
+const MAX_SEARCH_TEXT_CHARACTERS = 64 * 1_024
+
+export interface CatalogSnapshot {
+  readonly index: CatalogIndex
+  readonly indexModule: string
+  readonly specs: ReadonlyMap<string, CatalogSpecPayload>
+  readonly sources: ReadonlyMap<string, CatalogSourcePayload>
+}
+
+/** Build the immutable browser projection of one already-coherent server Catalog. */
+export function createCatalogSnapshot(
+  catalog: ViewerCatalog,
+  adapterManifest: ViewerAdapterManifest,
+  applicationSnapshot: `application:${string}` = `application:${'0'.repeat(64)}`,
+): CatalogSnapshot {
+  const sources = new Map<string, CatalogSourcePayload>()
+  const specs = new Map<string, CatalogSpecPayload>()
+  const entries: CatalogSpecEntry[] = []
+  const apiIndex = indexCatalogApis(catalog)
+  const declarationIdentities = ownedDeclarationIdentities(apiIndex)
+  const specSourceByModuleId = new Map(
+    catalog.specs.flatMap((spec) =>
+      spec.modules.map((module) => [module.id, spec.source] as const),
+    ),
+  )
+
+  for (const spec of catalog.specs) {
+    const projection = catalogReferenceProjection(spec, apiIndex)
+    const packed = packSpec(spec, sources, projection.documents)
+    const semanticReferences = projection.semanticReferences
+    const revision = contentRevision({ spec: packed, semanticReferences })
+    const payload: CatalogSpecPayload = {
+      format: CATALOG_SPEC_FORMAT,
+      version: CATALOG_TRANSPORT_VERSION,
+      source: spec.source,
+      revision,
+      snapshot: applicationSnapshot,
+      spec: packed,
+      ...(semanticReferences ? { semanticReferences } : {}),
+    }
+    specs.set(specPayloadKey(spec.source, revision), payload)
+    entries.push({
+      source: spec.source,
+      title: spec.title,
+      searchText: specSearchText(spec),
+      revision,
+      snapshot: applicationSnapshot,
+      metrics: catalogSpecMetrics(spec),
+      ...(spec.icon ? { icon: spec.icon.icon } : {}),
+      ...(declarationIdentities.get(spec.source)?.length
+        ? { apiDeclarationIdentities: declarationIdentities.get(spec.source) }
+        : {}),
+      ...catalogContractDependencies(spec, specSourceByModuleId),
+    })
+  }
+
+  const generation = contentRevision({ diagnostics: catalog.diagnostics, specs: entries })
+  const index: CatalogIndex = {
+    format: CATALOG_INDEX_FORMAT,
+    version: CATALOG_TRANSPORT_VERSION,
+    generation,
+    snapshot: applicationSnapshot,
+    specs: entries,
+    diagnostics: catalog.diagnostics,
+  }
+  return {
+    index,
+    indexModule: catalogIndexModule(index, adapterManifest),
+    specs,
+    sources,
+  }
+}
+
+function catalogContractDependencies(
+  spec: ViewerSpecification,
+  specSourceByModuleId: ReadonlyMap<string, string>,
+): Pick<CatalogSpecEntry, 'contractDependencies'> {
+  const counts = new Map<string, Set<string>>()
+  for (const module of spec.modules) {
+    for (const dependency of module.contract?.imports ?? []) {
+      const target = specSourceByModuleId.get(dependency.source)
+      if (!target || target === spec.source) continue
+      const declarations = counts.get(target)
+      if (declarations) declarations.add(dependency.key)
+      else counts.set(target, new Set([dependency.key]))
+    }
+  }
+  if (!counts.size) return {}
+  return {
+    contractDependencies: [...counts]
+      .map(([source, declarations]) => ({ source, declarations: declarations.size }))
+      .sort((left, right) => left.source.localeCompare(right.source)),
+  }
+}
+
+function specSearchText(spec: ViewerSpecification): string {
+  return [
+    spec.title,
+    spec.source,
+    ...spec.modules.flatMap((module) => [
+      ...(module.api?.model?.surface.exports.map((item) => item.path.join('.')) ?? []),
+      ...module.ports.map((port) => `${port.namespace ?? ''} ${port.port.name}`),
+    ]),
+    ...spec.capabilities.flatMap((resource) =>
+      resource.definitions.map((definition) => `${definition.id} ${definition.statement}`),
+    ),
+    ...spec.laws.flatMap((resource) =>
+      resource.definitions.map((definition) => `${definition.id} ${definition.statement}`),
+    ),
+    ...spec.benchmarks.flatMap((resource) =>
+      resource.definitions.map((definition) => `${definition.id} ${definition.statement}`),
+    ),
+    ...spec.states.flatMap((resource) =>
+      resource.definitions.map((definition) => definition.exportName),
+    ),
+    ...(spec.layout?.entries.map((entry) => entry.path) ?? []),
+    ...spec.packages.map((resource) => `${resource.package} ${resource.purpose}`),
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, MAX_SEARCH_TEXT_CHARACTERS)
+}
+
+function ownedDeclarationIdentities(
+  index: ReturnType<typeof indexCatalogApis>,
+): ReadonlyMap<string, readonly string[]> {
+  const identities = new Map<string, string[]>()
+  for (const [identity, owner] of index.owner) {
+    const current = identities.get(owner.spec.source)
+    if (current) current.push(identity)
+    else identities.set(owner.spec.source, [identity])
+  }
+  for (const current of identities.values()) current.sort()
+  return identities
+}
+
+export function specPayloadKey(source: string, revision: string): string {
+  return `${source}\0${revision}`
+}
+
+function packSpec(
+  spec: ViewerSpecification,
+  sourcePayloads: Map<string, CatalogSourcePayload>,
+  documentReferences: ReadonlyMap<object, readonly CatalogSemanticReference[]>,
+): PackedSpec {
+  const modules = spec.modules.map((module) => packModule(module, sourcePayloads))
+  return packModuleSpecification(spec, modules, documentReferences)
+}
+
+function packModuleSpecification(
+  spec: ViewerSpecification,
+  modules: readonly PackedSpecModule[],
+  documentReferences: ReadonlyMap<object, readonly CatalogSemanticReference[]>,
+): PackedSpec {
+  return {
+    ...spec,
+    modules,
+    ...(spec.architecture
+      ? { architecture: packMarkdownResource(spec.architecture, documentReferences) }
+      : {}),
+    history: spec.history.map((resource) =>
+      resource.document
+        ? {
+            ...resource,
+            document: packMarkdownDocument(resource.document, documentReferences),
+          }
+        : resource,
+    ),
+    ...(spec.internal
+      ? {
+          internal: {
+            ref: spec.internal.ref,
+            source: spec.internal.source,
+            text: spec.internal.text,
+            revision: spec.internal.revision,
+          },
+        }
+      : {}),
+  }
+}
+
+function packMarkdownResource(
+  resource: MarkdownResource,
+  references: ReadonlyMap<object, readonly CatalogSemanticReference[]>,
+): MarkdownResource {
+  return { ...resource, document: packMarkdownDocument(resource.document, references) }
+}
+
+function packMarkdownDocument(
+  document: MarkdownResource['document'],
+  references: ReadonlyMap<object, readonly CatalogSemanticReference[]>,
+): MarkdownResource['document'] {
+  return {
+    ...document,
+    html: projectMarkdownHtml(document, references.get(document) ?? []),
+  }
+}
+
+function packModule(
+  module: ViewerSpecification['modules'][number],
+  sourcePayloads: Map<string, CatalogSourcePayload>,
+): PackedSpecModule {
+  const { api, ports, ...rest } = module
+  return {
+    ...rest,
+    ...(api ? { api: packDeclaration(api, sourcePayloads) } : {}),
+    ports: ports.map((port) => packPort(port, sourcePayloads)),
+  }
+}
+
+function packDeclaration(
+  resource: DeclarationResource,
+  sources: Map<string, CatalogSourcePayload>,
+): PackedDeclarationResource {
+  const { model, ...rest } = resource
+  return {
+    ...rest,
+    ...(model ? { model: packModel(model, sources) } : {}),
+  }
+}
+
+function packPort(
+  resource: PortResource,
+  sources: Map<string, CatalogSourcePayload>,
+): PackedPortResource {
+  const { model, ...rest } = resource
+  return {
+    ...rest,
+    ...(model ? { model: packModel(model, sources) } : {}),
+  }
+}
+
+function packModel(
+  api: ApiModelV2,
+  sourcePayloads: Map<string, CatalogSourcePayload>,
+): PackedApiModel {
+  const { sources, tokens, ...model } = api
+  const tokensByFile = tokensGroupedByFile(tokens)
+  const knownFiles = new Set(sources.map((source) => source.file))
+  const unknownToken = tokens.find((token) => !knownFiles.has(token.file))
+  if (unknownToken) {
+    throw new Error(`API token source ${JSON.stringify(unknownToken.file)} is not declared.`)
+  }
+  const sourceKeys = sources.map((source) => {
+    const sourceTokens = tokensByFile.get(source.file) ?? []
+    return registerSource(source, sourceTokens, sourcePayloads)
+  })
+  return { ...model, sourceKeys }
+}
+
+function registerSource(
+  source: ApiSource,
+  tokens: readonly ApiToken[],
+  payloads: Map<string, CatalogSourcePayload>,
+): string {
+  const key = contentRevision({ source, tokens })
+  const existing = payloads.get(key)
+  if (existing) {
+    if (
+      safeJson({ source: existing.source, tokens: existing.tokens }) !==
+      safeJson({ source, tokens })
+    ) {
+      throw new Error(`Declaration source digest collision for ${JSON.stringify(source.file)}.`)
+    }
+    return key
+  }
+  payloads.set(key, {
+    format: CATALOG_SOURCE_FORMAT,
+    version: CATALOG_TRANSPORT_VERSION,
+    key,
+    source,
+    tokens,
+  })
+  return key
+}
+
+function tokensGroupedByFile(tokens: readonly ApiToken[]): Map<string, ApiToken[]> {
+  const output = new Map<string, ApiToken[]>()
+  for (const token of tokens) {
+    const entries = output.get(token.file)
+    if (entries) entries.push(token)
+    else output.set(token.file, [token])
+  }
+  return output
+}
+
+function catalogIndexModule(index: CatalogIndex, manifest: ViewerAdapterManifest): string {
+  return `export const index = JSON.parse(${JSON.stringify(safeJson(index))});\nexport const adapterManifest = JSON.parse(${JSON.stringify(safeJson(manifest))});\n`
+}
+
+function contentRevision(value: unknown): string {
+  return sourceRevision(safeJson(value))
+}
+
+function safeJson(value: unknown): string {
+  return JSON.stringify(value).replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029')
+}

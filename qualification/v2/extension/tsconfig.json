@@ -1,0 +1,12 @@
+{
+  "extends": "../../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@astrale-os/codegraph/analysis": ["../../../analysis/index.ts"],
+      "@astrale-os/codegraph/analysis/typescript": ["../../../analysis/typescript/index.ts"]
+    },
+    "rootDir": "../../.."
+  },
+  "include": ["consumer/**/*.ts", "qualify.ts"]
+}

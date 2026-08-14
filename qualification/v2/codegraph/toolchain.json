@@ -1,0 +1,12 @@
+{
+  "package": {
+    "name": "@optave/codegraph",
+    "version": "3.16.0",
+    "license": "Apache-2.0"
+  },
+  "source": {
+    "repository": "https://github.com/optave/ops-codegraph-tool.git",
+    "revision": "11475e7c0f36fd3fcb482dd3ea65f6d5845049b3"
+  },
+  "schemaVersion": 31
+}

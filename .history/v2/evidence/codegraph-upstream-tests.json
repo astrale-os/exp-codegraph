@@ -1,0 +1,39 @@
+{
+  "format": "astrale.typespec.v2.codegraph-upstream-tests",
+  "version": 1,
+  "status": "observed",
+  "date": "2026-08-14",
+  "subject": {
+    "package": "@optave/codegraph",
+    "version": "3.16.0",
+    "sourceRevision": "11475e7c0f36fd3fcb482dd3ea65f6d5845049b3"
+  },
+  "command": "pnpm exec vitest run tests/integration/incremental-parity.test.ts tests/integration/dataflow-incremental.test.ts tests/integration/issue-2015-reverse-dep-compound-rename-and-add.test.ts",
+  "environment": {
+    "installation": "source checkout built after pnpm install --ignore-scripts",
+    "nativeEngine": true,
+    "wasmGrammarsInstalled": false
+  },
+  "summary": {
+    "filesPassed": 1,
+    "filesFailed": 2,
+    "testsPassed": 13,
+    "testsFailed": 1,
+    "testsSkipped": 13
+  },
+  "findings": [
+    {
+      "kind": "upstream-native-regression",
+      "test": "Issue #2015 compound rename and add",
+      "expected": "the removed close method has no retained caller edge",
+      "observed": "the native incremental rebuild retained useB -> line 19",
+      "architecturalUse": "supports keeping cold equality as a TypeSpec-owned invariant"
+    },
+    {
+      "kind": "qualification-environment-gap",
+      "test": "WASM and standalone dataflow cases",
+      "observed": "Tree-sitter JavaScript and TypeScript WASM grammars were absent because dependency scripts were intentionally disabled",
+      "architecturalUse": "not classified as a Codegraph product defect"
+    }
+  ]
+}

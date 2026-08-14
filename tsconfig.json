@@ -1,0 +1,33 @@
+{
+  "extends": "@astrale/typescript-config/library",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
+    "noEmit": true,
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "*.ts",
+    "analysis",
+    "api",
+    "authoring",
+    "conformance",
+    "cli",
+    "compiler",
+    "json-schema",
+    "markdown",
+    "reference",
+    "repository",
+    "schema",
+    "server",
+    "source",
+    "specification",
+    "typescript",
+    "viewer",
+    "viewer-host"
+  ]
+}

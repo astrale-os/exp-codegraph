@@ -1,0 +1,574 @@
+{
+  "format": "astrale.typespec.v2.codegraph-spike",
+  "version": 1,
+  "status": "qualified",
+  "subject": {
+    "package": "@optave/codegraph",
+    "version": "3.16.0",
+    "license": "Apache-2.0",
+    "sourceRevision": "11475e7c0f36fd3fcb482dd3ea65f6d5845049b3"
+  },
+  "boundary": {
+    "semanticAuthority": "ttsc and TypeSpec portable facts remain authoritative",
+    "evaluatedRole": "materialization, change detection, query, AST, CFG, and dataflow substrate"
+  },
+  "source": {
+    "publicExports": [
+      ".",
+      "./cli",
+      "./package.json"
+    ],
+    "publicBuildGraph": true,
+    "publicDatabaseRepository": false,
+    "pipelineAlwaysParses": true,
+    "parserStageUsesTreeSitterPipeline": true,
+    "schemaVersion": 31,
+    "fixedTables": [
+      "ast_nodes",
+      "build_meta",
+      "cfg_blocks",
+      "cfg_edges",
+      "co_change_meta",
+      "co_changes",
+      "dataflow",
+      "dataflow_summary",
+      "dataflow_vertices",
+      "deleted_export_advisories",
+      "edges",
+      "entrypoint_calls",
+      "file_commit_counts",
+      "file_hashes",
+      "function_complexity",
+      "invoked_property_names",
+      "node_metrics",
+      "nodes",
+      "reexport_renames",
+      "return_types",
+      "schema_version"
+    ],
+    "documentsAnalysisStaleness": true,
+    "documentsFullRebuildAfterBranchMerges": true,
+    "sourceDigest": "218e6f65ce9ee30816c7bcb94c5dc5954e3fcdab45a36bc94b5af8f8fd13794a"
+  },
+  "ingestion": {
+    "compilerFactInput": false,
+    "publicExtractorInjection": false,
+    "redundantTreeSitterAnalysisRequiredByBuildGraph": true,
+    "disposition": "requires a new public ingestion pipeline or a fork"
+  },
+  "extension": {
+    "fixedGraphTablesAcceptArbitraryTextKinds": true,
+    "fixedGraphRowsSurviveFullBuild": false,
+    "fixedGraphRowsVisibleToGenericNameQuery": true,
+    "namespacedVersionedSidecarPossible": true,
+    "sidecar": {
+      "namespaces": [
+        "astrale.typescript.symbol"
+      ],
+      "versions": [
+        1,
+        2
+      ],
+      "pinnedGenerationPayload": {
+        "name": "defineMutation",
+        "identity": "ts:src/sdk/builder.ts#defineMutation"
+      },
+      "currentGenerationPayload": {
+        "name": "defineMutation",
+        "revision": 2
+      }
+    },
+    "sidecarAfterFullRebuilds": {
+      "namespaces": [
+        "astrale.typescript.symbol"
+      ],
+      "versions": [
+        1,
+        2
+      ],
+      "pinnedGenerationPayload": {
+        "name": "defineMutation",
+        "identity": "ts:src/sdk/builder.ts#defineMutation"
+      },
+      "currentGenerationPayload": {
+        "name": "defineMutation",
+        "revision": 2
+      }
+    },
+    "sidecarIntegratedWithCodegraphQueries": false,
+    "sidecarUsesCodegraphChangeLifecycle": false
+  },
+  "generations": {
+    "nativeStoreIsMutableCurrentState": true,
+    "packageSnapshotsAreWholeDatabaseBackups": true,
+    "generationPinnedReadersNative": false,
+    "immutableGenerationsLayerableInSidecar": true,
+    "infrastructureStillOwnedByAdapter": [
+      "generation transactions",
+      "reader leases",
+      "retention",
+      "fact schema validation",
+      "provenance and completeness queries"
+    ]
+  },
+  "identity": {
+    "databaseIdStableAcrossPositionShift": false,
+    "sourceLineStableAcrossPositionShift": false,
+    "contentHashStableAcrossPositionShift": true,
+    "qualifiedNameStableAcrossPositionShift": true,
+    "portableIdentityCanBeLayeredFromTtsc": true,
+    "codegraphIdentityIsSuitableAsSemanticAuthority": false,
+    "positionBuildMs": 21,
+    "positionParity": {
+      "equivalent": false,
+      "incrementalDigest": "a58c5b8c13025f14f0997aaa99bec25c72b0d631240c7baa03207aef8dfcc255",
+      "coldDigest": "1297279d477c022f0af08b312617dd9dee738dcb9d7b30480e7f16d050aff5a5",
+      "differingTables": [
+        "dataflowVertices",
+        "dataflow"
+      ],
+      "differences": {
+        "dataflowVertices": {
+          "incrementalOnly": [
+            "{\"file\":\"src/sdk/builder.ts\",\"qualified_name\":\"defineMutation\",\"function_kind\":\"function\",\"function_line\":7,\"kind\":\"param\",\"name\":\"options\",\"param_index\":0,\"line\":7,\"node_file\":null,\"node_name\":null,\"node_kind\":null,\"node_line\":null}",
+            "{\"file\":\"src/sdk/builder.ts\",\"qualified_name\":\"defineMutation\",\"function_kind\":\"function\",\"function_line\":7,\"kind\":\"return\",\"name\":null,\"param_index\":null,\"line\":8,\"node_file\":null,\"node_name\":null,\"node_kind\":null,\"node_line\":null}"
+          ],
+          "coldOnly": [],
+          "incrementalCount": 2,
+          "coldCount": 0
+        },
+        "dataflow": {
+          "incrementalOnly": [
+            "{\"source_file\":\"src/sdk/builder.ts\",\"source_name\":\"defineMutation\",\"source_kind\":\"function\",\"source_line\":7,\"target_file\":\"src/sdk/builder.ts\",\"target_name\":\"defineMutation\",\"target_kind\":\"function\",\"target_line\":7,\"source_vertex_kind\":\"param\",\"source_vertex_name\":\"options\",\"source_vertex_parameter\":0,\"target_vertex_kind\":\"return\",\"target_vertex_name\":null,\"target_vertex_parameter\":null,\"kind\":\"def_use\",\"param_index\":null,\"expression\":\"options\",\"line\":8,\"confidence\":1,\"scope\":\"intra\"}"
+          ],
+          "coldOnly": [],
+          "incrementalCount": 1,
+          "coldCount": 0
+        }
+      },
+      "coldBuildMs": 27
+    }
+  },
+  "churn": {
+    "change": {
+      "equivalent": true,
+      "incrementalDigest": "b65dfc321e97db19e6c5a09549db5af7b8cca2616f2d8eca39b44a3f49b71f4e",
+      "coldDigest": "b65dfc321e97db19e6c5a09549db5af7b8cca2616f2d8eca39b44a3f49b71f4e",
+      "differingTables": [],
+      "differences": {},
+      "coldBuildMs": 36,
+      "incremental": {
+        "elapsedMs": 23,
+        "maximumRssBytes": 169754624,
+        "changed": true,
+        "phases": {
+          "setupMs": 1,
+          "collectMs": 0.4,
+          "detectMs": 0.1,
+          "parseMs": 0.4,
+          "insertMs": 0.3,
+          "resolveMs": 0.1,
+          "edgesMs": 0.5,
+          "structureMs": 0.5,
+          "rolesMs": 0.4,
+          "gapDetectMs": 12.3,
+          "chaMs": 0,
+          "thisDispatchMs": 0,
+          "definePropertyDispatchMs": 0,
+          "reclassifyMs": 0,
+          "techniqueBackfillMs": 0.3,
+          "astMs": 0.1,
+          "complexityMs": 0,
+          "cfgMs": 0,
+          "dataflowMs": 0,
+          "finalizeMs": 0.4
+        }
+      }
+    },
+    "create": {
+      "equivalent": false,
+      "incrementalDigest": "d43fb5d467292939d41e69da8107a277e6f634fba1c762b1754b11a36b763bad",
+      "coldDigest": "67b0b6aac6f720cdba604a13b737af790c0f8203122a7076e6c6e8cef29c7659",
+      "differingTables": [
+        "metrics"
+      ],
+      "differences": {
+        "metrics": {
+          "incrementalOnly": [
+            "{\"file\":\"src/sdk/builder.ts\",\"qualified_name\":\"src/sdk/builder.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":9,\"symbol_count\":5,\"import_count\":0,\"export_count\":2,\"fan_in\":1,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "coldOnly": [
+            "{\"file\":\"src/sdk/builder.ts\",\"qualified_name\":\"src/sdk/builder.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":9,\"symbol_count\":5,\"import_count\":0,\"export_count\":2,\"fan_in\":2,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "incrementalCount": 14,
+          "coldCount": 14
+        }
+      },
+      "coldBuildMs": 38,
+      "incremental": {
+        "elapsedMs": 24,
+        "maximumRssBytes": 169934848,
+        "changed": true,
+        "phases": {
+          "setupMs": 0.5,
+          "collectMs": 0.4,
+          "detectMs": 0.1,
+          "parseMs": 0.1,
+          "insertMs": 0.3,
+          "resolveMs": 0,
+          "edgesMs": 0.3,
+          "structureMs": 0.5,
+          "rolesMs": 0.4,
+          "gapDetectMs": 15.2,
+          "chaMs": 0,
+          "thisDispatchMs": 0,
+          "definePropertyDispatchMs": 0,
+          "reclassifyMs": 0,
+          "techniqueBackfillMs": 0.3,
+          "astMs": 0.1,
+          "complexityMs": 0,
+          "cfgMs": 0,
+          "dataflowMs": 0,
+          "finalizeMs": 0.4
+        }
+      }
+    },
+    "rename": {
+      "equivalent": false,
+      "incrementalDigest": "689e18a1ae869a696e8fff21fc528c2584cc9bbef67d32b1d2a133edee6c60af",
+      "coldDigest": "ecf77961c6979919c849448b32cc6532c4957bf2f0c14977d9b024ec3e7dfcf9",
+      "differingTables": [
+        "metrics"
+      ],
+      "differences": {
+        "metrics": {
+          "incrementalOnly": [
+            "{\"file\":\"src/sdk/builder.ts\",\"qualified_name\":\"src/sdk/builder.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":9,\"symbol_count\":5,\"import_count\":0,\"export_count\":2,\"fan_in\":1,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "coldOnly": [
+            "{\"file\":\"src/sdk/builder.ts\",\"qualified_name\":\"src/sdk/builder.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":9,\"symbol_count\":5,\"import_count\":0,\"export_count\":2,\"fan_in\":2,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "incrementalCount": 14,
+          "coldCount": 14
+        }
+      },
+      "coldBuildMs": 31,
+      "incremental": {
+        "elapsedMs": 25,
+        "maximumRssBytes": 170147840,
+        "changed": true,
+        "phases": {
+          "setupMs": 1.2,
+          "collectMs": 0.5,
+          "detectMs": 0.1,
+          "parseMs": 0.2,
+          "insertMs": 0.3,
+          "resolveMs": 0,
+          "edgesMs": 0.3,
+          "structureMs": 0.6,
+          "rolesMs": 0.4,
+          "gapDetectMs": 14.2,
+          "chaMs": 0,
+          "thisDispatchMs": 0,
+          "definePropertyDispatchMs": 0,
+          "reclassifyMs": 0,
+          "techniqueBackfillMs": 0.2,
+          "astMs": 0.1,
+          "complexityMs": 0,
+          "cfgMs": 0,
+          "dataflowMs": 0,
+          "finalizeMs": 0.5
+        }
+      }
+    },
+    "delete": {
+      "equivalent": false,
+      "incrementalDigest": "0c28a4d7e679f495cbb5dcc08e4efa92b0e6cdcbd7c12fcde7d5c9b165df7afd",
+      "coldDigest": "b65dfc321e97db19e6c5a09549db5af7b8cca2616f2d8eca39b44a3f49b71f4e",
+      "differingTables": [
+        "metrics"
+      ],
+      "differences": {
+        "metrics": {
+          "incrementalOnly": [
+            "{\"file\":\"src/sdk/index.ts\",\"qualified_name\":\"src/sdk/index.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":2,\"symbol_count\":0,\"import_count\":0,\"export_count\":0,\"fan_in\":2,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "coldOnly": [
+            "{\"file\":\"src/sdk/index.ts\",\"qualified_name\":\"src/sdk/index.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":2,\"symbol_count\":0,\"import_count\":0,\"export_count\":0,\"fan_in\":1,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "incrementalCount": 13,
+          "coldCount": 13
+        }
+      },
+      "coldBuildMs": 40,
+      "incremental": {
+        "elapsedMs": 22,
+        "maximumRssBytes": 170295296,
+        "changed": true,
+        "phases": {
+          "setupMs": 0.8,
+          "collectMs": 0.5,
+          "detectMs": 0.1,
+          "parseMs": 0,
+          "insertMs": 0.1,
+          "resolveMs": 0,
+          "edgesMs": 0.1,
+          "structureMs": 0.2,
+          "rolesMs": 0,
+          "gapDetectMs": 14.7,
+          "chaMs": 0,
+          "thisDispatchMs": 0,
+          "definePropertyDispatchMs": 0,
+          "reclassifyMs": 0,
+          "techniqueBackfillMs": 0,
+          "astMs": 0,
+          "complexityMs": 0,
+          "cfgMs": 0,
+          "dataflowMs": 0,
+          "finalizeMs": 0.4
+        }
+      }
+    },
+    "codegraphConfig": {
+      "equivalent": false,
+      "incrementalDigest": "0c28a4d7e679f495cbb5dcc08e4efa92b0e6cdcbd7c12fcde7d5c9b165df7afd",
+      "coldDigest": "b65dfc321e97db19e6c5a09549db5af7b8cca2616f2d8eca39b44a3f49b71f4e",
+      "differingTables": [
+        "metrics"
+      ],
+      "differences": {
+        "metrics": {
+          "incrementalOnly": [
+            "{\"file\":\"src/sdk/index.ts\",\"qualified_name\":\"src/sdk/index.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":2,\"symbol_count\":0,\"import_count\":0,\"export_count\":0,\"fan_in\":2,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "coldOnly": [
+            "{\"file\":\"src/sdk/index.ts\",\"qualified_name\":\"src/sdk/index.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":2,\"symbol_count\":0,\"import_count\":0,\"export_count\":0,\"fan_in\":1,\"fan_out\":0,\"cohesion\":null,\"file_count\":null}"
+          ],
+          "incrementalCount": 13,
+          "coldCount": 13
+        }
+      },
+      "coldBuildMs": 31,
+      "incremental": {
+        "elapsedMs": 18,
+        "maximumRssBytes": 170426368,
+        "changed": false
+      }
+    },
+    "typescriptConfig": {
+      "equivalent": false,
+      "incrementalDigest": "b65dfc321e97db19e6c5a09549db5af7b8cca2616f2d8eca39b44a3f49b71f4e",
+      "coldDigest": "d62551dca96701ad1b185155fda8e38247a308ae1921515061cdafaee35408d1",
+      "differingTables": [
+        "nodes",
+        "edges",
+        "metrics"
+      ],
+      "differences": {
+        "nodes": {
+          "incrementalOnly": [
+            "{\"name\":\"defineMutation\",\"kind\":\"function\",\"file\":\"src/sdk/builder.ts\",\"line\":6,\"end_line\":8,\"qualified_name\":\"defineMutation\",\"scope\":null,\"visibility\":null,\"exported\":1,\"role\":\"core\",\"content_hash\":null,\"accessor_kind\":null,\"entrypoint\":0,\"parent_file\":null,\"parent_name\":null,\"parent_kind\":null}"
+          ],
+          "coldOnly": [
+            "{\"name\":\"defineMutation\",\"kind\":\"function\",\"file\":\"src/sdk/builder.ts\",\"line\":6,\"end_line\":8,\"qualified_name\":\"defineMutation\",\"scope\":null,\"visibility\":null,\"exported\":1,\"role\":\"entry\",\"content_hash\":null,\"accessor_kind\":null,\"entrypoint\":0,\"parent_file\":null,\"parent_name\":null,\"parent_kind\":null}"
+          ],
+          "incrementalCount": 35,
+          "coldCount": 35
+        },
+        "edges": {
+          "incrementalOnly": [
+            "{\"source_file\":\"src/cases.ts\",\"source_name\":\"src/cases.ts\",\"source_kind\":\"file\",\"source_line\":0,\"target_file\":\"src/sdk/builder.ts\",\"target_name\":\"src/sdk/builder.ts\",\"target_kind\":\"file\",\"target_line\":0,\"kind\":\"imports\",\"confidence\":0.9,\"dynamic\":0,\"technique\":null,\"dynamic_kind\":null}",
+            "{\"source_file\":\"src/cases.ts\",\"source_name\":\"src/cases.ts\",\"source_kind\":\"file\",\"source_line\":0,\"target_file\":\"src/sdk/index.ts\",\"target_name\":\"src/sdk/index.ts\",\"target_kind\":\"file\",\"target_line\":0,\"kind\":\"imports\",\"confidence\":1,\"dynamic\":0,\"technique\":null,\"dynamic_kind\":null}",
+            "{\"source_file\":\"src/cases.ts\",\"source_name\":\"direct\",\"source_kind\":\"constant\",\"source_line\":10,\"target_file\":\"src/sdk/builder.ts\",\"target_name\":\"defineMutation\",\"target_kind\":\"function\",\"target_line\":6,\"kind\":\"calls\",\"confidence\":1,\"dynamic\":0,\"technique\":\"ts-native\",\"dynamic_kind\":null}"
+          ],
+          "coldOnly": [
+            "{\"source_file\":\"src/cases.ts\",\"source_name\":\"direct\",\"source_kind\":\"constant\",\"source_line\":10,\"target_file\":\"src/fake.ts\",\"target_name\":\"defineMutation\",\"target_kind\":\"function\",\"target_line\":1,\"kind\":\"calls\",\"confidence\":1,\"dynamic\":0,\"technique\":\"ts-native\",\"dynamic_kind\":null}",
+            "{\"source_file\":\"src/cases.ts\",\"source_name\":\"unknowable\",\"source_kind\":\"constant\",\"source_line\":20,\"target_file\":\"src/fake.ts\",\"target_name\":\"defineMutation\",\"target_kind\":\"function\",\"target_line\":1,\"kind\":\"calls\",\"confidence\":1,\"dynamic\":0,\"technique\":\"ts-native\",\"dynamic_kind\":null}"
+          ],
+          "incrementalCount": 53,
+          "coldCount": 51
+        },
+        "metrics": {
+          "incrementalOnly": [
+            "{\"file\":\"src\",\"qualified_name\":\"src\",\"kind\":\"directory\",\"line\":0,\"line_count\":null,\"symbol_count\":19,\"import_count\":null,\"export_count\":null,\"fan_in\":1,\"fan_out\":1,\"cohesion\":0.6666666666666666,\"file_count\":5}",
+            "{\"file\":\"src/cases.ts\",\"qualified_name\":\"src/cases.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":27,\"symbol_count\":7,\"import_count\":5,\"export_count\":5,\"fan_in\":1,\"fan_out\":5,\"cohesion\":null,\"file_count\":null}",
+            "{\"file\":\"src/sdk\",\"qualified_name\":\"src/sdk\",\"kind\":\"directory\",\"line\":0,\"line_count\":null,\"symbol_count\":5,\"import_count\":null,\"export_count\":null,\"fan_in\":2,\"fan_out\":0,\"cohesion\":0,\"file_count\":2}"
+          ],
+          "coldOnly": [
+            "{\"file\":\"src\",\"qualified_name\":\"src\",\"kind\":\"directory\",\"line\":0,\"line_count\":null,\"symbol_count\":19,\"import_count\":null,\"export_count\":null,\"fan_in\":1,\"fan_out\":1,\"cohesion\":0.5,\"file_count\":5}",
+            "{\"file\":\"src/cases.ts\",\"qualified_name\":\"src/cases.ts\",\"kind\":\"file\",\"line\":0,\"line_count\":27,\"symbol_count\":7,\"import_count\":3,\"export_count\":5,\"fan_in\":1,\"fan_out\":3,\"cohesion\":null,\"file_count\":null}",
+            "{\"file\":\"src/sdk\",\"qualified_name\":\"src/sdk\",\"kind\":\"directory\",\"line\":0,\"line_count\":null,\"symbol_count\":5,\"import_count\":null,\"export_count\":null,\"fan_in\":0,\"fan_out\":0,\"cohesion\":null,\"file_count\":2}"
+          ],
+          "incrementalCount": 13,
+          "coldCount": 13
+        }
+      },
+      "coldBuildMs": 32,
+      "incremental": {
+        "elapsedMs": 17,
+        "maximumRssBytes": 170573824,
+        "changed": false
+      }
+    },
+    "branchSwitch": {
+      "equivalent": false,
+      "incrementalDigest": "d3db24598cf7fb9af6dd10d682cd01f5381a23d8e3c5156bbf52d11ab9ee1676",
+      "coldDigest": "d84e42f0399edfa7ab20bcb6191816c6ae585e83756fd9585a383c4d3fd60f6f",
+      "differingTables": [
+        "dataflowVertices",
+        "dataflow"
+      ],
+      "differences": {
+        "dataflowVertices": {
+          "incrementalOnly": [
+            "{\"file\":\"src/branch-helpers.ts\",\"qualified_name\":\"forward\",\"function_kind\":\"function\",\"function_line\":1,\"kind\":\"param\",\"name\":\"builder\",\"param_index\":0,\"line\":1,\"node_file\":null,\"node_name\":null,\"node_kind\":null,\"node_line\":null}",
+            "{\"file\":\"src/branch-helpers.ts\",\"qualified_name\":\"forward\",\"function_kind\":\"function\",\"function_line\":1,\"kind\":\"param\",\"name\":\"options\",\"param_index\":1,\"line\":1,\"node_file\":null,\"node_name\":null,\"node_kind\":null,\"node_line\":null}",
+            "{\"file\":\"src/branch-helpers.ts\",\"qualified_name\":\"forward\",\"function_kind\":\"function\",\"function_line\":1,\"kind\":\"return\",\"name\":null,\"param_index\":null,\"line\":5,\"node_file\":null,\"node_name\":null,\"node_kind\":null,\"node_line\":null}"
+          ],
+          "coldOnly": [],
+          "incrementalCount": 5,
+          "coldCount": 0
+        },
+        "dataflow": {
+          "incrementalOnly": [
+            "{\"source_file\":\"src/branch-helpers.ts\",\"source_name\":\"forward\",\"source_kind\":\"function\",\"source_line\":1,\"target_file\":\"src/branch-helpers.ts\",\"target_name\":\"forward\",\"target_kind\":\"function\",\"target_line\":1,\"source_vertex_kind\":\"param\",\"source_vertex_name\":\"builder\",\"source_vertex_parameter\":0,\"target_vertex_kind\":\"return\",\"target_vertex_name\":null,\"target_vertex_parameter\":null,\"kind\":\"def_use\",\"param_index\":null,\"expression\":\"builder(options)\",\"line\":5,\"confidence\":1,\"scope\":\"intra\"}",
+            "{\"source_file\":\"src/branch-helpers.ts\",\"source_name\":\"forward\",\"source_kind\":\"function\",\"source_line\":1,\"target_file\":\"src/branch-helpers.ts\",\"target_name\":\"forward\",\"target_kind\":\"function\",\"target_line\":1,\"source_vertex_kind\":\"param\",\"source_vertex_name\":\"options\",\"source_vertex_parameter\":1,\"target_vertex_kind\":\"return\",\"target_vertex_name\":null,\"target_vertex_parameter\":null,\"kind\":\"def_use\",\"param_index\":null,\"expression\":\"builder(options)\",\"line\":5,\"confidence\":1,\"scope\":\"intra\"}",
+            "{\"source_file\":\"src/branch-helpers.ts\",\"source_name\":\"callbackFactory\",\"source_kind\":\"function\",\"source_line\":8,\"target_file\":\"src/branch-helpers.ts\",\"target_name\":\"callbackFactory\",\"target_kind\":\"function\",\"target_line\":8,\"source_vertex_kind\":\"param\",\"source_vertex_name\":\"prefix\",\"source_vertex_parameter\":0,\"target_vertex_kind\":\"return\",\"target_vertex_name\":null,\"target_vertex_parameter\":null,\"kind\":\"def_use\",\"param_index\":null,\"expression\":\"function returnedCallback(input: string): string {\\n    return `${prefix}:${input}`\\n  }\",\"line\":9,\"confidence\":1,\"scope\":\"intra\"}"
+          ],
+          "coldOnly": [],
+          "incrementalCount": 3,
+          "coldCount": 0
+        }
+      },
+      "coldBuildMs": 29,
+      "incremental": {
+        "elapsedMs": 23,
+        "maximumRssBytes": 170704896,
+        "changed": true,
+        "phases": {
+          "setupMs": 1.8,
+          "collectMs": 0.5,
+          "detectMs": 0.1,
+          "parseMs": 0.4,
+          "insertMs": 0.4,
+          "resolveMs": 0.1,
+          "edgesMs": 0.5,
+          "structureMs": 0.6,
+          "rolesMs": 0.5,
+          "gapDetectMs": 11.3,
+          "chaMs": 0,
+          "thisDispatchMs": 0,
+          "definePropertyDispatchMs": 0,
+          "reclassifyMs": 0,
+          "techniqueBackfillMs": 0.2,
+          "astMs": 0.1,
+          "complexityMs": 0.1,
+          "cfgMs": 0.1,
+          "dataflowMs": 0,
+          "finalizeMs": 0.5
+        }
+      }
+    }
+  },
+  "bodyAnalysis": {
+    "astRows": 11,
+    "cfgBlocks": 15,
+    "dataflowRows": 0,
+    "dataflowKinds": [],
+    "callTargets": [
+      {
+        "sourceFile": "src/cases.ts",
+        "sourceName": "collision",
+        "targetFile": "src/fake.ts",
+        "targetName": "defineMutation",
+        "confidence": 1,
+        "technique": "ts-native"
+      },
+      {
+        "sourceFile": "src/cases.ts",
+        "sourceName": "direct",
+        "targetFile": "src/sdk/builder.ts",
+        "targetName": "defineMutation",
+        "confidence": 1,
+        "technique": "ts-native"
+      },
+      {
+        "sourceFile": "src/cases.ts",
+        "sourceName": "referenced",
+        "targetFile": "packages/referenced/src/index.ts",
+        "targetName": "referencedBuilder",
+        "confidence": 1,
+        "technique": "ts-native"
+      },
+      {
+        "sourceFile": "src/cases.ts",
+        "sourceName": "unknowable",
+        "targetFile": "src/sdk/builder.ts",
+        "targetName": "defineMutation",
+        "confidence": 1,
+        "technique": "ts-native"
+      }
+    ],
+    "knownUnknownAmbiguousUnsupportedValueStates": false,
+    "checkerResolvedSdkIdentity": false,
+    "usefulAsSupplementalStructuralEvidence": true
+  },
+  "fixturePerformance": {
+    "fullBuildMs": 92,
+    "maximumRssBytes": 167854080,
+    "databaseBytes": 385024,
+    "query": {
+      "samples": 50,
+      "medianMs": 9.477,
+      "p95Ms": 11.888
+    },
+    "rows": {
+      "nodes": 35,
+      "edges": 53,
+      "metrics": 13,
+      "complexity": 5,
+      "ast": 11,
+      "cfgBlocks": 15,
+      "cfgEdges": 10,
+      "dataflowVertices": 0,
+      "dataflow": 0,
+      "files": 7
+    }
+  },
+  "decision": {
+    "outcome": "own-normalized-materializer-with-selective-codegraph-derived-machinery",
+    "rationale": [
+      "No public compiler-fact ingestion or repository extension seam exists.",
+      "The fixed mutable schema lacks namespaces, versions, evidence, completeness, and immutable generations.",
+      "The documented incremental contract is weaker than normalized incremental equals cold.",
+      "AST, CFG, and dataflow are Tree-sitter-derived and cannot replace checker-resolved TypeSpec facts.",
+      "A sidecar can coexist but would reimplement the infrastructure block the dependency was meant to replace.",
+      "A direct dependency would inherit a conflicting analysis authority and lifecycle without removing TypeSpec-owned semantic infrastructure."
+    ],
+    "reusable": [
+      "normalized SQLite schema and index patterns",
+      "file metadata triage with content hashing as final authority",
+      "delete and rename purge semantics",
+      "bounded query and pagination patterns",
+      "cold-equivalence and adversarial churn test cases"
+    ],
+    "excludedFromReuse": [
+      "fixed nodes and edges ontology",
+      "Tree-sitter analysis pipeline",
+      "line or database-row identities",
+      "mutable-current generation lifecycle",
+      "mirrored native and WASM implementations"
+    ],
+    "productionStore": "TypeSpec-owned normalized SQLite materializer",
+    "currentSnapshotJsonStore": "correctness reference only; not the production architecture",
+    "dependencyPolicy": "no direct @optave/codegraph runtime dependency",
+    "derivationPolicy": "Any copied or adapted Apache-2.0 implementation must identify the upstream revision, preserve attribution, and document material divergences.",
+    "upstreamSeamsWorthProposing": [
+      "public transactional external-fact ingestion",
+      "namespaced extension tables and query registration",
+      "portable identity columns independent of source lines",
+      "generation-pinned read API",
+      "cold-equivalence mode covering analysis tables and config inputs"
+    ]
+  }
+}

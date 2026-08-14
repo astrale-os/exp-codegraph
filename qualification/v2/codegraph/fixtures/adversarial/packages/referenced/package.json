@@ -1,0 +1,8 @@
+{
+  "name": "@fixture/referenced",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

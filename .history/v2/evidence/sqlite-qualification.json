@@ -1,0 +1,110 @@
+{
+  "format": "astrale.typespec.v2.sqlite-qualification",
+  "version": 1,
+  "status": "qualified",
+  "operations": [
+    "baseline",
+    "edit",
+    "create",
+    "rename",
+    "delete",
+    "branch-like",
+    "config-change"
+  ],
+  "equality": {
+    "normalizedIncrementalEqualsMemory": true,
+    "normalizedIncrementalEqualsCold": true,
+    "configUniverseEqualsCold": true,
+    "nonSemanticCommitMetadataExcluded": [
+      "generation.sequence"
+    ]
+  },
+  "snapshots": {
+    "primaryDigest": "b07c8c0bd8197f37e51a99ada6fcd6b2eda5e101a4ef0ccace99dd044e31f93a",
+    "configuredDigest": "0df8fd9e77ffacfb13758b55831badcc768f0f09f61d2c1ce2ea7ac0c46f5423",
+    "primaryFacts": 3,
+    "configuredFacts": 3
+  },
+  "performance": {
+    "commits": [
+      {
+        "operation": "baseline",
+        "elapsedMs": 2.948
+      },
+      {
+        "operation": "edit",
+        "elapsedMs": 1.75
+      },
+      {
+        "operation": "create",
+        "elapsedMs": 2.273
+      },
+      {
+        "operation": "rename",
+        "elapsedMs": 1.46
+      },
+      {
+        "operation": "delete",
+        "elapsedMs": 1.613
+      },
+      {
+        "operation": "branch-like",
+        "elapsedMs": 1.885
+      },
+      {
+        "operation": "config-change",
+        "elapsedMs": 1.382
+      }
+    ],
+    "incrementalDatabaseBytes": 143360,
+    "coldDatabaseBytes": 126976
+  },
+  "schema": {
+    "userVersion": 3,
+    "tables": [
+      "analysis_current",
+      "analysis_fact_evidence",
+      "analysis_fact_inputs",
+      "analysis_facts",
+      "analysis_generation_shards",
+      "analysis_generations",
+      "analysis_leases",
+      "analysis_quarantine",
+      "analysis_shards"
+    ],
+    "generationColumns": [
+      "store_namespace",
+      "universe",
+      "sequence",
+      "generation_id",
+      "producer_id",
+      "producer_name",
+      "producer_version",
+      "protocol_version",
+      "source_manifest",
+      "capabilities_json"
+    ],
+    "wholeGenerationSnapshotJson": false,
+    "counts": {
+      "analysis_current": 2,
+      "analysis_fact_evidence": 9,
+      "analysis_fact_inputs": 0,
+      "analysis_facts": 9,
+      "analysis_generation_shards": 23,
+      "analysis_generations": 7,
+      "analysis_leases": 0,
+      "analysis_quarantine": 0,
+      "analysis_shards": 9
+    }
+  },
+  "provenance": {
+    "codegraphSourceRevision": "11475e7c0f36fd3fcb482dd3ea65f6d5845049b3",
+    "copiedSourceFiles": 0,
+    "adoptedPatterns": [
+      "normalized compound indexes",
+      "bounded parameterized query pages",
+      "purge-oriented churn cases",
+      "incremental versus cold normalization"
+    ]
+  }
+}

@@ -1,0 +1,901 @@
+format: astrale.typespec.intelligence-capabilities
+version: 1
+taxonomy: astrale.typespec.intelligence-taxonomy.v1
+taxonomyStatus: LOCKED
+catalogStatus: CANDIDATE
+
+roadmap:
+  format: astrale.typespec.intelligence-roadmap.v1
+  defaultCapabilityState: catalogued
+  milestones:
+    - id: extension-kernel-v1
+      status: candidate
+      goal: "Stabilize the smallest typed, incremental, trusted, and transport-neutral extension kernel."
+      dependsOn: []
+      foundations:
+        - "Versioned semantic definitions, registry, manifests, and capability planning"
+        - "Snapshot-pinned bounded readers, partition deltas, staged emitters, and atomic admission"
+        - "Typed graph/query, evaluation, compatibility, trust, failure, and execution-evidence contracts"
+      exitCriteria:
+        - "First-party analysis uses the same public extension machinery exposed to third parties."
+        - "Cold and incremental execution are semantically equivalent across governed change classes."
+        - "Published-package tests expose no compiler, storage, native-wire, or TypeSpec product internals."
+
+    - id: downstream-proof-v1
+      status: candidate
+      goal: "Qualify the kernel with small but adversarial SDK, architecture, document, graph, and impact consumers."
+      dependsOn: [extension-kernel-v1]
+      foundations:
+        - "Materialized model, evaluation rule, query algorithm, and projection extension roles"
+        - "One host-controlled compiler-near provider using portable versioned outputs"
+        - "Reusable extension test kit and representative scale fixtures"
+      exitCriteria:
+        - "The SDK linter distinguishes canonical identity, aliases, forwarding, callbacks, and every epistemic state."
+        - "Markdown references and module architecture update incrementally through public extension roles."
+        - "A custom graph algorithm and bounded impact query run without a TypeSpec fork or internal import."
+        - "Hostile extensions fail causally without corrupting the previously admitted generation."
+
+    - id: evidence-and-engines-vnext
+      status: deferred
+      goal: "Add governed external evidence and engine ports only after their identity, trust, freshness, and compatibility semantics are proven."
+      dependsOn: [downstream-proof-v1]
+      foundations:
+        - "External evidence identity, trust tier, environment, freshness, and correlation"
+        - "Versioned external-engine request and result admission without foreign handle leakage"
+      exitCriteria:
+        - "Recorded and live evidence remain distinguishable from source-derived semantic truth."
+        - "Engine replacement preserves admitted portable semantics and exposes unsupported or heuristic results."
+
+    - id: scenarios-and-stabilization-vnext
+      status: deferred
+      goal: "Generalize counterfactual scenarios and reviewable changes after bounded V1 impact proves the shared graph and result algebra."
+      dependsOn: [downstream-proof-v1]
+      foundations:
+        - "Immutable scenarios, assumptions, overlays, alternatives, plans, and postcondition evaluation"
+        - "Explicit mutation authority separated from semantic planning"
+      exitCriteria:
+        - "Predicted and observed generations cannot be confused and every assumption remains visible."
+        - "Applied plans are preconditioned, reviewable, and followed by actual refresh and evaluation."
+
+    - id: federation-and-history-vnext
+      status: deferred
+      goal: "Extend exact identities and snapshot composition across repositories and historical evidence without weakening local guarantees."
+      dependsOn: [downstream-proof-v1, evidence-and-engines-vnext]
+      foundations:
+        - "Repository-qualified identities, authorization, partial availability, and cross-store snapshot sets"
+        - "Historical semantic diffs, lineage, freshness, and retention policy"
+      exitCriteria:
+        - "Cross-repository answers preserve source identity, authorization, completeness, and independent freshness."
+        - "Historical conclusions identify exact semantic generations and retained evidence."
+
+  dispositions:
+    - capability: repository-atlas
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: platform-foundation
+      requiredPrimitives: [workspace snapshots, stable identities, source classification, completeness]
+      proof: [repository-classification, repository-change-differential]
+      rationale: "All downstream models need one exact and classified repository substrate."
+
+    - capability: module-dependency-multigraph
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: materialized-model
+      requiredPrimitives: [typed edges, occurrence evidence, graph projections, partitions]
+      proof: [module-edge-fidelity, module-type-only-edge]
+      rationale: "It pressures exact compiler facts, graph fidelity, and efficient downstream projection."
+
+    - capability: architecture-conformance
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: evaluation-rule
+      requiredPrimitives: [typed graph views, diagnostics, completeness, rule configuration]
+      proof: [architecture-cycle-policy, architecture-unavailable-facts]
+      rationale: "It proves that business judgment remains downstream while evidence stays generic."
+
+    - capability: dependency-cycle-evaluation
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: evaluation-rule
+      requiredPrimitives: [strongly connected components, typed edge policy, explanation paths]
+      proof: [dependency-cycle-policy, dependency-permitted-recursion]
+      rationale: "It prevents graph algorithms from silently becoming universal quality judgments."
+
+    - capability: module-dossier
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: projection
+      requiredPrimitives: [typed selectors, batched reads, result composition, completeness]
+      proof: [module-show-journey, projection-human-json-equivalence]
+      rationale: "It proves a useful intent-level projection without adding a second semantic authority."
+
+    - capability: change-impact
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: query-algorithm
+      requiredPrimitives: [typed change input, graph composition, bounded traversal, explanatory paths]
+      proof: [impact-change-kinds, impact-bounds-dynamic-escape]
+      rationale: "A bounded impact slice pressures runtime intent and cross-domain graph composition without requiring the full future scenario framework."
+
+    - capability: canonical-symbol-model
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: platform-foundation
+      requiredPrimitives: [compiler-resolved identity, aliases, overloads, occurrences]
+      proof: [symbol-alias-barrel, symbol-spelling-collision]
+      rationale: "Canonical identity is the minimum trustworthy base for SDK and graph consumers."
+
+    - capability: occurrence-call-model
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: platform-foundation
+      requiredPrimitives: [resolved calls, argument binding, callbacks, source evidence]
+      proof: [call-builder-callback, call-overload-selection]
+      rationale: "It provides body-level semantic input without exposing compiler handles."
+
+    - capability: body-flow-model
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: platform-foundation
+      requiredPrimitives: [portable body IR, control flow, definition-use, context-sensitive summaries]
+      proof: [body-helper-forwarding, body-branch-escape]
+      rationale: "It proves that advanced downstream analysis can compose portable exact-enough body facts."
+
+    - capability: bounded-value-model
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: platform-foundation
+      requiredPrimitives: [bounded evaluator, provenance, epistemic result algebra, limits]
+      proof: [value-result-algebra, value-dynamic-escape]
+      rationale: "It prevents powerful lint rules from collapsing uncertainty into guesses."
+
+    - capability: sdk-usage-conformance
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: evaluation-rule
+      requiredPrimitives: [SDK domain facts, body and value readers, diagnostics, partitions]
+      proof: [sdk-semantic-linter, sdk-focused-incremental]
+      rationale: "It is the hardest immediate consumer and validates canonical identity plus body semantics."
+
+    - capability: document-structure-model
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: materialized-model
+      requiredPrimitives: [document adapter, verified source, typed entities, incremental partitions]
+      proof: [markdown-heading-link, markdown-unrelated-retention]
+      rationale: "It proves language-neutral extension without privileging the TypeScript provider."
+
+    - capability: semantic-reference-graph
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: materialized-model
+      requiredPrimitives: [cross-domain identity, typed reference edges, ambiguity, reverse lookup]
+      proof: [document-symbol-reference, reference-rename]
+      rationale: "It pressures safe joins across document and compiler-derived semantic models."
+
+    - capability: reference-integrity
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: evaluation-rule
+      requiredPrimitives: [reference graph, findings, completeness, related locations]
+      proof: [reference-state-algebra, reference-deletion]
+      rationale: "It proves a real document rule over generic public models."
+
+    - capability: analysis-completeness-evaluation
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: evaluation-rule
+      requiredPrimitives: [capability availability, completeness, trust, limits, failure attribution]
+      proof: [hostile-extension, capability-availability]
+      rationale: "The platform must make missing or degraded analysis visible instead of silently succeeding."
+
+    - capability: topological-layer-model
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: materialized-model
+      requiredPrimitives: [public graph kernel, deterministic algorithm API, typed derived facts]
+      proof: [topological-layer-derivation, graph-cyclic-condensation]
+      rationale: "It proves deterministic derived graph models over condensation without turning layers into judgment."
+
+    - capability: centrality-coupling-model
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: materialized-model
+      requiredPrimitives: [public graph kernel, streaming edge access, deterministic algorithm API, typed derived facts]
+      proof: [custom-graph-algorithm, graph-centrality-fidelity]
+      rationale: "It proves that a consumer can add an unanticipated graph algorithm while keeping its metrics descriptive."
+
+    - capability: graph-path-exploration
+      state: v1-proof
+      milestone: downstream-proof-v1
+      extensionRole: query-algorithm
+      requiredPrimitives: [typed selectors, bounded graph traversal, cancellation, path evidence]
+      proof: [graph-large-sparse, graph-bounded-cycle]
+      rationale: "It proves runtime algorithms remain efficient, cancellable, and evidence-bearing."
+
+    - capability: test-evidence-graph
+      state: deferred
+      milestone: evidence-and-engines-vnext
+      extensionRole: future-contract
+      rationale: "V1 reserves evidence admission but defers a durable test-evidence identity and trust contract."
+
+    - capability: behavior-evidence-coverage
+      state: deferred
+      milestone: evidence-and-engines-vnext
+      extensionRole: future-contract
+      rationale: "It depends on governed correlation between temporal observations and static behavior models."
+
+    - capability: affected-tests
+      state: deferred
+      milestone: evidence-and-engines-vnext
+      extensionRole: query-algorithm
+      rationale: "Defensible test selection requires the future evidence model in addition to V1 impact traversal."
+
+    - capability: minimum-defensible-tests
+      state: deferred
+      milestone: evidence-and-engines-vnext
+      extensionRole: query-algorithm
+      rationale: "Optimization over test evidence is postponed until evidence identity and completeness are qualified."
+
+    - capability: architecture-stabilization
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "V1 evaluates architecture and predicts bounded impact but does not yet own generalized plans or mutation authority."
+
+    - capability: sdk-migration-stabilization
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "Safe migration needs the future alternative, overlay, precondition, and postcondition contracts."
+
+    - capability: reference-stabilization
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "Reference repair is intentionally downstream of qualified planning and application boundaries."
+
+    - capability: evidence-gap-stabilization
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "It requires both the external evidence contract and generalized stabilization lifecycle."
+
+    - capability: api-stabilization
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "API change plans must remain reviewable scenarios rather than ad hoc source mutations."
+
+    - capability: counterfactual-graph-prediction
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "V1 impact is bounded and ephemeral; persistent overlays and assumptions are a later governed contract."
+
+    - capability: multi-layer-impact
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "Cross-layer prediction waits for scenario composition and externally admitted evidence."
+
+    - capability: patch-risk-prediction
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "Risk prediction requires governed evidence and assumptions rather than an opaque V1 score."
+
+    - capability: implementation-plan-stabilization
+      state: deferred
+      milestone: scenarios-and-stabilization-vnext
+      extensionRole: future-contract
+      rationale: "Implementation planning depends on explicit alternatives, preconditions, and postcondition evaluation."
+
+    - capability: semantic-snapshot-diff
+      state: deferred
+      milestone: federation-and-history-vnext
+      extensionRole: future-contract
+      rationale: "V1 uses exact generations internally; durable historical lineage and cross-store diffs remain future work."
+
+capabilities:
+  # Repository and architecture
+  - id: repository-atlas
+    title: Repository atlas
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SPATIAL]
+    lenses: []
+    question: "What repositories, universes, projects, packages, modules, files, tests, specifications, documentation, and generated or vendored assets exist?"
+    result: "A classified containment model with stable logical identities, ownership, provenance, lifecycle, and explicit completeness."
+
+  - id: module-dependency-multigraph
+    title: Module dependency multigraph
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: []
+    question: "Which modules depend on which other modules, through exactly which compiler-resolved occurrences and dependency kinds?"
+    result: "An evidence-preserving multigraph of runtime, type-only, dynamic, side-effect, facade, deep-import, package, and project-reference dependencies."
+
+  - id: public-surface-graph
+    title: Public surface graph
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "What is actually public, where does each exported identity originate, and which consumers rely on it?"
+    result: "A graph of entrypoints, exports, aliases, barrels, implementations, deep imports, public consumers, and accidental exposure candidates."
+
+  - id: package-delivery-graph
+    title: Package and delivery graph
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Which sources, symbols, dependencies, assets, and entrypoints participate in each build and published artifact?"
+    result: "A delivery model connecting authored sources to runtime, development, build, documentation, executable, and package surfaces."
+
+  - id: architecture-conformance
+    title: Architecture conformance
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: []
+    question: "Does observed dependency direction, layering, composition, and ownership conform to the governed architecture?"
+    result: "Attributed pass, fail, indeterminate, or error findings with exact dependency paths, locations, rules, and unavailable evidence."
+    evaluationBasis: "Versioned architecture rules, declared module boundaries, and dependency laws."
+
+  - id: module-boundary-conformance
+    title: Module boundary conformance
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Are entrypoints, facades, internals, deep imports, package exports, and test boundaries used as their owners intend?"
+    result: "Boundary findings that distinguish legitimate public use, private coupling, accidental exposure, and incomplete analysis."
+    evaluationBasis: "Declared module surfaces, package exports, consumer scopes, and explicit boundary policy."
+
+  - id: dependency-cycle-evaluation
+    title: Dependency cycle evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SPATIAL]
+    lenses: []
+    question: "Which dependency cycles violate governed layering or create materially unstable composition?"
+    result: "Complete strongly connected components and attributable cycle findings without treating every graph cycle as automatically defective."
+    evaluationBasis: "Typed edge policy, allowed recursion boundaries, and governed architectural layering."
+
+  - id: repository-health-evaluation
+    title: Repository health evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [SECURITY, EXPERIENCE, PERFORMANCE, OBSERVABILITY]
+    question: "What governed concerns currently fail, pass, remain indeterminate, or cannot be evaluated across the complete repository?"
+    result: "An attributable rule inventory with findings, coverage, completeness, evidence, and trends rather than an opaque aggregate quality score."
+    evaluationBasis: "An explicitly versioned rule suite whose individual results remain independently visible."
+
+  - id: module-dossier
+    title: Module dossier
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "What is the complete relevant picture for this selected module?"
+    result: "A bounded dossier of purpose, public surface, dependencies, dependents, symbols, tests, documentation, specifications, findings, history, and completeness."
+    selectionInput: "A module, package, project, repository area, or logical boundary identity."
+
+  - id: dependency-explanation
+    title: Dependency explanation
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: []
+    question: "Why does one selected module, symbol, package, or file depend on another?"
+    result: "One or more typed explanatory paths with exact occurrences, re-exports, aliases, call relationships, and source evidence."
+    selectionInput: "A source entity, target entity, permitted edge families, and optional path limits."
+
+  - id: change-impact
+    title: Cross-system change impact
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "What could be affected by a selected symbol, module, file, package, commit, or proposed change?"
+    result: "Separated compile, dependency, call, value-flow, test, specification, documentation, package, release, and review impact with explanatory paths and blind spots."
+    scenarioInput: "Changed entities or a proposed semantic diff, plus requested impact families and traversal bounds."
+
+  - id: architecture-stabilization
+    title: Architecture stabilization
+    operator: STABILIZE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Which reviewable changes would bring observed dependencies and public boundaries back to the selected architecture?"
+    result: "An ordered, preconditioned change plan covering moves, imports, exports, facades, tests, documentation, and expected post-change evaluations."
+    targetInvariant: "The selected architecture rules and module-boundary contracts hold after re-modeling and re-evaluation."
+
+  # TypeScript and program semantics
+  - id: canonical-symbol-model
+    title: Canonical symbol model
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: []
+    question: "What declarations, aliases, barrels, overloads, implementations, references, types, and canonical identities exist?"
+    result: "A compiler-resolved symbol model that preserves aliases and occurrences while exposing canonical semantic identity."
+
+  - id: occurrence-call-model
+    title: Occurrence-preserving call model
+    operator: MODEL
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: []
+    question: "Which exact call, construction, access, render, callback, and dynamic invocation occurrences exist?"
+    result: "A call and occurrence model retaining callee identity, receiver, signature, arguments, parameter bindings, callbacks, and source evidence."
+
+  - id: body-flow-model
+    title: Function body and flow model
+    operator: MODEL
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: []
+    question: "What bounded execution structure and value relationships exist inside each function-like body?"
+    result: "Portable body IR containing statements, expressions, ownership, closures, CFG, def-use, reaching definitions, returns, throws, captures, and escape points."
+
+  - id: bounded-value-model
+    title: Bounded value model
+    operator: MODEL
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC]
+    lenses: []
+    question: "Which expression values can be established without executing arbitrary repository code?"
+    result: "Evidence-bearing known, unknown, ambiguous, or unsupported value results with explicit bounds and dynamic escape reasons."
+
+  - id: sdk-usage-conformance
+    title: SDK usage conformance
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Do consumers use the actual SDK builders, arguments, callbacks, chains, and lifecycle contracts correctly?"
+    result: "Identity-safe diagnostics with argument flow, callback evidence, bounded value states, related locations, and indeterminate outcomes where proof is unavailable."
+    evaluationBasis: "Versioned SDK semantic rules matched by canonical imported identity rather than local spelling."
+
+  - id: error-handling-evaluation
+    title: Error handling evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC]
+    lenses: [EXPERIENCE, OBSERVABILITY]
+    question: "Where are errors swallowed, silently converted, stripped of causal context, or represented as misleading success?"
+    result: "Control-flow-aware findings for hidden fallback, lost causes, unreachable failure classes, misleading success, and explicitly indeterminate paths."
+    evaluationBasis: "Declared error contracts, throw and return flow, catch behavior, fallback policy, and observable public outcomes."
+
+  - id: resource-lifecycle-evaluation
+    title: Resource lifecycle evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: [PERFORMANCE, OBSERVABILITY]
+    question: "Are resources, subscriptions, sessions, locks, streams, cancellation, and disposal propagated and closed correctly?"
+    result: "Lifecycle-path findings for leaks, double close, lost cancellation, unbounded retention, external escape, and unsupported analysis."
+    evaluationBasis: "Declared acquire, use, transfer, abort, dispose, and terminal-state contracts."
+
+  - id: argument-origin-explanation
+    title: Argument origin explanation
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: [OBSERVABILITY]
+    question: "Where did this selected call argument or returned value come from?"
+    result: "A backward evidence slice through definitions, parameter forwarding, helper returns, branches, callbacks, and explicit unknown or dynamic boundaries."
+    selectionInput: "A call argument, expression, return occurrence, or value-bearing diagnostic."
+
+  - id: semantic-slice
+    title: Semantic slice exploration
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: []
+    question: "What is the smallest relevant forward or backward semantic neighborhood around a selected entity?"
+    result: "A bounded typed slice across symbols, calls, control flow, definitions, values, modules, documentation, specifications, and evidence."
+    selectionInput: "One or more seeds, traversal direction, edge families, scope, and explicit bounds."
+
+  - id: entrypoint-reachability
+    title: Entrypoint reachability prediction
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: []
+    question: "What code and behavior could be reached from this explicit runtime, build, CLI, test, or package entrypoint?"
+    result: "A conservative reachability projection with typed paths, dynamic escape points, unreachable exclusions, and completeness."
+    scenarioInput: "One or more entrypoints, runtime assumptions, universe selection, edge families, and traversal bounds."
+
+  - id: signature-change-impact
+    title: Signature change impact
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "What would break or change if this public signature, callback contract, return type, overload, or option changed?"
+    result: "Consumer, call-binding, implementation, test, documentation, specification, and release impact separated by confidence and path."
+    scenarioInput: "A selected callable or type plus its proposed before-and-after semantic contract."
+
+  - id: sdk-migration-stabilization
+    title: SDK migration stabilization
+    operator: STABILIZE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "How can all consumers be migrated coherently to a selected SDK contract?"
+    result: "An ordered semantic migration plan with preconditioned edits, compatibility decisions, negative scans, affected tests, documentation changes, and post-migration evaluations."
+    targetInvariant: "Every in-scope consumer uses the selected canonical SDK contract and the superseded form has no unexplained active occurrences."
+
+  # Documents and knowledge
+  - id: document-structure-model
+    title: Document structure model
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: []
+    question: "What documents, sections, headings, anchors, links, code blocks, inline code, definitions, and mentions exist?"
+    result: "A presentation-neutral document model with exact source spans, stable document identities, syntax roles, and parse completeness."
+
+  - id: semantic-reference-graph
+    title: Semantic reference graph
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "How do documents refer to files, headings, modules, symbols, packages, specifications, rules, diagnostics, and other documents?"
+    result: "A cross-domain reference graph preserving resolved, ambiguous, unresolved, invalid, historical, and stale-reference states."
+
+  - id: reference-integrity
+    title: Reference integrity evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Which references are broken, ambiguous, stale, orphaned, incorrectly scoped, or attached to the wrong semantic subject?"
+    result: "Evidence-backed reference findings with candidates, resolution reasons, revision context, and explicit unavailable targets."
+    evaluationBasis: "Document syntax, canonical entity identities, anchor semantics, repository scope, and configured reference policy."
+
+  - id: documentation-contract-drift
+    title: Documentation and contract drift
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE, OBSERVABILITY]
+    question: "Where does documentation contradict current public signatures, behavior contracts, examples, errors, or lifecycle semantics?"
+    result: "Attributed drift findings connecting exact prose or code spans to current semantic facts and the revision where divergence appeared."
+    evaluationBasis: "Resolved semantic references, executable or compilable examples, public contracts, and accepted documentation assertions."
+
+  - id: public-api-documentation-coverage
+    title: Public API documentation coverage
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Which public APIs lack meaningful documentation, and which documentation has no live public subject?"
+    result: "Bidirectional coverage findings that distinguish missing, stale, ambiguous, intentionally internal, and unavailable documentation evidence."
+    evaluationBasis: "Governed public surfaces, documentation ownership, reference resolution, and explicit coverage requirements."
+
+  - id: documentation-dossier
+    title: Documentation dossier
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "What documentation explains or references this selected entity, and what does this document itself depend upon?"
+    result: "A bidirectional, section-aware dossier with resolved subjects, relevant excerpts, reference paths, drift findings, and revision evidence."
+    selectionInput: "A document, section, symbol, module, package, specification entity, diagnostic, or public API identity."
+
+  - id: reference-change-impact
+    title: Documentation reference change impact
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Which documentation, anchors, examples, and semantic references would be affected by this rename, move, removal, or contract change?"
+    result: "Direct and transitive documentation impact with affected spans, resolution changes, stale candidates, and explanatory paths."
+    scenarioInput: "A proposed entity rename, move, deletion, visibility change, or before-and-after contract."
+
+  - id: reference-stabilization
+    title: Reference stabilization
+    operator: STABILIZE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Which reviewable edits would restore coherent semantic references after repository or documentation change?"
+    result: "Revision-safe edit suggestions for links, anchors, mentions, code spans, examples, and moved subjects, followed by predicted and actual re-evaluation."
+    targetInvariant: "Every in-scope reference resolves to the intended current semantic subject or remains explicitly unresolved by policy."
+
+  # Tests, evidence, and completeness
+  - id: test-evidence-graph
+    title: Test and evidence graph
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "Which tests, fixtures, benchmarks, traces, specifications, rules, symbols, modules, and behaviors are evidentially connected?"
+    result: "A typed evidence graph separating declared coverage, observed execution, static reachability, attached evidence, and historical results."
+
+  - id: analysis-completeness-evaluation
+    title: Analysis completeness evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [OBSERVABILITY]
+    question: "Where is analysis complete, partial, unavailable, stale, ambiguous, unsupported, or outside the selected universe?"
+    result: "Capability-level completeness findings with limits, failures, affected scopes, evidence, freshness, and consequences for downstream rules."
+    evaluationBasis: "Declared capability requirements, effective limits, exact snapshot identities, universe membership, and producer completion records."
+
+  - id: behavior-evidence-coverage
+    title: Behavior and evidence coverage
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [OBSERVABILITY]
+    question: "Which governed behaviors have convincing evidence, weak evidence, no evidence, or only unrelated execution observations?"
+    result: "Bidirectional behavior-to-evidence findings without treating test reachability or trace absence as proof of behavioral coverage or unreachability."
+    evaluationBasis: "Versioned evidence requirements, resolved test relationships, static semantics, and attributable execution records."
+
+  - id: affected-tests
+    title: Affected test prediction
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "Which tests could detect regressions caused by these selected files, symbols, commits, or proposed semantic changes?"
+    result: "Ranked test impact grouped by direct evidence, semantic dependency, runtime reachability, historical sensitivity, and explicit blind spots."
+    scenarioInput: "Changed entities or a proposed patch, target universes, and acceptable prediction bounds."
+
+  - id: minimum-defensible-tests
+    title: Minimum defensible test set
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [PERFORMANCE, OBSERVABILITY]
+    question: "What is the smallest defensible test selection for this change, and what evidence remains uncovered?"
+    result: "A bounded test plan distinguishing proven obligations, likely coverage, omitted evidence, residual risk, and why every selected test matters."
+    scenarioInput: "A proposed change, required confidence, evidence policy, available test inventory, and execution budget."
+
+  - id: evidence-gap-stabilization
+    title: Evidence gap stabilization
+    operator: STABILIZE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [OBSERVABILITY]
+    question: "What reviewable evidence work would close the selected behavior, rule, or qualification gaps?"
+    result: "An ordered plan for missing tests, fixtures, assertions, traces, or qualification evidence without fabricating successful results."
+    targetInvariant: "Every selected governed behavior has the required attributable evidence or an explicitly accepted evidence limitation."
+
+  # Security, observability, and performance lenses
+  - id: trust-boundary-model
+    title: Trust boundary model
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: [SECURITY]
+    question: "Where do untrusted values, trusted authorities, credentials, admission boundaries, protected state, and privileged effects exist?"
+    result: "A trust model connecting sources, validation, authority, delegation, protected operations, sinks, and boundary crossings."
+
+  - id: source-sink-flow-model
+    title: Security source-to-sink flow model
+    operator: MODEL
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: [SECURITY]
+    question: "How can security-sensitive values propagate from sources through transformations, sanitizers, calls, storage, and sinks?"
+    result: "A conservative interprocedural flow model with sanitization, authorization, ambiguity, dynamic escape, and exact evidence paths."
+
+  - id: authorization-conformance
+    title: Authorization conformance
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: [SECURITY]
+    question: "Can protected operations be reached without the required authenticated authority and policy decision?"
+    result: "Path-sensitive findings for missing, bypassed, misplaced, duplicated, or indeterminate authorization gates."
+    evaluationBasis: "Declared trust boundaries, authority contracts, protected sinks, admission rules, and conservative runtime reachability."
+
+  - id: security-path-evaluation
+    title: Security path evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, SPATIAL]
+    lenses: [SECURITY]
+    question: "Which source-to-sink, secret-exposure, unsafe-deserialization, confused-deputy, or dynamic-execution paths violate policy?"
+    result: "Evidence paths with validated sanitizers and gates, unresolved behavior, exploitability preconditions, and indeterminate outcomes."
+    evaluationBasis: "Versioned security rules over the trust, call, control-flow, dataflow, and package models."
+
+  - id: security-change-impact
+    title: Security change impact
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [SECURITY]
+    question: "How would changing this authority, validator, sanitizer, trust boundary, dependency, or protected operation alter exposure?"
+    result: "Before-and-after security paths, newly reachable sinks, lost or gained gates, affected principals, and uncertainty."
+    scenarioInput: "A proposed security-relevant semantic diff and the trust scopes or principals to analyze."
+
+  - id: hidden-failure-evaluation
+    title: Hidden failure evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, TEMPORAL]
+    lenses: [EXPERIENCE, OBSERVABILITY]
+    question: "Where can behavior fail, degrade, fall back, retry, or become stale without the caller receiving an accurate causal outcome?"
+    result: "Findings for silent failure, misleading success, hidden fallback, stale reuse, lost cause, unattributed retry, and incomplete failure contracts."
+    evaluationBasis: "Public result contracts, failure flow, retry and fallback semantics, freshness requirements, and causal evidence propagation."
+
+  - id: diagnosability-evaluation
+    title: Diagnosability evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [SEMANTIC, DYNAMIC, TEMPORAL]
+    lenses: [EXPERIENCE, OBSERVABILITY]
+    question: "Can a consumer determine what happened, why it happened, which input and rule caused it, and whether the result is complete and current?"
+    result: "Findings for missing causal context, indistinguishable failures, untraceable decisions, absent completeness, and misleading diagnostic surfaces."
+    evaluationBasis: "Public diagnostics, error algebra, provenance, completeness, freshness, and causal attribution requirements rather than log volume."
+
+  - id: performance-cost-model
+    title: Performance cost model
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [PERFORMANCE]
+    question: "What statically known operations, cardinalities, allocations, I/O boundaries, queries, and measured workloads contribute to cost?"
+    result: "A separated compiler-known cost census and attributable measurement model without turning raw counts into quality conclusions."
+
+  - id: performance-budget-evaluation
+    title: Performance budget evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [PERFORMANCE]
+    question: "Which governed workloads or statically bounded operations violate their explicit resource and latency budgets?"
+    result: "Budget findings tied to exact workload shapes, measurement lanes, revisions, environments, static bounds, and non-qualifying evidence."
+    evaluationBasis: "Ratified workload definitions, numeric budgets, measurement boundaries, environment identity, and static complexity limits."
+
+  - id: performance-change-impact
+    title: Performance change impact
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [PERFORMANCE]
+    question: "Which cost centers, workloads, cardinalities, caches, I/O paths, or budgets could be affected by this proposed change?"
+    result: "A causal performance-risk projection separating compiler-known changes, measured evidence, expected workload impact, and unknown graph terms."
+    scenarioInput: "A proposed semantic diff, affected workload families, target environments, and evidence bounds."
+
+  # Public API and temporal evolution
+  - id: public-api-evolution-evaluation
+    title: Public API evolution evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "What public behavior, type, entrypoint, error, lifecycle, or compatibility contract changed between accepted snapshots?"
+    result: "A semantic change inventory distinguishing additive, breaking, corrective, representational, environmental, and unexplained drift."
+    evaluationBasis: "Versioned public contracts, observed consumers, compatibility policy, accepted revisions, and normalized semantic snapshots."
+
+  - id: semantic-snapshot-diff
+    title: Semantic snapshot diff
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "What meaningfully changed between these selected generations, commits, branches, releases, or proposed snapshots?"
+    result: "A typed diff across entities, relationships, behavior models, findings, completeness, documentation, evidence, and package surfaces."
+    selectionInput: "Two exact snapshots or one snapshot and one proposed semantic projection, plus requested domains."
+
+  - id: release-impact
+    title: Release impact prediction
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "What package versions, consumers, migrations, documentation, tests, and release notes are implicated by this proposed release?"
+    result: "A release-scope prediction with semantic breaking changes, dependency propagation, cross-repository consumers, evidence requirements, and blind spots."
+    scenarioInput: "A proposed release snapshot, package set, compatibility policy, and available downstream consumer indexes."
+
+  - id: api-stabilization
+    title: Public API stabilization
+    operator: STABILIZE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: [EXPERIENCE]
+    question: "Which changes would make the selected public API coherent, minimal, discoverable, compatible, and consistently documented?"
+    result: "A reviewable API plan covering types, names, entrypoints, errors, examples, documentation, compatibility, consumers, and post-change evaluation."
+    targetInvariant: "The selected public contract and compatibility policy are coherent across implementation, consumers, documentation, specifications, and package delivery."
+
+  # Generic graph intelligence
+  - id: topological-layer-model
+    title: Topological layer model
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, SPATIAL]
+    lenses: []
+    question: "What acyclic layers and condensed components emerge from a selected typed graph projection?"
+    result: "Deterministic topological layers over the condensation graph while preserving the original cyclic components and edge evidence."
+
+  - id: centrality-coupling-model
+    title: Centrality and coupling observations
+    operator: MODEL
+    world: STATIC
+    dimensions: [STRUCTURAL, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "Which entities are structurally central, highly coupled, bridging, isolated, or rapidly changing under selected graph measures?"
+    result: "Named, reproducible graph observations with definitions, scopes, evidence, and trends that never become automatic quality scores."
+
+  - id: architecture-motif-evaluation
+    title: Architecture motif evaluation
+    operator: EVALUATE
+    world: STATIC
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: []
+    question: "Which governed graph motifs such as facade bypass, dependency inversion, duplicated subgraphs, or god-module concentration are present?"
+    result: "Attributed motif matches with exact subgraphs, rule parameters, counterexamples, and indeterminate scopes."
+    evaluationBasis: "Versioned, falsifiable motif rules over typed graph projections rather than heuristic labels alone."
+
+  - id: graph-path-exploration
+    title: Graph path exploration
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, SPATIAL]
+    lenses: []
+    question: "What explanatory paths connect these selected entities under the requested relationship semantics?"
+    result: "Shortest, strongest, diverse, or bounded paths whose edge meaning, occurrence evidence, completeness, and ranking rationale remain visible."
+    selectionInput: "Source and target entities, graph projection, allowed edge kinds, ranking mode, and path bounds."
+
+  - id: counterfactual-graph-prediction
+    title: Counterfactual graph prediction
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "How would graph properties, reachability, cycles, layers, ownership, and findings change if selected nodes or edges were added, removed, or moved?"
+    result: "A before-and-after graph projection with changed paths, components, findings, assumptions, and uncertainty."
+    scenarioInput: "A typed set of hypothetical node, edge, boundary, ownership, or scope changes."
+
+  - id: multi-layer-impact
+    title: Multi-layer impact prediction
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [SECURITY, EXPERIENCE, PERFORMANCE, OBSERVABILITY]
+    question: "How does this scenario propagate across code, runtime behavior, architecture, security, public experience, performance, evidence, documentation, packages, and owners?"
+    result: "A compositional impact graph preserving each impact family, explanatory path, confidence, completeness, cross-lens interaction, and non-impact proof."
+    scenarioInput: "A selected or proposed change, included graph layers and lenses, universe set, and explicit traversal budgets."
+
+  # Agent and workflow consumers
+  - id: task-context-exploration
+    title: Task context exploration
+    operator: EXPLORE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "What is the smallest complete context needed to understand and safely act on this explicit engineering task?"
+    result: "A bounded context bundle of owners, contracts, code, relationships, history, findings, evidence, impacted consumers, and known unknowns."
+    selectionInput: "A task statement plus optional seed files, symbols, diagnostics, modules, commits, or desired outcomes."
+
+  - id: patch-risk-prediction
+    title: Patch risk prediction
+    operator: PREDICT
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: [SECURITY, EXPERIENCE, PERFORMANCE, OBSERVABILITY]
+    question: "What could this proposed patch break, silently change, leave incomplete, or make harder to operate and understand?"
+    result: "An evidence-backed review projection covering semantic drift, impact, rules, tests, documentation, lenses, uncertainty, and required verification."
+    scenarioInput: "An exact patch or before-and-after semantic snapshot with the intended outcome and accepted constraints."
+
+  - id: implementation-plan-stabilization
+    title: Implementation plan stabilization
+    operator: STABILIZE
+    world: RUNTIME
+    dimensions: [STRUCTURAL, SEMANTIC, DYNAMIC, TEMPORAL, SPATIAL]
+    lenses: []
+    question: "What ordered, ownership-correct, verifiable work would move the current system to this explicit desired outcome?"
+    result: "A dependency-ordered plan with semantic owners, preconditions, affected surfaces, migrations, tests, documentation, negative scans, review passes, and completion evidence."
+    targetInvariant: "The stated desired outcome holds across all selected contracts, consumers, dimensions, and evidence after re-modeling and re-evaluation."

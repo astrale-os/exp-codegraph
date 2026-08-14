@@ -1,0 +1,119 @@
+{
+  "name": "@astrale-os/codegraph",
+  "version": "0.1.0",
+  "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/astrale-os/exp-codegraph.git"
+  },
+  "bin": {
+    "cg": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "*.ts",
+    "analysis",
+    "application",
+    "cache",
+    "conformance",
+    "markdown",
+    "reference",
+    "repository",
+    "schema",
+    "server",
+    "source",
+    "specification",
+    "api",
+    "authoring",
+    "compiler",
+    "json-schema",
+    "typescript",
+    "viewer",
+    "viewer-host"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "import": "./dist/index.js"
+    },
+    "./authoring": {
+      "types": "./authoring/index.ts",
+      "import": "./dist/authoring/index.js"
+    },
+    "./analysis": {
+      "types": "./analysis/index.ts",
+      "import": "./dist/analysis/index.js"
+    },
+    "./analysis/typescript": {
+      "types": "./analysis/typescript/index.ts",
+      "import": "./dist/analysis/typescript/index.js"
+    },
+    "./analysis/sqlite": {
+      "types": "./analysis/sqlite/index.ts",
+      "import": "./dist/analysis/sqlite/index.js"
+    },
+    "./conformance": {
+      "types": "./conformance/index.ts",
+      "import": "./dist/conformance/index.js"
+    },
+    "./repository": {
+      "types": "./repository/index.ts",
+      "import": "./dist/repository/index.js"
+    },
+    "./specification": {
+      "types": "./specification/index.ts",
+      "import": "./dist/specification/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prebuild": "node scripts/clean-dist.mjs",
+    "build": "tsgo -p tsconfig.build.json",
+    "clean": "node scripts/clean-dist.mjs",
+    "check": "node --max-old-space-size=1280 cli.ts check .",
+    "dev": "node cli.ts dev .",
+    "prepack": "pnpm run typecheck && pnpm run test",
+    "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json",
+    "test": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
+    "test:file": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
+    "test:watch": "vitest --testTimeout 15000 --maxWorkers 2"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-javascript": "^6.2.4",
+    "@codemirror/lang-yaml": "^6.1.3",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
+    "@lezer/highlight": "^1.2.3",
+    "ajv": "^8.20.0",
+    "github-slugger": "^2.0.0",
+    "katex": "^0.18.1",
+    "mdast-util-from-markdown": "^2.0.2",
+    "mermaid": "^11.16.0",
+    "micromark": "^4.0.2",
+    "micromark-extension-gfm": "^3.0.0",
+    "preact": "^10.29.7",
+    "ttsc": "0.25.0",
+    "ts-json-schema-generator": "^2.9.0",
+    "typescript": "~6.0.3",
+    "vite": "^8.1.5",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@astrale/typescript-config": "jsr:~1.1.3",
+    "@types/node": "^24.10.0",
+    "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@fixture/root",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "dependencies": {
+    "@fixture/referenced": "workspace:*"
+  }
+}

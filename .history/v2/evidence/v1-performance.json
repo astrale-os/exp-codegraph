@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "format": "astrale.typespec.v2.v1-performance",
+  "baseRevision": "81553c4b334ac16e4837439a6a2be0daf849b7ed",
+  "capturedOn": "2026-08-13",
+  "environment": {
+    "platform": "darwin",
+    "platformVersion": "26.5.2",
+    "architecture": "arm64",
+    "node": "v24.18.1",
+    "pnpm": "11.13.1",
+    "heapLimitMiB": 1280,
+    "color": false
+  },
+  "metric": {
+    "elapsed": "wall-clock seconds reported by /usr/bin/time -l",
+    "maximumResidentSetSize": "bytes reported by /usr/bin/time -l for the command process tree"
+  },
+  "workloads": [
+    {
+      "id": "focused-runtime-query-no-cache",
+      "command": "node --max-old-space-size=1280 spec/cli.ts check . --select runtime/query --quiet --no-cache",
+      "result": "Checked selected 3 specifications (+42 support): 0 diagnostics.",
+      "exitCode": 0,
+      "elapsedSeconds": 9.89,
+      "maximumResidentSetSizeBytes": 999964672
+    },
+    {
+      "id": "full-check-no-cache",
+      "command": "node --max-old-space-size=1280 spec/scripts/check.ts --quiet --no-cache",
+      "result": "Checked 309 specifications and all repository guards with 0 diagnostics.",
+      "exitCode": 0,
+      "elapsedSeconds": 69.97,
+      "maximumResidentSetSizeBytes": 1808859136
+    },
+    {
+      "id": "full-check-isolated-cold-cache",
+      "command": "XDG_CACHE_HOME=<isolated-cache> node --max-old-space-size=1280 spec/scripts/check.ts --quiet",
+      "result": "Checked 309 specifications and all repository guards with 0 diagnostics.",
+      "exitCode": 0,
+      "elapsedSeconds": 72.12,
+      "maximumResidentSetSizeBytes": 1885224960,
+      "cacheFilesAfter": 1,
+      "cacheSizeKiBAfter": 21752
+    },
+    {
+      "id": "full-check-isolated-warm-cache",
+      "command": "XDG_CACHE_HOME=<same-isolated-cache> node --max-old-space-size=1280 spec/scripts/check.ts --quiet",
+      "result": "Checked 309 specifications and all repository guards with 0 diagnostics.",
+      "exitCode": 0,
+      "elapsedSeconds": 15.54,
+      "maximumResidentSetSizeBytes": 1342734336,
+      "cacheFilesAfter": 1,
+      "cacheSizeKiBAfter": 21752
+    },
+    {
+      "id": "dev-warm-cache-readiness",
+      "command": "XDG_CACHE_HOME=<same-isolated-cache> node --max-old-space-size=1280 spec/cli.ts dev . --port <ephemeral>",
+      "result": "SPEC_SERVER_URL emitted; process then stopped with SIGINT by the readiness harness.",
+      "exitCode": 0,
+      "readinessSeconds": 13.502,
+      "elapsedSeconds": 14.79,
+      "maximumResidentSetSizeBytes": 1373077504
+    }
+  ],
+  "observations": [
+    "A focused check still loads a 45-specification closure and approaches one gigabyte RSS.",
+    "The isolated cold full check approaches 1.89 GB RSS despite the 1280 MiB V8 heap cap because RSS includes native and child-process memory.",
+    "The warm cache reduces full-check elapsed time by 78 percent but retains about 1.34 GB RSS.",
+    "The V1 cache is one opaque 21.2 MiB blob, so V2 must prove unaffected universes and shards are neither reloaded nor rewritten."
+  ]
+}

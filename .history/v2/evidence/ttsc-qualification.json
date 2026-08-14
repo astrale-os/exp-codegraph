@@ -1,0 +1,180 @@
+{
+  "format": "astrale.typespec.v2.ttsc-qualification",
+  "version": 1,
+  "status": "qualified",
+  "toolchain": {
+    "ttsc": {
+      "version": "0.25.0",
+      "integrity": "sha512-f5FZg7TZb4BgMBAWfRWcd0KcLG5uVNNyzIMOHZLAk/0f4sQHUucNm6a6SDMd34WKhVsRmbCNk9BVoTvqytUpfQ=="
+    },
+    "graph": {
+      "version": "0.25.0",
+      "integrity": "sha512-3IBa4ZpvMWNrAkr5FYBsj2MDtxYkPw723oX0jvwUEQUBEPlVExTHPLF2gynig1RXRHeLh5g63/nwt+g55x6NIA==",
+      "serveProtocol": 1,
+      "snapshotProtocol": 1,
+      "dumpSchema": 6
+    },
+    "typescriptGo": {
+      "typescript": "7.0.2",
+      "revision": "56ab4af42157"
+    },
+    "darwinArm64": {
+      "version": "0.25.0",
+      "integrity": "sha512-DrqbSBDRHPfCtYTWVuUMde4p+1dvfMHlBy430t3ckrQu2t8YzTzJRHKQiX858LaFjh3tyIF/1z55rjkXqyg/Ww==",
+      "ttscgraphSha256": "d5f53f980ec58fdace5835005ea7a8c6cdc02f2fa690c4565b5bb90be87306ac"
+    }
+  },
+  "checks": {
+    "semanticGraph": {
+      "aliasesAndBarrels": "canonical declaration in src/sdk/builder.ts",
+      "spellingCollision": "separate src/fake.ts target",
+      "closureCallback": true,
+      "projectReference": true,
+      "callMultiplicity": {
+        "observedOccurrences": 2,
+        "graphEdges": 1,
+        "disposition": "requires occurrence facts outside @ttsc/graph"
+      }
+    },
+    "projectUniverses": {
+      "productionHasTestCase": false,
+      "testHasTestCase": true
+    },
+    "lifecycle": {
+      "unchangedMemoryReused": true,
+      "cancellation": true,
+      "idempotentClose": true
+    },
+    "compilerNearBody": {
+      "api": "ttsc driver.LoadProgram + TypeScript-Go AST/Checker",
+      "artifactFormat": "astrale.typespec.v2.body-facts",
+      "artifactVersion": 1,
+      "capabilities": [
+        "argument-source",
+        "bounded-value-state",
+        "callback-body",
+        "one-hop-parameter-binding",
+        "occurrence-calls",
+        "resolved-symbol-target",
+        "source-digest"
+      ],
+      "sourceFiles": 5,
+      "callOccurrences": 18,
+      "sdkCallOccurrences": 9,
+      "valueStates": [
+        "ambiguous",
+        "known",
+        "unknown",
+        "unsupported"
+      ],
+      "callbackForms": [
+        "reference",
+        "returned"
+      ],
+      "deterministicDigest": "dd8ac44142de2beabd3b34bf234224ce0439351788c1fdff05a43e48bae48e29"
+    },
+    "sourcePluginPackaging": {
+      "compiledWithoutLocalGo": true,
+      "coldCacheBuildMs": 37893,
+      "warmCacheRunMs": 1102,
+      "warmCacheReused": true,
+      "typescriptGoBinary": "darwin-arm64"
+    },
+    "productionNativePackaging": {
+      "compiledWithoutLocalGo": true,
+      "coldCacheBuildMs": 4996,
+      "warmCacheRunMs": 721,
+      "warmCacheReused": true,
+      "protocolVersion": 1,
+      "binarySha256": "a7e6cad10e606921c5b1dfad0bbb26607c7cb5be18dfc8ac4bea931677fe563b"
+    },
+    "productionNativeProtocol": {
+      "generationValidatedByStore": true,
+      "unchangedStable": true,
+      "incrementalUpserts": 19,
+      "manifestShards": 38,
+      "coldEquivalent": true,
+      "publicIdentityPositionIndependent": true,
+      "topologyChanges": {
+        "create": {
+          "upserts": 40,
+          "deletes": 0,
+          "manifest": 40
+        },
+        "rename": {
+          "upserts": 40,
+          "deletes": 0,
+          "manifest": 40
+        },
+        "delete": {
+          "reusedPortableUniverse": true
+        },
+        "config": {
+          "upserts": 38,
+          "deletes": 0,
+          "manifest": 38
+        },
+        "contentAddressedConfigRestore": true
+      },
+      "universeIdentity": {
+        "callerSeedRemoved": true,
+        "rootMembershipRollover": true,
+        "configurationRollover": true,
+        "restoredUniverseReused": true
+      },
+      "projectFacts": 1,
+      "diagnosticFacts": 0,
+      "sourceFacts": 5,
+      "symbolFacts": 161,
+      "occurrenceFacts": 67,
+      "bodyFacts": 23,
+      "moduleFacts": 1,
+      "moduleExports": 31,
+      "moduleDeclarations": 37,
+      "callOccurrences": 17,
+      "sdkCallOccurrences": 9,
+      "bodyRelations": 165,
+      "conservativeDefinitionUses": 21,
+      "controlFlowEdgeKinds": [
+        "exception",
+        "fallthrough",
+        "false",
+        "loop",
+        "return",
+        "true"
+      ],
+      "valueStates": [
+        "ambiguous",
+        "known",
+        "unknown",
+        "unsupported"
+      ],
+      "bodyCompletionLimits": [
+        "CFG_EXPRESSION_BRANCH_PARTIAL"
+      ]
+    },
+    "incremental": {
+      "initial": "initial",
+      "unchanged": "unchanged",
+      "bodyEdit": "incremental",
+      "bodyEditRetainedShards": 71,
+      "bodyEditUpserts": 1,
+      "bodyEditManifest": 72,
+      "create": "reload",
+      "rename": "reload",
+      "delete": "reload",
+      "config": "reload",
+      "coldDifferentialChecks": 6
+    },
+    "packaging": {
+      "graphWithoutLocalGo": true,
+      "binarySha256": "d5f53f980ec58fdace5835005ea7a8c6cdc02f2fa690c4565b5bb90be87306ac",
+      "platform": "darwin-arm64"
+    }
+  },
+  "boundary": {
+    "graph": "symbol-level topology; repeated call occurrences intentionally collapse to one edge",
+    "bodyFacts": "portable occurrence relations, symbols, structured CFG, resolved calls, bounded values, and conservative def-use",
+    "deferred": "conditional-expression CFG expansion and analyses beyond the ratified bounded portable evaluator"
+  }
+}

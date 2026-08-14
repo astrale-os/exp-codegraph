@@ -1,0 +1,435 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://astrale.dev/schemas/typespec/intelligence-capabilities.v1.schema.json",
+  "title": "TypeSpec semantic-intelligence capability catalog",
+  "description": "Locks the operator, semantic-world, dimension, and orthogonal-lens taxonomy used to classify candidate downstream analysis capabilities, and validates their candidate integration roadmap. Operators classify what one atomic capability does. Dimensions and lenses are independently multi-valued.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "taxonomy",
+    "taxonomyStatus",
+    "catalogStatus",
+    "roadmap",
+    "capabilities"
+  ],
+  "properties": {
+    "format": {
+      "const": "astrale.typespec.intelligence-capabilities"
+    },
+    "version": {
+      "const": 1
+    },
+    "taxonomy": {
+      "const": "astrale.typespec.intelligence-taxonomy.v1"
+    },
+    "taxonomyStatus": {
+      "const": "LOCKED"
+    },
+    "catalogStatus": {
+      "const": "CANDIDATE"
+    },
+    "roadmap": {
+      "$ref": "#/$defs/roadmap"
+    },
+    "capabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/capability"
+      }
+    }
+  },
+  "$defs": {
+    "capabilityId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "roadmapId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "proofId": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+    },
+    "roadmapState": {
+      "type": "string",
+      "enum": ["catalogued", "kernel-supported", "v1-proof", "product-integrated", "deferred", "blocked"]
+    },
+    "roadmap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "defaultCapabilityState", "milestones", "dispositions"],
+      "properties": {
+        "format": {
+          "const": "astrale.typespec.intelligence-roadmap.v1"
+        },
+        "defaultCapabilityState": {
+          "const": "catalogued"
+        },
+        "milestones": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/milestone"
+          }
+        },
+        "dispositions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/disposition"
+          }
+        }
+      }
+    },
+    "milestone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "goal", "dependsOn", "foundations", "exitCriteria"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/roadmapId"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["candidate", "active", "complete", "deferred"]
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 10
+        },
+        "dependsOn": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/roadmapId"
+          }
+        },
+        "foundations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3
+          }
+        },
+        "exitCriteria": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 10
+          }
+        }
+      }
+    },
+    "disposition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "state", "rationale"],
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "state": {
+          "$ref": "#/$defs/roadmapState"
+        },
+        "milestone": {
+          "$ref": "#/$defs/roadmapId"
+        },
+        "extensionRole": {
+          "type": "string",
+          "enum": ["platform-foundation", "materialized-model", "evaluation-rule", "query-algorithm", "projection", "compiler-near-provider", "composed-capability", "future-contract"]
+        },
+        "requiredPrimitives": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3
+          }
+        },
+        "proof": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/proofId"
+          }
+        },
+        "blockedBy": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 3
+          }
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 10
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": ["v1-proof", "product-integrated"]
+              }
+            }
+          },
+          "then": {
+            "required": ["milestone", "extensionRole", "requiredPrimitives", "proof"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "kernel-supported"
+              }
+            }
+          },
+          "then": {
+            "required": ["extensionRole", "requiredPrimitives"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "deferred"
+              }
+            }
+          },
+          "then": {
+            "required": ["milestone", "extensionRole"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "blocked"
+              }
+            }
+          },
+          "then": {
+            "required": ["blockedBy"]
+          }
+        }
+      ]
+    },
+    "operator": {
+      "type": "string",
+      "enum": ["EXPLORE", "MODEL", "EVALUATE", "STABILIZE", "PREDICT"],
+      "description": "EXPLORE selects, traverses, compares, or explains existing knowledge. MODEL constructs descriptive facts and relationships without judging them. EVALUATE applies explicit governed criteria and preserves pass, fail, indeterminate, and error. STABILIZE proposes or applies reviewable changes toward an explicit invariant and requires subsequent re-modeling and evaluation. PREDICT computes consequences for an explicit scenario, entrypoint, or counterfactual."
+    },
+    "world": {
+      "type": "string",
+      "enum": ["STATIC", "RUNTIME"],
+      "description": "STATIC capabilities exist independently of a caller question and may run automatically. RUNTIME capabilities require explicit consumer intent, parameters, a scenario, or a target invariant. This ownership is independent of eager, lazy, cached, daemon, or CLI execution mechanics and is distinct from the DYNAMIC analysis dimension."
+    },
+    "dimension": {
+      "type": "string",
+      "enum": ["STRUCTURAL", "SEMANTIC", "DYNAMIC", "TEMPORAL", "SPATIAL"],
+      "description": "STRUCTURAL covers containment, topology, dependency, layering, boundaries, and composition. SEMANTIC covers symbols, types, contracts, identities, values, meaning, and declared intent. DYNAMIC covers possible execution behavior such as calls, control flow, dataflow, effects, lifecycle, and reachability. TEMPORAL covers revision, ordering, freshness, history, causality, and evidence across time. SPATIAL covers repository, universe, project, package, module, file, ownership, scope, and deployment location. TEMPORAL and SPATIAL usually qualify another dimension rather than standing alone."
+    },
+    "lens": {
+      "type": "string",
+      "enum": ["SECURITY", "EXPERIENCE", "PERFORMANCE", "OBSERVABILITY"],
+      "description": "SECURITY examines trust, authority, confidentiality, integrity, isolation, and exposure. EXPERIENCE examines public API quality, usability, discoverability, consistency, actionability, and error quality. PERFORMANCE examines computational cost, scaling, resource use, and measured budgets. OBSERVABILITY examines whether behavior, failure, uncertainty, fallback, and causality are visible and attributable; it does not mean logging. A lens is selected only when the capability explicitly analyzes that quality."
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "operator",
+        "world",
+        "dimensions",
+        "lenses",
+        "question",
+        "result"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/capabilityId"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 3
+        },
+        "operator": {
+          "$ref": "#/$defs/operator"
+        },
+        "world": {
+          "$ref": "#/$defs/world"
+        },
+        "dimensions": {
+          "type": "array",
+          "minItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/dimension"
+          },
+          "description": "Every selected idea is intentionally classified through more than one dimension."
+        },
+        "lenses": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/lens"
+          },
+          "description": "May be empty. Generic implementation quality is not a reason to add a lens."
+        },
+        "question": {
+          "type": "string",
+          "minLength": 10,
+          "description": "The high-value consumer question this capability owns."
+        },
+        "result": {
+          "type": "string",
+          "minLength": 10,
+          "description": "The typed, evidence-bearing outcome without prescribing a CLI or TypeScript API."
+        },
+        "selectionInput": {
+          "type": "string",
+          "minLength": 3
+        },
+        "scenarioInput": {
+          "type": "string",
+          "minLength": 3
+        },
+        "targetInvariant": {
+          "type": "string",
+          "minLength": 3
+        },
+        "evaluationBasis": {
+          "type": "string",
+          "minLength": 3
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "enum": ["MODEL", "EVALUATE"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "world": {
+                "const": "STATIC"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "enum": ["EXPLORE", "PREDICT", "STABILIZE"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "world": {
+                "const": "RUNTIME"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "EXPLORE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "selectionInput": true
+            },
+            "required": ["selectionInput"]
+          },
+          "else": {
+            "properties": {
+              "selectionInput": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "PREDICT"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "scenarioInput": true
+            },
+            "required": ["scenarioInput"]
+          },
+          "else": {
+            "properties": {
+              "scenarioInput": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "STABILIZE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "targetInvariant": true
+            },
+            "required": ["targetInvariant"]
+          },
+          "else": {
+            "properties": {
+              "targetInvariant": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "operator": {
+                "const": "EVALUATE"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evaluationBasis": true
+            },
+            "required": ["evaluationBasis"]
+          },
+          "else": {
+            "properties": {
+              "evaluationBasis": false
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "format": "astrale.typespec.v1-cli-oracle",
+  "version": 1,
+  "results": [
+    {
+      "id": "help",
+      "arguments": [
+        "--help"
+      ],
+      "exitCode": 0,
+      "stdout": "Usage:\n  astrale-spec init [module-directory]\n  astrale-spec check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--quiet] [--no-cache]\n  astrale-spec changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]\n  astrale-spec test [module-path]... [--root <directory>] [--quiet] [--no-cache]\n  astrale-spec test changed [base] [--root <directory>] [--quiet] [--no-cache]\n  astrale-spec verify [root] [--select <relative-path>]... [--schema-root <directory>]... [--require-pass] [--details] [--quiet]\n  astrale-spec dev [root] [--port <number>] [--open] [--verify] [--no-cache]\n",
+      "stderr": ""
+    },
+    {
+      "id": "usage-error",
+      "arguments": [
+        "unknown"
+      ],
+      "exitCode": 2,
+      "stdout": "",
+      "stderr": "Usage:\n  astrale-spec init [module-directory]\n  astrale-spec check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--quiet] [--no-cache]\n  astrale-spec changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]\n  astrale-spec test [module-path]... [--root <directory>] [--quiet] [--no-cache]\n  astrale-spec test changed [base] [--root <directory>] [--quiet] [--no-cache]\n  astrale-spec verify [root] [--select <relative-path>]... [--schema-root <directory>]... [--require-pass] [--details] [--quiet]\n  astrale-spec dev [root] [--port <number>] [--open] [--verify] [--no-cache]\n"
+    },
+    {
+      "id": "focused-check",
+      "arguments": [
+        "check",
+        ".",
+        "--select",
+        "runtime/query",
+        "--quiet",
+        "--no-cache"
+      ],
+      "exitCode": 0,
+      "stdout": "Checked selected 3 specifications (+42 support): 0 diagnostics.\n",
+      "stderr": ""
+    },
+    {
+      "id": "empty-selection",
+      "arguments": [
+        "check",
+        ".",
+        "--select",
+        "does/not/exist",
+        "--quiet",
+        "--no-cache"
+      ],
+      "exitCode": 1,
+      "stdout": "Checked selected 0 specifications: 2 diagnostics.\n",
+      "stderr": ".:1:1 [SPEC_NOT_FOUND] No SPEC.yml or convention-based .spec/api.d.ts anchors found.\n.:1:1 [SELECTION_EMPTY] No specification matches: does/not/exist\n"
+    },
+    {
+      "id": "focused-verify",
+      "arguments": [
+        "verify",
+        ".",
+        "--select",
+        "runtime/query",
+        "--quiet"
+      ],
+      "exitCode": 1,
+      "stdout": "Verified 3 specifications: 0 passed, 3 failed, 0 idle, 0 errors.\nRun the same verify command with --details for complete expected/actual evidence.\n",
+      "stderr": "runtime/query/.spec/api.d.ts FAIL — 2 diagnostics in 1 profile\n  contract.module.dependencies fail forward=12/12 inverse=39/41\n    MODULE_PACKAGE_UNDECLARED ×2 — runtime/query/backend.ts:15:31 External package is not allowlisted: @astrale-os/kernel-runtime\nruntime/query/cursor/.spec/api.d.ts FAIL — 1 diagnostic in 1 profile\n  contract.module.dependencies fail forward=7/7 inverse=24/25\n    MODULE_PACKAGE_UNDECLARED ×1 — runtime/query/cursor/contract.ts:5:31 External package is not allowlisted: @astrale-os/kernel-runtime\nruntime/query/planner/.spec/api.d.ts FAIL — 2 diagnostics in 2 profiles\n  contract.module.surface fail forward=20/21 inverse=17/17\n    MODULE_TYPE_MISMATCH ×1 — runtime/query/planner/.spec/api.d.ts:1:1 Public type differs from its declaration.\n  contract.module.dependencies fail forward=8/8 inverse=35/36\n    MODULE_PACKAGE_UNDECLARED ×1 — runtime/query/planner/admission.ts:18:61 External package is not allowlisted: @astrale-os/kernel-runtime\n"
+    },
+    {
+      "id": "focused-evidence",
+      "arguments": [
+        "test",
+        "runtime/query",
+        "--root",
+        ".",
+        "--quiet",
+        "--no-cache"
+      ],
+      "exitCode": 0,
+      "stdout": "Testing 10 active evidence declarations in 2 files across 1 package (0 skipped, 0 todo).\n\n RUN  v3.2.7 <workspace>/runtime\n\n ✓ query/cursor/__tests__/cursor-fingerprint.test.ts (1 test) <duration>\n ✓ query/cursor/__tests__/cursor.test.ts (14 tests) <duration>\n\n Test Files  2 passed (2)\n      Tests  15 passed (15)\n   Start at  <time>\n   Duration  <duration> (transform <duration>, setup <duration>, collect <duration>, tests <duration>, environment <duration>, prepare <duration>)\n\nTested 1 package: 1 passed, 0 failed.\nAttached evidence is not the full test suite; pnpm test remains authoritative.\n",
+      "stderr": "$ node test/file.ts runtime/query/cursor/__tests__/cursor-fingerprint.test.ts runtime/query/cursor/__tests__/cursor.test.ts\n$ vitest run <workspace>/runtime/query/cursor/__tests__/cursor-fingerprint.test.ts <workspace>/runtime/query/cursor/__tests__/cursor.test.ts\n"
+    }
+  ]
+}

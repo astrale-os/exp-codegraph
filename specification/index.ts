@@ -1,0 +1,64 @@
+export type { ImplementationBinding } from './binding.ts'
+export { initializeModuleSpecification, MINIMUM_MODULE_SPEC } from './module/init.ts'
+export {
+  compileSpecificationSnapshot,
+  compileSpecificationSnapshots,
+} from './snapshot/index.ts'
+export type { SpecificationCompilationBatchOptions } from './snapshot/index.ts'
+export { specificationModuleId } from './snapshot/index.ts'
+export type {
+  AuthoredLawResource,
+  AuthoredLawSpecification,
+  AuthoredLayoutResource,
+  AuthoredStateResource,
+  AuthoredStateSpecification,
+  SpecificationModuleSnapshot,
+  SpecificationSnapshot,
+  SpecificationSnapshotId,
+} from './snapshot/index.ts'
+export {
+  contractDiagnostics,
+  editableResourceSources,
+  resourceSources,
+} from './model.ts'
+export type {
+  BenchmarkResource,
+  BenchmarkSpecification,
+  CapabilityResource,
+  CapabilitySpecification,
+  CodeDeclarationResource,
+  HistoryPresentation,
+  HistoryResource,
+  DeclarationResource,
+  ExampleResource,
+  ExportedDefinition,
+  LawResource,
+  LawSpecification,
+  LayoutAdditionalPath,
+  LayoutEntry,
+  LayoutEntryObservation,
+  LayoutEntryStatus,
+  LayoutIgnorePattern,
+  LayoutIgnorePatternSource,
+  LayoutObservation,
+  LayoutObservedKind,
+  LayoutPathKind,
+  LayoutResource,
+  MarkdownResource,
+  ModuleCodeResource,
+  ModuleDescriptorResource,
+  ModuleIconResource,
+  ModuleSourceResource,
+  PackagePatternResource,
+  PackageSpecificationResource,
+  PortInterface,
+  PortResource,
+  SchemaResource,
+  StateResource,
+  StateSpecification,
+  TestEvidence,
+  TestEvidenceStatus,
+  TextResource,
+  SvgIconElement,
+} from './resource/index.ts'
+export type { ModuleSpecification, SpecModule } from './model.ts'

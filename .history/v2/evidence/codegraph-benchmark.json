@@ -1,0 +1,76 @@
+{
+  "format": "astrale.typespec.v2.codegraph-benchmark",
+  "version": 1,
+  "status": "qualified",
+  "subject": {
+    "package": "@optave/codegraph",
+    "version": "3.16.0"
+  },
+  "method": {
+    "isolatedProcesses": true,
+    "nativeCodegraph": true,
+    "bodyAnalysis": [
+      "ast",
+      "cfg",
+      "complexity",
+      "dataflow"
+    ],
+    "corpusCopiesExclude": [
+      ".codegraph",
+      ".git",
+      ".next",
+      ".turbo",
+      "coverage",
+      "dist",
+      "node_modules",
+      "target"
+    ],
+    "querySamples": 100,
+    "comparisonBoundary": "Codegraph and the TypeSpec semantic store retain different payloads; sizes and timings are operational, not equivalent-fact efficiency claims."
+  },
+  "corpora": {
+    "typespec": {
+      "name": "typespec",
+      "status": "time-limit-exceeded",
+      "phase": "full",
+      "limitMs": 180000,
+      "message": "Codegraph exceeded the governed 180000 ms phase limit: /opt/homebrew/Cellar/node@24/24.18.1/bin/node /private/tmp/kernel-typespec-v2-adr-20260813/spec/qualification/v2/codegraph/build-worker.mjs --installation /private/tmp/ops-codegraph-tool-v3.16.0 --root /var/folders/r7/5glf_c8d1398vlfmtxlfdtmh0000gn/T/astrale-typespec-v2-codegraph-benchmark-ip0NgQ/typespec --database /var/folders/r7/5glf_c8d1398vlfmtxlfdtmh0000gn/T/astrale-typespec-v2-codegraph-benchmark-ip0NgQ/typespec/.qualification/graph.db"
+    },
+    "kernel": {
+      "name": "kernel",
+      "status": "time-limit-exceeded",
+      "phase": "full",
+      "limitMs": 180000,
+      "message": "Codegraph exceeded the governed 180000 ms phase limit: /opt/homebrew/Cellar/node@24/24.18.1/bin/node /private/tmp/kernel-typespec-v2-adr-20260813/spec/qualification/v2/codegraph/build-worker.mjs --installation /private/tmp/ops-codegraph-tool-v3.16.0 --root /var/folders/r7/5glf_c8d1398vlfmtxlfdtmh0000gn/T/astrale-typespec-v2-codegraph-benchmark-ip0NgQ/kernel --database /var/folders/r7/5glf_c8d1398vlfmtxlfdtmh0000gn/T/astrale-typespec-v2-codegraph-benchmark-ip0NgQ/kernel/.qualification/graph.db"
+    }
+  },
+  "reference": {
+    "format": "astrale.typespec.v2.module-observations",
+    "version": 4,
+    "nativeDigest": "72e3f2817fa7b5b1fd9b824b3dad513ca528196e431f01425f3ec5b6fb4b3408",
+    "checkpointSha256": "21cceba9df46e17a77187c7ac2bf065dbf9ed7666151384028cac73c91aacc03",
+    "checkpointBytes": 295388909,
+    "universes": 15,
+    "facts": 303,
+    "parseMs": 2731,
+    "materializeMs": 29539,
+    "maximumRssBytes": 1280819200,
+    "databaseBytes": 296624128,
+    "openAndFirstPage": {
+      "samples": 15,
+      "medianMs": 72.632,
+      "p95Ms": 762.007
+    },
+    "storageModel": "normalized immutable generations, content-addressed shards, indexed facts, evidence, and inputs"
+  },
+  "conclusion": {
+    "codegraphFixtureStrength": [
+      "compact normalized structural tables",
+      "fast indexed point queries",
+      "low-cost no-op and one-file refresh relative to cold build"
+    ],
+    "realCorpusOutcome": "Full body-enabled Codegraph builds of both TypeSpec and Kernel exceeded the governed 180 second per-corpus limit.",
+    "typeSpecStoreOutcome": "The 295 MB, 15-universe semantic checkpoint materialized in under the governed corpus phase limit and retained indexed generation-pinned queries.",
+    "adoptionImpact": "Performance does not remove the ingestion, immutable-generation, semantic-identity, provenance, or cold-equivalence incompatibilities established by the source/churn spike."
+  }
+}
