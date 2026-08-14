@@ -9,10 +9,10 @@ import { pathToFileURL } from 'node:url'
 import { normalizeCodegraph, tableCounts } from './normalize.ts'
 import { installSidecarProbe, readSidecarProbe } from './sidecar.ts'
 
-const repositoryRoot = resolve(import.meta.dirname, '../../../..')
+const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const qualificationRoot = resolve(import.meta.dirname)
 const fixtureSource = resolve(qualificationRoot, 'fixtures/adversarial')
-const evidencePath = resolve(repositoryRoot, 'spec/.history/v2/evidence/codegraph-spike.json')
+const evidencePath = resolve(repositoryRoot, '.history/v2/evidence/codegraph-spike.json')
 const installation = argument('--installation')
 const writeEvidence = process.argv.includes('--write')
 const retainFixture = process.argv.includes('--retain')

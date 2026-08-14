@@ -10,6 +10,7 @@ export default defineLayout({
     'framing_test.go',
     'go.mod',
     'identity.go',
+    'identity_test.go',
     'main.go',
     'model.go',
     'module.go',

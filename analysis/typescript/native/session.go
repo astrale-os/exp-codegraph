@@ -76,6 +76,12 @@ func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
 	if input.Base != a.current {
 		return nil, "", protocolError("BASE_STALE", "The requested base is not the resident analyzer's current private generation.")
 	}
+	// Callers own change discovery. Once a resident base exists, an empty
+	// change set is a true no-op and must not re-walk or re-extract the complete
+	// compiler universe merely to rediscover the same content-addressed shards.
+	if input.Base != "" && !input.Invalidate && len(input.Changed) == 0 {
+		return nil, input.Base, nil
+	}
 	if input.Invalidate {
 		if err := a.rebuild(); err != nil {
 			return nil, "", err

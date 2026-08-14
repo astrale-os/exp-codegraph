@@ -43,6 +43,7 @@ func writeTransactionResponse(
 	id int,
 	transaction *factTransaction,
 	maximumFrameBytes int,
+	transactionChunkFrameBytes int,
 	maximumTransactionBytes int,
 ) error {
 	serialized, err := json.Marshal(transaction)
@@ -67,7 +68,7 @@ func writeTransactionResponse(
 		return writeEncodedFrame(output, encodedDirect, maximumFrameBytes)
 	}
 
-	chunkBytes, err := maximumRawChunkBytes(id, len(serialized), maximumFrameBytes)
+	chunkBytes, err := maximumRawChunkBytes(id, len(serialized), transactionChunkFrameBytes)
 	if err != nil {
 		return err
 	}
@@ -78,7 +79,7 @@ func writeTransactionResponse(
 		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-start",
 		Encoding: transactionFrameEncoding, Bytes: len(serialized), Chunks: chunks, SHA256: digest,
 	}
-	if err := writeFrame(output, start, maximumFrameBytes); err != nil {
+	if err := writeFrame(output, start, transactionChunkFrameBytes); err != nil {
 		return err
 	}
 	for sequence, offset := 0, 0; offset < len(serialized); sequence, offset = sequence+1, offset+chunkBytes {
@@ -90,14 +91,14 @@ func writeTransactionResponse(
 			ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-chunk",
 			Sequence: sequence, Data: base64.StdEncoding.EncodeToString(serialized[offset:end]),
 		}
-		if err := writeFrame(output, frame, maximumFrameBytes); err != nil {
+		if err := writeFrame(output, frame, transactionChunkFrameBytes); err != nil {
 			return err
 		}
 	}
 	return writeFrame(output, transactionEndFrame{
 		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-end",
 		Bytes: len(serialized), Chunks: chunks, SHA256: digest,
-	}, maximumFrameBytes)
+	}, transactionChunkFrameBytes)
 }
 
 func writeFrame(output io.Writer, frame any, maximumFrameBytes int) error {

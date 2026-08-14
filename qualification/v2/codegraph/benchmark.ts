@@ -21,15 +21,16 @@ import type { FactTransaction } from '../../../analysis/index.ts'
 import { createSQLiteAnalysisStore } from '../../../analysis/sqlite/index.ts'
 import { normalizeCodegraph, tableCounts } from './normalize.ts'
 
-const repositoryRoot = resolve(import.meta.dirname, '../../../..')
-const evidencePath = resolve(repositoryRoot, 'spec/.history/v2/evidence/codegraph-benchmark.json')
+const repositoryRoot = resolve(import.meta.dirname, '../../..')
+const evidencePath = resolve(repositoryRoot, '.history/v2/evidence/codegraph-benchmark.json')
 const installation = argument('--installation')
 const checkpointPath = argument('--checkpoint')
+const kernelSource = argument('--kernel-root')
 const writeEvidence = process.argv.includes('--write')
 
-if (!installation || !checkpointPath) {
+if (!installation || !checkpointPath || !kernelSource) {
   throw new Error(
-    'Usage: benchmark.ts --installation <Codegraph root> --checkpoint <V2 observation checkpoint> [--write]',
+    'Usage: benchmark.ts --installation <upstream Codegraph root> --checkpoint <V2 observation checkpoint> --kernel-root <Kernel root> [--write]',
   )
 }
 
@@ -45,11 +46,11 @@ async function main(): Promise<void> {
     const typespecRoot = join(temporary, 'typespec')
     const kernelRoot = join(temporary, 'kernel')
     progress('copy TypeSpec corpus')
-    await copyCorpus(resolve(repositoryRoot, 'spec'), typespecRoot, extensions)
+    await copyCorpus(repositoryRoot, typespecRoot, extensions)
     progress('copy Kernel corpus')
-    await copyCorpus(repositoryRoot, kernelRoot, extensions)
+    await copyCorpus(resolve(kernelSource!), kernelRoot, extensions)
     await linkDependencies(repositoryRoot, typespecRoot)
-    await linkDependencies(repositoryRoot, kernelRoot)
+    await linkDependencies(resolve(kernelSource!), kernelRoot)
 
     const typespec = await benchmarkCorpus(
       'typespec',
@@ -61,7 +62,7 @@ async function main(): Promise<void> {
       'kernel',
       kernelRoot,
       installation!,
-      'spec/analysis/identity/model.ts',
+      'core/index.ts',
     )
     const reference = await benchmarkReferenceStore(checkpointPath!, temporary)
     const evidence = {

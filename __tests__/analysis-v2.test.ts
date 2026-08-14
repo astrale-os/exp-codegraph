@@ -43,6 +43,7 @@ import {
 } from '../analysis/index.ts'
 import { combineCompleteness } from '../analysis/internal/completeness.ts'
 import { materializeTransaction, serializeMaterialized } from '../analysis/internal/state.ts'
+import { stableJson } from '../analysis/identity/model.ts'
 import { createMemoryAnalysisStore } from '../analysis/memory/index.ts'
 import { createSQLiteAnalysisStore } from '../analysis/sqlite/index.ts'
 import { validateFunctionBodyIR, type FunctionBodyIR } from '../analysis/typescript/body/index.ts'
@@ -71,10 +72,22 @@ describe('TypeSpec V2 generic analysis foundation', () => {
   it('publishes bounded native transport defaults', () => {
     expect(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS).toEqual({
       maximumFrameBytes: 64 * 1_024 * 1_024,
+      transactionChunkFrameBytes: 8 * 1_024 * 1_024,
       maximumTransactionBytes: 256 * 1_024 * 1_024,
       maximumErrorBytes: 1 * 1_024 * 1_024,
     })
     expect(Object.isFrozen(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS)).toBe(true)
+  })
+
+  it('canonicalizes Unicode separators exactly across JavaScript and Go', () => {
+    expect(
+      stableJson({
+        actual: 'line\u2028paragraph\u2029separator',
+        literal: String.raw`line\u2028paragraph\u2029separator`,
+      }),
+    ).toBe(
+      String.raw`{"actual":"line\u2028paragraph\u2029separator","literal":"line\\u2028paragraph\\u2029separator"}`,
+    )
   })
 
   it('publishes and validates the effective bounded-value evaluator budget', () => {

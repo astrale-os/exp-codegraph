@@ -74,7 +74,12 @@ export function portablePath(path: string): string {
 }
 
 export function stableJson(value: unknown): string {
+  // Go's encoding/json always escapes the two JSON-valid JavaScript line
+  // separators for JSONP safety. Preserve that portable spelling here while
+  // leaving literal backslash-u text untouched.
   return JSON.stringify(canonical(value))
+    .replaceAll('\u2028', '\\u2028')
+    .replaceAll('\u2029', '\\u2029')
 }
 
 function canonical(value: unknown): unknown {

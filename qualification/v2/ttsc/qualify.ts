@@ -35,10 +35,10 @@ import { validateFunctionBodyIR } from '../../../analysis/typescript/body/index.
 import { typeScriptDependencyIdentity } from '../../../analysis/typescript/index.ts'
 import { createTypeScriptAnalysisService } from '../../../analysis/typescript/index.ts'
 
-const repositoryRoot = resolve(import.meta.dirname, '../../../..')
+const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const qualificationRoot = resolve(import.meta.dirname)
 const fixtureSource = resolve(qualificationRoot, 'fixtures/adversarial')
-const evidencePath = resolve(repositoryRoot, 'spec/.history/v2/evidence/ttsc-qualification.json')
+const evidencePath = resolve(repositoryRoot, '.history/v2/evidence/ttsc-qualification.json')
 const installation = argument('--installation')
 const nativeOutput = argument('--native-output')
 const writeEvidence = process.argv.includes('--write')
@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   const project = join(temporary, 'project')
   await cp(fixtureSource, project, { recursive: true })
   await cp(
-    resolve(repositoryRoot, 'spec/analysis/typescript/native'),
+    resolve(repositoryRoot, 'analysis/typescript/native'),
     join(project, 'native-analysis'),
     {
       recursive: true,

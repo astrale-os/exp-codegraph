@@ -77,6 +77,8 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly environment?: Readonly<Record<string, string>>
   /** Maximum bytes in one JSONL frame; larger transactions use ordered bounded frames. */
   readonly maximumFrameBytes?: number
+  /** Preferred frame ceiling for chunks within a streamed transaction. */
+  readonly transactionChunkFrameBytes?: number
   /** Maximum decoded bytes in one complete semantic transaction. */
   readonly maximumTransactionBytes?: number
   readonly maximumErrorBytes?: number
@@ -84,6 +86,7 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS: Readonly<{
   readonly maximumFrameBytes: number
+  readonly transactionChunkFrameBytes: number
   readonly maximumTransactionBytes: number
   readonly maximumErrorBytes: number
 }>

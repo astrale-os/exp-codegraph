@@ -34,15 +34,16 @@ import {
 import { conformanceCorpusScope } from './scope.ts'
 import { qualifiedProductionNativeDigest } from '../ttsc/qualified-native.ts'
 
-const root = resolve(import.meta.dirname, '../../../..')
+const packageRoot = resolve(import.meta.dirname, '../../..')
+const root = resolve(argument('--repository-root') ?? packageRoot)
 const checkpointPath = argument('--observation-input')
 const nativePath = argument('--native')
 const resultPath = argument('--result-output')
 const selectedModules = argumentsFor('--module')
 const write = process.argv.includes('--write')
-const evidencePath = resolve(root, 'spec/.history/v2/evidence/g4-conformance.json')
-const oraclePath = resolve(root, 'spec/.history/v2/evidence/v1-oracle.json')
-const ttscEvidencePath = resolve(root, 'spec/.history/v2/evidence/ttsc-qualification.json')
+const evidencePath = resolve(packageRoot, '.history/v2/evidence/g4-conformance.json')
+const oraclePath = resolve(packageRoot, '.history/v2/evidence/v1-oracle.json')
+const ttscEvidencePath = resolve(packageRoot, '.history/v2/evidence/ttsc-qualification.json')
 const shadowRoots = ['spec']
 
 if (!checkpointPath) {

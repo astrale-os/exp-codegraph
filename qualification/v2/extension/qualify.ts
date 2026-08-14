@@ -23,12 +23,12 @@ import {
 
 import type * as Consumer from './consumer/index.ts'
 
-const repositoryRoot = resolve(import.meta.dirname, '../../../..')
-const specificationPackageRoot = resolve(repositoryRoot, 'spec')
+const repositoryRoot = resolve(import.meta.dirname, '../../..')
+const specificationPackageRoot = repositoryRoot
 const fixtureSource = resolve(import.meta.dirname, '../ttsc/fixtures/adversarial')
 const consumerSource = resolve(import.meta.dirname, 'consumer')
 const evidencePath = resolve(
-  specificationPackageRoot,
+  repositoryRoot,
   '.history/v2/evidence/sdk-extension-qualification.json',
 )
 const writeEvidence = process.argv.includes('--write')

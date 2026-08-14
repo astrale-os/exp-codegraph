@@ -39,7 +39,8 @@ func run(arguments []string) int {
 
 type commandOptions struct {
 	cwd, config, universe, capabilitiesJSON, modulesJSON string
-	maximumFrameBytes, maximumTransactionBytes           int
+	maximumFrameBytes, transactionChunkFrameBytes        int
+	maximumTransactionBytes                              int
 }
 
 func parseOptions(command string, arguments []string) (commandOptions, error) {
@@ -51,6 +52,7 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	capabilities := flags.String("capabilities-json", "[]", "sorted native capability JSON")
 	modules := flags.String("modules-json", "[]", "portable module boundary JSON")
 	maximumFrameBytes := flags.Int("maximum-frame-bytes", 64*1024*1024, "maximum JSONL frame bytes")
+	transactionChunkFrameBytes := flags.Int("transaction-chunk-frame-bytes", 8*1024*1024, "preferred streamed transaction frame bytes")
 	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", 256*1024*1024, "maximum assembled transaction bytes")
 	_ = flags.String("plugins-json", "", "ttsc compatibility")
 	_ = flags.Bool("emit", false, "ttsc compatibility")
@@ -71,13 +73,17 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	if *universe == "" {
 		*universe = deriveID("project-universe", "typescript.native.default", map[string]any{"config": *config})
 	}
-	if *maximumFrameBytes < 1024 || *maximumTransactionBytes < 1024 {
+	if *maximumFrameBytes < 1024 || *transactionChunkFrameBytes < 1024 || *maximumTransactionBytes < 1024 {
 		return commandOptions{}, fmt.Errorf("native frame and transaction limits must be at least 1024 bytes")
+	}
+	if *transactionChunkFrameBytes > *maximumFrameBytes {
+		return commandOptions{}, fmt.Errorf("native transaction chunk frame limit exceeds the maximum frame limit")
 	}
 	return commandOptions{
 		cwd: *cwd, config: *config, universe: *universe,
 		capabilitiesJSON: *capabilities, modulesJSON: *modules,
-		maximumFrameBytes: *maximumFrameBytes, maximumTransactionBytes: *maximumTransactionBytes,
+		maximumFrameBytes: *maximumFrameBytes, transactionChunkFrameBytes: *transactionChunkFrameBytes,
+		maximumTransactionBytes: *maximumTransactionBytes,
 	}, nil
 }
 
@@ -231,6 +237,7 @@ func runServe(arguments []string) int {
 			input.ID,
 			transaction,
 			options.maximumFrameBytes,
+			options.transactionChunkFrameBytes,
 			options.maximumTransactionBytes,
 		); err != nil {
 			fmt.Fprintln(os.Stderr, err)

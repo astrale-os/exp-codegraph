@@ -8,6 +8,7 @@ export interface TtscApplicationSessionOptions {
   readonly cacheDirectory?: string
   readonly environment?: NodeJS.ProcessEnv
   readonly maximumFrameBytes?: number
+  readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
 }
 
@@ -30,6 +31,9 @@ export function createTtscApplicationSessionFactory(
         command: native.command,
         ...(options.maximumFrameBytes !== undefined
           ? { maximumFrameBytes: options.maximumFrameBytes }
+          : {}),
+        ...(options.transactionChunkFrameBytes !== undefined
+          ? { transactionChunkFrameBytes: options.transactionChunkFrameBytes }
           : {}),
         ...(options.maximumTransactionBytes !== undefined
           ? { maximumTransactionBytes: options.maximumTransactionBytes }

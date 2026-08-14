@@ -20,12 +20,14 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly arguments?: readonly string[]
   readonly environment?: Readonly<Record<string, string>>
   readonly maximumFrameBytes?: number
+  readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
   readonly maximumErrorBytes?: number
 }
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
   maximumFrameBytes: 64 * 1_024 * 1_024,
+  transactionChunkFrameBytes: 8 * 1_024 * 1_024,
   maximumTransactionBytes: 256 * 1_024 * 1_024,
   maximumErrorBytes: 1 * 1_024 * 1_024,
 })
@@ -79,12 +81,22 @@ export function createProcessNativeAnalysisSessionFactory(
   if (!options.command) throw new TypeError('Native analysis command is required.')
   const maximumFrameBytes =
     options.maximumFrameBytes ?? DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumFrameBytes
+  const transactionChunkFrameBytes =
+    options.transactionChunkFrameBytes ??
+    Math.min(
+      DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.transactionChunkFrameBytes,
+      maximumFrameBytes,
+    )
   const maximumTransactionBytes =
     options.maximumTransactionBytes ??
     DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumTransactionBytes
   const maximumErrorBytes =
     options.maximumErrorBytes ?? DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumErrorBytes
   validateLimit(maximumFrameBytes, 'maximumFrameBytes')
+  validateLimit(transactionChunkFrameBytes, 'transactionChunkFrameBytes')
+  if (transactionChunkFrameBytes > maximumFrameBytes) {
+    throw new RangeError('transactionChunkFrameBytes must not exceed maximumFrameBytes.')
+  }
   validateLimit(maximumTransactionBytes, 'maximumTransactionBytes')
   validateLimit(maximumErrorBytes, 'maximumErrorBytes')
   return {
@@ -108,6 +120,8 @@ export function createProcessNativeAnalysisSessionFactory(
           ),
           '--maximum-frame-bytes',
           String(maximumFrameBytes),
+          '--transaction-chunk-frame-bytes',
+          String(transactionChunkFrameBytes),
           '--maximum-transaction-bytes',
           String(maximumTransactionBytes),
         ],
@@ -531,7 +545,7 @@ function requiredDigest(input: unknown, path: string): string {
 }
 
 function decodeBase64(value: string): Uint8Array {
-  if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)) {
+  if (value.length % 4 !== 0) {
     throw new TypeError('Transaction chunk data is not canonical base64.')
   }
   const decoded = Buffer.from(value, 'base64')

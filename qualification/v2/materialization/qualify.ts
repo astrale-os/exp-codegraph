@@ -22,8 +22,8 @@ import {
 import { createMemoryAnalysisStore } from '../../../analysis/memory/index.ts'
 import { createSQLiteAnalysisStore } from '../../../analysis/sqlite/index.ts'
 
-const repositoryRoot = resolve(import.meta.dirname, '../../../..')
-const evidencePath = resolve(repositoryRoot, 'spec/.history/v2/evidence/sqlite-qualification.json')
+const repositoryRoot = resolve(import.meta.dirname, '../../..')
+const evidencePath = resolve(repositoryRoot, '.history/v2/evidence/sqlite-qualification.json')
 const writeEvidence = process.argv.includes('--write')
 const repositoryInventory = deriveAnalysisId(
   'source-manifest',
