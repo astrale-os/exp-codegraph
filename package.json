@@ -83,7 +83,7 @@
     "clean": "node scripts/clean-dist.mjs",
     "check": "node --max-old-space-size=1280 cli.ts check .",
     "dev": "node cli.ts dev .",
-    "prepack": "pnpm run native:assert-release && pnpm run typecheck && pnpm run test",
+    "release:check": "pnpm run native:assert-release && pnpm run typecheck && pnpm run test",
     "native:build": "node scripts/native/build.mjs",
     "native:assemble": "node scripts/native/assemble.mjs",
     "native:assert-release": "node scripts/native/assert-release.mjs",

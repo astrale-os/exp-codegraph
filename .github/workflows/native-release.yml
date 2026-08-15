@@ -85,7 +85,7 @@ jobs:
           pattern: '*-*'
           path: .native-input
       - name: Assemble and validate release
-        run: pnpm native:assemble -- --input .native-input && pnpm native:assert-release
+        run: pnpm native:assemble -- --input .native-input && pnpm release:check
       - name: Pack consumer and opaque artifact packages
         run: |
           mkdir -p release
