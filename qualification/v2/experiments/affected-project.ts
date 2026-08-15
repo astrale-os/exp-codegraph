@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
-import { cp, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { relative, resolve, sep } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
   createMemoryAnalysisStore,
   type AnalysisTelemetryEvent,
+  type AnalysisStore,
 } from '../../../analysis/index.ts'
+import { createSQLiteAnalysisStore } from '../../../analysis/sqlite/index.ts'
 import { resolveApplicationModuleBoundaries } from '../../../application/analysis/index.ts'
 import {
   discoverSpecificationDirectories,
@@ -22,6 +25,7 @@ const root = await resolveApplicationRoot(requiredArgument('--root'))
 const binary = resolve(requiredArgument('--native-binary'))
 const project = argument('--project') ?? 'tsconfig.json'
 const changed = argument('--changed') ?? 'analysis/generation/model.ts'
+const backend = requiredBackend(argument('--backend') ?? 'memory')
 const temporary = await mkdtemp(`${tmpdir()}${sep}codegraph-affected-project-`)
 const mirror = resolve(temporary, 'mirror')
 const events: AnalysisTelemetryEvent[] = []
@@ -53,11 +57,25 @@ try {
   const changedBefore = await readFile(changedFile, 'utf8')
   const changedAfter = insertBodyComment(changedBefore)
 
-  const store = createMemoryAnalysisStore({ maximumRetainedGenerations: 2 })
+  const sqliteFile = resolve(temporary, 'incremental.sqlite')
+  const store: AnalysisStore = backend === 'sqlite'
+    ? await createSQLiteAnalysisStore({
+        file: sqliteFile,
+        namespace: `${target}:affected-project`,
+        maximumRetainedGenerations: 2,
+        telemetry: (event) => events.push(event),
+      })
+    : createMemoryAnalysisStore({
+        maximumRetainedGenerations: 2,
+        telemetry: (event) => events.push(event),
+      })
   const baseline = await analyzeProject({
     target, root: mirror, project, modules, binary, store,
     telemetry: (event) => events.push(event),
   })
+  const sqliteBefore = backend === 'sqlite'
+    ? sqliteAttribution(sqliteFile, `${target}:affected-project`)
+    : undefined
   process.stderr.write(`cold baseline ${baseline.elapsedMs} ms\n`)
   let incremental: Awaited<ReturnType<typeof baseline.service.refresh>>
   let incrementalMs = 0
@@ -72,7 +90,12 @@ try {
   }
   assert(incremental!.transaction)
 
-  const coldStore = createMemoryAnalysisStore()
+  const coldStore: AnalysisStore = backend === 'sqlite'
+    ? await createSQLiteAnalysisStore({
+        file: resolve(temporary, 'cold.sqlite'),
+        namespace: `${target}:affected-project:cold`,
+      })
+    : createMemoryAnalysisStore()
   const cold = await analyzeProject({
     target, root: mirror, project, modules, binary, store: coldStore,
   })
@@ -117,10 +140,20 @@ try {
         return event ? [[phase, { durationNs: event.durationNs, metrics: event.metrics }]] : []
       }),
     )
+    const sqlitePhases = Object.fromEntries(
+      [...events]
+        .filter((event) => event.component === 'sqlite-store')
+        .slice(-6)
+        .map((event) => [event.phase, { durationNs: event.durationNs, metrics: event.metrics }]),
+    )
+    const sqliteAfter = backend === 'sqlite'
+      ? sqliteAttribution(sqliteFile, `${target}:affected-project`)
+      : undefined
     process.stdout.write(`${JSON.stringify({
       format: 'astrale.codegraph.affected-project-experiment',
       version: 1,
       target,
+      backend,
       project,
       changed,
       sourcesProjected: sourceProjection?.metrics?.sources,
@@ -133,6 +166,21 @@ try {
       generation: incremental!.generation.id,
       exactColdEquality: true,
       phases,
+      ...(backend === 'sqlite' ? {
+        sqliteBytes: (await stat(sqliteFile)).size,
+        sqlitePhases,
+        sqliteAttribution: {
+          before: sqliteBefore,
+          after: sqliteAfter,
+          delta: Object.fromEntries(
+            Object.keys(sqliteAfter!).map((key) => [
+              key,
+              sqliteAfter![key as keyof typeof sqliteAfter] -
+                sqliteBefore![key as keyof typeof sqliteBefore],
+            ]),
+          ),
+        },
+      } : {}),
       nativeWire: nativeWire?.metrics,
       native: native?.metrics,
     }, null, 2)}\n`)
@@ -257,6 +305,31 @@ function requiredTarget(value: string): SelfHostTargetId {
     throw new Error('--target must be codegraph or kernel.')
   }
   return value
+}
+
+function requiredBackend(value: string): 'memory' | 'sqlite' {
+  if (value !== 'memory' && value !== 'sqlite') {
+    throw new Error('--backend must be memory or sqlite.')
+  }
+  return value
+}
+
+function sqliteAttribution(file: string, namespace: string) {
+  const database = new DatabaseSync(file, { readOnly: true })
+  try {
+    const count = (table: string) => Number((database
+      .prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE store_namespace = ?`)
+      .get(namespace) as { readonly count: number }).count)
+    return {
+      generations: count('analysis_generations'),
+      shardRows: count('analysis_shards'),
+      factRows: count('analysis_facts'),
+      payloadRows: count('analysis_shard_payloads'),
+      membershipRows: count('analysis_generation_shards'),
+    }
+  } finally {
+    database.close()
+  }
 }
 
 function round(value: number): number {

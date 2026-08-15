@@ -18,14 +18,21 @@ coordinates these owners behind the generic contract.
 ```mermaid
 stateDiagram-v2
   [*] --> staged
-  staged --> validated: validate transaction
+  staged --> validated: set-oriented semantic admission
   staged --> aborted: invalid / cancelled
-  validated --> committed: one database transaction
-  validated --> aborted: stale base / write failure
+  validated --> locked: acquire writer / recheck exact base
+  locked --> committed: write delta in one transaction
+  locked --> aborted: stale base / write failure
   committed --> leased: query opens generation
   leased --> committed: query disposes
   committed --> collected: retention allows and no lease
 ```
+
+Semantic admission runs once against indexed current membership before the writer lock and never
+hydrates unaffected payloads. Once the lock is acquired, the store rechecks the exact current
+generation identity and sequence; immutable shard content and the synchronously admitted caller
+transaction need no second semantic scan. Changed content-addressed payloads are encoded before the
+lock and only their rows plus the next immutable generation membership are written.
 
 An advisory caller may explicitly fall back to memory after an attributable open/recovery failure.
 A caller requiring durability fails instead. SQLite-specific connection and schema types do not

@@ -42,6 +42,12 @@ export const SQLITE_COLD_EQUIVALENCE = defineLaw({
     'After create, edit, delete, rename, configuration change, branch-like churn, and recurrence, normalized incremental facts equal a clean materialization of the same producer transaction.',
 })
 
+export const SQLITE_DELTA_ADMISSION = defineLaw({
+  id: 'SQLITE-DELTA-ADMISSION',
+  statement:
+    'A delta is semantically admitted once against indexed current membership with set-oriented fact-closure checks and no unaffected payload hydration; after acquiring the writer lock, the store rechecks the exact base identity and sequence before writing only changed content-addressed shards and immutable generation membership.',
+})
+
 export const SQLITE_PHYSICAL_PAYLOAD_TRANSPARENCY = defineLaw({
   id: 'SQLITE-PHYSICAL-PAYLOAD-TRANSPARENCY',
   statement:

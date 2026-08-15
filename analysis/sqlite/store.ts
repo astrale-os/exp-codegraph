@@ -22,7 +22,10 @@ import {
 } from './limits.ts'
 import { prepareShardPayloads } from './materialization/payload.ts'
 import { loadCurrentGeneration, loadGeneration } from './materialization/read.ts'
-import { validateSQLiteTransaction } from './materialization/validate.ts'
+import {
+  validateSQLiteTransaction,
+  validateSQLiteTransactionBase,
+} from './materialization/validate.ts'
 import { writeTransaction } from './materialization/write.ts'
 import { SQLitePinnedQuery } from './query/pinned.ts'
 import { SQLiteSnapshotSet } from './query/snapshot-set.ts'
@@ -123,11 +126,11 @@ class SQLiteAnalysisStore implements AnalysisStore {
     this.assertOpen()
     options.signal?.throwIfAborted()
     const totalStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
-    // Validate against indexed membership before acquiring the cross-process
-    // writer lock. The same validation is repeated inside the transaction to
-    // retain causal stale-base diagnostics under contention.
+    // Admit semantics against indexed membership before acquiring the
+    // cross-process writer lock. Inside the transaction only the causal base
+    // is rechecked; immutable admitted content cannot change while waiting.
     let phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
-    validateSQLiteTransaction(this.#database, this.#options.namespace, transaction)
+    const validated = validateSQLiteTransaction(this.#database, this.#options.namespace, transaction)
     this.emit('transaction.validate-before-lock', phaseStarted, transaction)
     options.signal?.throwIfAborted()
     phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
@@ -141,7 +144,12 @@ class SQLiteAnalysisStore implements AnalysisStore {
     this.#database.exec('BEGIN IMMEDIATE')
     try {
       phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
-      validateSQLiteTransaction(this.#database, this.#options.namespace, transaction)
+      validateSQLiteTransactionBase(
+        this.#database,
+        this.#options.namespace,
+        transaction,
+        validated.currentSequence,
+      )
       this.emit('transaction.validate-locked', phaseStarted, transaction)
       options.signal?.throwIfAborted()
       phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n

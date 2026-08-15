@@ -1210,6 +1210,100 @@ lines.on('line', (line) => {
     }
   })
 
+  it('rejects a delta when an unaffected shard still consumes a removed fact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-delta-closure-'))
+    temporary.push(root)
+    const base = buildTwoShardTransaction()
+    const owner = base.upserts.find((shard) => shard.namespace === 'fixture.values')!
+    const consumer = base.upserts.find((shard) => shard.namespace === 'fixture.other')!
+    const consumerDraft = {
+      ...consumer,
+      facts: consumer.facts.map((fact) => ({
+        ...fact,
+        provenance: { ...fact.provenance, inputs: [owner.facts[0]!.id] },
+      })),
+    }
+    const consuming = { ...consumerDraft, digest: factShardDigest(consumerDraft) }
+    const initialDrafts = [owner, consuming].sort((left, right) => left.key.localeCompare(right.key))
+    const initialManifest = initialDrafts.map(shardReference)
+    const initialId = generationIdentity(
+      {
+        universe: base.next.universe,
+        producer: base.next.producer,
+        sourceManifest: base.next.sourceManifest,
+        capabilities: base.next.capabilities,
+      },
+      initialManifest,
+    )
+    const initial: FactTransaction = {
+      ...base,
+      next: { ...base.next, id: initialId },
+      manifest: initialManifest,
+      upserts: initialDrafts.map((shard) => ({
+        ...shard,
+        facts: shard.facts.map((fact) => ({ ...fact, generation: initialId })),
+      })),
+    }
+
+    const replacementValue = 'replacement-owner'
+    const replacementFact = {
+      ...owner.facts[0]!,
+      id: deriveAnalysisId('fact', owner.namespace, { value: replacementValue }),
+      subject: replacementValue,
+      payload: replacementValue,
+    }
+    const replacementDraft = { ...owner, facts: [replacementFact] }
+    const replacement = { ...replacementDraft, digest: factShardDigest(replacementDraft) }
+    const nextManifest = [replacement, consuming]
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .map(shardReference)
+    const nextSourceManifest = deriveAnalysisId('source-manifest', 'delta-closure', {
+      revision: 2,
+    }) as SourceManifestId
+    const nextId = generationIdentity(
+      {
+        universe: initial.next.universe,
+        producer: initial.next.producer,
+        sourceManifest: nextSourceManifest,
+        capabilities: initial.next.capabilities,
+      },
+      nextManifest,
+    )
+    const invalid: FactTransaction = {
+      protocolVersion: 1,
+      base: initialId,
+      next: {
+        ...initial.next,
+        id: nextId,
+        sequence: 2,
+        sourceManifest: nextSourceManifest,
+      },
+      manifest: nextManifest,
+      upserts: [{
+        ...replacement,
+        facts: replacement.facts.map((fact) => ({ ...fact, generation: nextId })),
+      }],
+      deletes: [],
+    }
+
+    const stores: AnalysisStore[] = [
+      createMemoryAnalysisStore(),
+      await createSQLiteAnalysisStore({
+        file: join(root, 'analysis.sqlite'),
+        namespace: 'delta-closure',
+      }),
+    ]
+    for (const store of stores) {
+      try {
+        await store.commit(initial)
+        await expect(store.commit(invalid)).rejects.toThrow('names unavailable derivation input')
+        expect(await store.current(initial.next.universe)).toEqual(initial.next)
+      } finally {
+        await store.dispose()
+      }
+    }
+  })
+
   it('renews SQLite leases across connections and collects only released generations', async () => {
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-sqlite-lease-'))
     temporary.push(root)

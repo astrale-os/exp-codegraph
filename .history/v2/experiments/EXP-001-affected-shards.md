@@ -81,6 +81,23 @@ replay. It uses overlapping module boundaries to prove owner selection and retai
 dependencies. Every scenario reconstructs the exact independent cold generation; uncertain and
 topology changes select the complete safe fallback.
 
+The first Kernel SQLite holdout showed that source-local native work alone was insufficient:
+incremental refresh took 2,784.15 ms and SQLite commit consumed 1,996.50 ms, dominated by validating
+the 492 changed facts one query at a time and repeating that work after the writer lock. Set-oriented
+closure admission plus an exact base identity/sequence recheck reduced the same commit phase to
+89.57 ms and the end-to-end edit to 1,046.77 ms while preserving the exact cold generation. The
+locked causal recheck itself consumed 0.051 ms. Unaffected payloads were neither hydrated nor
+rewritten; the transaction contained 14 shard upserts and two deletes against 2,305 manifest entries.
+These samples diagnose and remove the persistence bottleneck but remain non-authoritative single
+runs.
+
+A second instrumented run attributed the physical database delta exactly: one generation, 14 shard
+rows, 492 fact rows, and 14 compressed payload rows were added. The 2,305 unchanged shard payloads
+and their facts were not rewritten. SQLite added 2,305 small membership rows for the new immutable
+generation; the complete write phase remained 37.12 ms, so a persistent delta-manifest schema is not
+currently justified. Set-oriented semantic admission was 23.15 ms, the locked base recheck 0.079 ms,
+and total SQLite commit 115.67 ms on that run.
+
 Remaining before graduation: the frozen counterbalanced Codegraph measurements with distribution
 statistics, the repeated Kernel holdout, SQLite no-reload/no-rewrite evidence, cold-regression proof,
 and full governed qualification. The results above remain diagnostic-only until those are complete.
