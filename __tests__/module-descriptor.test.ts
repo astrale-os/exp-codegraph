@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { compileDescriptor } from '../specification/module/descriptor.ts'
+import { compileDescriptor } from '../specification/index.ts'
 
 describe('module specification descriptor extraction', () => {
   it('extracts semantic descriptors through aliased authoring imports', () => {
