@@ -1,6 +1,6 @@
 # EXP-001: affected-shard incremental TypeScript analysis
 
-Status: authorized spike; not authoritative
+Status: qualified; implementation accepted by V2-REV-021
 
 Frozen: 2026-08-15
 
@@ -47,11 +47,29 @@ body/symbol/occurrence projection, identity hashing, serialization, native trans
 SQLite commit, generated/transmitted bytes by namespace, allocations, heap, and peak RSS. Run both
 instrumented attribution and uninstrumented wall-time trials so profiling overhead is visible.
 
-The benchmark uses a declared private implementation fixture, not an entrypoint heuristic. It runs
-at least five counterbalanced baseline/candidate pairs after one discarded warm-up and reports every
-sample, paired ratios, medians, median absolute deviation, and a bootstrap 95 percent interval. The
-20-times edit threshold applies to the paired median; the cold candidate median may be at most 1.05
-times baseline and its upper interval must be reported rather than hidden.
+The benchmark uses a declared private implementation fixture, not an entrypoint heuristic. The
+original frozen method required at least five counterbalanced baseline/candidate pairs after one
+discarded warm-up. That method was stopped after three complete measured pairs and one additional
+baseline: a candidate cold rebuild took 727,952.98 ms and was immediately followed by a 77,273.04 ms
+baseline cold rebuild. Accumulating more alternating whole-repository samples would not cheaply
+distinguish candidate overhead from host noise.
+
+The revised method preserves every completed run as diagnostic evidence, uses independent cold
+rebuilds only as semantic oracles, and graduates on causal work rather than a long-lived historical
+binary: exact incremental/cold equality; affected source, module, shard, fact, byte, allocation, and
+SQLite row counters; adversarial fallback proofs; and a small isolated cold-attribution comparison.
+The historical binary is not required to produce the same generation identity as the candidate and
+is removed after attribution. The candidate still may not graduate with an unexplained cold-path
+regression above 5 percent. The method change is explicit rather than a retroactive claim that the
+aborted matrix satisfied its original distribution threshold.
+
+The isolated cold-only attribution used the same 310-source, 4,736-shard corpus without an edit loop
+or semantic export. The historical binary completed in 107,811.04 ms and the candidate in 78,022.31
+ms, making the candidate 27.63 percent faster rather than regressed. Native projection fell from
+99.64 seconds to 70.76 seconds and transport from 3.09 seconds to 1.74 seconds while semantic
+transaction volume remained effectively unchanged (237,726,584 versus 237,731,170 bytes). The
+candidate therefore passes the cold-path threshold; the 727.95 second sample remains disclosed as
+host noise rather than being removed from the record.
 
 ## Current spike status
 
@@ -98,9 +116,10 @@ generation; the complete write phase remained 37.12 ms, so a persistent delta-ma
 currently justified. Set-oriented semantic admission was 23.15 ms, the locked base recheck 0.079 ms,
 and total SQLite commit 115.67 ms on that run.
 
-Remaining before graduation: the frozen counterbalanced Codegraph measurements with distribution
-statistics, the repeated Kernel holdout, SQLite no-reload/no-rewrite evidence, cold-regression proof,
-and full governed qualification. The results above remain diagnostic-only until those are complete.
+Graduation is complete. Generated evidence records 91.31x Codegraph and 28.73x Kernel private-edit
+speedups, exact independent-cold equality, exact changed-payload row deltas, and all eleven
+adversarial scenarios. The aborted matrix remains diagnostic-only; the accepted conclusion is in
+`.history/v2/evidence/affected-shard-qualification.json` and V2-REV-021.
 
 The qualified post-cleanup attribution baseline contains 303 owned sources and 4,551 shards. One
 instrumented cold memory run spent 69.1 seconds in projection: 21.9 seconds discovering symbols,

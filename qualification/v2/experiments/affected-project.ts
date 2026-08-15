@@ -26,7 +26,7 @@ const binary = resolve(requiredArgument('--native-binary'))
 const project = argument('--project') ?? 'tsconfig.json'
 const changed = argument('--changed') ?? 'analysis/generation/model.ts'
 const backend = requiredBackend(argument('--backend') ?? 'memory')
-const legacyNative = process.argv.includes('--legacy-native')
+const output = argument('--output')
 const temporary = await mkdtemp(`${tmpdir()}${sep}codegraph-affected-project-`)
 const mirror = resolve(temporary, 'mirror')
 const events: AnalysisTelemetryEvent[] = []
@@ -72,7 +72,6 @@ try {
       })
   const baseline = await analyzeProject({
     target, root: mirror, project, modules, binary, store,
-    ...(legacyNative ? { legacyEagerCommit: true } : {}),
     telemetry: (event) => events.push(event),
   })
   const sqliteBefore = backend === 'sqlite'
@@ -100,7 +99,6 @@ try {
     : createMemoryAnalysisStore()
   const cold = await analyzeProject({
     target, root: mirror, project, modules, binary, store: coldStore,
-    ...(legacyNative ? { legacyEagerCommit: true } : {}),
   })
   process.stderr.write(`cold oracle ${cold.elapsedMs} ms\n`)
   try {
@@ -152,14 +150,14 @@ try {
     const sqliteAfter = backend === 'sqlite'
       ? sqliteAttribution(sqliteFile, `${target}:affected-project`)
       : undefined
-    process.stdout.write(`${JSON.stringify({
+    const result = {
       format: 'astrale.codegraph.affected-project-experiment',
       version: 1,
       target,
       backend,
       project,
       changed,
-      nativePublication: legacyNative ? 'legacy-eager' : 'commit-late',
+      nativePublication: 'commit-late',
       sourcesProjected: sourceProjection?.metrics?.sources,
       incrementalMs: round(incrementalMs),
       coldMs: cold.elapsedMs,
@@ -191,7 +189,24 @@ try {
       } : {}),
       nativeWire: nativeWire?.metrics,
       native: native?.metrics,
-    }, null, 2)}\n`)
+    }
+    const serialized = `${JSON.stringify(result, null, 2)}\n`
+    if (output) {
+      const destination = resolve(output)
+      await writeFile(destination, serialized, 'utf8')
+      process.stdout.write(`${JSON.stringify({
+        format: result.format,
+        target,
+        backend,
+        incrementalMs: result.incrementalMs,
+        coldMs: result.coldMs,
+        speedup: result.speedup,
+        generation: result.generation,
+        output: destination,
+      }, null, 2)}\n`)
+    } else {
+      process.stdout.write(serialized)
+    }
   } finally {
     await cold.service.dispose()
     await store.dispose()

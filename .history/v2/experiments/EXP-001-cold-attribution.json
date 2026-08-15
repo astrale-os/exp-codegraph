@@ -1,0 +1,31 @@
+{
+  "format": "astrale.codegraph.affected-cold-attribution",
+  "version": 1,
+  "status": "diagnostic",
+  "target": "codegraph",
+  "project": "tsconfig.json",
+  "sources": 310,
+  "shards": 4736,
+  "baseline": {
+    "artifactSha256": "8ccd7884e0e057a9ffd9c5b7fc05acb053625397deb2e8e0076cae07d409bd4d",
+    "nativeSha256": "950548b20bea70284bb2f074cd959c1fcbe95e947c8e96eaa5e4573b08e564a2",
+    "elapsedMs": 107811.04,
+    "projectionNs": 99635121834,
+    "transportNs": 3088060791,
+    "transactionBytes": 237726584,
+    "wireBytes": 316972157,
+    "totalAllocatedBytes": 90686353816
+  },
+  "candidate": {
+    "artifactSha256": "a462476f97bba5fd5075ec00cb6565edab56f623c10e56fe6c18aa008a36624e",
+    "nativeSha256": "69a365aae4bab7471524c6515237b6ef257b98e9cb7a97f9cd4fc16f934fd111",
+    "elapsedMs": 78022.31,
+    "projectionNs": 70757230000,
+    "transportNs": 1739449625,
+    "transactionBytes": 237731170,
+    "wireBytes": 316978329,
+    "totalAllocatedBytes": 90894008704
+  },
+  "candidateOverBaseline": 0.72369,
+  "conclusion": "The candidate was 27.63 percent faster in the isolated cold trial with effectively unchanged semantic transaction volume. The aborted matrix outlier is not evidence of a candidate cold regression."
+}

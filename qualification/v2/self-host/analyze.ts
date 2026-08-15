@@ -46,8 +46,6 @@ export interface AnalyzeProjectOptions {
   readonly telemetry?: AnalysisTelemetrySink
   readonly payloadCodecs?: readonly FactPayloadCodec[]
   readonly capabilities?: readonly string[]
-  /** Historical benchmark adapter only: the producer advances before application-store commit. */
-  readonly legacyEagerCommit?: boolean
 }
 
 export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
@@ -60,20 +58,6 @@ export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
     ...(options.payloadCodecs ? { payloadCodecs: options.payloadCodecs } : {}),
     ...(options.telemetry ? { telemetry: options.telemetry } : {}),
   })
-  const sessions = options.legacyEagerCommit
-    ? {
-        async open(
-          project: Parameters<typeof processSessions.open>[0],
-          openOptions?: Parameters<typeof processSessions.open>[1],
-        ) {
-          const session = await processSessions.open(project, openOptions)
-          return {
-            request: session.request.bind(session),
-            dispose: session.dispose.bind(session),
-          }
-        },
-      }
-    : processSessions
   const service = await createTypeScriptAnalysisService({
     project: {
       root: options.root,
@@ -81,7 +65,7 @@ export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
       capabilities: options.capabilities ?? SELF_HOST_NATIVE_CAPABILITIES,
       modules: options.modules,
     },
-    sessions,
+    sessions: processSessions,
     store: options.store,
     ...(options.telemetry ? { telemetry: options.telemetry } : {}),
   })

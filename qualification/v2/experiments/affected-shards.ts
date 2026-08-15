@@ -16,6 +16,7 @@ import { stableJson } from '../../../analysis/identity/model.ts'
 
 const fixture = resolve(import.meta.dirname, '../ttsc/fixtures/adversarial')
 const binary = resolve(requiredArgument('--native-binary'))
+const output = argument('--output')
 const temporary = await mkdtemp(join(tmpdir(), 'codegraph-affected-shards-'))
 const capabilities = [
   'astrale.typescript.module',
@@ -103,12 +104,25 @@ try {
   }, { mode: 'resident-full', universeChanged: true }))
   results.push(await commitReplayScenario())
 
-  process.stdout.write(`${JSON.stringify({
+  const result = {
     format: 'astrale.codegraph.affected-shards-experiment',
     version: 2,
     exactColdEquality: results.every((result) => result.exactColdEquality),
     results,
-  }, null, 2)}\n`)
+  }
+  const serialized = `${JSON.stringify(result, null, 2)}\n`
+  if (output) {
+    const destination = resolve(output)
+    await writeFile(destination, serialized, 'utf8')
+    process.stdout.write(`${JSON.stringify({
+      format: result.format,
+      exactColdEquality: result.exactColdEquality,
+      scenarios: result.results.length,
+      output: destination,
+    }, null, 2)}\n`)
+  } else {
+    process.stdout.write(serialized)
+  }
 } finally {
   await rm(temporary, { recursive: true, force: true })
 }
@@ -303,10 +317,14 @@ async function replace(root: string, path: string, before: string, after: string
 }
 
 function requiredArgument(name: string): string {
-  const index = process.argv.indexOf(name)
-  const value = index < 0 ? undefined : process.argv[index + 1]
+  const value = argument(name)
   if (!value) throw new Error(`${name} is required.`)
   return value
+}
+
+function argument(name: string): string | undefined {
+  const index = process.argv.indexOf(name)
+  return index < 0 ? undefined : process.argv[index + 1]
 }
 
 function round(value: number): number {
