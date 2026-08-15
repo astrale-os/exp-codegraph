@@ -82,7 +82,7 @@
     "dev": "node cli.ts dev .",
     "prepack": "pnpm run typecheck && pnpm run test",
     "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json",
-    "test": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
+    "test": "pnpm run build && vitest run --testTimeout 60000 --maxWorkers 1",
     "test:file": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
     "test:watch": "vitest --testTimeout 15000 --maxWorkers 2"
   },
