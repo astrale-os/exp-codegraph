@@ -45,6 +45,13 @@ that compiler lineage private, validates the complete native manifest, stages th
 closure over it, and advances the caller-owned store once. A mandatory pass, validation, cancellation,
 or commit failure therefore cannot expose a native-only intermediate generation.
 
+Incremental extraction is ownership-driven. The resident compiler proves whether an edit preserved
+its import graph and declaration shape. Private edits replace only source-owned symbol, occurrence,
+and body shards; public-shape changes expand through TypeScript's reverse dependencies. Monolithic
+module observations are conservatively rebuilt until their surface, outbound dependency, diagnostic,
+and inventory projections become independent physical shards. Native transport sends only the
+resulting delta, and the process advances its private base only after application-store acknowledgement.
+
 The caller describes requested project inputs but never supplies a universe identifier. After the
 resident compiler loads the complete configuration chain, project-reference roots, module
 boundaries, capabilities, exact toolchain and protocol, and platform, the native adapter derives the

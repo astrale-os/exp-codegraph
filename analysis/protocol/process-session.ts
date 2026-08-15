@@ -14,6 +14,7 @@ import type {
   NativeAnalysisResponse,
   NativeAnalysisSession,
   NativeAnalysisSessionFactory,
+  NativeFactDelta,
   NativeProjectDescriptor,
 } from './model.ts'
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from './model.ts'
@@ -38,6 +39,7 @@ export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
 })
 
 interface TransactionAssembly {
+  readonly payloadKind: 'transaction' | 'delta'
   readonly bytes: number
   readonly chunks: number
   readonly sha256: string
@@ -60,6 +62,7 @@ type NativeAnalysisWireFrame =
       readonly id: number
       readonly protocolVersion: number
       readonly kind: 'transaction-start'
+      readonly payloadKind: 'transaction' | 'delta'
       readonly encoding: 'base64-json'
       readonly bytes: number
       readonly chunks: number
@@ -76,6 +79,7 @@ type NativeAnalysisWireFrame =
       readonly id: number
       readonly protocolVersion: number
       readonly kind: 'transaction-end'
+      readonly payloadKind: 'transaction' | 'delta'
       readonly bytes: number
       readonly chunks: number
       readonly sha256: string
@@ -278,6 +282,23 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     })
   }
 
+  async acknowledge(
+    acknowledgement: {
+      readonly id: number
+      readonly generation: import('../identity/index.ts').AnalysisGenerationId
+      readonly sequence: number
+    },
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const response = await this.request(
+      { ...acknowledgement, kind: 'acknowledge' },
+      options,
+    )
+    if (response.kind !== 'acknowledged' || response.generation !== acknowledgement.generation) {
+      throw new Error('Native analysis did not acknowledge the committed generation.')
+    }
+  }
+
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
@@ -329,8 +350,10 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
         throw new TypeError('A streamed transaction was interrupted by a terminal response.')
       }
       if (
-        frame.kind === 'transaction' &&
-        Buffer.byteLength(JSON.stringify(frame.transaction)) > this.#maximumTransactionBytes
+        (frame.kind === 'transaction' || frame.kind === 'delta') &&
+        Buffer.byteLength(JSON.stringify(
+          frame.kind === 'transaction' ? frame.transaction : frame.delta,
+        )) > this.#maximumTransactionBytes
       ) {
         throw new RangeError('Native analysis transaction exceeds the configured transaction limit.')
       }
@@ -352,6 +375,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       throw new TypeError('Transaction chunk count exceeds its announced byte length.')
     }
     pending.assembly = {
+      payloadKind: frame.payloadKind,
       bytes: frame.bytes,
       chunks: frame.chunks,
       sha256: frame.sha256,
@@ -394,7 +418,8 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     if (
       frame.bytes !== assembly.bytes ||
       frame.chunks !== assembly.chunks ||
-      frame.sha256 !== assembly.sha256
+      frame.sha256 !== assembly.sha256 ||
+      frame.payloadKind !== assembly.payloadKind
     ) {
       throw new TypeError('Transaction end metadata does not match its start frame.')
     }
@@ -411,20 +436,34 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     const serialized = Buffer.concat(assembly.parts, assembly.bytes)
     const digest = createHash('sha256').update(serialized).digest('hex')
     if (digest !== assembly.sha256) throw new TypeError('Transaction stream digest is invalid.')
-    let transaction: FactTransaction
+    let payload: FactTransaction | NativeFactDelta
     try {
-      transaction = validateTransaction(JSON.parse(serialized.toString('utf8')))
+      const parsed: unknown = JSON.parse(serialized.toString('utf8'))
+      payload = assembly.payloadKind === 'transaction'
+        ? validateTransaction(parsed)
+        : validateDelta(parsed)
     } catch (error) {
       throw new TypeError('Transaction stream does not contain a valid transaction.', {
         cause: error,
       })
     }
-    this.resolve(frame.id, pending, {
-      id: frame.id,
-      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
-      kind: 'transaction',
-      transaction,
-    })
+    this.resolve(
+      frame.id,
+      pending,
+      assembly.payloadKind === 'transaction'
+        ? {
+            id: frame.id,
+            protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+            kind: 'transaction',
+            transaction: payload as FactTransaction,
+          }
+        : {
+            id: frame.id,
+            protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+            kind: 'delta',
+            delta: payload as NativeFactDelta,
+          },
+    )
   }
 
   private resolve(id: number, pending: PendingRequest, response: NativeAnalysisResponse): void {
@@ -534,6 +573,20 @@ function validateRequest(request: NativeAnalysisRequest): void {
   if (request.kind === 'refresh' && request.changed?.some((path) => !path || path.includes('\0'))) {
     throw new TypeError('Native changed path is invalid.')
   }
+  if (
+    request.kind === 'refresh'
+    && ((request.base === undefined) !== (request.baseSequence === undefined)
+      || (request.baseSequence !== undefined
+        && (!Number.isSafeInteger(request.baseSequence) || request.baseSequence < 1)))
+  ) {
+    throw new TypeError('Native refresh base and positive baseSequence must occur together.')
+  }
+  if (
+    request.kind === 'acknowledge'
+    && (!Number.isSafeInteger(request.sequence) || request.sequence < 1)
+  ) {
+    throw new TypeError('Native acknowledgement sequence is invalid.')
+  }
 }
 
 function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
@@ -548,10 +601,12 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
   if (
     ![
       'transaction',
+      'delta',
       'transaction-start',
       'transaction-chunk',
       'transaction-end',
       'unchanged',
+      'acknowledged',
       'error',
     ].includes(String(value.kind))
   ) {
@@ -563,6 +618,7 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
       id: value.id as number,
       protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
       kind: 'transaction-start',
+      payloadKind: requiredPayloadKind(value.payloadKind),
       encoding: 'base64-json',
       bytes: requiredInteger(value.bytes, 'bytes', 1),
       chunks: requiredInteger(value.chunks, 'chunks', 1),
@@ -583,6 +639,7 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
       id: value.id as number,
       protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
       kind: 'transaction-end',
+      payloadKind: requiredPayloadKind(value.payloadKind),
       bytes: requiredInteger(value.bytes, 'bytes', 1),
       chunks: requiredInteger(value.chunks, 'chunks', 1),
       sha256: requiredDigest(value.sha256, 'sha256'),
@@ -596,12 +653,31 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
       transaction: validateTransaction(value.transaction),
     }
   }
+  if (value.kind === 'delta') {
+    return {
+      id: value.id as number,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'delta',
+      delta: validateDelta(value.delta),
+    }
+  }
   if (value.kind === 'unchanged') {
     return {
       id: value.id as number,
       protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
       kind: 'unchanged',
       generation: admitAnalysisId('generation', requiredString(value.generation, 'generation')),
+    }
+  }
+  if (value.kind === 'acknowledged') {
+    return {
+      id: value.id as number,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'acknowledged',
+      generation: admitAnalysisId(
+        'generation',
+        requiredString(value.generation, 'generation'),
+      ),
     }
   }
   if (
@@ -625,6 +701,15 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
 function requiredDigest(input: unknown, path: string): string {
   if (typeof input !== 'string' || !/^[a-f0-9]{64}$/u.test(input)) {
     throw new TypeError(`${path} must be a lowercase SHA-256 digest.`)
+  }
+  return input
+}
+
+function requiredPayloadKind(input: unknown): 'transaction' | 'delta' {
+  // Protocol-v1 transaction streams predate the explicit payload discriminator.
+  if (input === undefined) return 'transaction'
+  if (input !== 'transaction' && input !== 'delta') {
+    throw new TypeError('Transaction payload kind is invalid.')
   }
   return input
 }
@@ -683,6 +768,19 @@ function validateTransaction(input: unknown): FactTransaction {
     deletes: stringArray(value.deletes, 'transaction.deletes').map((key) =>
       admitAnalysisId('fact-shard-key', key),
     ),
+  }
+}
+
+function validateDelta(input: unknown): NativeFactDelta {
+  const value = requiredRecord(input, 'delta')
+  const parsed = validateTransaction({ ...value, manifest: [] })
+  if (!parsed.base) throw new TypeError('delta.base is required.')
+  return {
+    protocolVersion: parsed.protocolVersion,
+    base: parsed.base,
+    next: parsed.next,
+    upserts: parsed.upserts,
+    deletes: parsed.deletes,
   }
 }
 

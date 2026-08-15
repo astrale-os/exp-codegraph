@@ -206,7 +206,35 @@ func runServe(arguments []string) int {
 		if input.Kind == "dispose" {
 			return 0
 		}
-		if input.ID < 1 || input.Kind != "refresh" {
+		if input.Kind == "acknowledge" {
+			if input.ID < 1 || input.Generation == "" || input.Sequence < 1 {
+				if err := writeFrame(output, errorResponse(input.ID, "REQUEST_INVALID", errors.New("expected a valid generation acknowledgement")), options.maximumFrameBytes); err != nil {
+					fmt.Fprintln(os.Stderr, err)
+					return 2
+				}
+			} else if err := analyzer.acknowledge(input); err != nil {
+				code := "ACK_FAILED"
+				var native nativeError
+				if errors.As(err, &native) {
+					code = native.code
+				}
+				if writeErr := writeFrame(output, errorResponse(input.ID, code, err), options.maximumFrameBytes); writeErr != nil {
+					fmt.Fprintln(os.Stderr, writeErr)
+					return 2
+				}
+			} else if err := writeFrame(output, response{
+				ID: input.ID, ProtocolVersion: protocolVersion, Kind: "acknowledged", Generation: input.Generation,
+			}, options.maximumFrameBytes); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			if err := flush(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			continue
+		}
+		if input.ID < 1 || input.Kind != "refresh" || (input.Base != "" && input.BaseSequence < 1) || (input.Base == "" && input.BaseSequence != 0) {
 			if err := writeFrame(output, errorResponse(input.ID, "REQUEST_INVALID", errors.New("expected a positive refresh request")), options.maximumFrameBytes); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 				return 2
@@ -247,16 +275,26 @@ func runServe(arguments []string) int {
 			}
 			continue
 		}
-		if err := writeTransactionResponse(
-			output,
-			input.ID,
-			transaction,
-			options.maximumFrameBytes,
-			options.transactionChunkFrameBytes,
-			options.maximumTransactionBytes,
-			telemetry,
-		); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+		var writeErr error
+		if transaction.Base == "" {
+			writeErr = writeTransactionResponse(
+				output, input.ID, transaction,
+				options.maximumFrameBytes, options.transactionChunkFrameBytes,
+				options.maximumTransactionBytes, telemetry,
+			)
+		} else {
+			writeErr = writeDeltaResponse(
+				output, input.ID, &factDelta{
+					ProtocolVersion: transaction.ProtocolVersion,
+					Base:            transaction.Base, Next: transaction.Next,
+					Upserts: transaction.Upserts, Deletes: transaction.Deletes,
+				},
+				options.maximumFrameBytes, options.transactionChunkFrameBytes,
+				options.maximumTransactionBytes, telemetry,
+			)
+		}
+		if writeErr != nil {
+			fmt.Fprintln(os.Stderr, writeErr)
 			return 2
 		}
 		if err := flush(); err != nil {

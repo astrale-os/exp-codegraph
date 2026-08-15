@@ -55,9 +55,30 @@ times baseline and its upper interval must be reported rather than hidden.
 
 ## Current spike status
 
-The first uncommitted selective-source candidate passed the small SDK extension differential but
-failed exact incremental/cold equality on the real Codegraph mirror. It remains diagnostic-only.
-The likely causes must be established by evidence; no result from this candidate qualifies V2.
+The rejected first selective-source candidate failed exact incremental/cold equality because it
+reused a monolithic module fact when body-derived error codes and other source-owned observations
+could change. That candidate remains rejected.
+
+The replacement candidate retains compact shard references plus an explicit source-to-shard owner
+index, reprojects one source for a private edit, expands public shape changes through TypeScript's
+canonical reverse dependency graph, and conservatively rebuilds monolithic module observations. It
+publishes commit-late and transmits only the affected upserts/deletes after a base exists. One
+diagnostic Codegraph mirror run measured 4,511.53 ms for a private function-body comment versus a
+115,924.72 ms independent cold oracle (25.70 times); it projected one source, sent 15 upserts and
+four deletes in 699,455 wire bytes, and produced the exact same generation identity. This passes the
+single-run wall threshold but is not yet the required counterbalanced qualification.
+
+Eight adversarial microproject changes—private body, public shape, import graph, ambient scope,
+create, delete, rename, and configuration—reconstructed facts exactly equal to their cold oracle.
+The public change selected the three-source reverse closure; every uncertain/topology case selected
+a complete rebuild. An injected application-store failure replayed the pending native candidate and
+then matched cold, proving commit-late recovery. Six alternating cold microproject samples per arm
+had effectively identical medians (baseline 209.8/208.6 ms; candidate 209.8/208.0 ms), so no cold
+regression is visible at fixture scale.
+
+Remaining before graduation: the frozen five-pair Codegraph benchmark with distribution statistics,
+the Kernel holdout, SQLite no-rewrite evidence, and full governed qualification. These measurements
+remain diagnostic-only until all four are complete.
 
 The qualified post-cleanup attribution baseline contains 303 owned sources and 4,551 shards. One
 instrumented cold memory run spent 69.1 seconds in projection: 21.9 seconds discovering symbols,

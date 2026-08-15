@@ -8,11 +8,14 @@ const (
 )
 
 type request struct {
-	ID         int      `json:"id"`
-	Kind       string   `json:"kind"`
-	Base       string   `json:"base,omitempty"`
-	Changed    []string `json:"changed,omitempty"`
-	Invalidate bool     `json:"invalidate,omitempty"`
+	ID           int      `json:"id"`
+	Kind         string   `json:"kind"`
+	Base         string   `json:"base,omitempty"`
+	BaseSequence int      `json:"baseSequence,omitempty"`
+	Generation   string   `json:"generation,omitempty"`
+	Sequence     int      `json:"sequence,omitempty"`
+	Changed      []string `json:"changed,omitempty"`
+	Invalidate   bool     `json:"invalidate,omitempty"`
 }
 
 type response struct {
@@ -20,10 +23,19 @@ type response struct {
 	ProtocolVersion int              `json:"protocolVersion"`
 	Kind            string           `json:"kind"`
 	Transaction     *factTransaction `json:"transaction,omitempty"`
+	Delta           *factDelta       `json:"delta,omitempty"`
 	Generation      string           `json:"generation,omitempty"`
 	Code            string           `json:"code,omitempty"`
 	Message         string           `json:"message,omitempty"`
 	Retryable       bool             `json:"retryable,omitempty"`
+}
+
+type factDelta struct {
+	ProtocolVersion int                `json:"protocolVersion"`
+	Base            string             `json:"base"`
+	Next            analysisGeneration `json:"next"`
+	Upserts         []factShard        `json:"upserts"`
+	Deletes         []string           `json:"deletes"`
 }
 
 type producerIdentity struct {
@@ -100,6 +112,7 @@ type factShardReference struct {
 }
 
 type sourceRecord struct {
+	Physical   string
 	Path       string
 	Source     string
 	Revision   string

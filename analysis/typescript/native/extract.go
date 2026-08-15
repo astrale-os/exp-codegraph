@@ -44,30 +44,9 @@ type extractor struct {
 }
 
 func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
-	x := &extractor{
-		root: root, universe: universe, checker: program.Checker,
-		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
-		symbolSeen: map[string]symbolFactPayload{}, modules: modules,
-	}
-	files := program.SourceFiles()
-	sort.Slice(files, func(i, j int) bool { return files[i].FileName() < files[j].FileName() })
-	phase := time.Now()
-	for _, file := range files {
-		path, owned := x.ownedPath(file.FileName())
-		if !owned {
-			continue
-		}
-		source := deriveID("source", "typescript:"+universe, map[string]any{"path": path})
-		digest := hashText(file.Text())
-		x.sources[file.FileName()] = sourceRecord{
-			Path: path, Source: source, TextDigest: digest,
-			Revision: deriveID("source-revision", source, map[string]any{"digest": digest}),
-		}
-	}
-	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources)})
+	x, files, records := prepareExtractor(root, universe, program, modules, nil, nil, telemetry, requestID)
 	var shards []factShard
-	var records []sourceRecord
-	phase = time.Now()
+	phase := time.Now()
 	shards = append(shards, x.projectShard(program))
 	telemetry.record(requestID, "projection.project", phase, nil)
 	phase = time.Now()
@@ -81,19 +60,90 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	}
 	shards = append(shards, moduleShards...)
 	telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(moduleShards)})
-	phase = time.Now()
+	shards = append(shards, x.sourceShards(files, nil, telemetry, requestID)...)
+	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
+	return shards, records, nil
+}
+
+// prepareExtractor installs a complete source identity table while hashing only
+// the selected sources when prior records are available. Semantic extraction
+// can therefore resolve declarations outside a private edit without re-reading
+// or retaining any unaffected fact payload.
+func prepareExtractor(
+	root, universe string,
+	program *driver.Program,
+	modules []moduleBoundary,
+	prior map[string]sourceRecord,
+	selected map[string]bool,
+	telemetry *nativeTelemetry,
+	requestID int,
+) (*extractor, []*shimast.SourceFile, []sourceRecord) {
+	x := &extractor{
+		root: root, universe: universe, checker: program.Checker,
+		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
+		symbolSeen: map[string]symbolFactPayload{}, modules: modules,
+	}
+	files := program.SourceFiles()
+	sort.Slice(files, func(i, j int) bool { return files[i].FileName() < files[j].FileName() })
+	phase := time.Now()
+	for _, file := range files {
+		path, owned := x.ownedPath(file.FileName())
+		if !owned {
+			continue
+		}
+		if record, exists := prior[file.FileName()]; exists && selected != nil && !selected[file.FileName()] {
+			x.sources[file.FileName()] = record
+			continue
+		}
+		source := deriveID("source", "typescript:"+universe, map[string]any{"path": path})
+		digest := hashText(file.Text())
+		x.sources[file.FileName()] = sourceRecord{
+			Physical: file.FileName(), Path: path, Source: source, TextDigest: digest,
+			Revision: deriveID("source-revision", source, map[string]any{"digest": digest}),
+		}
+	}
+	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources)})
+	var records []sourceRecord
 	for _, file := range files {
 		record, ok := x.sources[file.FileName()]
 		if !ok {
 			continue
 		}
 		records = append(records, record)
+	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	return x, files, records
+}
+
+// sourceShards projects the source-owned namespaces for selected physical
+// files. A nil selection denotes the complete owned compiler universe.
+func (x *extractor) sourceShards(
+	files []*shimast.SourceFile,
+	selected map[string]bool,
+	telemetry *nativeTelemetry,
+	requestID int,
+) []factShard {
+	var shards []factShard
+	phase := time.Now()
+	selectedCount := 0
+	for _, file := range files {
+		if selected != nil && !selected[file.FileName()] {
+			continue
+		}
+		record, ok := x.sources[file.FileName()]
+		if !ok {
+			continue
+		}
+		selectedCount++
 		shards = append(shards, x.sourceShard(file, record))
 		x.discoverSymbols(file)
 	}
-	telemetry.record(requestID, "projection.sources-and-symbol-discovery", phase, map[string]any{"sources": len(records)})
+	telemetry.record(requestID, "projection.sources-and-symbol-discovery", phase, map[string]any{"sources": selectedCount})
 	phase = time.Now()
 	for _, file := range files {
+		if selected != nil && !selected[file.FileName()] {
+			continue
+		}
 		record, ok := x.sources[file.FileName()]
 		if !ok {
 			continue
@@ -105,6 +155,9 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	telemetry.record(requestID, "projection.symbols", phase, nil)
 	phase = time.Now()
 	for _, file := range files {
+		if selected != nil && !selected[file.FileName()] {
+			continue
+		}
 		record, ok := x.sources[file.FileName()]
 		if !ok {
 			continue
@@ -117,6 +170,9 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	phase = time.Now()
 	bodyShards := 0
 	for _, file := range files {
+		if selected != nil && !selected[file.FileName()] {
+			continue
+		}
 		record, ok := x.sources[file.FileName()]
 		if !ok {
 			continue
@@ -127,8 +183,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	}
 	telemetry.record(requestID, "projection.bodies", phase, map[string]any{"shards": bodyShards})
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
-	return shards, records, nil
+	return shards
 }
 
 func (x *extractor) projectShard(program *driver.Program) factShard {

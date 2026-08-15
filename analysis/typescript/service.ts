@@ -11,7 +11,10 @@ import type {
   TypeScriptAnalysisServiceOptions,
   TypeScriptRefreshResult,
 } from './model.ts'
-import { materializeNativeTransaction } from './universe-transaction.ts'
+import {
+  materializeNativeDelta,
+  materializeNativeTransaction,
+} from './universe-transaction.ts'
 
 export async function createTypeScriptAnalysisService(
   options: TypeScriptAnalysisServiceOptions,
@@ -61,6 +64,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         id: ++this.#request,
         kind: 'refresh',
         ...(current ? { base: current.id } : {}),
+        ...(current ? { baseSequence: current.sequence } : {}),
         ...(options.changed ? { changed: [...options.changed].sort() } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
       },
@@ -87,24 +91,47 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         durationMs: performance.now() - started,
       }
     }
+    if (response.kind === 'acknowledged') {
+      throw new Error('Native analysis acknowledged a generation without a commit request.')
+    }
     phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
-    const materialized = await materializeNativeTransaction(
-      this.#options.store,
-      activeUniverse,
-      current,
-      response.transaction,
-      { signal: options.signal },
-    )
+    const materialized = response.kind === 'delta'
+      ? await materializeNativeDelta(
+          this.#options.store,
+          current,
+          response.delta,
+          { signal: options.signal },
+        )
+      : await materializeNativeTransaction(
+          this.#options.store,
+          activeUniverse,
+          current,
+          response.transaction,
+          { signal: options.signal },
+        )
+    const transaction = materialized.transaction
+      ?? (response.kind === 'transaction' ? response.transaction : undefined)
+    if (!transaction) throw new Error('Native delta materialization omitted its transaction.')
     this.emit('transaction.materialize', request, phaseStarted, {
-      manifestShards: response.transaction.manifest.length,
-      upsertShards: response.transaction.upserts.length,
-      deleteShards: response.transaction.deletes.length,
+      manifestShards: transaction.manifest.length,
+      upsertShards: transaction.upserts.length,
+      deleteShards: transaction.deletes.length,
     })
+    if (this.#session.acknowledge) {
+      await this.#session.acknowledge(
+        {
+          id: ++this.#request,
+          generation: materialized.generation.id,
+          sequence: materialized.generation.sequence,
+        },
+        { signal: options.signal },
+      )
+    }
     this.#universe = materialized.generation.universe
     const universe = materialized.generation.universe
     const changedSources = [
       ...new Set([
-        ...response.transaction.upserts
+        ...transaction.upserts
           .filter((shard) => shard.namespace === 'typescript.source')
           .flatMap((shard) =>
             shard.facts.map(
@@ -120,7 +147,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
     ].sort()
     const invalidatedPasses = [
       ...new Set(
-        response.transaction.upserts.flatMap((shard) =>
+        transaction.upserts.flatMap((shard) =>
           shard.facts.map((fact) => fact.provenance.pass),
         ),
       ),

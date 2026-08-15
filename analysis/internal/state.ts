@@ -80,26 +80,19 @@ export function materializeTransaction(
       }
     }
   }
-  // Digests deliberately omit the enclosing generation so a producer can
-  // carry unchanged semantic shards without retransmitting them. Facts remain
-  // generation-pinned query records, however, so bind every carried shard to
-  // the new generation at this atomic materialization boundary.
-  const rebound = new Map(
-    [...shards].map(([key, shard]) => [
-      key,
-      immutable({
-        ...shard,
-        facts: shard.facts.map((fact) => ({ ...fact, generation: transaction.next.id })),
-      }),
-    ]),
-  )
-  return immutable({ generation: transaction.next, shards: rebound })
+  // Shard digests deliberately omit the enclosing generation. Preserve the
+  // immutable physical shard objects across generations and bind their facts
+  // only when a generation-pinned reader observes them. Commit work therefore
+  // scales with the delta rather than recreating every unaffected fact.
+  return immutable({ generation: transaction.next, shards })
 }
 
 export function serializeMaterialized(value: MaterializedGeneration): string {
   return stableJson({
     generation: value.generation,
-    shards: [...value.shards.values()].sort(byShardKey),
+    shards: [...value.shards.values()]
+      .map((shard) => bindShard(shard, value.generation.id))
+      .sort(byShardKey),
   })
 }
 
@@ -183,7 +176,7 @@ class PinnedQuery implements AnalysisQuery {
     this.#release = release
     this.generation = materialized.generation
     this.#facts = [...materialized.shards.values()]
-      .flatMap((shard) => [...shard.facts])
+      .flatMap((shard) => shard.facts.map((fact) => bindFact(fact, materialized.generation.id)))
       .sort((left, right) => left.id.localeCompare(right.id))
     this.#byId = new Map(this.#facts.map((fact) => [fact.id, fact]))
     this.#manifest = [...materialized.shards.values()].map(shardReference).sort(byKey)
@@ -394,6 +387,18 @@ function immutable<Value>(value: Value): Value {
   }
   for (const entry of Object.values(value as Record<string, unknown>)) immutable(entry)
   return Object.freeze(value)
+}
+
+function bindShard(shard: FactShard, generation: AnalysisGenerationId): FactShard {
+  if (shard.facts.every((fact) => fact.generation === generation)) return shard
+  return {
+    ...shard,
+    facts: shard.facts.map((fact) => bindFact(fact, generation)),
+  }
+}
+
+function bindFact(fact: Fact, generation: AnalysisGenerationId): Fact {
+  return fact.generation === generation ? fact : { ...fact, generation }
 }
 
 function byKey(left: FactShardReference, right: FactShardReference): number {

@@ -16,6 +16,7 @@ type transactionStartFrame struct {
 	ID              int    `json:"id"`
 	ProtocolVersion int    `json:"protocolVersion"`
 	Kind            string `json:"kind"`
+	PayloadKind     string `json:"payloadKind"`
 	Encoding        string `json:"encoding"`
 	Bytes           int    `json:"bytes"`
 	Chunks          int    `json:"chunks"`
@@ -34,6 +35,7 @@ type transactionEndFrame struct {
 	ID              int    `json:"id"`
 	ProtocolVersion int    `json:"protocolVersion"`
 	Kind            string `json:"kind"`
+	PayloadKind     string `json:"payloadKind"`
 	Bytes           int    `json:"bytes"`
 	Chunks          int    `json:"chunks"`
 	SHA256          string `json:"sha256"`
@@ -48,8 +50,39 @@ func writeTransactionResponse(
 	maximumTransactionBytes int,
 	telemetry *nativeTelemetry,
 ) error {
+	return writePayloadResponse(
+		output, id, "transaction", transaction,
+		maximumFrameBytes, transactionChunkFrameBytes, maximumTransactionBytes, telemetry,
+	)
+}
+
+func writeDeltaResponse(
+	output io.Writer,
+	id int,
+	delta *factDelta,
+	maximumFrameBytes int,
+	transactionChunkFrameBytes int,
+	maximumTransactionBytes int,
+	telemetry *nativeTelemetry,
+) error {
+	return writePayloadResponse(
+		output, id, "delta", delta,
+		maximumFrameBytes, transactionChunkFrameBytes, maximumTransactionBytes, telemetry,
+	)
+}
+
+func writePayloadResponse(
+	output io.Writer,
+	id int,
+	payloadKind string,
+	payload any,
+	maximumFrameBytes int,
+	transactionChunkFrameBytes int,
+	maximumTransactionBytes int,
+	telemetry *nativeTelemetry,
+) error {
 	started := time.Now()
-	serialized, err := json.Marshal(transaction)
+	serialized, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("encode native transaction: %w", err)
 	}
@@ -60,8 +93,11 @@ func writeTransactionResponse(
 			maximumTransactionBytes,
 		)
 	}
-	direct := response{
-		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction", Transaction: transaction,
+	direct := response{ID: id, ProtocolVersion: protocolVersion, Kind: payloadKind}
+	if payloadKind == "transaction" {
+		direct.Transaction = payload.(*factTransaction)
+	} else {
+		direct.Delta = payload.(*factDelta)
 	}
 	encodedDirect, err := json.Marshal(direct)
 	if err != nil {
@@ -86,7 +122,8 @@ func writeTransactionResponse(
 	digest := hex.EncodeToString(digestBytes[:])
 	start := transactionStartFrame{
 		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-start",
-		Encoding: transactionFrameEncoding, Bytes: len(serialized), Chunks: chunks, SHA256: digest,
+		PayloadKind: payloadKind,
+		Encoding:    transactionFrameEncoding, Bytes: len(serialized), Chunks: chunks, SHA256: digest,
 	}
 	if err := writeFrame(counted, start, transactionChunkFrameBytes); err != nil {
 		return err
@@ -106,7 +143,8 @@ func writeTransactionResponse(
 	}
 	err = writeFrame(counted, transactionEndFrame{
 		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-end",
-		Bytes: len(serialized), Chunks: chunks, SHA256: digest,
+		PayloadKind: payloadKind,
+		Bytes:       len(serialized), Chunks: chunks, SHA256: digest,
 	}, transactionChunkFrameBytes)
 	telemetry.record(id, "transport.serialize-and-write", started, map[string]any{
 		"transactionBytes": len(serialized), "directResponseBytes": len(encodedDirect),

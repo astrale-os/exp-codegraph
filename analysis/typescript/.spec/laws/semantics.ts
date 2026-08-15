@@ -84,6 +84,12 @@ export const TYPESCRIPT_INCREMENTAL_EQUIVALENCE = defineLaw({
     'After normalization of commit-only metadata, every incremental TypeScript generation is semantically identical to a cold build from the same source and configuration state.',
 })
 
+export const TYPESCRIPT_AFFECTED_SOURCE_CLOSURE = defineLaw({
+  id: 'TYPESCRIPT-AFFECTED-SOURCE-CLOSURE',
+  statement:
+    'A compiler-proven private edit reprojects only its owning source shards; a declaration-shape change expands through the exact transitive reverse dependency closure, while global scope, import-graph uncertainty, root churn, configuration changes, and mutating plugins fail closed to a complete rebuild.',
+})
+
 export const TYPESCRIPT_ATOMIC_PUBLICATION = defineLaw({
   id: 'TYPESCRIPT-ATOMIC-PUBLICATION',
   statement:

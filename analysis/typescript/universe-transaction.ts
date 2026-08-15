@@ -1,8 +1,9 @@
-import type { FactShardReference } from '../facts/index.ts'
+import { shardReference, type FactShardReference } from '../facts/index.ts'
 import type { AnalysisGeneration, FactTransaction } from '../generation/index.ts'
 import { validateFactTransaction } from '../generation/index.ts'
 import type { ProjectUniverseId } from '../identity/index.ts'
 import type { AnalysisStore } from '../query/index.ts'
+import type { NativeFactDelta } from '../protocol/index.ts'
 
 export interface MaterializedNativeTransaction {
   readonly generation: AnalysisGeneration
@@ -57,6 +58,44 @@ export async function materializeNativeTransaction(
   assertTransaction(rebased, destination.id)
   await store.commit(rebased, options)
   return { generation: rebased.next, transaction: rebased, rollover: true }
+}
+
+/** Reconstruct and validate one wire-efficient affected-shard delta. */
+export async function materializeNativeDelta(
+  store: AnalysisStore,
+  activeGeneration: AnalysisGeneration | undefined,
+  delta: NativeFactDelta,
+  options: { readonly signal?: AbortSignal } = {},
+): Promise<MaterializedNativeTransaction> {
+  if (!activeGeneration || activeGeneration.id !== delta.base) {
+    throw new Error('A native affected-shard delta requires the exact current generation.')
+  }
+  if (activeGeneration.universe !== delta.next.universe) {
+    throw new Error('A native affected-shard delta cannot cross a project universe.')
+  }
+  const query = await store.open(activeGeneration.universe, activeGeneration.id)
+  let currentManifest: readonly FactShardReference[]
+  try {
+    currentManifest = await query.manifest()
+  } finally {
+    await query.dispose()
+  }
+  const manifest = new Map(currentManifest.map((reference) => [reference.key, reference]))
+  for (const key of delta.deletes) {
+    if (!manifest.delete(key)) throw new Error(`Native delta deleted unknown shard ${key}.`)
+  }
+  for (const shard of delta.upserts) manifest.set(shard.key, shardReference(shard))
+  const transaction: FactTransaction = {
+    protocolVersion: delta.protocolVersion,
+    base: delta.base,
+    next: delta.next,
+    manifest: [...manifest.values()].sort((left, right) => left.key.localeCompare(right.key)),
+    upserts: delta.upserts,
+    deletes: delta.deletes,
+  }
+  assertTransaction(transaction, activeGeneration.id)
+  await store.commit(transaction, options)
+  return { generation: transaction.next, transaction, rollover: false }
 }
 
 function assertCompleteRollover(transaction: FactTransaction): void {

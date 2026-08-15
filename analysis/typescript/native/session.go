@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	shimcompiler "github.com/microsoft/typescript-go/shim/compiler"
 	shimcore "github.com/microsoft/typescript-go/shim/core"
 	shimtsoptions "github.com/microsoft/typescript-go/shim/tsoptions"
 	"github.com/samchon/ttsc/packages/ttsc/driver"
@@ -18,7 +19,21 @@ type generationState struct {
 	generation     analysisGeneration
 	manifest       []factShardReference
 	digests        map[string]string
+	sources        map[string]sourceRecord
+	sourceShards   map[string][]string
 	sourceManifest string
+}
+
+type refreshSelection struct {
+	full  bool
+	files []string
+}
+
+type pendingGeneration struct {
+	state       generationState
+	transaction *factTransaction
+	universe    string
+	rollover    bool
 }
 
 type analyzer struct {
@@ -30,6 +45,8 @@ type analyzer struct {
 	session      *driver.Session
 	states       map[string]generationState
 	current      string
+	pendingFull  bool
+	pending      *pendingGeneration
 	telemetry    *nativeTelemetry
 }
 
@@ -97,25 +114,51 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		}
 		a.telemetry.record(input.ID, "refresh.total", started, metrics)
 	}()
-	if input.Base != a.current {
+	if a.pending != nil {
+		if input.Base != a.current || input.Invalidate || len(input.Changed) != 0 {
+			return nil, "", protocolError("COMMIT_PENDING", "A native generation is awaiting application-store acknowledgement.")
+		}
+		return a.pending.transaction, "", nil
+	}
+	adopting := a.current == "" && input.Base != ""
+	if input.Base != a.current && !adopting {
 		return nil, "", protocolError("BASE_STALE", "The requested base is not the resident analyzer's current private generation.")
 	}
 	// Callers own change discovery. Once a resident base exists, an empty
 	// change set is a true no-op and must not re-walk or re-extract the complete
 	// compiler universe merely to rediscover the same content-addressed shards.
-	if input.Base != "" && !input.Invalidate && len(input.Changed) == 0 {
+	if input.Base != "" && !adopting && !input.Invalidate && len(input.Changed) == 0 && !a.pendingFull {
 		return nil, input.Base, nil
 	}
+	compilerAdvanced := false
+	defer func() {
+		if err != nil && compilerAdvanced {
+			// Session.Apply has already advanced the resident compiler. A retry
+			// must rebuild a complete candidate instead of comparing against the
+			// unpublished compiler state as though it were the committed base.
+			a.pendingFull = true
+		}
+	}()
+	selection := refreshSelection{full: input.Base == "" || adopting || a.pendingFull}
 	updateStarted := time.Now()
-	if input.Invalidate {
+	if input.Invalidate || a.pendingFull {
 		if err := a.rebuild(); err != nil {
 			return nil, "", err
 		}
+		compilerAdvanced = true
+		selection.full = true
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": "rebuild"})
-	} else if err := a.apply(input.Changed); err != nil {
-		return nil, "", err
 	} else {
-		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": "resident-apply"})
+		selection, err = a.apply(input.Changed)
+		if err != nil {
+			return nil, "", err
+		}
+		compilerAdvanced = len(input.Changed) != 0
+		mode := "resident-apply"
+		if selection.full {
+			mode = "resident-full"
+		}
+		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": mode})
 	}
 
 	universeStarted := time.Now()
@@ -130,14 +173,22 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		// generation in the new lineage is a complete transaction with no base;
 		// the caller may rebase that complete snapshot when an identical portable
 		// universe was materialized during an earlier configuration cycle.
-		a.universe = nextUniverse
-		a.states = map[string]generationState{}
-		a.current = ""
+		selection.full = true
+	}
+	baseID := input.Base
+	if rollover {
+		baseID = ""
+	}
+	base, hasBase := a.states[baseID]
+	if !hasBase {
+		selection.full = true
 	}
 
 	extractionStarted := time.Now()
-	shards, sources, err := extractProgram(a.root, a.universe, a.session.Program(), a.modules, a.telemetry, input.ID)
-	a.telemetry.record(input.ID, "projection.total", extractionStarted, map[string]any{"shards": len(shards), "sources": len(sources)})
+	shards, sources, replaced, err := a.extract(nextUniverse, selection, base, input.ID)
+	a.telemetry.record(input.ID, "projection.total", extractionStarted, map[string]any{
+		"shards": len(shards), "sources": len(sources), "full": selection.full,
+	})
 	if err != nil {
 		return nil, "", err
 	}
@@ -161,25 +212,31 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	for _, source := range sources {
 		sourceEntries = append(sourceEntries, map[string]any{"path": source.Path, "revision": source.Revision})
 	}
-	sourceManifest := deriveID("source-manifest", "typescript:"+a.universe, map[string]any{
+	sourceManifest := deriveID("source-manifest", "typescript:"+nextUniverse, map[string]any{
 		"configuration": configuration,
 		"sources":       sourceEntries,
 	})
-	manifest := make([]factShardReference, 0, len(shards))
-	digests := make(map[string]string, len(shards))
+	manifestByKey := make(map[string]factShardReference, len(base.manifest)+len(shards))
+	if hasBase && !selection.full {
+		for _, reference := range base.manifest {
+			if !replaced[reference.Key] {
+				manifestByKey[reference.Key] = reference
+			}
+		}
+	}
 	for _, shard := range shards {
-		manifest = append(manifest, factShardReference{
+		manifestByKey[shard.Key] = factShardReference{
 			Key: shard.Key, Digest: shard.Digest, Namespace: shard.Namespace,
 			SchemaVersion: shard.SchemaVersion, Facts: len(shard.Facts),
-		})
-		digests[shard.Key] = shard.Digest
+		}
+	}
+	manifest := make([]factShardReference, 0, len(manifestByKey))
+	digests := make(map[string]string, len(manifestByKey))
+	for _, reference := range manifestByKey {
+		manifest = append(manifest, reference)
+		digests[reference.Key] = reference.Digest
 	}
 	sort.Slice(manifest, func(i, j int) bool { return manifest[i].Key < manifest[j].Key })
-	baseID := input.Base
-	if rollover {
-		baseID = ""
-	}
-	base, hasBase := a.states[baseID]
 	if hasBase && base.sourceManifest == sourceManifest && stableJSON(base.manifest) == stableJSON(manifest) {
 		return nil, input.Base, nil
 	}
@@ -196,11 +253,11 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		sequence = base.generation.Sequence + 1
 	}
 	generationID := deriveID("generation", "astrale.analysis.generation.v1", map[string]any{
-		"universe": a.universe, "producer": producer, "sourceManifest": sourceManifest,
+		"universe": nextUniverse, "producer": producer, "sourceManifest": sourceManifest,
 		"capabilities": a.capabilities, "manifest": manifest,
 	})
 	generation := analysisGeneration{
-		ID: generationID, Sequence: sequence, Universe: a.universe, Producer: producer,
+		ID: generationID, Sequence: sequence, Universe: nextUniverse, Producer: producer,
 		SourceManifest: sourceManifest, Capabilities: a.capabilities,
 	}
 	upserts := make([]factShard, 0, len(shards))
@@ -227,15 +284,174 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		ProtocolVersion: protocolVersion, Base: baseID, Next: generation,
 		Manifest: manifest, Upserts: upserts, Deletes: deletes,
 	}
-	a.states[generationID] = generationState{
-		generation: generation, manifest: manifest, digests: digests, sourceManifest: sourceManifest,
+	state := generationState{
+		generation: generation, manifest: manifest, digests: digests,
+		sources: sourceRecordMap(sources), sourceShards: mergeSourceShardOwnership(base, sources, shards, selection.full),
+		sourceManifest: sourceManifest,
 	}
-	a.current = generationID
-	a.collectStates()
+	if adopting && generationID == input.Base {
+		state.generation.Sequence = input.BaseSequence
+		a.install(state, nextUniverse, rollover)
+		return nil, input.Base, nil
+	}
+	a.pending = &pendingGeneration{
+		state: state, transaction: transaction, universe: nextUniverse, rollover: rollover,
+	}
 	a.telemetry.record(input.ID, "transaction.materialize", materializationStarted, map[string]any{
 		"manifestShards": len(manifest), "upsertShards": len(upserts), "deleteShards": len(deletes),
 	})
 	return transaction, "", nil
+}
+
+func (a *analyzer) acknowledge(input request) error {
+	if input.Generation == a.current && a.pending == nil {
+		return nil
+	}
+	if a.pending == nil {
+		return protocolError("ACK_UNEXPECTED", "No native generation is awaiting acknowledgement.")
+	}
+	if input.Generation != a.pending.state.generation.ID {
+		return protocolError("ACK_GENERATION_MISMATCH", "The acknowledged generation is not the pending native generation.")
+	}
+	if input.Sequence < 1 {
+		return protocolError("ACK_SEQUENCE_INVALID", "The acknowledged generation sequence must be positive.")
+	}
+	pending := a.pending
+	pending.state.generation.Sequence = input.Sequence
+	a.install(pending.state, pending.universe, pending.rollover)
+	return nil
+}
+
+func (a *analyzer) install(state generationState, universe string, rollover bool) {
+	if rollover || universe != a.universe {
+		a.states = map[string]generationState{}
+	}
+	a.universe = universe
+	a.states[state.generation.ID] = state
+	a.current = state.generation.ID
+	a.pending = nil
+	a.pendingFull = false
+	a.collectStates()
+}
+
+// extract produces a complete snapshot for uncertain changes and only
+// replacement shards for compiler-proven private edits. Module facts remain a
+// conservative global projection until their surface/dependency/diagnostic
+// pieces are physically split; rebuilding them is cheap relative to body
+// extraction and preserves cold equivalence without repository exceptions.
+func (a *analyzer) extract(
+	universe string,
+	selection refreshSelection,
+	base generationState,
+	requestID int,
+) ([]factShard, []sourceRecord, map[string]bool, error) {
+	if selection.full {
+		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.telemetry, requestID)
+		return shards, sources, nil, err
+	}
+	selected := make(map[string]bool, len(selection.files))
+	for _, file := range selection.files {
+		selected[file] = true
+	}
+	x, files, sources := prepareExtractor(
+		a.root, universe, a.session.Program(), a.modules,
+		base.sources, selected, a.telemetry, requestID,
+	)
+	replaced := map[string]bool{}
+	for _, reference := range base.manifest {
+		switch reference.Namespace {
+		case projectNamespace, diagnosticNamespace, moduleNamespace:
+			replaced[reference.Key] = true
+		}
+	}
+	for file := range selected {
+		record, exists := x.sources[file]
+		if !exists {
+			return nil, nil, nil, fmt.Errorf("selected TypeScript source disappeared from the owned projection: %s", file)
+		}
+		for _, key := range base.sourceShards[record.Source] {
+			replaced[key] = true
+		}
+	}
+	phase := time.Now()
+	shards := []factShard{x.projectShard(a.session.Program())}
+	a.telemetry.record(requestID, "projection.project", phase, nil)
+	phase = time.Now()
+	diagnostic := x.diagnosticShard(a.session.Program())
+	shards = append(shards, diagnostic)
+	a.telemetry.record(requestID, "projection.diagnostics", phase, map[string]any{"facts": len(diagnostic.Facts)})
+	phase = time.Now()
+	modules, err := x.moduleShards(a.session.Program())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	shards = append(shards, modules...)
+	a.telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(modules)})
+	shards = append(shards, x.sourceShards(files, selected, a.telemetry, requestID)...)
+	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
+	return shards, sources, replaced, nil
+}
+
+func sourceRecordMap(records []sourceRecord) map[string]sourceRecord {
+	result := make(map[string]sourceRecord, len(records))
+	for _, record := range records {
+		result[record.Physical] = record
+	}
+	return result
+}
+
+func mergeSourceShardOwnership(
+	base generationState,
+	sources []sourceRecord,
+	shards []factShard,
+	full bool,
+) map[string][]string {
+	owners := map[string][]string{}
+	if !full {
+		for source, keys := range base.sourceShards {
+			owners[source] = append([]string{}, keys...)
+		}
+	}
+	known := make(map[string]bool, len(sources))
+	for _, source := range sources {
+		known[source.Source] = true
+	}
+	replacedOwners := map[string]bool{}
+	for _, shard := range shards {
+		if source := shardSourceOwner(shard); source != "" && known[source] {
+			replacedOwners[source] = true
+		}
+	}
+	for source := range replacedOwners {
+		delete(owners, source)
+	}
+	for _, shard := range shards {
+		if source := shardSourceOwner(shard); source != "" && known[source] {
+			owners[source] = append(owners[source], shard.Key)
+		}
+	}
+	for source := range owners {
+		owners[source] = sortedUnique(owners[source])
+	}
+	return owners
+}
+
+func shardSourceOwner(shard factShard) string {
+	if len(shard.Facts) == 0 {
+		return ""
+	}
+	if shard.Namespace == sourceNamespace {
+		return shard.Facts[0].Subject
+	}
+	if shard.Namespace != symbolNamespace && shard.Namespace != occurrenceNamespace && shard.Namespace != bodyNamespace {
+		return ""
+	}
+	for _, entry := range shard.Facts {
+		if len(entry.Provenance.Evidence) != 0 {
+			return entry.Provenance.Evidence[0].Source
+		}
+	}
+	return ""
 }
 
 func recordFactBytes(telemetry *nativeTelemetry, requestID int, shards []factShard) {
@@ -407,30 +623,133 @@ func parsedProjectConfigs(program *driver.Program) ([]*shimtsoptions.ParsedComma
 	return configs, nil
 }
 
-func (a *analyzer) apply(changed []string) error {
-	for _, path := range sortedUnique(append([]string{}, changed...)) {
+func (a *analyzer) apply(changed []string) (refreshSelection, error) {
+	paths := sortedUnique(append([]string{}, changed...))
+	if len(paths) == 0 {
+		return refreshSelection{}, nil
+	}
+	if a.session.Program().HasLinkedProgramPlugins() {
+		if err := a.rebuild(); err != nil {
+			return refreshSelection{}, err
+		}
+		return refreshSelection{full: true}, nil
+	}
+	absolutePaths := make([]string, 0, len(paths))
+	oldShapes := make(map[string]string, len(paths))
+	full := false
+	for _, path := range paths {
 		absolute, err := a.absoluteChangedPath(path)
 		if err != nil {
-			return err
+			return refreshSelection{}, err
 		}
 		if _, resident := a.session.SourceText(absolute); !resident {
 			// New roots, deletions/renames, tsconfig changes, and files newly
 			// admitted by an include glob require the compiler to rediscover the
 			// project root set rather than applying a single-file overlay.
-			return a.rebuild()
+			if err := a.rebuild(); err != nil {
+				return refreshSelection{}, err
+			}
+			return refreshSelection{full: true}, nil
 		}
+		source := a.session.Program().SourceFile(absolute)
+		if source == nil || source.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(source) {
+			full = true
+		} else {
+			shape, err := a.session.Program().DeclarationShapeDigest(source)
+			if err != nil {
+				return refreshSelection{}, err
+			}
+			oldShapes[absolute] = shape
+		}
+		absolutePaths = append(absolutePaths, absolute)
+	}
+	selected := make([]string, 0, len(absolutePaths))
+	public := []string{}
+	for _, absolute := range absolutePaths {
 		content, err := os.ReadFile(absolute)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return a.rebuild()
+				if err := a.rebuild(); err != nil {
+					return refreshSelection{}, err
+				}
+				return refreshSelection{full: true}, nil
 			}
-			return err
+			return refreshSelection{}, err
 		}
-		// Apply itself rebuilds the resident Program when imports or references
-		// change; its boolean reports reuse evidence, not failure.
-		a.session.Apply(absolute, string(content))
+		if reused := a.session.Apply(absolute, string(content)); !reused {
+			full = true
+		}
+		updated := a.session.Program().SourceFile(absolute)
+		if updated == nil {
+			full = true
+			continue
+		}
+		selected = append(selected, updated.FileName())
 	}
-	return nil
+	if full {
+		return refreshSelection{full: true}, nil
+	}
+	for _, absolute := range absolutePaths {
+		updated := a.session.Program().SourceFile(absolute)
+		if updated == nil || updated.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(updated) {
+			return refreshSelection{full: true}, nil
+		}
+		shape, err := a.session.Program().DeclarationShapeDigest(updated)
+		if err != nil {
+			return refreshSelection{}, err
+		}
+		if shape != oldShapes[absolute] {
+			public = append(public, updated.FileName())
+		}
+	}
+	if len(public) != 0 {
+		selected = affectedSourceClosure(a.session.Program(), selected, public)
+	}
+	return refreshSelection{files: sortedUnique(selected)}, nil
+}
+
+// affectedSourceClosure expands declaration-shape changes through the exact
+// reverse dependency graph retained by TypeScript. Private implementation
+// edits therefore select one source, while public changes reproject every
+// transitive consumer without falling back to a repository-wide walk.
+func affectedSourceClosure(program *driver.Program, changed, public []string) []string {
+	reverse := map[string][]string{}
+	physicalByCanonical := map[string]string{}
+	for _, source := range program.SourceFiles() {
+		physicalByCanonical[string(source.Path())] = filepath.Clean(source.FileName())
+	}
+	for _, source := range program.SourceFiles() {
+		owner := filepath.Clean(source.FileName())
+		for _, referenced := range shimcompiler.GetReferencedFilePaths(program.TSProgram, source) {
+			if target := physicalByCanonical[referenced]; target != "" {
+				reverse[target] = append(reverse[target], owner)
+			}
+		}
+	}
+	selected := map[string]bool{}
+	for _, path := range changed {
+		selected[filepath.Clean(path)] = true
+	}
+	queue := sortedUnique(append([]string{}, public...))
+	for len(queue) != 0 {
+		path := filepath.Clean(queue[0])
+		queue = queue[1:]
+		if !selected[path] {
+			selected[path] = true
+		}
+		for _, dependent := range reverse[path] {
+			if !selected[dependent] {
+				selected[dependent] = true
+				queue = append(queue, dependent)
+			}
+		}
+	}
+	result := make([]string, 0, len(selected))
+	for path := range selected {
+		result = append(result, path)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (a *analyzer) absoluteChangedPath(path string) (string, error) {
