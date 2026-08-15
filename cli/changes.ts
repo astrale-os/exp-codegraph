@@ -76,12 +76,14 @@ export async function changedSpecificationScope(
 
 async function defaultBase(root: string): Promise<string> {
   const environmentBase = process.env.GITHUB_BASE_REF || process.env.SPEC_BASE
+  const currentBranch = await optionalGit(root, ['branch', '--show-current'])
   if (environmentBase) {
     const remote = `origin/${environmentBase}`
-    if (await gitRefExists(root, remote)) return remote
-    if (await gitRefExists(root, environmentBase)) return environmentBase
+    if (await gitRefIsAncestor(root, remote)) return remote
+    if (environmentBase !== currentBranch && (await gitRefIsAncestor(root, environmentBase))) {
+      return environmentBase
+    }
   }
-  const currentBranch = await optionalGit(root, ['branch', '--show-current'])
   const refs = pathsByLine(
     await git(root, [
       'for-each-ref',
@@ -177,6 +179,16 @@ function specificationAnchor(file: string): boolean {
 async function gitRefExists(root: string, ref: string): Promise<boolean> {
   try {
     await git(root, ['rev-parse', '--verify', `${ref}^{commit}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function gitRefIsAncestor(root: string, ref: string): Promise<boolean> {
+  if (!(await gitRefExists(root, ref))) return false
+  try {
+    await git(root, ['merge-base', '--is-ancestor', ref, 'HEAD'])
     return true
   } catch {
     return false
