@@ -1,5 +1,6 @@
 import type { AnalysisSnapshotSet } from '../../../analysis/.spec/api.js'
 import type { AnalysisStore } from '../../../analysis/query/.spec/api.js'
+import type { AnalysisTelemetrySink } from '../../../analysis/profiling/.spec/api.js'
 import type {
   NativeAnalysisSessionFactory,
   NativeModuleBoundary,
@@ -48,6 +49,7 @@ export interface ApplicationAnalysisWorkspaceOptions {
   readonly sessions: NativeAnalysisSessionFactory
   readonly store?: AnalysisStore
   readonly maximumRetainedGenerations?: number
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export interface ApplicationModuleBoundaries {
@@ -61,6 +63,7 @@ export interface CodegraphApplicationSessionOptions {
   readonly maximumFrameBytes?: number
   readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export function resolveApplicationModuleBoundaries(

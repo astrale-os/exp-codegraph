@@ -27,6 +27,7 @@ import {
   createModuleConformanceProfiles,
   planConformance,
   qualifySpecification,
+  qualifySpecifications,
   type ConformanceProfile,
 } from '../conformance/index.ts'
 import { compileModuleContract } from '../conformance/module/contract/compiler.ts'
@@ -251,7 +252,21 @@ export declare function connect(endpoint?: Endpoint): void
         analysis,
         profiles: [profile],
       })
+      let queryOpens = 0
+      const batch = await qualifySpecifications({
+        specifications: [specification, specification],
+        analysis: {
+          ...analysis,
+          async query(universe) {
+            queryOpens++
+            return analysis.query(universe)
+          },
+        },
+        profiles: [profile],
+      })
       expect(first.id).toBe(second.id)
+      expect(batch.map((value) => value.id)).toEqual([first.id, first.id])
+      expect(queryOpens).toBe(1)
       expect(first).toMatchObject({
         format: 'astrale.typespec.qualification',
         version: 2,

@@ -252,11 +252,11 @@ func (x *extractor) projectShard(program *driver.Program) factShard {
 	configuration := []string{program.ParsedConfig.ConfigName()}
 	configuration = append(configuration, program.ParsedConfig.ExtendedSourceFiles()...)
 	for index, path := range configuration {
-		configuration[index], _ = x.ownedPath(path)
+		configuration[index], _ = x.publicSourceCoordinate(path)
 	}
 	references := append([]string{}, program.ParsedConfig.ResolvedProjectReferencePaths()...)
 	for index, path := range references {
-		references[index], _ = x.ownedPath(path)
+		references[index], _ = x.publicSourceCoordinate(path)
 	}
 	payload := projectFactPayload{
 		Universe:           x.universe,
@@ -279,7 +279,7 @@ func (x *extractor) diagnosticShard(program *driver.Program) factShard {
 		var evidence []sourceSpan
 		var diagnosticSpan *sourceSpan
 		if diagnostic.File != "" {
-			file, _ = x.ownedPath(diagnostic.File)
+			file, _ = x.publicSourceCoordinate(diagnostic.File)
 			if record, exists := x.sources[diagnostic.File]; exists && diagnostic.Start != nil {
 				end := *diagnostic.Start + 1
 				if diagnostic.Length != nil && *diagnostic.Length > 0 {
@@ -424,7 +424,7 @@ func (x *extractor) symbolID(symbol *shimast.Symbol) string {
 	if file == nil {
 		return ""
 	}
-	path, owned := x.ownedPath(file.FileName())
+	path, owned := x.symbolSourceCoordinate(file.FileName())
 	name := stableSymbolName(symbol)
 	if name == "" {
 		name = "<anonymous>"
@@ -471,6 +471,20 @@ func (x *extractor) symbolID(symbol *shimast.Symbol) string {
 		}
 	}
 	return id
+}
+
+// symbolSourceCoordinate preserves ownership as an extraction concern while
+// always using a public, relocatable coordinate as semantic identity. In
+// particular, a dependency can be reported beneath the checkout in one
+// installation and through a symlink outside it in another; those physical
+// layouts must still identify the same package declaration.
+func (x *extractor) symbolSourceCoordinate(path string) (string, bool) {
+	ownedPath, owned := x.ownedPath(path)
+	if owned {
+		return ownedPath, true
+	}
+	coordinate, _ := x.publicSourceCoordinate(path)
+	return coordinate, false
 }
 
 func (x *extractor) identityCollisions(file *shimast.SourceFile, identityKey string) int {

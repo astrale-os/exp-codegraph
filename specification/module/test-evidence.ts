@@ -4,7 +4,12 @@ import ts from 'typescript'
 
 import type { TestEvidenceReference } from '../../authoring/evidence.ts'
 import type { Diagnostic } from '../../source/diagnostic.ts'
-import type { LawResource, StateResource, TestEvidence, TestEvidenceStatus } from '../model.ts'
+import type {
+  LawResource,
+  StateResource,
+  TestEvidence,
+  TestEvidenceStatus,
+} from '../resource/index.ts'
 
 import { readBounded, sourceRevision } from '../../source/file.ts'
 

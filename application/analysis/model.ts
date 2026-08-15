@@ -1,5 +1,6 @@
 import type {
   AnalysisSnapshotSet,
+  AnalysisTelemetrySink,
   NativeAnalysisSessionFactory,
   NativeModuleBoundary,
   ProjectUniverseId,
@@ -44,4 +45,5 @@ export interface ApplicationAnalysisWorkspaceOptions {
   readonly sessions: NativeAnalysisSessionFactory
   readonly store?: import('../../analysis/index.ts').AnalysisStore
   readonly maximumRetainedGenerations?: number
+  readonly telemetry?: AnalysisTelemetrySink
 }

@@ -77,13 +77,14 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
   let applicationSnapshot: TypeSpecApplicationSnapshot | undefined
   let catalogGeneration = 0
   let deliveredGeneration = 0
+  let compilerAnalysis = verify
   let operations = Promise.resolve()
   let disposed = false
   const pendingChanges = new Set<string>()
   const sourceChanges = createSourceChangeFilter()
   const snapshots = new CatalogSnapshotStore()
 
-  const rebuild = async (forceCompiler = verify): Promise<CatalogRebuildResult> => {
+  const rebuild = async (forceCompiler = compilerAnalysis): Promise<CatalogRebuildResult> => {
     const changed = [...pendingChanges].sort()
     pendingChanges.clear()
     application ??= await applicationPromise
@@ -102,6 +103,7 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
             }),
         ...(changed.length ? { changed } : {}),
       })
+    if (forceCompiler) compilerAnalysis = true
     const nextReader = await application.open(refreshed.snapshot.id)
     try {
       const next = await services.projectCatalog(root, nextReader)
@@ -159,8 +161,18 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
         return rejected(request, 'VERIFIER_MISSING', 'Specification has no API contract to verify.')
       }
       if (!specification.verification) {
+        const inventory = applicationSnapshot!.inventory
         await rebuild(true)
         specification = catalog!.specs.find((candidate) => candidate.source === request.source)
+        if (
+          applicationSnapshot!.inventory !== inventory ||
+          specification?.verificationRevision !== request.revision
+        ) {
+          return {
+            ...rejected(request, 'SOURCE_CHANGED', 'Specification source changed.'),
+            ...(specification ? { revision: specification.verificationRevision } : {}),
+          }
+        }
       }
       if (!specification?.verification) {
         return rejected(request, 'EXECUTION_FAILED', 'V2 qualification did not produce a result.')

@@ -9,6 +9,7 @@ import {
   AUTHORING_SPECIFIER,
   authoringHelperBinding,
   calledObjectLiteral as callObject,
+  isAuthoringSpecifier,
   literalProperty as property,
   literalPropertyName as propertyName,
   nodeDiagnostic,
@@ -155,7 +156,7 @@ function parseModule(source: string, text: string, imported: string): ParsedModu
     if (ts.isImportDeclaration(statement)) {
       if (
         !ts.isStringLiteral(statement.moduleSpecifier) ||
-        statement.moduleSpecifier.text !== AUTHORING_SPECIFIER
+        !isAuthoringSpecifier(statement.moduleSpecifier.text)
       ) {
         diagnostics.push(
           nodeDiagnostic(

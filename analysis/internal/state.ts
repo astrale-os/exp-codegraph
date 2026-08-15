@@ -16,6 +16,7 @@ import type {
   FactPage,
   PageRequest,
 } from '../query/index.ts'
+import { deriveAnalysisSnapshotSetId } from '../query/identity.ts'
 
 import { factHeader, shardReference } from '../facts/index.ts'
 import { TransactionError, validateFactTransaction } from '../generation/index.ts'
@@ -346,16 +347,9 @@ class PinnedSnapshotSet implements AnalysisSnapshotSet {
     this.#release = release
     this.inventory = inventory
     this.universes = [...values.keys()].sort()
-    this.id = deriveAnalysisId(
-      'snapshot-set',
-      'astrale.analysis.snapshot-set.v2',
-      {
-        inventory,
-        generations: this.universes.map((universe) => [
-          universe,
-          values.get(universe)!.generation.id,
-        ]),
-      },
+    this.id = deriveAnalysisSnapshotSetId(
+      new Map(this.universes.map((universe) => [universe, values.get(universe)!.generation.id])),
+      inventory,
     )
   }
 

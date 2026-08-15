@@ -41,6 +41,7 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
       options.store ??
       createMemoryAnalysisStore({
         maximumRetainedGenerations: options.maximumRetainedGenerations ?? 2,
+        ...(options.telemetry ? { telemetry: options.telemetry } : {}),
       })
     this.#ownsStore = options.store === undefined
   }
@@ -70,6 +71,7 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
             },
             sessions: this.#options.sessions,
             store: this.#store,
+            ...(this.#options.telemetry ? { telemetry: this.#options.telemetry } : {}),
           }),
         )
       }

@@ -3,13 +3,15 @@ import { resolve } from 'node:path'
 
 import type {
   AnalysisSnapshotSet,
+  AnalysisTelemetrySink,
   PassId,
   RepositoryId,
   SourceId,
 } from '../analysis/index.ts'
 import type { ConformanceProfile, QualificationSnapshot } from '../conformance/index.ts'
-import type { RepositorySourceService } from '../repository/index.ts'
+import type { RepositorySourceService, RepositoryStatisticsReport } from '../repository/index.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
+import type { SpecificationSnapshot } from '../specification/index.ts'
 import type { ApplicationAnalysisWorkspace } from './analysis/index.ts'
 import type { ApplicationSchemaDependencyResource } from './observation/index.ts'
 import { withOperationSnapshot } from '../source/operation-snapshot.ts'
@@ -32,7 +34,7 @@ import {
   MODULE_LAYOUT_PROFILE_ID,
   createModuleLayoutConformanceProfile,
   createTypeSpecConformanceProfiles,
-  qualifySpecification,
+  qualifySpecifications,
 } from '../conformance/index.ts'
 import {
   analyzeRepositoryStatistics,
@@ -70,6 +72,7 @@ export interface TypeSpecApplicationOptions {
   /** Portable repository key; required when the root package has no stable package name. */
   readonly repository?: string
   readonly maximumRetainedSnapshots?: number
+  readonly telemetry?: AnalysisTelemetrySink
   readonly analysis?: Omit<ApplicationAnalysisWorkspaceOptions, 'root' | 'repository' | 'sessions'>
   readonly native?: CodegraphApplicationSessionOptions
 }
@@ -93,7 +96,11 @@ export async function createTypeSpecApplicationServiceWithDependencies(
     createApplicationAnalysisWorkspace({
       root,
       repository,
-      sessions: createCodegraphApplicationSessionFactory(options.native),
+      sessions: createCodegraphApplicationSessionFactory({
+        ...options.native,
+        ...(options.telemetry ? { telemetry: options.telemetry } : {}),
+      }),
+      ...(options.telemetry ? { telemetry: options.telemetry } : {}),
       ...options.analysis,
     })
   return new HeadlessTypeSpecApplicationService(root, repository, {
@@ -131,6 +138,8 @@ async function repositoryIdentity(root: string, explicit: string | undefined): P
 class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
   #disposed = false
   #current: TypeSpecApplicationSnapshotId | undefined
+  #currentRequestKey: string | undefined
+  #corpus: ApplicationCorpus | undefined
   readonly #records = new Map<TypeSpecApplicationSnapshotId, ApplicationRecord>()
   readonly #root: string
   readonly #repository: RepositoryId
@@ -163,21 +172,89 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     const started = performance.now()
     let phase = started
     options.signal?.throwIfAborted()
-    const directories = await this.#dependencies.discover(this.#root, {
-      ...(options.exclude ? { exclude: options.exclude } : {}),
+    const inventory = await this.#dependencies.inventory({
+      repository: this.#repository,
+      root: this.#root,
+      scope: { exclude: APPLICATION_REPOSITORY_EXCLUDES },
+      ...(options.signal ? { signal: options.signal } : {}),
     })
-    const discoverMs = performance.now() - phase
-    phase = performance.now()
-    const specifications = [
-      ...(await this.#dependencies.compile(
-        this.#root,
-        directories,
-        {
-          maximumConcurrency:
-            TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+    const inventoryMs = performance.now() - phase
+    const previous = this.current()
+    const requestKey = applicationRefreshKey(options)
+    if (
+      previous &&
+      previous.inventory === inventory.revision &&
+      this.#currentRequestKey === requestKey &&
+      (options.schemaRoots?.length ?? 0) === 0 &&
+      (options.changed?.length ?? 0) === 0 &&
+      options.invalidate !== true
+    ) {
+      return {
+        snapshot: previous,
+        changes: applicationChanges(previous, previous, [], []),
+        timing: {
+          totalMs: performance.now() - started,
+          discoverMs: 0,
+          compileMs: 0,
+          inventoryMs,
+          statisticsMs: 0,
+          analysisMs: 0,
+          qualificationMs: 0,
         },
-      )),
-    ]
+      }
+    }
+    const corpusKey = applicationCorpusKey(inventory.revision, options.exclude ?? [])
+    let specifications: readonly SpecificationSnapshot[]
+    let sources: RepositorySourceService
+    let statistics: RepositoryStatisticsReport
+    let discoverMs = 0
+    let compileMs = 0
+    let statisticsMs = 0
+    const cachedCorpus = this.#corpus
+    if (cachedCorpus?.key === corpusKey) {
+      specifications = cachedCorpus.specifications
+      sources = cachedCorpus.sources
+      statistics = cachedCorpus.statistics
+    } else {
+      phase = performance.now()
+      const directories = await this.#dependencies.discover(this.#root, {
+        ...(options.exclude ? { exclude: options.exclude } : {}),
+      })
+      discoverMs = performance.now() - phase
+      phase = performance.now()
+      specifications = [
+        ...(await this.#dependencies.compile(
+          this.#root,
+          directories,
+          {
+            maximumConcurrency:
+              TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+          },
+        )),
+      ]
+      compileMs = performance.now() - phase
+      assertSpecificationInventory(specifications, inventory)
+      phase = performance.now()
+      sources = this.#dependencies.sources(this.#root, inventory)
+      statistics = await this.#dependencies.statistics({
+        inventory,
+        sources,
+        groupings: [
+          ...defaultRepositoryStatisticsGroupings(),
+          createRepositoryPathOwnershipGrouping(
+            'module',
+            specifications.map((specification) => ({
+              root: specification.root,
+              key: specification.module.id,
+              label: specification.title,
+            })),
+          ),
+        ],
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+      statisticsMs = performance.now() - phase
+      this.#corpus = { key: corpusKey, specifications, sources, statistics }
+    }
     const selected = selectApplicationSpecifications(this.#root, specifications, {
       ...(options.select ? { select: options.select } : {}),
       ...(options.focused !== undefined ? { focused: options.focused } : {}),
@@ -186,36 +263,12 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         : {}),
     })
     const analysisSpecifications = options.focused ? selected.qualification : specifications
-    const schemaDependencies = await this.loadSchemaDependencies(options.schemaRoots ?? [])
-    const compileMs = performance.now() - phase
-    phase = performance.now()
-    const inventory = await this.#dependencies.inventory({
-      repository: this.#repository,
-      root: this.#root,
-      scope: { exclude: APPLICATION_REPOSITORY_EXCLUDES },
-      ...(options.signal ? { signal: options.signal } : {}),
-    })
-    assertSpecificationInventory(specifications, inventory)
-    const inventoryMs = performance.now() - phase
-    phase = performance.now()
-    const sources = this.#dependencies.sources(this.#root, inventory)
-    const statistics = await this.#dependencies.statistics({
-      inventory,
-      sources,
-      groupings: [
-        ...defaultRepositoryStatisticsGroupings(),
-        createRepositoryPathOwnershipGrouping(
-          'module',
-          specifications.map((specification) => ({
-            root: specification.root,
-            key: specification.module.id,
-            label: specification.title,
-          })),
-        ),
-      ],
-      ...(options.signal ? { signal: options.signal } : {}),
-    })
-    const statisticsMs = performance.now() - phase
+    let schemaDependencies: readonly ApplicationSchemaDependencyResource[] = []
+    if (options.schemaRoots?.length) {
+      phase = performance.now()
+      schemaDependencies = await this.loadSchemaDependencies(options.schemaRoots)
+      compileMs += performance.now() - phase
+    }
     options.signal?.throwIfAborted()
 
     let qualifications: readonly QualificationSnapshot[] = []
@@ -249,23 +302,16 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       )
       try {
         phase = performance.now()
-        const values: QualificationSnapshot[] = []
         const profiles = applicationProfiles(this.#dependencies.profiles, options)
-        for (const specification of selected.qualification) {
-          options.signal?.throwIfAborted()
-          values.push(
-            await qualifySpecification({
-              specification,
-              analysis: refreshed.snapshot,
-              profiles,
-              ...(options.requestedProfiles
-                ? { requestedProfiles: options.requestedProfiles }
-                : {}),
-              ...(options.signal ? { signal: options.signal } : {}),
-            }),
-          )
-        }
-        qualifications = values
+        qualifications = await qualifySpecifications({
+          specifications: selected.qualification,
+          analysis: refreshed.snapshot,
+          profiles,
+          ...(options.requestedProfiles
+            ? { requestedProfiles: options.requestedProfiles }
+            : {}),
+          ...(options.signal ? { signal: options.signal } : {}),
+        })
         analysis = {
           id: refreshed.snapshot.id,
           inventory: refreshed.snapshot.inventory,
@@ -305,8 +351,8 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       ],
       analysisDiagnostics,
     })
-    const previous = this.current()
     const snapshot = await this.publish(candidate, sources, analysisSnapshot)
+    this.#currentRequestKey = requestKey
     return {
       snapshot,
       changes: applicationChanges(previous, snapshot, changedSources, invalidatedPasses),
@@ -394,6 +440,8 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     if (this.#disposed) return
     this.#disposed = true
     this.#current = undefined
+    this.#currentRequestKey = undefined
+    this.#corpus = undefined
     const records = [...this.#records.values()]
     this.#records.clear()
     await Promise.all(records.map(disposeRecord))
@@ -449,6 +497,13 @@ interface ApplicationRecord {
   disposed: boolean
 }
 
+interface ApplicationCorpus {
+  readonly key: string
+  readonly specifications: readonly SpecificationSnapshot[]
+  readonly sources: RepositorySourceService
+  readonly statistics: RepositoryStatisticsReport
+}
+
 async function disposeRecord(record: ApplicationRecord): Promise<void> {
   if (record.disposed) return
   record.disposed = true
@@ -483,6 +538,28 @@ function applicationChanges(
 
 function sortedUnique<Value extends string>(values: readonly Value[]): readonly Value[] {
   return [...new Set(values)].sort((left, right) => left.localeCompare(right))
+}
+
+/**
+ * Normalize only semantic refresh inputs. Inventory identity independently pins every local byte;
+ * explicit invalidation/change hints and external schema roots deliberately bypass the fast path.
+ */
+function applicationRefreshKey(options: TypeSpecApplicationRefreshOptions): string {
+  return JSON.stringify({
+    exclude: sortedUnique(options.exclude ?? []),
+    select: sortedUnique(options.select ?? []),
+    focused: options.focused === true,
+    includeDependents: options.includeDependents === true,
+    requireCompleteLayout: options.requireCompleteLayout === true,
+    requireExactLayout: options.requireExactLayout === true,
+    requestedProfiles: sortedUnique(options.requestedProfiles ?? []),
+    compilerAnalysis: options.compilerAnalysis !== false,
+    qualify: options.qualify === true,
+  })
+}
+
+function applicationCorpusKey(inventory: string, exclude: readonly string[]): string {
+  return JSON.stringify({ inventory, exclude: sortedUnique(exclude) })
 }
 
 function applicationProfiles(

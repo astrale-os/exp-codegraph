@@ -1,4 +1,7 @@
-import type { NativeAnalysisSessionFactory } from '../../analysis/index.ts'
+import type {
+  AnalysisTelemetrySink,
+  NativeAnalysisSessionFactory,
+} from '../../analysis/index.ts'
 
 import { createProcessNativeAnalysisSessionFactory } from '../../analysis/index.ts'
 import { resolvePackagedNativeAnalysis } from '../../analysis/typescript/distribution/index.ts'
@@ -9,6 +12,7 @@ export interface CodegraphApplicationSessionOptions {
   readonly maximumFrameBytes?: number
   readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 /** Lazily admit the packaged or explicit native analyzer when a project is first analyzed. */
@@ -36,6 +40,7 @@ export function createCodegraphApplicationSessionFactory(
         ...(options.environment
           ? { environment: definedEnvironment(options.environment) }
           : {}),
+        ...(options.telemetry ? { telemetry: options.telemetry } : {}),
       }).open(project, openOptions)
     },
   }

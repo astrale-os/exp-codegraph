@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS,
   deriveAnalysisId,
+  deriveAnalysisSnapshotSetId,
   createProcessNativeAnalysisSessionFactory,
   createNodeSourceTextReader,
   factHeader,
@@ -87,8 +88,8 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     expect(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS).toEqual({
       maximumFrameBytes: 64 * 1_024 * 1_024,
       transactionChunkFrameBytes: 8 * 1_024 * 1_024,
-      maximumTransactionBytes: 256 * 1_024 * 1_024,
-      maximumPhysicalTransactionBytes: 256 * 1_024 * 1_024,
+      maximumTransactionBytes: 384 * 1_024 * 1_024,
+      maximumPhysicalTransactionBytes: 512 * 1_024 * 1_024,
       maximumErrorBytes: 1 * 1_024 * 1_024,
     })
     expect(Object.isFrozen(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS)).toBe(true)
@@ -313,9 +314,13 @@ describe('TypeSpec V2 generic analysis foundation', () => {
       sidecar,
       `
 import { createInterface } from 'node:readline'
-const unsupported = ['--payload-codecs-json', '--maximum-physical-transaction-bytes']
+const unsupported = ['--payload-codecs-json']
   .filter((argument) => process.argv.includes(argument))
 if (unsupported.length) throw new Error('unexpected optional arguments: ' + unsupported.join(','))
+const physicalLimit = process.argv.indexOf('--maximum-physical-transaction-bytes')
+if (physicalLimit < 0 || process.argv[physicalLimit + 1] !== String(512 * 1024 * 1024)) {
+  throw new Error('resolved physical transaction limit was not forwarded')
+}
 const lines = createInterface({ input: process.stdin })
 lines.on('line', (line) => {
   const request = JSON.parse(line)
@@ -1110,6 +1115,7 @@ lines.on('line', (line) => {
       const memorySecond = await memory.snapshotSet(generations, secondInventory)
       try {
         expect(memoryFirst.id).toBe(sqliteFirst.id)
+        expect(memoryFirst.id).toBe(deriveAnalysisSnapshotSetId(generations, firstInventory))
         expect(memoryFirst.inventory).toBe(firstInventory)
         expect(sqliteFirst.inventory).toBe(firstInventory)
         expect(memorySecond.id).not.toBe(memoryFirst.id)

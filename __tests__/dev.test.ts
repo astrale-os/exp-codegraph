@@ -246,7 +246,7 @@ describe('universal specification dev server', () => {
     const running = await startDev({
       root: current.root,
       port: 0,
-      verify: true,
+      verify: false,
       cache: false,
       native: { binary: native.command },
     })
@@ -254,7 +254,8 @@ describe('universal specification dev server', () => {
 
     const initial = await running.server.ssrLoadModule('virtual:spec-catalog-index')
     const spec = await loadSpec(running.url, initial.index.specs[0])
-    expect(spec.verification?.status, JSON.stringify(spec, null, 2)).toBe('pass')
+    expect(spec.verification).toBeUndefined()
+    expect(spec.modules[0]?.contract).toBeDefined()
 
     const oneShot = await runVerification(
       running.url,

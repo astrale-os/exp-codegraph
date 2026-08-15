@@ -10,8 +10,35 @@ export function createApplicationSnapshot(
     version: 2 as const,
     ...input,
   }
-  const id = `application:${createHash('sha256').update(stableJson(content)).digest('hex')}` as TypeSpecApplicationSnapshotId
+  const id = `application:${digest(identityPreimage(content))}` as TypeSpecApplicationSnapshotId
   return immutable({ ...content, id })
+}
+
+/**
+ * Compose already content-addressed children instead of duplicating their rich payloads in one
+ * repository-sized JSON string. Statistics do not yet expose their own identity, so they receive
+ * one bounded local digest while the application remains their immutable owner.
+ */
+function identityPreimage(
+  content: Omit<TypeSpecApplicationSnapshot, 'id'>,
+): unknown {
+  return {
+    format: content.format,
+    version: content.version,
+    repository: content.repository,
+    inventory: content.inventory,
+    selection: content.selection,
+    specifications: content.specifications.map((value) => value.id),
+    statistics: digest(content.statistics),
+    qualifications: content.qualifications.map((value) => value.id),
+    analysis: content.analysis,
+    diagnostics: content.diagnostics,
+    analysisDiagnostics: content.analysisDiagnostics,
+  }
+}
+
+function digest(value: unknown): string {
+  return createHash('sha256').update(stableJson(value)).digest('hex')
 }
 
 function stableJson(value: unknown): string {

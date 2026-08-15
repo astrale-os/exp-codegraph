@@ -1,5 +1,5 @@
 import type { Diagnostic } from '../../source/diagnostic.ts'
-import type { ModuleIconResource, SvgIconElement } from '../model.ts'
+import type { ModuleIconResource, SvgIconElement } from '../resource/index.ts'
 import type { ModuleFile } from './inventory.ts'
 
 import { readBounded, sourceRevision } from '../../source/file.ts'

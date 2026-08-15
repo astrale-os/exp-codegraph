@@ -54,8 +54,11 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
   maximumFrameBytes: 64 * 1_024 * 1_024,
   transactionChunkFrameBytes: 8 * 1_024 * 1_024,
-  maximumTransactionBytes: 256 * 1_024 * 1_024,
-  maximumPhysicalTransactionBytes: 256 * 1_024 * 1_024,
+  // The richest frozen Kernel project retains 268,454,479 semantic payload
+  // bytes. Keep a finite measured ceiling with modest headroom; ordinary
+  // demand-driven requests remain far below it.
+  maximumTransactionBytes: 384 * 1_024 * 1_024,
+  maximumPhysicalTransactionBytes: 512 * 1_024 * 1_024,
   maximumErrorBytes: 1 * 1_024 * 1_024,
 })
 
@@ -167,12 +170,8 @@ export function createProcessNativeAnalysisSessionFactory(
           String(transactionChunkFrameBytes),
           '--maximum-transaction-bytes',
           String(maximumTransactionBytes),
-          ...(options.maximumPhysicalTransactionBytes === undefined
-            ? []
-            : [
-                '--maximum-physical-transaction-bytes',
-                String(maximumPhysicalTransactionBytes),
-              ]),
+          '--maximum-physical-transaction-bytes',
+          String(maximumPhysicalTransactionBytes),
           ...(telemetry ? ['--telemetry-fd', '3'] : []),
         ],
         {

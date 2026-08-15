@@ -10,6 +10,12 @@ import type {
   SymbolId,
 } from '../../identity/.spec/api.js'
 
+/** Derive the portable identity pinned by both memory and durable snapshot sets. */
+export declare function deriveAnalysisSnapshotSetId(
+  generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>,
+  inventory: SourceManifestId,
+): SnapshotSetId
+
 export interface FactFilter {
   readonly namespaces?: readonly string[]
   readonly kinds?: readonly string[]

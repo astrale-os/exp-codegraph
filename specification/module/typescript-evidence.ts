@@ -8,7 +8,7 @@ import {
   operationSnapshotNamespace,
   readSourceRevision,
 } from '../../source/operation-snapshot.ts'
-import { AUTHORING_SPECIFIER } from './authoring-syntax.ts'
+import { isAuthoringSpecifier } from './authoring-syntax.ts'
 import { visitModuleReferences } from './typescript-reference.ts'
 
 interface TypeScriptDependencyEvidence {
@@ -141,7 +141,7 @@ function resolveFresh(
     return target ? canonicalFile(target) : undefined
   }
   const containingFile =
-    evidence.specifier === AUTHORING_SPECIFIER
+    isAuthoringSpecifier(evidence.specifier)
       ? fileURLToPath(import.meta.url)
       : evidence.containingFile
   const target = ts.resolveModuleName(

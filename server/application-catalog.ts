@@ -106,7 +106,9 @@ async function projectSpecification(
     (candidate) => candidate.specification.id === specification.id,
   )
   const binding = moduleFact ? implementationBinding(moduleFact.payload) : undefined
-  const contract = moduleFact ? presentationContract(specification.source, moduleFact.payload) : undefined
+  const contract = specification.module.api
+    ? presentationContract(specification.module.id, moduleFact?.payload)
+    : undefined
   const moduleDiagnostics = moduleFact?.payload.issues.map(issueDiagnostic) ?? []
   const laws = withLawEvidence(specification.laws, testFact?.payload)
   const states = withStateEvidence(specification.states, testFact?.payload)
@@ -114,13 +116,7 @@ async function projectSpecification(
   const verification = qualification && hasCompilerQualification(qualification)
     ? projectQualification(qualification)
     : undefined
-  const revision = sourceRevision(
-    JSON.stringify({
-      application: reader.snapshot.id,
-      specification: specification.id,
-      qualification: qualification?.id,
-    }),
-  )
+  const revision = specification.revision
   return {
     title: specification.title,
     source: specification.source,
@@ -228,8 +224,11 @@ function implementationBinding(fact: TypeScriptModuleFact): ImplementationBindin
   }
 }
 
-function presentationContract(_source: string, fact: TypeScriptModuleFact): ViewerModuleContract {
-  const imports = fact.dependencies.flatMap((dependency) =>
+function presentationContract(
+  module: string,
+  fact: TypeScriptModuleFact | undefined,
+): ViewerModuleContract {
+  const imports = fact?.dependencies.flatMap((dependency) =>
     dependency.occurrences.flatMap((occurrence) => occurrence.declaration
       ? [{
           key: occurrence.declaration,
@@ -239,9 +238,9 @@ function presentationContract(_source: string, fact: TypeScriptModuleFact): View
           name: occurrence.declaration,
         }]
       : []),
-  )
+  ) ?? []
   return {
-    id: fact.target.id,
+    id: fact?.target.id ?? module,
     imports,
   }
 }

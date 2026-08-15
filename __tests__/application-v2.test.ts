@@ -84,6 +84,11 @@ describe('headless TypeSpec V2 application', () => {
       expect(service.current()).toBe(first)
       expect(secondRefresh.changes.previous).toBe(first.id)
       expect(secondRefresh.timing.totalMs).toBeGreaterThanOrEqual(0)
+      expect(secondRefresh.timing.compileMs).toBe(0)
+      expect(secondRefresh.timing.statisticsMs).toBe(0)
+      expect(secondRefresh.timing.analysisMs).toBe(0)
+      expect(secondRefresh.timing.qualificationMs).toBe(0)
+      expect(secondRefresh.timing.inventoryMs).toBeGreaterThanOrEqual(0)
       expect(Object.isFrozen(first)).toBe(true)
       expect(Object.isFrozen(first.specifications[0])).toBe(true)
       expect('catalog' in first).toBe(false)
@@ -99,6 +104,9 @@ describe('headless TypeSpec V2 application', () => {
         status: 'stale',
         path: 'module/.spec/api.d.ts',
       })
+      const changedRefresh = await service.refresh({ qualify: true })
+      expect(changedRefresh.snapshot.id).not.toBe(first.id)
+      expect(changedRefresh.changes.specifications.changed).toEqual(['module/.spec/api.d.ts'])
       await reader.dispose()
     } finally {
       await service.dispose()
@@ -163,13 +171,15 @@ export interface Consumer { readonly base: Base }
         'consumer/.spec/api.d.ts',
       ])
 
-      const base = (
-        await service.refresh({
-          focused: true,
-          select: ['base'],
-          includeDependents: true,
-        })
-      ).snapshot
+      const baseRefresh = await service.refresh({
+        focused: true,
+        select: ['base'],
+        includeDependents: true,
+      })
+      const base = baseRefresh.snapshot
+      expect(baseRefresh.timing.discoverMs).toBe(0)
+      expect(baseRefresh.timing.compileMs).toBe(0)
+      expect(baseRefresh.timing.statisticsMs).toBe(0)
       expect(base.selection).toMatchObject({
         selected: ['base/.spec/api.d.ts', 'consumer/.spec/api.d.ts'],
         support: [],
@@ -187,7 +197,8 @@ export interface Consumer { readonly base: Base }
       'module/.spec/layout.ts': `import { defineLayout } from '@astrale-os/codegraph/authoring'
 export default defineLayout({ entries: ['src/', 'src/index.ts'], exact: true })
 `,
-      'module/.spec/laws/value.ts': `import { defineLaw } from '@astrale-os/codegraph/authoring'
+      // The previous package spelling remains an input alias while consumers migrate to Codegraph.
+      'module/.spec/laws/value.ts': `import { defineLaw } from '@astrale-os/spec/authoring'
 export const VALUE_PRESENT = defineLaw({ id: 'VALUE-PRESENT', statement: 'A value is present.', tests: [{ file: 'tests/value.test.ts', id: 'VALUE-PRESENT' }] })
 `,
       'module/src/index.ts': 'export const value = true\n',

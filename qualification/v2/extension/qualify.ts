@@ -32,7 +32,8 @@ const evidencePath = resolve(
   '.history/v2/evidence/sdk-extension-qualification.json',
 )
 const writeEvidence = process.argv.includes('--write')
-const nativeBinary = argument('--native-binary')
+const nativeBinaryInput = argument('--native-binary')
+const nativeBinary = nativeBinaryInput ? resolve(nativeBinaryInput) : undefined
 
 const nativeCapabilities = [
   'typescript.project',

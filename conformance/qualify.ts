@@ -10,6 +10,7 @@ import type {
   QualificationSnapshot,
   QualificationSnapshotId,
   QualifySpecificationOptions,
+  QualifySpecificationsOptions,
 } from './model.ts'
 
 import { planConformance } from './plan.ts'
@@ -18,6 +19,21 @@ import { planConformance } from './plan.ts'
 export async function qualifySpecification(
   options: QualifySpecificationOptions,
 ): Promise<QualificationSnapshot> {
+  const [qualification] = await qualifySpecifications({
+    specifications: [options.specification],
+    analysis: options.analysis,
+    profiles: options.profiles,
+    ...(options.requestedProfiles ? { requestedProfiles: options.requestedProfiles } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+  })
+  if (!qualification) throw new Error('Single-specification qualification returned no result.')
+  return qualification
+}
+
+/** Qualify one corpus while leasing every pinned universe and capability view exactly once. */
+export async function qualifySpecifications(
+  options: QualifySpecificationsOptions,
+): Promise<readonly QualificationSnapshot[]> {
   options.signal?.throwIfAborted()
   const plan = planConformance(options.profiles, options.requestedProfiles)
   const queries = new Map<ProjectUniverseId, AnalysisQuery>()
@@ -35,91 +51,113 @@ export async function qualifySpecification(
         ),
       )
     }
-
-    const results = new Map<string, QualificationProfileResult>()
-    for (const profile of plan.ordered) {
+    const qualifications: QualificationSnapshot[] = []
+    for (const specification of options.specifications) {
       options.signal?.throwIfAborted()
-      const evidenceCompleteness = await requiredEvidence(
-        profile,
-        options.specification.module.id,
-        options.analysis.universes,
-        capabilityByUniverse,
-        queries,
+      qualifications.push(
+        await qualifyPreparedSpecification(
+          specification,
+          options,
+          plan,
+          queries,
+          capabilityByUniverse,
+        ),
       )
-      const unavailable = evidenceCompleteness.filter((entry) => !evidenceSatisfies(entry))
-      let rules: readonly ConformanceRuleResult[]
-      if (unavailable.length) {
-        rules = profile.manifest.rules.map((rule) => ({
-          rule,
-          status: 'indeterminate',
-          diagnostics: unavailable.map((entry) => unavailableDiagnostic(profile, rule, entry)),
-          coverage: emptyCoverage(),
-        }))
-      } else {
-        try {
-          rules = normalizeRules(
-            profile,
-            await profile.evaluate({
-              specification: options.specification,
-              analysis: options.analysis,
-              queries,
-              dependencyResults: results,
-              ...(options.signal ? { signal: options.signal } : {}),
-            }),
-          )
-          options.signal?.throwIfAborted()
-        } catch (error) {
-          if (options.signal?.aborted) options.signal.throwIfAborted()
-          rules = profile.manifest.rules.map((rule) => ({
-            rule,
-            status: 'error',
-            diagnostics: [
-              {
-                code: 'CONFORMANCE_PROFILE_FAILED',
-                severity: 'error',
-                message: error instanceof Error ? error.message : String(error),
-                profile: profile.manifest.id,
-                rule,
-                evidence: [],
-                inputs: [],
-              },
-            ],
-            coverage: emptyCoverage(),
-          }))
-        }
-      }
-      results.set(profile.manifest.id, {
-        id: profile.manifest.id,
-        version: profile.manifest.version,
-        status: aggregate(rules.map((rule) => rule.status)),
-        rules,
-        coverage: aggregateCoverage(rules),
-        evidenceCompleteness,
-      })
     }
-
-    const profiles = plan.ordered.map((profile) => results.get(profile.manifest.id)!)
-    const compiled = {
-      format: 'astrale.typespec.qualification' as const,
-      version: 2 as const,
-      specification: {
-        id: options.specification.id,
-        revision: options.specification.revision,
-        source: options.specification.source,
-      },
-      analysis: {
-        id: options.analysis.id,
-        universes: [...options.analysis.universes],
-      },
-      scope: plan.scope,
-      status: aggregate(profiles.map((profile) => profile.status)),
-      profiles,
-    }
-    const id = qualificationIdentity(compiled)
-    return immutable({ ...compiled, id })
+    return qualifications
   } finally {
     await Promise.all([...queries.values()].map((query) => query.dispose()))
   }
+}
+
+async function qualifyPreparedSpecification(
+  specification: QualifySpecificationOptions['specification'],
+  options: QualifySpecificationsOptions,
+  plan: ReturnType<typeof planConformance>,
+  queries: ReadonlyMap<ProjectUniverseId, AnalysisQuery>,
+  capabilityByUniverse: ReadonlyMap<ProjectUniverseId, ReadonlyMap<string, Completeness>>,
+): Promise<QualificationSnapshot> {
+  const results = new Map<string, QualificationProfileResult>()
+  for (const profile of plan.ordered) {
+    options.signal?.throwIfAborted()
+    const evidenceCompleteness = await requiredEvidence(
+      profile,
+      specification.module.id,
+      options.analysis.universes,
+      capabilityByUniverse,
+      queries,
+    )
+    const unavailable = evidenceCompleteness.filter((entry) => !evidenceSatisfies(entry))
+    let rules: readonly ConformanceRuleResult[]
+    if (unavailable.length) {
+      rules = profile.manifest.rules.map((rule) => ({
+        rule,
+        status: 'indeterminate',
+        diagnostics: unavailable.map((entry) => unavailableDiagnostic(profile, rule, entry)),
+        coverage: emptyCoverage(),
+      }))
+    } else {
+      try {
+        rules = normalizeRules(
+          profile,
+          await profile.evaluate({
+            specification,
+            analysis: options.analysis,
+            queries,
+            dependencyResults: results,
+            ...(options.signal ? { signal: options.signal } : {}),
+          }),
+        )
+        options.signal?.throwIfAborted()
+      } catch (error) {
+        if (options.signal?.aborted) options.signal.throwIfAborted()
+        rules = profile.manifest.rules.map((rule) => ({
+          rule,
+          status: 'error',
+          diagnostics: [
+            {
+              code: 'CONFORMANCE_PROFILE_FAILED',
+              severity: 'error',
+              message: error instanceof Error ? error.message : String(error),
+              profile: profile.manifest.id,
+              rule,
+              evidence: [],
+              inputs: [],
+            },
+          ],
+          coverage: emptyCoverage(),
+        }))
+      }
+    }
+    results.set(profile.manifest.id, {
+      id: profile.manifest.id,
+      version: profile.manifest.version,
+      status: aggregate(rules.map((rule) => rule.status)),
+      rules,
+      coverage: aggregateCoverage(rules),
+      evidenceCompleteness,
+    })
+  }
+
+  const profiles = plan.ordered.map((profile) => results.get(profile.manifest.id)!)
+  const compiled = {
+    format: 'astrale.typespec.qualification' as const,
+    version: 2 as const,
+    specification: {
+      id: specification.id,
+      revision: specification.revision,
+      source: specification.source,
+    },
+    analysis: {
+      id: options.analysis.id,
+      universes: [...options.analysis.universes],
+    },
+    scope: plan.scope,
+    status: aggregate(profiles.map((profile) => profile.status)),
+    profiles,
+  }
+  const id = qualificationIdentity(compiled)
+  return immutable({ ...compiled, id })
 }
 
 async function requiredEvidence(

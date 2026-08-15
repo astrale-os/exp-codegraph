@@ -8,6 +8,7 @@ import { createHash } from 'node:crypto'
 import {
   createMemoryAnalysisStore,
   deriveAnalysisId,
+  deriveAnalysisSnapshotSetId,
   type AnalysisGenerationId,
   type NativeModuleBoundary,
   type ProjectUniverseId,
@@ -46,6 +47,7 @@ const evidencePath = resolve(packageRoot, '.history/v2/evidence/self-host-qualif
 const nativeBinary = requiredArgument('--native-binary')
 const kernelRoot = requiredArgument('--kernel-root')
 const auditPath = argument('--audit')
+const outputPath = argument('--output')
 const selectedTarget = argument('--target')
 const writeEvidence = process.argv.includes('--write')
 
@@ -119,6 +121,7 @@ async function main(): Promise<void> {
     assert.equal(evidence.invariants.warmNoChangeReusedGeneration, true)
     const serialized = `${JSON.stringify(evidence, null, 2)}\n`
     assertPortable(serialized, targets, resolve(nativeBinary))
+    if (outputPath) await atomicWrite(resolve(outputPath), serialized)
     if (writeEvidence) {
       if (unresolved.length) {
         throw new Error(
@@ -167,7 +170,6 @@ async function qualifyTarget(
   const projects = groupByProject(resolution.boundaries)
   if (!projects.size) throw new Error(`${target.id} produced no analyzable TypeScript projects.`)
 
-  const memory = createMemoryAnalysisStore({ maximumRetainedGenerations: 2 })
   const memoryGenerations = new Map<ProjectUniverseId, AnalysisGenerationId>()
   let memorySnapshot: { readonly id: string; readonly inventory: string; readonly universes: readonly string[] }
   const memoryResults = new Map<string, {
@@ -177,10 +179,11 @@ async function qualifyTarget(
     readonly warmMs: number
     readonly warmReused: boolean
   }>()
-  try {
-    let index = 0
-    for (const [project, modules] of projects) {
-      progress(target.id, `memory ${++index}/${projects.size}: ${project}`)
+  let memoryIndex = 0
+  for (const [project, modules] of projects) {
+    const memory = createMemoryAnalysisStore({ maximumRetainedGenerations: 2 })
+    try {
+      progress(target.id, `memory ${++memoryIndex}/${projects.size}: ${project}`)
       const analyzed = await analyzeProject({
         target: target.id,
         root,
@@ -205,16 +208,14 @@ async function qualifyTarget(
       } finally {
         await analyzed.service.dispose()
       }
+    } finally {
+      await memory.dispose()
     }
-    const snapshot = await memory.snapshotSet(memoryGenerations, inventoryBefore.revision)
-    memorySnapshot = {
-      id: snapshot.id,
-      inventory: snapshot.inventory,
-      universes: snapshot.universes,
-    }
-    await snapshot.dispose()
-  } finally {
-    await memory.dispose()
+  }
+  memorySnapshot = {
+    id: deriveAnalysisSnapshotSetId(memoryGenerations, inventoryBefore.revision),
+    inventory: inventoryBefore.revision,
+    universes: [...memoryGenerations.keys()].sort(),
   }
 
   const sqliteFile = resolve(temporary, `${target.id}.sqlite`)
@@ -627,7 +628,7 @@ function requiredArgument(name: string): string {
   const value = argument(name)
   if (!value) {
     throw new Error(
-      'Usage: node qualification/v2/self-host/qualify.ts --native-binary <path> --kernel-root <path> [--target codegraph|kernel] [--audit <path>] [--write]',
+      'Usage: node qualification/v2/self-host/qualify.ts --native-binary <path> --kernel-root <path> [--target codegraph|kernel] [--audit <path>] [--output <path>] [--write]',
     )
   }
   return value

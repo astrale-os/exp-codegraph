@@ -171,6 +171,61 @@ export declare class Client {
     expect(after.api?.sourceRevision).not.toBe(before.api?.sourceRevision)
   })
 
+  it('admits large hierarchical APIs while retaining the declaration-byte ceiling', async () => {
+    const fragments = Object.fromEntries(
+      Array.from({ length: 160 }, (_, index) => [
+        `fragment-${index}.d.ts`,
+        `${index < 159 ? `import type { Fragment${index + 1} } from './fragment-${index + 1}.js'\n` : ''}export interface Fragment${index} { readonly next: ${index < 159 ? `Fragment${index + 1}` : 'string'} }\n`,
+      ]),
+    )
+    const current = await declarationFixture(
+      `import type { Fragment0 } from './fragment-0.js'\nexport interface Root { readonly value: Fragment0 }\n`,
+      fragments,
+    )
+    const result = await compileApi({ mainFile: current.api, projectRoot: current.root })
+
+    expect(result.ok).toBe(true)
+    expect(result.diagnostics).toEqual([])
+    expect(result.api?.sources).toHaveLength(161)
+  })
+
+  it('keeps semantic issue ranges relative to the analyzed project rather than process cwd', async () => {
+    const current = await declarationFixture(`
+export interface MixedRecord {
+  readonly fixed: string
+  readonly [key: string]: string
+}
+`)
+    const result = await compileApi({ mainFile: current.api, projectRoot: current.root })
+
+    expect(result.ok).toBe(false)
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        code: 'TYPESCRIPT_INDEX_SIGNATURE_UNSUPPORTED',
+        range: expect.objectContaining({ file: '.spec/api.d.ts' }),
+      }),
+    )
+  })
+
+  it('represents inherited index semantics through heritage without inventing an own signature', async () => {
+    const current = await declarationFixture(`
+/** @conformance identity */
+export interface StringRecord {
+  readonly [key: string]: string
+}
+export interface BrandedRecord extends StringRecord {
+  readonly brand: 'record'
+}
+`)
+    const result = await compileApi({ mainFile: current.api, projectRoot: current.root })
+    const branded = result.api?.surface.declarations.find(({ name }) => name === 'BrandedRecord')
+
+    expect(result.ok).toBe(true)
+    expect(result.diagnostics).toEqual([])
+    expect(branded?.extends).toHaveLength(1)
+    expect(branded?.properties).toContainEqual(expect.objectContaining({ name: 'brand' }))
+  })
+
   it('keeps platform-global identity stable across ambient declaration merging', async () => {
     const current = await declarationFixture(
       `import type { RuntimeGlobals } from './runtime-globals.js'\nexport interface Lease { readonly signal: AbortSignal; readonly globals?: RuntimeGlobals }\n`,

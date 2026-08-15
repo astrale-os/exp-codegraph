@@ -121,7 +121,18 @@ export interface QualifySpecificationOptions {
   readonly signal?: AbortSignal
 }
 
+export interface QualifySpecificationsOptions {
+  readonly specifications: readonly SpecificationSnapshot[]
+  readonly analysis: AnalysisSnapshotSet
+  readonly profiles: readonly ConformanceProfile[]
+  readonly requestedProfiles?: readonly string[]
+  readonly signal?: AbortSignal
+}
+
 export function qualifySpecification(options: QualifySpecificationOptions): Promise<QualificationSnapshot>
+export function qualifySpecifications(
+  options: QualifySpecificationsOptions,
+): Promise<readonly QualificationSnapshot[]>
 
 export const SPECIFICATION_VALIDITY_PROFILE_ID: 'contract.specification.validity'
 export const MODULE_STRUCTURE_PROFILE_ID: 'contract.module.structure'

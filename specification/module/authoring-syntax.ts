@@ -3,13 +3,22 @@ import ts from 'typescript'
 import type { Diagnostic } from '../../source/diagnostic.ts'
 
 export const AUTHORING_SPECIFIER = '@astrale-os/codegraph/authoring'
+/** Temporary source-compatible spelling retained while repositories migrate to Codegraph. */
+export const AUTHORING_SPECIFIER_ALIASES = [
+  AUTHORING_SPECIFIER,
+  '@astrale-os/spec/authoring',
+] as const
+
+export function isAuthoringSpecifier(value: string): boolean {
+  return (AUTHORING_SPECIFIER_ALIASES as readonly string[]).includes(value)
+}
 
 export function authoringHelperBinding(file: ts.SourceFile, imported: string): string | undefined {
   for (const statement of file.statements) {
     if (
       !ts.isImportDeclaration(statement) ||
       !ts.isStringLiteral(statement.moduleSpecifier) ||
-      statement.moduleSpecifier.text !== AUTHORING_SPECIFIER
+      !isAuthoringSpecifier(statement.moduleSpecifier.text)
     )
       continue
     const bindings = statement.importClause?.namedBindings
