@@ -6,7 +6,7 @@ import type {
   PackagePatternResource,
   PackageSpecificationResource,
   SchemaResource,
-} from '../model.ts'
+} from '../resource/index.ts'
 
 import { matchesPackagePattern } from './package.ts'
 

@@ -8,12 +8,13 @@ import type {
   LayoutIgnorePattern,
   LayoutObservation,
   LayoutObservedKind,
-} from '../model.ts'
+} from '../resource/index.ts'
 
 import { sourceRevision } from '../../source/file.ts'
 import {
   AUTHORING_SPECIFIER,
   authoringHelperBinding,
+  isAuthoringSpecifier,
   literalProperty,
   nodeDiagnostic,
   plainStringLiteral as stringLiteral,
@@ -57,7 +58,7 @@ export function compileLayout(source: string, text: string): LayoutCompilation {
     if (ts.isImportDeclaration(statement)) {
       if (
         !ts.isStringLiteral(statement.moduleSpecifier) ||
-        statement.moduleSpecifier.text !== AUTHORING_SPECIFIER
+        !isAuthoringSpecifier(statement.moduleSpecifier.text)
       ) {
         diagnostics.push(
           nodeDiagnostic(

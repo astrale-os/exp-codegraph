@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimchecker "github.com/microsoft/typescript-go/shim/checker"
@@ -33,79 +35,228 @@ var supportedCapabilities = []string{
 }
 
 type extractor struct {
-	root       string
-	universe   string
-	checker    *shimchecker.Checker
-	sources    map[string]sourceRecord
-	symbolIDs  map[*shimast.Symbol]string
-	symbolSeen map[string]symbolFactPayload
-	modules    []moduleBoundary
+	root                        string
+	universe                    string
+	plan                        projectionPlan
+	checker                     *shimchecker.Checker
+	sources                     map[string]sourceRecord
+	symbolIDs                   map[*shimast.Symbol]string
+	symbolSeen                  map[string]symbolFactPayload
+	modules                     []moduleBoundary
+	payloadCodecs               map[string]bool
+	bodyPackingError            error
+	maximumSemanticPayloadBytes int
+	semanticPayloadBytes        int
+	payloadEncodingError        error
 }
 
-func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary) ([]factShard, []sourceRecord, error) {
+func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
+	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, nil, nil, telemetry, requestID)
+	var shards []factShard
+	telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
+		"capabilities": strings.Join(plan.capabilities(), ","),
+		"stages":       strings.Join(plan.stages(), ","),
+	})
+	if plan.project {
+		phase := time.Now()
+		shards = append(shards, x.projectShard(program))
+		telemetry.record(requestID, "projection.project", phase, nil)
+	}
+	if plan.diagnostics {
+		phase := time.Now()
+		diagnostic := x.diagnosticShard(program)
+		shards = append(shards, diagnostic)
+		telemetry.record(requestID, "projection.diagnostics", phase, map[string]any{"facts": len(diagnostic.Facts)})
+	}
+	if plan.modules {
+		phase := time.Now()
+		moduleShards, err := x.moduleShards(program)
+		if err != nil {
+			return nil, nil, err
+		}
+		shards = append(shards, moduleShards...)
+		telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(moduleShards)})
+	}
+	if plan.sourceOwned() {
+		sourceShards, err := x.sourceShards(files, nil, telemetry, requestID)
+		if err != nil {
+			return nil, nil, err
+		}
+		shards = append(shards, sourceShards...)
+	}
+	telemetry.record(requestID, "facts.semantic-payloads", time.Now(), map[string]any{
+		"bytes": x.semanticPayloadBytes,
+	})
+	if x.payloadEncodingError != nil {
+		return nil, nil, x.payloadEncodingError
+	}
+	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
+	return shards, records, nil
+}
+
+// prepareExtractor installs a complete source identity table while hashing only
+// the selected sources when prior records are available. Semantic extraction
+// can therefore resolve declarations outside a private edit without re-reading
+// or retaining any unaffected fact payload.
+func prepareExtractor(
+	root, universe string,
+	program *driver.Program,
+	modules []moduleBoundary,
+	plan projectionPlan,
+	payloadCodecs map[string]bool,
+	maximumSemanticPayloadBytes int,
+	prior map[string]sourceRecord,
+	selected map[string]bool,
+	telemetry *nativeTelemetry,
+	requestID int,
+) (*extractor, []*shimast.SourceFile, []sourceRecord) {
 	x := &extractor{
-		root: root, universe: universe, checker: program.Checker,
+		root: root, universe: universe, plan: plan, checker: program.Checker,
 		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
-		symbolSeen: map[string]symbolFactPayload{}, modules: modules,
+		symbolSeen: map[string]symbolFactPayload{}, modules: modules, payloadCodecs: payloadCodecs,
+		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
 	}
 	files := program.SourceFiles()
 	sort.Slice(files, func(i, j int) bool { return files[i].FileName() < files[j].FileName() })
+	phase := time.Now()
 	for _, file := range files {
 		path, owned := x.ownedPath(file.FileName())
 		if !owned {
 			continue
 		}
+		if record, exists := prior[file.FileName()]; exists && selected != nil && !selected[file.FileName()] {
+			x.sources[file.FileName()] = record
+			continue
+		}
 		source := deriveID("source", "typescript:"+universe, map[string]any{"path": path})
 		digest := hashText(file.Text())
 		x.sources[file.FileName()] = sourceRecord{
-			Path: path, Source: source, TextDigest: digest,
+			Physical: file.FileName(), Path: path, Source: source, TextDigest: digest,
 			Revision: deriveID("source-revision", source, map[string]any{"digest": digest}),
 		}
 	}
-	var shards []factShard
+	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources)})
 	var records []sourceRecord
-	shards = append(shards, x.projectShard(program), x.diagnosticShard(program))
-	moduleShards, err := x.moduleShards(program)
-	if err != nil {
-		return nil, nil, err
-	}
-	shards = append(shards, moduleShards...)
 	for _, file := range files {
 		record, ok := x.sources[file.FileName()]
 		if !ok {
 			continue
 		}
 		records = append(records, record)
-		shards = append(shards, x.sourceShard(file, record))
-		x.discoverSymbols(file)
 	}
+	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	return x, files, records
+}
+
+// sourceShards projects the source-owned namespaces for selected physical
+// files. A nil selection denotes the complete owned compiler universe.
+func (x *extractor) sourceShards(
+	files []*shimast.SourceFile,
+	selected map[string]bool,
+	telemetry *nativeTelemetry,
+	requestID int,
+) ([]factShard, error) {
+	var shards []factShard
+	selectedCount := 0
 	for _, file := range files {
-		record, ok := x.sources[file.FileName()]
+		if selected != nil && !selected[file.FileName()] {
+			continue
+		}
+		_, ok := x.sources[file.FileName()]
 		if !ok {
 			continue
 		}
-		if shard := x.symbolShard(file, record); len(shard.Facts) != 0 {
-			shards = append(shards, shard)
+		selectedCount++
+	}
+	if x.plan.sources {
+		phase := time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			shards = append(shards, x.sourceShard(file, record))
 		}
-		if shard := x.occurrenceShard(file, record); len(shard.Facts) != 0 {
-			shards = append(shards, shard)
+		telemetry.record(requestID, "projection.sources", phase, map[string]any{"sources": selectedCount})
+	}
+	if x.plan.symbols {
+		phase := time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			if _, ok := x.sources[file.FileName()]; ok {
+				x.discoverSymbols(file)
+			}
 		}
-		shards = append(shards, x.bodyShards(file, record)...)
+		telemetry.record(requestID, "projection.symbol-discovery", phase, map[string]any{"sources": selectedCount})
+		phase = time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			if shard := x.symbolShard(file, record); len(shard.Facts) != 0 {
+				shards = append(shards, shard)
+			}
+		}
+		telemetry.record(requestID, "projection.symbols", phase, map[string]any{"sources": selectedCount})
+	}
+	if x.plan.occurrences {
+		phase := time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			if shard := x.occurrenceShard(file, record); len(shard.Facts) != 0 {
+				shards = append(shards, shard)
+			}
+		}
+		telemetry.record(requestID, "projection.occurrences", phase, map[string]any{"sources": selectedCount})
+	}
+	if x.plan.bodies {
+		phase := time.Now()
+		bodyShards := 0
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			bodies, err := x.bodyShards(file, record)
+			if err != nil {
+				return nil, err
+			}
+			bodyShards += len(bodies)
+			shards = append(shards, bodies...)
+		}
+		telemetry.record(requestID, "projection.bodies", phase, map[string]any{"sources": selectedCount, "shards": bodyShards})
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
-	return shards, records, nil
+	return shards, nil
 }
 
 func (x *extractor) projectShard(program *driver.Program) factShard {
 	configuration := []string{program.ParsedConfig.ConfigName()}
 	configuration = append(configuration, program.ParsedConfig.ExtendedSourceFiles()...)
 	for index, path := range configuration {
-		configuration[index], _ = x.ownedPath(path)
+		configuration[index], _ = x.publicSourceCoordinate(path)
 	}
 	references := append([]string{}, program.ParsedConfig.ResolvedProjectReferencePaths()...)
 	for index, path := range references {
-		references[index], _ = x.ownedPath(path)
+		references[index], _ = x.publicSourceCoordinate(path)
 	}
 	payload := projectFactPayload{
 		Universe:           x.universe,
@@ -128,7 +279,7 @@ func (x *extractor) diagnosticShard(program *driver.Program) factShard {
 		var evidence []sourceSpan
 		var diagnosticSpan *sourceSpan
 		if diagnostic.File != "" {
-			file, _ = x.ownedPath(diagnostic.File)
+			file, _ = x.publicSourceCoordinate(diagnostic.File)
 			if record, exists := x.sources[diagnostic.File]; exists && diagnostic.Start != nil {
 				end := *diagnostic.Start + 1
 				if diagnostic.Length != nil && *diagnostic.Length > 0 {
@@ -215,6 +366,21 @@ func (x *extractor) newFact(
 	evidence []sourceSpan,
 	completion completeness,
 ) fact {
+	if x.payloadEncodingError == nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)
+		} else {
+			x.semanticPayloadBytes += len(encoded)
+			if x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
+				x.payloadEncodingError = fmt.Errorf(
+					"semantic fact payloads exceed configured limit: bytes=%d limit=%d",
+					x.semanticPayloadBytes,
+					x.maximumSemanticPayloadBytes,
+				)
+			}
+		}
+	}
 	if evidence == nil {
 		evidence = []sourceSpan{}
 	}
@@ -258,7 +424,7 @@ func (x *extractor) symbolID(symbol *shimast.Symbol) string {
 	if file == nil {
 		return ""
 	}
-	path, owned := x.ownedPath(file.FileName())
+	path, owned := x.symbolSourceCoordinate(file.FileName())
 	name := stableSymbolName(symbol)
 	if name == "" {
 		name = "<anonymous>"
@@ -305,6 +471,20 @@ func (x *extractor) symbolID(symbol *shimast.Symbol) string {
 		}
 	}
 	return id
+}
+
+// symbolSourceCoordinate preserves ownership as an extraction concern while
+// always using a public, relocatable coordinate as semantic identity. In
+// particular, a dependency can be reported beneath the checkout in one
+// installation and through a symlink outside it in another; those physical
+// layouts must still identify the same package declaration.
+func (x *extractor) symbolSourceCoordinate(path string) (string, bool) {
+	ownedPath, owned := x.ownedPath(path)
+	if owned {
+		return ownedPath, true
+	}
+	coordinate, _ := x.publicSourceCoordinate(path)
+	return coordinate, false
 }
 
 func (x *extractor) identityCollisions(file *shimast.SourceFile, identityKey string) int {

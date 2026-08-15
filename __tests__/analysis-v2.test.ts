@@ -5,13 +5,16 @@ import { mkdtemp, mkdir, opendir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { brotliCompressSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS,
   deriveAnalysisId,
+  deriveAnalysisSnapshotSetId,
   createProcessNativeAnalysisSessionFactory,
   createNodeSourceTextReader,
+  factHeader,
   factShardDigest,
   generationIdentity,
   planPasses,
@@ -44,9 +47,21 @@ import {
 import { combineCompleteness } from '../analysis/internal/completeness.ts'
 import { materializeTransaction, serializeMaterialized } from '../analysis/internal/state.ts'
 import { stableJson } from '../analysis/identity/model.ts'
+import {
+  admitFactPayloadCodecs,
+  bindPhysicalFact,
+  createFactWithPhysicalPayload,
+} from '../analysis/facts/representation/index.ts'
 import { createMemoryAnalysisStore } from '../analysis/memory/index.ts'
-import { createSQLiteAnalysisStore } from '../analysis/sqlite/index.ts'
-import { validateFunctionBodyIR, type FunctionBodyIR } from '../analysis/typescript/body/index.ts'
+import {
+  createSQLiteAnalysisStore,
+  DEFAULT_SQLITE_PAYLOAD_MATERIALIZATION,
+} from '../analysis/sqlite/index.ts'
+import {
+  validateFunctionBodyIR,
+  type FunctionBodyIR,
+} from '../analysis/typescript/body/index.ts'
+import { TYPESCRIPT_BODY_PAYLOAD_CODEC } from '../analysis/typescript/physical/index.ts'
 import {
   createTypeScriptFactReader,
   createTypeScriptAnalysisPipeline,
@@ -73,10 +88,15 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     expect(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS).toEqual({
       maximumFrameBytes: 64 * 1_024 * 1_024,
       transactionChunkFrameBytes: 8 * 1_024 * 1_024,
-      maximumTransactionBytes: 256 * 1_024 * 1_024,
+      maximumTransactionBytes: 384 * 1_024 * 1_024,
+      maximumPhysicalTransactionBytes: 512 * 1_024 * 1_024,
       maximumErrorBytes: 1 * 1_024 * 1_024,
     })
     expect(Object.isFrozen(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS)).toBe(true)
+  })
+
+  it('defaults SQLite to independently addressable payloads', () => {
+    expect(DEFAULT_SQLITE_PAYLOAD_MATERIALIZATION).toBe('inline-json')
   })
 
   it('canonicalizes Unicode separators exactly across JavaScript and Go', () => {
@@ -201,6 +221,7 @@ describe('TypeSpec V2 generic analysis foundation', () => {
         'memory',
         'pass',
         'policy',
+        'profiling',
         'protocol',
         'query',
         'source',
@@ -212,16 +233,18 @@ describe('TypeSpec V2 generic analysis foundation', () => {
       source: new Set(['identity']),
       pass: new Set(['facts', 'generation', 'identity', 'query']),
       policy: new Set(['facts', 'identity', 'pass', 'query']),
+      profiling: new Set(),
       internal: new Set(['facts', 'generation', 'identity', 'query']),
-      memory: new Set(['generation', 'identity', 'internal', 'query']),
-      protocol: new Set(['facts', 'generation', 'identity']),
-      sqlite: new Set(['facts', 'generation', 'identity', 'internal', 'query']),
+      memory: new Set(['generation', 'identity', 'internal', 'profiling', 'query']),
+      protocol: new Set(['facts', 'generation', 'identity', 'profiling']),
+      sqlite: new Set(['facts', 'generation', 'identity', 'internal', 'profiling', 'query']),
       typescript: new Set([
         'facts',
         'generation',
         'identity',
         'memory',
         'pass',
+        'profiling',
         'protocol',
         'query',
       ]),
@@ -291,11 +314,28 @@ describe('TypeSpec V2 generic analysis foundation', () => {
       sidecar,
       `
 import { createInterface } from 'node:readline'
+const unsupported = ['--payload-codecs-json']
+  .filter((argument) => process.argv.includes(argument))
+if (unsupported.length) throw new Error('unexpected optional arguments: ' + unsupported.join(','))
+const physicalLimit = process.argv.indexOf('--maximum-physical-transaction-bytes')
+if (physicalLimit < 0 || process.argv[physicalLimit + 1] !== String(512 * 1024 * 1024)) {
+  throw new Error('resolved physical transaction limit was not forwarded')
+}
 const lines = createInterface({ input: process.stdin })
 lines.on('line', (line) => {
   const request = JSON.parse(line)
   if (request.kind === 'dispose') process.exit(0)
   if (request.changed?.includes('hang')) return
+  if (request.changed?.includes('legacy-error')) {
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      protocolVersion: 1,
+      kind: 'error',
+      code: 'LEGACY_ERROR',
+      message: 'legacy protocol-v1 omitted false retryability'
+    }) + '\\n')
+    return
+  }
   if (request.changed?.includes('malformed')) {
     process.stdout.write(JSON.stringify({
       id: request.id,
@@ -342,8 +382,20 @@ lines.on('line', (line) => {
       kind: 'unchanged',
       generation,
     })
+    expect(await session.request({
+      id: 2,
+      kind: 'refresh',
+      changed: ['legacy-error'],
+    })).toEqual({
+      id: 2,
+      protocolVersion: 1,
+      kind: 'error',
+      code: 'LEGACY_ERROR',
+      message: 'legacy protocol-v1 omitted false retryability',
+      retryable: false,
+    })
     await session.dispose()
-    expect(() => session.request({ id: 2, kind: 'refresh' })).toThrow('disposed')
+    expect(() => session.request({ id: 3, kind: 'refresh' })).toThrow('disposed')
 
     const aborted = await factory.open(project)
     const controller = new AbortController()
@@ -360,6 +412,70 @@ lines.on('line', (line) => {
       malformed.request({ id: 1, kind: 'refresh', changed: ['malformed'] }),
     ).rejects.toThrow('invalid protocol frame')
     await malformed.dispose()
+  })
+
+  it('keeps diagnostic telemetry on a separate descriptor and semantics unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-telemetry-session-'))
+    temporary.push(root)
+    const sidecar = join(root, 'sidecar.mjs')
+    const generation = deriveAnalysisId('generation', 'telemetry-sidecar', {})
+    await writeFile(
+      sidecar,
+      `
+import { writeSync } from 'node:fs'
+import { createInterface } from 'node:readline'
+const profiled = process.argv.includes('--telemetry-fd')
+const lines = createInterface({ input: process.stdin })
+lines.on('line', (line) => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+  if (profiled) writeSync(3, JSON.stringify({
+    format: 'astrale.codegraph.analysis-telemetry',
+    version: 1,
+    component: 'native',
+    phase: 'fixture.refresh',
+    request: request.id,
+    durationNs: 1,
+    metrics: { facts: 0 }
+  }) + '\\n')
+  process.stdout.write(JSON.stringify({
+    id: request.id,
+    protocolVersion: 1,
+    kind: 'unchanged',
+    generation: ${JSON.stringify(generation)}
+  }) + '\\n')
+})
+`,
+    )
+    const project = {
+      root,
+      config: 'tsconfig.json',
+      capabilities: ['fixture'],
+    }
+    const plain = await createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+    }).open(project)
+    const events: import('../analysis/index.ts').AnalysisTelemetryEvent[] = []
+    const profiled = await createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+      telemetry: (event) => events.push(event),
+    }).open(project)
+    const request = { id: 1, kind: 'refresh' as const }
+    const [plainResponse, profiledResponse] = await Promise.all([
+      plain.request(request),
+      profiled.request(request),
+    ])
+    expect(profiledResponse).toEqual(plainResponse)
+    await expect.poll(() => events.some((event) => event.phase === 'fixture.refresh')).toBe(true)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ component: 'native', phase: 'fixture.refresh', request: 1 }),
+        expect.objectContaining({ component: 'transport', phase: 'request.roundtrip', request: 1 }),
+      ]),
+    )
+    await Promise.all([plain.dispose(), profiled.dispose()])
   })
 
   it('assembles bounded native transaction frames and rejects unsafe stream sequences', async () => {
@@ -444,6 +560,7 @@ lines.on('line', (line) => {
       arguments: [sidecar],
       maximumFrameBytes: 1_024,
       maximumTransactionBytes: 32 * 1_024,
+      maximumPhysicalTransactionBytes: 32 * 1_024,
     })
     const project = {
       root,
@@ -485,6 +602,68 @@ lines.on('line', (line) => {
     await transactionLimit.dispose()
   })
 
+  it('enforces decoded semantic payload limits independently of compact wire size', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-native-semantic-limit-'))
+    temporary.push(root)
+    const sidecar = join(root, 'sidecar.mjs')
+    const semantic = 'x'.repeat(2_048)
+    const transaction = buildTransaction({ sequence: 1, values: [semantic] })
+    const wire = structuredClone(transaction) as unknown as {
+      upserts: { facts: Record<string, unknown>[] }[]
+    }
+    for (const shard of wire.upserts) {
+      for (const fact of shard.facts) {
+        delete fact.payload
+        fact.physicalPayload = {
+          codec: 'qualification.semantic-limit/1',
+          data: 'small-token',
+        }
+      }
+    }
+    await writeFile(
+      sidecar,
+      `
+import { createInterface } from 'node:readline'
+const transaction = ${JSON.stringify(wire)}
+const lines = createInterface({ input: process.stdin })
+lines.on('line', (line) => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+  process.stdout.write(JSON.stringify({
+    id: request.id,
+    protocolVersion: 1,
+    kind: 'transaction',
+    transaction,
+  }) + '\\n')
+})
+`,
+    )
+    const factory = createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+      maximumTransactionBytes: 1_024,
+      maximumPhysicalTransactionBytes: 64 * 1_024,
+      payloadCodecs: [
+        {
+          id: 'qualification.semantic-limit/1',
+          decode: () => semantic,
+        },
+      ],
+    })
+    const session = await factory.open({
+      root,
+      config: 'tsconfig.json',
+      capabilities: ['fixture.values'],
+    })
+    await expect(session.request({ id: 1, kind: 'refresh' })).rejects.toMatchObject({
+      message: 'Native analysis returned an invalid protocol frame.',
+      cause: expect.objectContaining({
+        message: expect.stringContaining('decoded semantic payload limit'),
+      }),
+    })
+    await session.dispose()
+  })
+
   it('validates semantic shard digests without a cyclic enclosing-generation hash', () => {
     const transaction = buildTransaction({ sequence: 1, values: ['one', 'two'] })
     expect(transaction.upserts.map(validateFactShard)).toEqual([[]])
@@ -507,7 +686,8 @@ lines.on('line', (line) => {
       await store.commit(first)
       const pinned = await store.open(first.next.universe)
       try {
-        const page = await pinned.facts({}, { limit: 2 })
+        expect((await pinned.facts({}, { limit: 2 })).total).toBeUndefined()
+        const page = await pinned.facts({}, { limit: 2, includeTotal: true })
         const expected = first.upserts[0]!.facts.map((fact) => fact.payload)
         expect(page.facts.map((fact) => fact.payload)).toEqual(expected.slice(0, 2))
         expect(page.total).toBe(3)
@@ -734,6 +914,183 @@ lines.on('line', (line) => {
     }
   })
 
+  it('preserves arbitrary semantic payload keys across memory and SQLite', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-semantic-payload-'))
+    temporary.push(root)
+    const payload = { $codegraph: 'semantic-domain-tag', data: 1 }
+    const transaction = buildTransaction({ sequence: 1, values: [payload] })
+    const memory = createMemoryAnalysisStore()
+    try {
+      await memory.commit(transaction)
+      expect(await snapshotOfFacts(memory, transaction.next.universe)).toEqual([payload])
+      for (const payloadMaterialization of ['inline-json', 'shard-brotli'] as const) {
+        const options = {
+          file: join(root, `${payloadMaterialization}.sqlite`),
+          namespace: `semantic-payload-${payloadMaterialization}`,
+          payloadMaterialization,
+        }
+        const sqlite = await createSQLiteAnalysisStore(options)
+        try {
+          await sqlite.commit(transaction)
+          expect(await snapshotOfFacts(sqlite, transaction.next.universe)).toEqual([payload])
+        } finally {
+          await sqlite.dispose()
+        }
+        const reopened = await createSQLiteAnalysisStore(options)
+        try {
+          expect(await snapshotOfFacts(reopened, transaction.next.universe)).toEqual([payload])
+        } finally {
+          await reopened.dispose()
+        }
+      }
+    } finally {
+      await memory.dispose()
+    }
+  })
+
+  it('decodes physical payload identity ephemerally and memoizes public reads', () => {
+    const transaction = buildTransaction({ sequence: 1, values: ['semantic'] })
+    const original = transaction.upserts[0]!.facts[0]!
+    let decodes = 0
+    const codecs = admitFactPayloadCodecs([
+      {
+        id: 'qualification.counted/1',
+        decode(data) {
+          decodes += 1
+          return { data }
+        },
+      },
+    ])
+    const fact = createFactWithPhysicalPayload(
+      {
+        id: original.id,
+        generation: original.generation,
+        namespace: original.namespace,
+        schemaVersion: original.schemaVersion,
+        kind: original.kind,
+        subject: original.subject,
+        completeness: original.completeness,
+        provenance: original.provenance,
+      },
+      { codec: 'qualification.counted/1', data: 'physical' },
+      codecs,
+      'qualification fact',
+    )
+    const draft = {
+      key: transaction.upserts[0]!.key,
+      namespace: fact.namespace,
+      schemaVersion: fact.schemaVersion,
+      completion: { kind: 'complete' } as const,
+      facts: [fact],
+    }
+    const digest = factShardDigest(draft)
+    const afterIdentity = decodes
+    const shard = { ...draft, digest }
+    expect(validateFactShard(shard)).toEqual([])
+    expect(decodes).toBe(afterIdentity + 1)
+    expect(validateFactShard(shard)).toEqual([])
+    expect(decodes).toBe(afterIdentity + 1)
+    const first = fact.payload
+    const second = fact.payload
+    expect(first).toBe(second)
+    expect(first).toEqual({ data: 'physical' })
+    expect(decodes).toBe(afterIdentity + 2)
+  })
+
+  it('selects memory and SQLite headers without decoding physical payloads', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-header-hydration-'))
+    temporary.push(root)
+    const semantic = buildTransaction({ sequence: 1, values: ['semantic'] })
+    const original = semantic.upserts[0]!.facts[0]!
+    let decodes = 0
+    const codec = {
+      id: 'qualification.header-counted/1',
+      decode(data: unknown) {
+        decodes += 1
+        return { data }
+      },
+    }
+    const codecs = admitFactPayloadCodecs([codec])
+    const physical = createFactWithPhysicalPayload(
+      {
+        id: original.id,
+        generation: original.generation,
+        namespace: original.namespace,
+        schemaVersion: original.schemaVersion,
+        kind: original.kind,
+        subject: original.subject,
+        completeness: original.completeness,
+        provenance: original.provenance,
+      },
+      { codec: codec.id, data: 'physical' },
+      codecs,
+      'header qualification fact',
+    )
+    const draft = {
+      key: semantic.upserts[0]!.key,
+      namespace: physical.namespace,
+      schemaVersion: physical.schemaVersion,
+      completion: { kind: 'complete' } as const,
+      facts: [physical],
+    }
+    const shard = { ...draft, digest: factShardDigest(draft) }
+    const manifest = [shardReference(shard)]
+    const generation = generationIdentity(
+      {
+        universe: semantic.next.universe,
+        producer: semantic.next.producer,
+        sourceManifest: semantic.next.sourceManifest,
+        capabilities: semantic.next.capabilities,
+      },
+      manifest,
+    )
+    const transaction: FactTransaction = {
+      protocolVersion: 1,
+      next: { ...semantic.next, id: generation },
+      manifest,
+      upserts: [{ ...shard, facts: [bindPhysicalFact(physical, generation)] }],
+      deletes: [],
+    }
+    const memory = createMemoryAnalysisStore()
+    const sqlite = await createSQLiteAnalysisStore({
+      file: join(root, 'analysis.sqlite'),
+      namespace: 'header-hydration',
+      payloadCodecs: [codec],
+      payloadMaterialization: 'shard-brotli',
+    })
+    try {
+      await memory.commit(transaction)
+      await sqlite.commit(transaction)
+      const afterCommit = decodes
+      const memoryQuery = await memory.open(transaction.next.universe)
+      const sqliteQuery = await sqlite.open(transaction.next.universe)
+      try {
+        for (const query of [memoryQuery, sqliteQuery]) {
+          const page = await query.headers({}, { limit: 1 })
+          expect(page.headers).toHaveLength(1)
+          expect(page.total).toBeUndefined()
+          expect((await query.headers({}, { limit: 1, includeTotal: true })).total).toBe(1)
+          expect(Object.hasOwn(page.headers[0]!, 'payload')).toBe(false)
+          expect(page.headers[0]).toEqual(factHeader(transaction.upserts[0]!.facts[0]!))
+          expect(await query.headersById([original.id])).toEqual(page.headers)
+          const exported = []
+          for await (const header of query.exportHeaders()) exported.push(header)
+          expect(exported).toEqual(page.headers)
+        }
+        expect(decodes).toBe(afterCommit)
+        expect((await memoryQuery.factsById([original.id]))[0]!.payload).toEqual({ data: 'physical' })
+        expect((await sqliteQuery.factsById([original.id]))[0]!.payload).toEqual({ data: 'physical' })
+        expect(decodes).toBe(afterCommit + 2)
+      } finally {
+        await sqliteQuery.dispose()
+        await memoryQuery.dispose()
+      }
+    } finally {
+      await sqlite.dispose()
+      await memory.dispose()
+    }
+  })
+
   it('binds snapshot-set identity to the exact repository inventory revision', async () => {
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-snapshot-inventory-'))
     temporary.push(root)
@@ -758,6 +1115,7 @@ lines.on('line', (line) => {
       const memorySecond = await memory.snapshotSet(generations, secondInventory)
       try {
         expect(memoryFirst.id).toBe(sqliteFirst.id)
+        expect(memoryFirst.id).toBe(deriveAnalysisSnapshotSetId(generations, firstInventory))
         expect(memoryFirst.inventory).toBe(firstInventory)
         expect(sqliteFirst.inventory).toBe(firstInventory)
         expect(memorySecond.id).not.toBe(memoryFirst.id)
@@ -800,14 +1158,25 @@ lines.on('line', (line) => {
         const left = await memory.open(transaction.next.universe)
         const right = await sqlite.open(transaction.next.universe)
         try {
-          const leftPage = await left.facts(filter, { limit: 1 })
-          const rightPage = await right.facts(filter, { limit: 1 })
+          const leftPage = await left.facts(filter, { limit: 1, includeTotal: true })
+          const rightPage = await right.facts(filter, { limit: 1, includeTotal: true })
           expect(rightPage.facts).toEqual(leftPage.facts)
           expect(rightPage.total).toBe(leftPage.total)
           if (rightPage.nextCursor) {
             expect(
               (await right.facts(filter, { limit: 1, cursor: rightPage.nextCursor })).facts,
             ).toEqual((await left.facts(filter, { limit: 10 })).facts.slice(1))
+          }
+          const leftHeaders = await left.headers(filter, { limit: 1, includeTotal: true })
+          const rightHeaders = await right.headers(filter, { limit: 1, includeTotal: true })
+          expect(rightHeaders.headers).toEqual(leftHeaders.headers)
+          expect(rightHeaders.total).toBe(leftHeaders.total)
+          expect(Boolean(rightHeaders.nextCursor)).toBe(Boolean(leftHeaders.nextCursor))
+          expect(rightHeaders.headers).toEqual(leftPage.facts.map(factHeader))
+          if (rightHeaders.nextCursor) {
+            expect(
+              (await right.headers(filter, { limit: 1, cursor: rightHeaders.nextCursor })).headers,
+            ).toEqual((await left.headers(filter, { limit: 10 })).headers.slice(1))
           }
         } finally {
           await right.dispose()
@@ -862,8 +1231,120 @@ lines.on('line', (line) => {
       expect(tableCount(database, 'analysis_facts')).toBe(2)
       expect(tableCount(database, 'analysis_fact_evidence')).toBe(1)
       expect(tableCount(database, 'analysis_fact_inputs')).toBe(1)
+      expect(
+        database
+          .prepare('SELECT DISTINCT payload_layout FROM analysis_shards')
+          .all()
+          .map((row) => (row as { readonly payload_layout: string }).payload_layout),
+      ).toEqual(['inline-json/1'])
+      expect(
+        database
+          .prepare('PRAGMA table_info(analysis_shards)')
+          .all()
+          .map((column) => (column as { readonly name: string }).name),
+      ).toContain('payload_layout')
+      expect(
+        database
+          .prepare("PRAGMA index_list('analysis_facts')")
+          .all()
+          .map((index) => (index as { readonly name: string }).name),
+      ).toContain('analysis_facts_by_completeness')
     } finally {
       database.close()
+    }
+  })
+
+  it('rejects a delta when an unaffected shard still consumes a removed fact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-delta-closure-'))
+    temporary.push(root)
+    const base = buildTwoShardTransaction()
+    const owner = base.upserts.find((shard) => shard.namespace === 'fixture.values')!
+    const consumer = base.upserts.find((shard) => shard.namespace === 'fixture.other')!
+    const consumerDraft = {
+      ...consumer,
+      facts: consumer.facts.map((fact) => ({
+        ...fact,
+        provenance: { ...fact.provenance, inputs: [owner.facts[0]!.id] },
+      })),
+    }
+    const consuming = { ...consumerDraft, digest: factShardDigest(consumerDraft) }
+    const initialDrafts = [owner, consuming].sort((left, right) => left.key.localeCompare(right.key))
+    const initialManifest = initialDrafts.map(shardReference)
+    const initialId = generationIdentity(
+      {
+        universe: base.next.universe,
+        producer: base.next.producer,
+        sourceManifest: base.next.sourceManifest,
+        capabilities: base.next.capabilities,
+      },
+      initialManifest,
+    )
+    const initial: FactTransaction = {
+      ...base,
+      next: { ...base.next, id: initialId },
+      manifest: initialManifest,
+      upserts: initialDrafts.map((shard) => ({
+        ...shard,
+        facts: shard.facts.map((fact) => ({ ...fact, generation: initialId })),
+      })),
+    }
+
+    const replacementValue = 'replacement-owner'
+    const replacementFact = {
+      ...owner.facts[0]!,
+      id: deriveAnalysisId('fact', owner.namespace, { value: replacementValue }),
+      subject: replacementValue,
+      payload: replacementValue,
+    }
+    const replacementDraft = { ...owner, facts: [replacementFact] }
+    const replacement = { ...replacementDraft, digest: factShardDigest(replacementDraft) }
+    const nextManifest = [replacement, consuming]
+      .sort((left, right) => left.key.localeCompare(right.key))
+      .map(shardReference)
+    const nextSourceManifest = deriveAnalysisId('source-manifest', 'delta-closure', {
+      revision: 2,
+    }) as SourceManifestId
+    const nextId = generationIdentity(
+      {
+        universe: initial.next.universe,
+        producer: initial.next.producer,
+        sourceManifest: nextSourceManifest,
+        capabilities: initial.next.capabilities,
+      },
+      nextManifest,
+    )
+    const invalid: FactTransaction = {
+      protocolVersion: 1,
+      base: initialId,
+      next: {
+        ...initial.next,
+        id: nextId,
+        sequence: 2,
+        sourceManifest: nextSourceManifest,
+      },
+      manifest: nextManifest,
+      upserts: [{
+        ...replacement,
+        facts: replacement.facts.map((fact) => ({ ...fact, generation: nextId })),
+      }],
+      deletes: [],
+    }
+
+    const stores: AnalysisStore[] = [
+      createMemoryAnalysisStore(),
+      await createSQLiteAnalysisStore({
+        file: join(root, 'analysis.sqlite'),
+        namespace: 'delta-closure',
+      }),
+    ]
+    for (const store of stores) {
+      try {
+        await store.commit(initial)
+        await expect(store.commit(invalid)).rejects.toThrow('names unavailable derivation input')
+        expect(await store.current(initial.next.universe)).toEqual(initial.next)
+      } finally {
+        await store.dispose()
+      }
     }
   })
 
@@ -979,7 +1460,7 @@ PRAGMA user_version = 1;
     const verified = new DatabaseSync(legacyFile, { readOnly: true })
     expect(
       (verified.prepare('PRAGMA user_version').get() as { user_version: number }).user_version,
-    ).toBe(4)
+    ).toBe(7)
     expect(
       verified
         .prepare('PRAGMA table_info(analysis_shards)')
@@ -987,6 +1468,66 @@ PRAGMA user_version = 1;
         .map((column) => (column as { readonly name: string }).name),
     ).toContain('capabilities_json')
     verified.close()
+  })
+
+  it('converges inline schema 4/5 and compressed schema 6 on one schema-7 layout', async () => {
+    const roots = await Promise.all(
+      ['v4', 'v5', 'v6'].map((version) => mkdtemp(join(tmpdir(), `codegraph-${version}-migration-`))),
+    )
+    temporary.push(...roots)
+    for (const [index, version] of [4, 5].entries()) {
+      const file = join(roots[index]!, 'analysis.sqlite')
+      const options = {
+        file,
+        namespace: `migration-v${version}`,
+        payloadMaterialization: 'inline-json' as const,
+      }
+      const transaction = buildTransaction({ sequence: 1, values: [`v${version}`] })
+      const store = await createSQLiteAnalysisStore(options)
+      await store.commit(transaction)
+      await store.dispose()
+      const legacy = new DatabaseSync(file)
+      legacy.exec(`
+DROP INDEX analysis_facts_by_completeness;
+ALTER TABLE analysis_shards DROP COLUMN payload_layout;
+PRAGMA user_version = ${version};
+`)
+      legacy.close()
+      const migrated = await createSQLiteAnalysisStore(options)
+      try {
+        expect(await snapshotOfFacts(migrated, transaction.next.universe)).toEqual([`v${version}`])
+      } finally {
+        await migrated.dispose()
+      }
+      assertCurrentSQLiteSchema(file)
+    }
+
+    const file = join(roots[2]!, 'analysis.sqlite')
+    const options = { file, namespace: 'migration-v6' }
+    const transaction = buildTransaction({ sequence: 1, values: ['v6'] })
+    const store = await createSQLiteAnalysisStore(options)
+    await store.commit(transaction)
+    await store.dispose()
+    const legacy = new DatabaseSync(file)
+    legacy
+      .prepare(
+        `UPDATE analysis_shard_payloads
+         SET encoding = 'brotli-json/1', payloads_blob = ?`,
+      )
+      .run(brotliCompressSync(Buffer.from(JSON.stringify(['v6']))))
+    legacy.exec(`
+DROP INDEX analysis_facts_by_completeness;
+ALTER TABLE analysis_shards DROP COLUMN payload_layout;
+PRAGMA user_version = 6;
+`)
+    legacy.close()
+    const migrated = await createSQLiteAnalysisStore(options)
+    try {
+      expect(await snapshotOfFacts(migrated, transaction.next.universe)).toEqual(['v6'])
+    } finally {
+      await migrated.dispose()
+    }
+    assertCurrentSQLiteSchema(file)
   })
 
   it('quarantines corrupt derived snapshots and permits a clean rebuild', async () => {
@@ -1033,11 +1574,15 @@ PRAGMA user_version = 1;
     }
   })
 
-  it('quarantines semantically corrupt snapshots even when their JSON envelope remains valid', async () => {
+  it('quarantines invalid compact payload ordinals even when their JSON remains valid', async () => {
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-sqlite-semantic-corruption-'))
     temporary.push(root)
     const file = join(root, 'analysis.sqlite')
-    const options = { file, namespace: 'semantic-corruption' }
+    const options = {
+      file,
+      namespace: 'semantic-corruption',
+      payloadMaterialization: 'shard-brotli' as const,
+    }
     const transaction = buildTransaction({ sequence: 1, values: ['before-corruption'] })
     const store = await createSQLiteAnalysisStore(options)
     await store.commit(transaction)
@@ -1054,8 +1599,123 @@ PRAGMA user_version = 1;
     expect(
       (evidence.prepare('SELECT reason FROM analysis_quarantine').get() as { reason: string })
         .reason,
-    ).toContain('semantic validation')
+    ).toContain('payload ordinal is invalid')
     evidence.close()
+  })
+
+  it('quarantines missing or corrupt shard payloads and duplicate payload ordinals', async () => {
+    const blobRoot = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-payload-blob-'))
+    const missingRoot = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-payload-missing-'))
+    const ordinalRoot = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-payload-ordinal-'))
+    temporary.push(blobRoot, missingRoot, ordinalRoot)
+
+    const blobOptions = {
+      file: join(blobRoot, 'analysis.sqlite'),
+      namespace: 'blob-corruption',
+      payloadMaterialization: 'shard-brotli' as const,
+    }
+    const blobTransaction = buildTransaction({ sequence: 1, values: ['one'] })
+    const blobStore = await createSQLiteAnalysisStore(blobOptions)
+    await blobStore.commit(blobTransaction)
+    await blobStore.dispose()
+    const corruptBlob = new DatabaseSync(blobOptions.file)
+    corruptBlob
+      .prepare('UPDATE analysis_shard_payloads SET payloads_blob = ?')
+      .run(Buffer.from([0]))
+    corruptBlob.close()
+    await expect(createSQLiteAnalysisStore(blobOptions)).rejects.toThrow('quarantined 1')
+
+    const missingOptions = {
+      file: join(missingRoot, 'analysis.sqlite'),
+      namespace: 'missing-payload',
+      payloadMaterialization: 'shard-brotli' as const,
+    }
+    const missingTransaction = buildTransaction({ sequence: 1, values: ['one'] })
+    const missingStore = await createSQLiteAnalysisStore(missingOptions)
+    await missingStore.commit(missingTransaction)
+    await missingStore.dispose()
+    const missingBlob = new DatabaseSync(missingOptions.file)
+    missingBlob.prepare('DELETE FROM analysis_shard_payloads').run()
+    missingBlob.close()
+    await expect(createSQLiteAnalysisStore(missingOptions)).rejects.toThrow('quarantined 1')
+    const missingEvidence = new DatabaseSync(missingOptions.file, { readOnly: true })
+    expect(
+      (
+        missingEvidence.prepare('SELECT reason FROM analysis_quarantine').get() as {
+          reason: string
+        }
+      ).reason,
+    ).toContain('payload storage is missing')
+    missingEvidence.close()
+
+    const ordinalOptions = {
+      file: join(ordinalRoot, 'analysis.sqlite'),
+      namespace: 'ordinal-corruption',
+      payloadMaterialization: 'shard-brotli' as const,
+    }
+    const ordinalTransaction = buildTransaction({ sequence: 1, values: ['one', 'two'] })
+    const ordinalStore = await createSQLiteAnalysisStore(ordinalOptions)
+    await ordinalStore.commit(ordinalTransaction)
+    await ordinalStore.dispose()
+    const corruptOrdinals = new DatabaseSync(ordinalOptions.file)
+    corruptOrdinals.prepare('UPDATE analysis_facts SET payload_json = ?').run('0')
+    corruptOrdinals.close()
+    await expect(createSQLiteAnalysisStore(ordinalOptions)).rejects.toThrow('quarantined 1')
+    const ordinalEvidence = new DatabaseSync(ordinalOptions.file, { readOnly: true })
+    expect(
+      (
+        ordinalEvidence.prepare('SELECT reason FROM analysis_quarantine').get() as {
+          reason: string
+        }
+      ).reason,
+    ).toContain('payload ordinals are invalid')
+    ordinalEvidence.close()
+  })
+
+  it('bounds decompressed shard payloads before acquiring the SQLite writer lock', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-payload-limit-'))
+    temporary.push(root)
+    const store = await createSQLiteAnalysisStore({
+      file: join(root, 'analysis.sqlite'),
+      namespace: 'payload-limit',
+      maximumDecompressedShardPayloadBytes: 1_024,
+      maximumCachedShardPayloadBytes: 1_024,
+    })
+    const transaction = buildTransaction({ sequence: 1, values: ['x'.repeat(2_048)] })
+    try {
+      await expect(store.commit(transaction)).rejects.toThrow('decompressed limit')
+      expect(await store.current(transaction.next.universe)).toBeUndefined()
+    } finally {
+      await store.dispose()
+    }
+  })
+
+  it('queries pages spanning more decoded shards than the bounded cache retains', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-bounded-cache-'))
+    temporary.push(root)
+    const transaction = buildTwoShardTransaction()
+    const store = await createSQLiteAnalysisStore({
+      file: join(root, 'analysis.sqlite'),
+      namespace: 'bounded-cache',
+      payloadMaterialization: 'shard-brotli',
+      maximumDecompressedShardPayloadBytes: 1_024,
+      maximumCachedShardPayloadBytes: 1_024,
+    })
+    try {
+      await store.commit(transaction)
+      const query = await store.open(transaction.next.universe)
+      try {
+        const page = await query.facts({}, { limit: 10 })
+        expect(page.facts.map((fact) => fact.payload).sort()).toEqual([
+          `left-${'x'.repeat(500)}`,
+          `right-${'x'.repeat(500)}`,
+        ])
+      } finally {
+        await query.dispose()
+      }
+    } finally {
+      await store.dispose()
+    }
   })
 
   it('isolates durable namespaces while retaining identical portable fact identities', async () => {
@@ -1356,6 +2016,91 @@ process.exit(0)
         ).toBe('unavailable')
       } finally {
         await current.dispose()
+      }
+    } finally {
+      await store.dispose()
+    }
+  })
+
+  it('hydrates only declared portable-pass inputs and rejects undeclared reads', async () => {
+    const store = createMemoryAnalysisStore()
+    try {
+      const base = buildTransaction({ sequence: 1, values: ['input'] })
+      await store.commit(base)
+      const query = await store.open(base.next.universe)
+      try {
+        const exports: (readonly string[] | undefined)[] = []
+        const headerExports: (readonly string[] | undefined)[] = []
+        const observed: AnalysisQuery = {
+          generation: query.generation,
+          manifest: () => query.manifest(),
+          capabilities: () => query.capabilities(),
+          headers: (filter, page) => query.headers(filter, page),
+          headersById: (ids) => query.headersById(ids),
+          exportHeaders(filter = {}) {
+            headerExports.push(filter.namespaces)
+            return query.exportHeaders(filter)
+          },
+          facts: (filter, page) => query.facts(filter, page),
+          factsById: (ids) => query.factsById(ids),
+          export(filter = {}) {
+            exports.push(filter.namespaces)
+            return query.export(filter)
+          },
+          async dispose() {},
+        }
+        const manifest = pass(
+          'selective-input',
+          ['fixture.selective'],
+          ['fixture.values'],
+          [{ namespace: 'fixture.values', minimumVersion: 1, maximumVersion: 1 }],
+          [{ namespace: 'fixture.selective', version: 1 }],
+        ) as PortablePass['manifest']
+        const implementation: PortablePass = {
+          manifest,
+          async run(context) {
+            await expect(
+              context.query.facts({ namespaces: ['fixture.undeclared'] }),
+            ).rejects.toThrow('undeclared input namespace fixture.undeclared')
+            const headers = await context.query.headers()
+            expect(headers.headers).toHaveLength(1)
+            expect(headers.total).toBeUndefined()
+            expect(
+              (await context.query.headers({}, { limit: 100, includeTotal: true })).total,
+            ).toBe(1)
+            const inputs = await context.query.facts()
+            expect(inputs.total).toBeUndefined()
+            expect(
+              (await context.query.facts({}, { limit: 100, includeTotal: true })).total,
+            ).toBe(1)
+            return {
+              completion: { kind: 'complete' },
+              shards: [passShard(manifest, context.generation.id, inputs.facts)],
+              diagnostics: [],
+            }
+          },
+        }
+        const producer: ProducerIdentity = {
+          id: deriveAnalysisId('producer', 'qualification-selective-pass', { version: 1 }),
+          name: 'qualification-selective-pass',
+          version: '1.0.0',
+          protocolVersion: 1,
+        }
+        const plan = planPasses([manifest], ['fixture.selective'], {
+          availableCapabilities: ['fixture.values'],
+          availableSchemas: [{ namespace: 'fixture.values', version: 1 }],
+        })
+        const result = await runPortablePasses({
+          plan,
+          passes: [implementation],
+          query: observed,
+          producer,
+        })
+        expect(result.executed).toEqual([manifest.id])
+        expect(exports).toEqual([['fixture.values'], ['fixture.values']])
+        expect(headerExports).toEqual([['fixture.values'], ['fixture.values']])
+      } finally {
+        await query.dispose()
       }
     } finally {
       await store.dispose()
@@ -1754,6 +2499,73 @@ process.exit(0)
     ])
   })
 
+  it('decodes compact bodies exactly and rejects corrupt dictionaries and ordinals', () => {
+    const packed = packedBodyFixture()
+    const decoded = TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(packed) as {
+      readonly body: FunctionBodyIR
+      readonly values: Readonly<Record<string, ValueResult<unknown>>>
+    }
+    expect(validateFunctionBodyIR(decoded.body)).toEqual([])
+    expect(decoded.body.function).toBe(`symbol:${'03'.repeat(32)}`)
+    expect(decoded.body.occurrences[0]).toMatchObject({
+      id: `occurrence:${'04'.repeat(32)}`,
+      owner: decoded.body.function,
+      span: {
+        source: `source:${'01'.repeat(32)}`,
+        revision: `source-revision:${'02'.repeat(32)}`,
+        start: 0,
+        end: 1,
+      },
+    })
+
+    const duplicated = structuredClone(packed)
+    duplicated.t.push(duplicated.t[0]!)
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(duplicated)).toThrow('duplicated')
+
+    const outside = structuredClone(packed)
+    outside.p.push(0)
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(outside)).toThrow('outside')
+
+    const malformed = structuredClone(packed)
+    malformed.c[0] = 'not-an-identity'
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(malformed)).toThrow('identity is invalid')
+
+    const repeatedValue = structuredClone(packed)
+    repeatedValue.v.push(
+      [0, { kind: 'known', value: 1, evidence: [] }],
+      [0, { kind: 'known', value: 1, evidence: [] }],
+    )
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(repeatedValue)).toThrow(
+      'repeats a value occurrence',
+    )
+
+    const invalidCompleteness = structuredClone(packed)
+    invalidCompleteness.q = { kind: 'mystery' }
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidCompleteness)).toThrow(
+      'completeness.kind is invalid',
+    )
+
+    const invalidValue = structuredClone(packed)
+    invalidValue.v.push([0, { kind: 'mystery', evidence: [] }])
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidValue)).toThrow(
+      'value.kind is invalid',
+    )
+
+    const invalidOccurrenceKind = structuredClone(packed)
+    invalidOccurrenceKind.t.push('not-an-occurrence-kind')
+    invalidOccurrenceKind.o[0]![1] = invalidOccurrenceKind.t.length - 1
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidOccurrenceKind)).toThrow(
+      'BODY_OCCURRENCE_KIND_INVALID',
+    )
+
+    const invalidSpan = structuredClone(packed)
+    invalidSpan.o[0]![2] = 2
+    invalidSpan.o[0]![3] = 1
+    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidSpan)).toThrow(
+      'BODY_OCCURRENCE_SPAN_INVALID',
+    )
+  })
+
   it('evaluates helper parameters and return summaries in the calling context', async () => {
     const { transaction, calls } = bodyEvaluationTransaction()
     const store = createMemoryAnalysisStore()
@@ -1794,6 +2606,10 @@ process.exit(0)
         const page = await reader.facts('body', {}, { limit: 10 })
         expect(page.facts).toHaveLength(2)
         expect(page.facts[0]?.payload.body.function).toMatch(/^symbol:/u)
+        const all = []
+        for await (const fact of reader.exportAll()) all.push(fact)
+        expect(all).toHaveLength(2)
+        expect(all.every((fact) => fact.namespace === 'typescript.body')).toBe(true)
       } finally {
         await query.dispose()
       }
@@ -1807,6 +2623,9 @@ process.exit(0)
         dispose: async () => undefined,
         manifest: async () => [],
         capabilities: async () => [],
+        headers: async () => ({ headers: [] }),
+        headersById: async () => [],
+        async *exportHeaders() {},
         facts: async () => ({ facts: [malformed] }),
         factsById: async () => [malformed],
         async *export() {
@@ -1816,6 +2635,11 @@ process.exit(0)
       await expect(
         createTypeScriptFactReader(malformedQuery).facts('body', {}, { limit: 1 }),
       ).rejects.toMatchObject({ code: 'TYPESCRIPT_FACT_CONTRACT_INVALID', kind: 'body' })
+      await expect(async () => {
+        for await (const _fact of createTypeScriptFactReader(malformedQuery).exportAll()) {
+          // Admission happens before a malformed fact becomes visible to the consumer.
+        }
+      }).rejects.toMatchObject({ code: 'TYPESCRIPT_FACT_CONTRACT_INVALID', kind: 'body' })
     } finally {
       await store.dispose()
     }
@@ -1906,7 +2730,7 @@ function buildTransaction(options: {
   readonly universe?: ProjectUniverseId
   readonly sequence: number
   readonly base?: AnalysisGenerationId
-  readonly values: readonly string[]
+  readonly values: readonly unknown[]
   readonly sourceRevision?: string | number
 }): FactTransaction {
   const universe =
@@ -1926,14 +2750,16 @@ function buildTransaction(options: {
   const pending = deriveAnalysisId('generation', 'pending', { sequence: options.sequence })
   const namespace = 'fixture.values'
   const key = deriveAnalysisId('fact-shard-key', namespace, { owner: 'fixture' })
-  const facts: Fact<string>[] = options.values
-    .map((value) => ({
+  const facts: Fact[] = options.values
+    .map((value) => {
+      const subject = typeof value === 'string' ? value : stableJson(value)
+      return {
       id: deriveAnalysisId('fact', namespace, { value }),
       generation: pending,
       namespace,
       schemaVersion: 1,
       kind: 'value',
-      subject: value,
+      subject,
       completeness: { kind: 'complete' } as const,
       provenance: {
         pass: deriveAnalysisId('pass', namespace, { name: 'fixture' }),
@@ -1942,7 +2768,8 @@ function buildTransaction(options: {
         inputs: [],
       },
       payload: value,
-    }))
+      }
+    })
     .sort((left, right) => left.id.localeCompare(right.id))
   const draft = {
     key,
@@ -2058,12 +2885,87 @@ function buildRichTransaction(): FactTransaction {
   }
 }
 
+function buildTwoShardTransaction(): FactTransaction {
+  const base = buildTransaction({ sequence: 1, values: [`left-${'x'.repeat(500)}`] })
+  const first = base.upserts[0]!
+  const namespace = 'fixture.other'
+  const pending = deriveAnalysisId('generation', 'pending-two-shards', {})
+  const value = `right-${'x'.repeat(500)}`
+  const fact: Fact = {
+    ...first.facts[0]!,
+    id: deriveAnalysisId('fact', namespace, { value }),
+    generation: pending,
+    namespace,
+    subject: value,
+    payload: value,
+  }
+  const secondDraft = {
+    key: deriveAnalysisId('fact-shard-key', namespace, { owner: 'fixture' }),
+    namespace,
+    schemaVersion: 1,
+    completion: { kind: 'complete' } as const,
+    facts: [fact],
+  }
+  const second: FactShard = { ...secondDraft, digest: factShardDigest(secondDraft) }
+  const drafts = [first, second].sort((left, right) => left.key.localeCompare(right.key))
+  const references = drafts.map(shardReference)
+  const capabilities = ['fixture.other', 'fixture.values']
+  const generation = generationIdentity(
+    {
+      universe: base.next.universe,
+      producer: base.next.producer,
+      sourceManifest: base.next.sourceManifest,
+      capabilities,
+    },
+    references,
+  )
+  const upserts = drafts.map((shard) => ({
+    ...shard,
+    facts: shard.facts.map((entry) => ({ ...entry, generation })),
+  }))
+  return {
+    protocolVersion: 1,
+    next: {
+      ...base.next,
+      id: generation,
+      capabilities,
+    },
+    manifest: references,
+    upserts,
+    deletes: [],
+  }
+}
+
 function tableCount(database: DatabaseSync, table: string): number {
   return (
     database.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as {
       readonly count: number
     }
   ).count
+}
+
+function assertCurrentSQLiteSchema(file: string): void {
+  const database = new DatabaseSync(file, { readOnly: true })
+  try {
+    expect(
+      (database.prepare('PRAGMA user_version').get() as { readonly user_version: number })
+        .user_version,
+    ).toBe(7)
+    expect(
+      database
+        .prepare('PRAGMA table_info(analysis_shards)')
+        .all()
+        .map((column) => (column as { readonly name: string }).name),
+    ).toContain('payload_layout')
+    expect(
+      database
+        .prepare("PRAGMA index_list('analysis_facts')")
+        .all()
+        .map((index) => (index as { readonly name: string }).name),
+    ).toContain('analysis_facts_by_completeness')
+  } finally {
+    database.close()
+  }
 }
 
 function pass(
@@ -2240,7 +3142,7 @@ function bodyEvaluationTransaction(): {
     subject: body.function,
     completeness: { kind: 'complete' } as const,
     provenance: { pass: passId, passVersion: '1.0.0', evidence: [], inputs: [] },
-    payload: { body, calls: body.calls, values, completeness: { kind: 'complete' } },
+    payload: { body, values, completeness: { kind: 'complete' } },
   })
   const facts = [
     makeFact(helperBody, {}),
@@ -2352,6 +3254,25 @@ function bodyFixture(): FunctionBodyIR {
       escapes: [],
       recursion: false,
     },
+  }
+}
+
+function packedBodyFixture() {
+  const compact = (byte: number) => Buffer.alloc(32, byte).toString('base64url')
+  return {
+    c: [compact(1), compact(2), compact(3)],
+    s: [] as string[],
+    t: ['statement', 'ExpressionStatement', 'entry'],
+    p: [] as number[],
+    o: [[compact(4), 0, 0, 1, 1, -1]],
+    r: [] as unknown[],
+    b: [[2, [0]]],
+    e: [] as unknown[],
+    d: [] as unknown[],
+    a: [] as unknown[],
+    u: [[], [], [], [], [], 0],
+    v: [] as unknown[][],
+    q: { kind: 'complete' },
   }
 }
 

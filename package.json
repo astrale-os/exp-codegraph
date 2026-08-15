@@ -15,6 +15,8 @@
     "dist",
     "LICENSE",
     "README.md",
+    "THIRD_PARTY_NOTICES.md",
+    "native-release.json",
     "*.ts",
     "analysis",
     "application",
@@ -33,7 +35,9 @@
     "json-schema",
     "typescript",
     "viewer",
-    "viewer-host"
+    "viewer-host",
+    "!analysis/typescript/native/**",
+    "!analysis/typescript/ttsc/**"
   ],
   "type": "module",
   "exports": {
@@ -65,6 +69,10 @@
       "types": "./repository/index.ts",
       "import": "./dist/repository/index.js"
     },
+    "./schema": {
+      "types": "./schema/index.ts",
+      "import": "./dist/schema/index.js"
+    },
     "./specification": {
       "types": "./specification/index.ts",
       "import": "./dist/specification/index.js"
@@ -80,8 +88,11 @@
     "clean": "node scripts/clean-dist.mjs",
     "check": "node --max-old-space-size=1280 cli.ts check .",
     "dev": "node cli.ts dev .",
-    "prepack": "pnpm run typecheck && pnpm run test",
-    "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json",
+    "release:check": "pnpm run native:assert-release && pnpm run typecheck && pnpm run test",
+    "native:build": "node scripts/native/build.mjs",
+    "native:assemble": "node scripts/native/assemble.mjs",
+    "native:assert-release": "node scripts/native/assert-release.mjs",
+    "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/application/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json && tsgo --noEmit -p qualification/v2/experiments/tsconfig.json && tsgo --noEmit -p qualification/v2/self-host/tsconfig.json",
     "test": "pnpm run build && vitest run --testTimeout 60000 --maxWorkers 1",
     "test:file": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
     "test:watch": "vitest --testTimeout 15000 --maxWorkers 2"
@@ -102,7 +113,6 @@
     "micromark": "^4.0.2",
     "micromark-extension-gfm": "^3.0.0",
     "preact": "^10.29.7",
-    "ttsc": "0.25.0",
     "ts-json-schema-generator": "^2.9.0",
     "typescript": "~6.0.3",
     "vite": "^8.1.5",
@@ -112,7 +122,14 @@
     "@astrale/typescript-config": "jsr:~1.1.3",
     "@types/node": "^24.10.0",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
+    "ttsc": "0.25.0",
     "vitest": "^4.1.10"
+  },
+  "optionalDependencies": {
+    "@astrale-os/codegraph-native-darwin-arm64": "workspace:*",
+    "@astrale-os/codegraph-native-darwin-x64": "workspace:*",
+    "@astrale-os/codegraph-native-linux-arm64": "workspace:*",
+    "@astrale-os/codegraph-native-linux-x64": "workspace:*"
   },
   "engines": {
     "node": ">=24 <25"

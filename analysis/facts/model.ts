@@ -1,88 +1,50 @@
-import type {
-  AnalysisGenerationId,
-  FactId,
-  FactShardDigest,
-  FactShardKey,
-  PassId,
-  SourceId,
-  SourceRevisionId,
-} from '../identity/index.ts'
+import type { FactShardDigest } from '../identity/index.ts'
 import { deriveAnalysisId } from '../identity/index.ts'
+import {
+  admittedFactShardPayloadBytes,
+  certifyFactShard,
+  payloadForSemanticIdentity,
+} from './representation/index.ts'
+import type { Completeness, Fact, FactHeader, FactShard, FactShardReference } from './types.ts'
 
-export interface SourceSpan {
-  readonly source: SourceId
-  readonly revision: SourceRevisionId
-  readonly start: number
-  readonly end: number
-}
+export type {
+  AnalysisFailure,
+  AnalysisLimit,
+  Completeness,
+  Fact,
+  FactHeader,
+  FactProvenance,
+  FactShard,
+  FactShardReference,
+  SourceSpan,
+} from './types.ts'
 
-export interface AnalysisLimit {
-  readonly code: string
-  readonly message: string
-  readonly effective: Readonly<Record<string, number | string | boolean>>
-}
+const textEncoder = new TextEncoder()
 
-export interface AnalysisFailure {
-  readonly code: string
-  readonly message: string
-  readonly attributableTo?: PassId
-  readonly retryable: boolean
-}
-
-export type Completeness =
-  | { readonly kind: 'complete' }
-  | { readonly kind: 'partial'; readonly reasons: readonly AnalysisLimit[] }
-  | { readonly kind: 'unavailable'; readonly reasons: readonly AnalysisFailure[] }
-
-export interface FactProvenance {
-  readonly pass: PassId
-  readonly passVersion: string
-  readonly evidence: readonly SourceSpan[]
-  readonly inputs: readonly FactId[]
-}
-
-export interface Fact<Payload = unknown> {
-  readonly id: FactId
-  readonly generation: AnalysisGenerationId
-  readonly namespace: string
-  readonly schemaVersion: number
-  readonly kind: string
-  readonly subject: string
-  readonly completeness: Completeness
-  readonly provenance: FactProvenance
-  readonly payload: Payload
-}
-
-export interface FactShardReference {
-  readonly key: FactShardKey
-  readonly digest: FactShardDigest
-  readonly namespace: string
-  readonly schemaVersion: number
-  readonly facts: number
-  /** Semantic capabilities whose completeness is bounded by this shard. */
-  readonly capabilities?: readonly string[]
-}
-
-export interface FactShard {
-  readonly key: FactShardKey
-  readonly digest: FactShardDigest
-  readonly namespace: string
-  readonly schemaVersion: number
-  readonly completion: Completeness
-  readonly facts: readonly Fact[]
-  /** Semantic capabilities whose completeness is bounded by this shard. */
-  readonly capabilities?: readonly string[]
+/** Read a fact envelope without invoking a lazy semantic payload getter. */
+export function factHeader(fact: Fact): FactHeader {
+  return {
+    id: fact.id,
+    generation: fact.generation,
+    namespace: fact.namespace,
+    schemaVersion: fact.schemaVersion,
+    kind: fact.kind,
+    subject: fact.subject,
+    completeness: fact.completeness,
+    provenance: fact.provenance,
+  }
 }
 
 export function factShardDigest(shard: Omit<FactShard, 'digest'>): FactShardDigest {
   const { digest: _digest, ...semantic } = shard as FactShard
   return deriveAnalysisId('fact-shard-digest', shard.namespace, {
     ...semantic,
-    facts: shard.facts.map(({ generation: _generation, ...fact }) => fact),
+    facts: shard.facts.map(semanticFactIdentity),
   })
 }
 
 export function validateFactShard(shard: FactShard): readonly string[] {
+  if (admittedFactShardPayloadBytes(shard) !== undefined) return []
   const diagnostics: string[] = []
   if (!shard.namespace.trim()) diagnostics.push('FACT_NAMESPACE_REQUIRED')
   if (!Number.isSafeInteger(shard.schemaVersion) || shard.schemaVersion < 1) {
@@ -119,12 +81,13 @@ export function validateFactShard(shard: FactShard): readonly string[] {
       }
     }
   }
-  const expected = factShardDigest({
+  const semanticFacts = shard.facts.map(semanticFactIdentity)
+  const expected = deriveAnalysisId('fact-shard-digest', shard.namespace, {
     key: shard.key,
     namespace: shard.namespace,
     schemaVersion: shard.schemaVersion,
     completion: shard.completion,
-    facts: shard.facts,
+    facts: semanticFacts,
     ...(shard.capabilities ? { capabilities: shard.capabilities } : {}),
   })
   if (shard.digest !== expected) {
@@ -134,7 +97,19 @@ export function validateFactShard(shard: FactShard): readonly string[] {
       ].join(',')}`,
     )
   }
-  return [...new Set(diagnostics)].sort()
+  const result = [...new Set(diagnostics)].sort()
+  if (!result.length) {
+    // A valid shard is an immutable semantic certificate. Later transaction
+    // admission may safely reuse it without decoding private payloads again.
+    certifyFactShard(
+      shard,
+      semanticFacts.reduce(
+        (bytes, fact) => bytes + encodedPayloadBytes(fact.payload),
+        0,
+      ),
+    )
+  }
+  return result
 }
 
 export function shardReference(shard: FactShard): FactShardReference {
@@ -158,4 +133,23 @@ function validateCompleteness(
   for (const reason of value.reasons) {
     if (!reason.code || !reason.message) diagnostics.push(`${owner}_COMPLETENESS_REASON_INVALID`)
   }
+}
+
+function semanticFactIdentity(fact: Fact): Omit<Fact, 'generation'> {
+  return {
+    id: fact.id,
+    namespace: fact.namespace,
+    schemaVersion: fact.schemaVersion,
+    kind: fact.kind,
+    subject: fact.subject,
+    completeness: fact.completeness,
+    provenance: fact.provenance,
+    payload: payloadForSemanticIdentity(fact),
+  }
+}
+
+function encodedPayloadBytes(payload: unknown): number {
+  const encoded = JSON.stringify(payload)
+  if (encoded === undefined) throw new TypeError('Fact payload is not JSON-serializable.')
+  return textEncoder.encode(encoded).byteLength
 }

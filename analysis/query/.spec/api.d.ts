@@ -1,4 +1,4 @@
-import type { Completeness, Fact, FactShardReference } from '../../facts/.spec/api.js'
+import type { Completeness, Fact, FactHeader, FactShardReference } from '../../facts/.spec/api.js'
 import type { AnalysisGeneration, FactTransaction } from '../../generation/.spec/api.js'
 import type {
   AnalysisGenerationId,
@@ -9,6 +9,12 @@ import type {
   SourceManifestId,
   SymbolId,
 } from '../../identity/.spec/api.js'
+
+/** Derive the portable identity pinned by both memory and durable snapshot sets. */
+export declare function deriveAnalysisSnapshotSetId(
+  generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>,
+  inventory: SourceManifestId,
+): SnapshotSetId
 
 export interface FactFilter {
   readonly namespaces?: readonly string[]
@@ -22,10 +28,18 @@ export interface FactFilter {
 export interface PageRequest {
   readonly limit: number
   readonly cursor?: string
+  /** Request the exact filtered cardinality; implementations omit it otherwise. */
+  readonly includeTotal?: boolean
 }
 
 export interface FactPage {
   readonly facts: readonly Fact[]
+  readonly nextCursor?: string
+  readonly total?: number
+}
+
+export interface FactHeaderPage {
+  readonly headers: readonly FactHeader[]
   readonly nextCursor?: string
   readonly total?: number
 }
@@ -41,6 +55,9 @@ export interface AnalysisQuery {
   dispose(): Promise<void>
   manifest(): Promise<readonly FactShardReference[]>
   capabilities(): Promise<readonly CapabilityStatus[]>
+  headers(filter?: FactFilter, page?: PageRequest): Promise<FactHeaderPage>
+  headersById(ids: readonly FactId[]): Promise<readonly FactHeader[]>
+  exportHeaders(filter?: FactFilter): AsyncIterable<FactHeader>
   facts(filter?: FactFilter, page?: PageRequest): Promise<FactPage>
   factsById(ids: readonly FactId[]): Promise<readonly Fact[]>
   export(filter?: FactFilter): AsyncIterable<Fact>

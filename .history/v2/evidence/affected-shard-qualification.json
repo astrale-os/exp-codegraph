@@ -1,0 +1,180 @@
+{
+  "format": "astrale.codegraph.v2.affected-shard-qualification",
+  "version": 1,
+  "status": "qualified",
+  "qualifiedRequirements": [
+    "V2-ANA-014"
+  ],
+  "contributesToRequirements": [
+    "V2-QLF-006"
+  ],
+  "thresholds": {
+    "minimumPrivateEditSpeedup": 20,
+    "maximumColdRegression": 0.05,
+    "incrementalEqualsIndependentCold": true,
+    "changedPayloadRowsOnly": true
+  },
+  "codegraph": {
+    "project": "tsconfig.json",
+    "changed": "analysis/generation/model.ts",
+    "incrementalMs": 843.96,
+    "independentColdMs": 77065.71,
+    "speedup": 91.31,
+    "exactColdEquality": true,
+    "sourcesProjected": 1,
+    "manifestShards": 4736,
+    "upsertShards": 15,
+    "upsertFacts": 230,
+    "deleteShards": 4,
+    "wireBytes": 699554,
+    "transactionBytes": 699501,
+    "nativeAllocatedBytes": 420732400,
+    "sqliteCommitNs": 101991541,
+    "sqliteRows": {
+      "generations": 1,
+      "shardRows": 15,
+      "factRows": 230,
+      "payloadRows": 15,
+      "membershipRows": 4736
+    }
+  },
+  "kernel": {
+    "project": "core/tsconfig.json",
+    "changed": "core/dns-label.ts",
+    "incrementalMs": 906.17,
+    "independentColdMs": 26036.91,
+    "speedup": 28.73,
+    "exactColdEquality": true,
+    "sourcesProjected": 1,
+    "manifestShards": 2305,
+    "upsertShards": 7,
+    "upsertFacts": 330,
+    "deleteShards": 0,
+    "wireBytes": 1918246,
+    "transactionBytes": 1918193,
+    "nativeAllocatedBytes": 376702760,
+    "sqliteCommitNs": 74349291,
+    "sqliteRows": {
+      "generations": 1,
+      "shardRows": 7,
+      "factRows": 330,
+      "payloadRows": 7,
+      "membershipRows": 2305
+    }
+  },
+  "coldAttribution": {
+    "sourceManifestIdentityComparable": false,
+    "sourceManifestIdentityReason": "The historical producer predates the candidate identity preimage and is performance attribution only.",
+    "baselineMs": 107811.04,
+    "candidateMs": 78022.31,
+    "candidateOverBaseline": 0.723695,
+    "baselineProjectionNs": 99635121834,
+    "candidateProjectionNs": 70757230000,
+    "baselineTransportNs": 3088060791,
+    "candidateTransportNs": 1739449625,
+    "baselineTransactionBytes": 237726584,
+    "candidateTransactionBytes": 237731170
+  },
+  "adversarial": [
+    {
+      "name": "private-body",
+      "exactColdEquality": true,
+      "mode": "resident-apply",
+      "projectedSources": 1,
+      "projectedModules": 1
+    },
+    {
+      "name": "private-diagnostic",
+      "exactColdEquality": true,
+      "mode": "resident-apply",
+      "projectedSources": 1,
+      "projectedModules": 1
+    },
+    {
+      "name": "computed-dependency",
+      "exactColdEquality": true,
+      "mode": "resident-apply",
+      "projectedSources": 1,
+      "projectedModules": 2
+    },
+    {
+      "name": "public-shape",
+      "exactColdEquality": true,
+      "mode": "resident-apply",
+      "projectedSources": 3,
+      "projectedModules": 2
+    },
+    {
+      "name": "import-graph",
+      "exactColdEquality": true,
+      "mode": "resident-full",
+      "projectedSources": 5,
+      "projectedModules": 2
+    },
+    {
+      "name": "ambient-scope",
+      "exactColdEquality": true,
+      "mode": "resident-full",
+      "projectedSources": 5,
+      "projectedModules": 2
+    },
+    {
+      "name": "create",
+      "exactColdEquality": true,
+      "mode": "resident-full",
+      "projectedSources": 6,
+      "projectedModules": 2
+    },
+    {
+      "name": "delete",
+      "exactColdEquality": true,
+      "mode": "resident-full",
+      "projectedSources": 4,
+      "projectedModules": 2
+    },
+    {
+      "name": "rename",
+      "exactColdEquality": true,
+      "mode": "resident-full",
+      "projectedSources": 5,
+      "projectedModules": 2
+    },
+    {
+      "name": "config",
+      "exactColdEquality": true,
+      "mode": "resident-full",
+      "projectedSources": 5,
+      "projectedModules": 2
+    },
+    {
+      "name": "commit-replay",
+      "exactColdEquality": true
+    }
+  ],
+  "provenance": {
+    "kernelRevision": "683ae7980ef07f4b8d36d6425bbbccc00c00fe41",
+    "nativeSha256": "69a365aae4bab7471524c6515237b6ef257b98e9cb7a97f9cd4fc16f934fd111",
+    "artifacts": {
+      "codegraph": {
+        "sha256": "3cf5fec02bc8b616a6b0a1bacb0257c670bec1ce6bd8a763788a54a84d9891c1"
+      },
+      "kernel": {
+        "sha256": "c92025a80e5a3a42a9818eed97f3963f431178049734c7bcd51d5bce54b8756a"
+      },
+      "adversarial": {
+        "sha256": "d1c67fafe81465cbc9f273e4b8213e8307c36f2f41fb69e9dd2a9e192e68aaa5"
+      },
+      "coldBaseline": {
+        "sha256": "8ccd7884e0e057a9ffd9c5b7fc05acb053625397deb2e8e0076cae07d409bd4d"
+      },
+      "coldCandidate": {
+        "sha256": "a462476f97bba5fd5075ec00cb6565edab56f623c10e56fe6c18aa008a36624e"
+      }
+    },
+    "commands": [
+      "node qualification/v2/experiments/affected-shards.ts --native-binary <binary> --output <artifact>",
+      "node qualification/v2/experiments/affected-project.ts --target codegraph --root . --native-binary <binary> --backend sqlite --project tsconfig.json --changed analysis/generation/model.ts --output <artifact>",
+      "node qualification/v2/experiments/affected-project.ts --target kernel --root <clean-kernel> --native-binary <binary> --backend sqlite --project core/tsconfig.json --changed core/dns-label.ts --output <artifact>"
+    ]
+  }
+}

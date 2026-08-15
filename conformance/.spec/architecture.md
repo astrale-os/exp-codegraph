@@ -4,6 +4,10 @@ Conformance is a headless judgment layer. It consumes one immutable normative sp
 exact generation-pinned analysis snapshot set, runs explicitly installed profiles in dependency
 order, and emits one immutable qualification snapshot.
 
+Corpus qualification leases each pinned universe once and reuses its capability view across every
+specification. The single-spec function is a convenience wrapper over that batch boundary, so
+application cost scales with semantic work rather than repeated query-session setup.
+
 Missing, partial, or unavailable required evidence becomes `indeterminate`; it is never translated
 into a mismatch or a pass. Focused execution includes profile dependencies and is permanently marked
 advisory. Only an unfiltered full result has full-CI authority.

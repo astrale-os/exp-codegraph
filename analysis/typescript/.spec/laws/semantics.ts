@@ -84,6 +84,24 @@ export const TYPESCRIPT_INCREMENTAL_EQUIVALENCE = defineLaw({
     'After normalization of commit-only metadata, every incremental TypeScript generation is semantically identical to a cold build from the same source and configuration state.',
 })
 
+export const TYPESCRIPT_AFFECTED_SOURCE_CLOSURE = defineLaw({
+  id: 'TYPESCRIPT-AFFECTED-SOURCE-CLOSURE',
+  statement:
+    'A compiler-proven private edit reprojects only its owning source shards; a declaration-shape change expands through the exact transitive reverse dependency closure, while global scope, import-graph uncertainty, root churn, configuration changes, and mutating plugins fail closed to a complete rebuild.',
+})
+
+export const TYPESCRIPT_AFFECTED_MODULE_PROJECTION = defineLaw({
+  id: 'TYPESCRIPT-AFFECTED-MODULE-PROJECTION',
+  statement:
+    'A compiler-proven private edit reprojects only its affected semantic module owners while retaining exact cross-owner dependency closure and diagnostic source revisions; public shape, dependency, global diagnostic, topology, configuration, plugin, or uncertain changes conservatively expand to every required module, and every incremental public module fact is identical to a cold projection.',
+})
+
+export const TYPESCRIPT_DEMAND_DRIVEN_PROJECTION = defineLaw({
+  id: 'TYPESCRIPT-DEMAND-DRIVEN-PROJECTION',
+  statement:
+    'The native adapter executes only the semantic projectors requested by the capability plan and their exact compiler prerequisites; each requested namespace is identical to the corresponding projection of an all-capability cold build, while an unrequested projector emits no facts and performs no semantic traversal.',
+})
+
 export const TYPESCRIPT_ATOMIC_PUBLICATION = defineLaw({
   id: 'TYPESCRIPT-ATOMIC-PUBLICATION',
   statement:

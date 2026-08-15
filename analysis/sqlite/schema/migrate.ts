@@ -41,6 +41,10 @@ export function migrateSQLiteAnalysisSchema(database: DatabaseSync): void {
     database.exec(SQLITE_ANALYSIS_SCHEMA)
     return
   }
+  if (version === 4 || version === 5 || version === 6) {
+    migratePayloadLayout(database)
+    return
+  }
   if (version === 3) {
     migrateShardCapabilities(database)
     return
@@ -57,7 +61,37 @@ function migrateShardCapabilities(database: DatabaseSync): void {
   database.exec('BEGIN IMMEDIATE')
   try {
     database.exec("ALTER TABLE analysis_shards ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '[]'")
-    database.exec(`PRAGMA user_version = ${SQLITE_ANALYSIS_SCHEMA_VERSION}`)
+    database.exec('PRAGMA user_version = 4')
+    database.exec('COMMIT')
+  } catch (error) {
+    if (database.isTransaction) database.exec('ROLLBACK')
+    throw error
+  }
+  migratePayloadLayout(database)
+}
+
+function migratePayloadLayout(database: DatabaseSync): void {
+  database.exec(SQLITE_ANALYSIS_SCHEMA)
+  database.exec('BEGIN IMMEDIATE')
+  try {
+    const columns = database.prepare('PRAGMA table_info(analysis_shards)').all() as {
+      readonly name: string
+    }[]
+    if (!columns.some((column) => column.name === 'payload_layout')) {
+      database.exec(
+        "ALTER TABLE analysis_shards ADD COLUMN payload_layout TEXT NOT NULL DEFAULT 'inline-json/1'",
+      )
+    }
+    database.exec(`
+UPDATE analysis_shards
+SET payload_layout = 'shard-ordinal/1'
+WHERE EXISTS (
+  SELECT 1 FROM analysis_shard_payloads AS payload
+  WHERE payload.store_namespace = analysis_shards.store_namespace
+    AND payload.shard_digest = analysis_shards.shard_digest
+);
+PRAGMA user_version = ${SQLITE_ANALYSIS_SCHEMA_VERSION};
+`)
     database.exec('COMMIT')
   } catch (error) {
     if (database.isTransaction) database.exec('ROLLBACK')

@@ -7,7 +7,7 @@ import type {
 } from '../../identity/index.ts'
 import type { AnalysisQuery, AnalysisSnapshotSet } from '../../query/index.ts'
 
-import { deriveAnalysisId } from '../../identity/index.ts'
+import { deriveAnalysisSnapshotSetId } from '../../query/index.ts'
 
 export class SQLiteSnapshotSet implements AnalysisSnapshotSet {
   readonly id: SnapshotSetId
@@ -35,16 +35,9 @@ export class SQLiteSnapshotSet implements AnalysisSnapshotSet {
     this.#release = release
     this.inventory = inventory
     this.universes = [...generations.keys()].sort()
-    this.id = deriveAnalysisId(
-      'snapshot-set',
-      'astrale.analysis.snapshot-set.v2',
-      {
-        inventory,
-        generations: this.universes.map((universe) => [
-          universe,
-          generations.get(universe)!.id,
-        ]),
-      },
+    this.id = deriveAnalysisSnapshotSetId(
+      new Map(this.universes.map((universe) => [universe, generations.get(universe)!.id])),
+      inventory,
     )
   }
 

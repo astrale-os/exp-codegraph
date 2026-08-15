@@ -4,6 +4,8 @@ import type { FactShardReference } from '../../facts/index.ts'
 import type { AnalysisGeneration } from '../../generation/index.ts'
 import type { AnalysisGenerationId, ProjectUniverseId } from '../../identity/index.ts'
 import type { MaterializedGeneration } from '../../internal/state.ts'
+import type { FactPayloadCodecMap } from '../../facts/representation/index.ts'
+import { DEFAULT_SQLITE_ANALYSIS_LIMITS } from '../limits.ts'
 
 import {
   factFromRows,
@@ -15,6 +17,14 @@ import {
   type InputRow,
   type ShardRow,
 } from './model.ts'
+import {
+  loadShardPayloads,
+  persistedFactPayload,
+  SQLITE_INLINE_PAYLOAD_LAYOUT,
+  SQLITE_SHARD_PAYLOAD_LAYOUT,
+  ShardPayloadCache,
+  validateShardPayloadMembership,
+} from './payload.ts'
 
 export function loadCurrentGeneration(
   database: DatabaseSync,
@@ -97,6 +107,9 @@ export function loadMaterializedGeneration(
   database: DatabaseSync,
   storeNamespace: string,
   generation: AnalysisGeneration,
+  payloadCodecs: FactPayloadCodecMap,
+  maximumDecompressedShardPayloadBytes =
+    DEFAULT_SQLITE_ANALYSIS_LIMITS.maximumDecompressedShardPayloadBytes,
 ): MaterializedGeneration {
   const shardRows = database
     .prepare(
@@ -113,6 +126,7 @@ export function loadMaterializedGeneration(
     .all(storeNamespace, generation.universe, generation.sequence) as unknown as ShardRow[]
   const shards = new Map(
     shardRows.map((row) => {
+      assertShardPayloadLayout(database, storeNamespace, row)
       const factRows = database
         .prepare(
           `SELECT * FROM analysis_facts
@@ -136,18 +150,56 @@ export function loadMaterializedGeneration(
         .all(storeNamespace, row.shard_digest) as unknown as InputRow[]
       const evidence = groupByFact(evidenceRows)
       const inputs = groupByFact(inputRows)
-      const facts = factRows.map((fact) =>
+      const payloadRows = factRows.map((fact) => ({
+        ...fact,
+        payload_layout: row.payload_layout,
+      }))
+      const payloads = new ShardPayloadCache(maximumDecompressedShardPayloadBytes)
+      loadShardPayloads(
+        database,
+        storeNamespace,
+        payloadRows,
+        payloads,
+        maximumDecompressedShardPayloadBytes,
+      )
+      validateShardPayloadMembership(payloadRows, payloads)
+      const facts = payloadRows.map((fact) =>
         factFromRows(
           fact,
           generation.id,
           evidence.get(fact.fact_id) ?? [],
           inputs.get(fact.fact_id) ?? [],
+          persistedFactPayload(fact, payloads),
+          payloadCodecs,
         ),
       )
       return [row.shard_key, shardFromRows(row, facts)] as const
     }),
   )
   return { generation, shards }
+}
+
+function assertShardPayloadLayout(
+  database: DatabaseSync,
+  storeNamespace: string,
+  row: ShardRow,
+): void {
+  const payload = database
+    .prepare(
+      `SELECT 1 FROM analysis_shard_payloads
+       WHERE store_namespace = ? AND shard_digest = ?`,
+    )
+    .get(storeNamespace, row.shard_digest)
+  if (row.payload_layout === SQLITE_SHARD_PAYLOAD_LAYOUT && !payload) {
+    throw new TypeError(`Persisted shard ${row.shard_digest} payload storage is missing.`)
+  }
+  if (row.payload_layout === SQLITE_INLINE_PAYLOAD_LAYOUT && payload) {
+    throw new TypeError(`Persisted shard ${row.shard_digest} has extraneous payload storage.`)
+  }
+  if (
+    row.payload_layout !== SQLITE_SHARD_PAYLOAD_LAYOUT &&
+    row.payload_layout !== SQLITE_INLINE_PAYLOAD_LAYOUT
+  ) throw new TypeError(`Persisted shard ${row.shard_digest} payload layout is unsupported.`)
 }
 
 function groupByFact<Row extends { readonly fact_id: string }>(

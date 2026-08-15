@@ -16,7 +16,8 @@ import type {
   NativeProjectDescriptor,
 } from '../../protocol/.spec/api.js'
 import type { AnalysisStore } from '../../query/.spec/api.js'
-import type { FunctionBodyIR, ResolvedCall } from '../body/.spec/api.js'
+import type { AnalysisTelemetrySink } from '../../profiling/.spec/api.js'
+import type { FunctionBodyIR } from '../body/.spec/api.js'
 import type {
   ObservationIssue,
   ObservedDeclaration,
@@ -139,7 +140,6 @@ export interface TypeScriptOccurrenceFact {
 
 export interface TypeScriptBodyFacts {
   readonly body: FunctionBodyIR
-  readonly calls: readonly ResolvedCall[]
   readonly values: Readonly<Record<string, ValueResult<unknown>>>
   readonly completeness: Completeness
 }
@@ -168,6 +168,7 @@ export interface TypeScriptAnalysisServiceOptions {
   readonly project: NativeProjectDescriptor
   readonly sessions: NativeAnalysisSessionFactory
   readonly store: AnalysisStore
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export interface TypeScriptAnalysisPipelineOptions {
@@ -188,6 +189,7 @@ export function createTypeScriptAnalysisPipeline(
 ): Promise<TypeScriptAnalysisService>
 
 export { validateFunctionBodyIR } from '../body/.spec/api.js'
+export * from '../distribution/.spec/api.js'
 export * from '../facts/.spec/api.js'
 export type { FunctionBodyIR, ResolvedCall } from '../body/.spec/api.js'
 export type { ValueResult } from '../value/.spec/api.js'

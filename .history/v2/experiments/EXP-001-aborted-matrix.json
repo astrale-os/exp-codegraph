@@ -1,0 +1,107 @@
+{
+  "format": "astrale.codegraph.affected-matrix-diagnostic",
+  "version": 1,
+  "status": "aborted-noisy-method",
+  "analyzerRevision": "d252e67a44ab09f92a9814c537db32d506dcc114",
+  "baselineNativeSha256": "950548b20bea70284bb2f074cd959c1fcbe95e947c8e96eaa5e4573b08e564a2",
+  "candidateNativeSha256": "69a365aae4bab7471524c6515237b6ef257b98e9cb7a97f9cd4fc16f934fd111",
+  "target": "codegraph",
+  "backend": "sqlite",
+  "reason": "A 727952.98 ms candidate cold outlier followed by a 77273.04 ms baseline cold result made further whole-repository alternation a poor causal test.",
+  "interpretation": "Every completed run was exact against its own independent cold rebuild. Historical and candidate generation identities differ, so the historical binary is performance attribution only and not a semantic parity authority.",
+  "candidateGeneration": "generation:ac274ca8e452f73657433fb0bf71dd277e7ca0592148720e7a9a37b8814cf9e0",
+  "baselineGeneration": "generation:3537a73791b89b10a8a42eca8dcb105671667214eec8e39fe5468397562680f7",
+  "samples": [
+    {
+      "label": "warmup-1-1-baseline",
+      "artifactSha256": "6bb660d440892cd75a3d6d7e155b9cdfa31020469e8539a2fea00d31f2ba458a",
+      "incrementalMs": 140867.69,
+      "coldMs": 171779.79,
+      "sourcesProjected": null,
+      "wireBytes": 1849606,
+      "totalAllocatedBytes": 90690656840
+    },
+    {
+      "label": "warmup-1-2-candidate",
+      "artifactSha256": "e5c301c87de15f92e46501f32db58c8baa8fba9f66695bb24a3dd8a06da5d72e",
+      "incrementalMs": 984.77,
+      "coldMs": 165333.77,
+      "sourcesProjected": 1,
+      "wireBytes": 699554,
+      "totalAllocatedBytes": 420829592
+    },
+    {
+      "label": "block-1-1-candidate",
+      "artifactSha256": "139c9a9af1110b09c860082443ac976cb7ca59ba1cbebf7b0855bcb936f7640e",
+      "incrementalMs": 1695.25,
+      "coldMs": 116366.76,
+      "sourcesProjected": 1,
+      "wireBytes": 699554,
+      "totalAllocatedBytes": 421682800
+    },
+    {
+      "label": "block-1-2-baseline",
+      "artifactSha256": "653cbd671a253cf8359dab9058d97e69e478fbe4cfe25a10b5400d37b04c0ea2",
+      "incrementalMs": 106512.07,
+      "coldMs": 107201.61,
+      "sourcesProjected": null,
+      "wireBytes": 1849606,
+      "totalAllocatedBytes": 90711009400
+    },
+    {
+      "label": "block-2-1-baseline",
+      "artifactSha256": "c9138afb19e839b4b1bddb4abe01d6672376759b6cc70e31287fe007ddbcf282",
+      "incrementalMs": 97795.6,
+      "coldMs": 119780.64,
+      "sourcesProjected": null,
+      "wireBytes": 1849606,
+      "totalAllocatedBytes": 90703481168
+    },
+    {
+      "label": "block-2-2-candidate",
+      "artifactSha256": "c207be44d006231dba3851798a76635d52cab56b7f8a85fb9841732a38135b9d",
+      "incrementalMs": 1072.47,
+      "coldMs": 132474.12,
+      "sourcesProjected": 1,
+      "wireBytes": 699554,
+      "totalAllocatedBytes": 420737480
+    },
+    {
+      "label": "block-3-1-candidate",
+      "artifactSha256": "b691e64db81c7a93d41cc85a140642df26e5d9a8b4fdcfb2266f6b5f4fcd7687",
+      "incrementalMs": 841.18,
+      "coldMs": 727952.98,
+      "sourcesProjected": 1,
+      "wireBytes": 699554,
+      "totalAllocatedBytes": 420814896
+    },
+    {
+      "label": "block-3-2-baseline",
+      "artifactSha256": "24a577c0b15fc08469c46ee19c99cf76fddd3b8cbe0b6d1bd3ef3102327f30e4",
+      "incrementalMs": 73072.67,
+      "coldMs": 77273.04,
+      "sourcesProjected": null,
+      "wireBytes": 1849606,
+      "totalAllocatedBytes": 90703310352
+    },
+    {
+      "label": "block-4-1-baseline",
+      "artifactSha256": "afe813f72c0cbafdd087c67d76e8972293df7722731515b9e5cd7266d6585940",
+      "incrementalMs": 74527.14,
+      "coldMs": 78407.47,
+      "sourcesProjected": null,
+      "wireBytes": 1849606,
+      "totalAllocatedBytes": 90679464464
+    }
+  ],
+  "candidateDeltaInvariant": {
+    "manifestShards": 4736,
+    "upsertShards": 15,
+    "upsertFacts": 230,
+    "deleteShards": 4,
+    "sqliteShardRows": 15,
+    "sqliteFactRows": 230,
+    "sqlitePayloadRows": 15,
+    "sqliteMembershipRows": 4736
+  }
+}

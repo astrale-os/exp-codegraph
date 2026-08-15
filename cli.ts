@@ -5,13 +5,19 @@ import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.ts'
 import { parseCommand, USAGE } from './cli/parse.ts'
 import { terminalText } from './cli/report.ts'
 import { runCommand } from './cli/run.ts'
-import { startDev } from './server/start.ts'
+import { readCodegraphVersion } from './cli/version.ts'
 import { initializeModuleSpecification } from './specification/module/init.ts'
+
+const startDev: import('./cli/run.ts').CliServices['startDev'] = async (options) => {
+  const server = await import('./server/start.ts')
+  return server.startDev(options)
+}
 
 try {
   const result = await runCommand(
     parseCommand(process.argv.slice(2)),
     {
+      version: readCodegraphVersion,
       initializeModule: initializeModuleSpecification,
       createApplication: createCliApplicationService,
       startDev,

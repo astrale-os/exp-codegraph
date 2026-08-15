@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
 import type { Diagnostic } from '../../source/diagnostic.ts'
-import type { ModuleSourceReference } from '../model.ts'
+import type { ModuleSourceReference } from '../resource/index.ts'
 import type { ModuleFile, ModuleFileInventory } from './inventory.ts'
 
 import {
@@ -22,7 +22,7 @@ import {
   resolveAlias,
   semanticTokenIdentity,
 } from '../../typescript/surface/symbol.ts'
-import { AUTHORING_SPECIFIER, nodeDiagnostic } from './authoring-syntax.ts'
+import { AUTHORING_SPECIFIER, isAuthoringSpecifier, nodeDiagnostic } from './authoring-syntax.ts'
 import {
   captureModuleTypeScriptEvidence,
   moduleTypeScriptEvidenceCurrent,
@@ -517,7 +517,7 @@ function moduleBoundaryDiagnostics(
         )
         return
       }
-      if (specifier === AUTHORING_SPECIFIER) return
+      if (isAuthoringSpecifier(specifier)) return
       if (specifier.startsWith('#')) {
         diagnostics.push(
           nodeDiagnostic(
@@ -742,7 +742,7 @@ function compilerHost(
     ts.sys,
   ).resolvedModule
   const resolveModule = (specifier: string, containingFile: string, mode: ts.ResolutionMode) => {
-    if (specifier === AUTHORING_SPECIFIER && authoring) {
+    if (isAuthoringSpecifier(specifier) && authoring) {
       onResolution?.(containingFile, authoring.resolvedFileName)
       return authoring
     }

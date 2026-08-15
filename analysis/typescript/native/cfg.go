@@ -314,7 +314,7 @@ func (b *controlFlowBuilder) findExpressionLimitations(node *shimast.Node) {
 	if node == nil {
 		return
 	}
-	if node != b.body.body && shimast.IsFunctionLike(node) {
+	if shimast.IsFunctionLike(node) {
 		return
 	}
 	if node.Kind == shimast.KindConditionalExpression {

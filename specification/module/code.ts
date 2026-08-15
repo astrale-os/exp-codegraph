@@ -7,6 +7,7 @@ import {
   AUTHORING_SPECIFIER,
   authoringHelperBinding,
   calledObjectLiteral,
+  isAuthoringSpecifier,
   literalProperty,
   literalPropertyName,
   nodeDiagnostic,
@@ -157,7 +158,7 @@ function validateImport(
   const bindings = statement.importClause?.namedBindings
   const valid =
     ts.isStringLiteral(statement.moduleSpecifier) &&
-    statement.moduleSpecifier.text === AUTHORING_SPECIFIER &&
+    isAuthoringSpecifier(statement.moduleSpecifier.text) &&
     bindings &&
     ts.isNamedImports(bindings) &&
     bindings.elements.length === 1 &&

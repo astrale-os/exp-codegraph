@@ -4,11 +4,13 @@ export default defineLayout({
   entries: [
     'body/',
     'dependency.ts',
+    'distribution/',
     'facts/',
     'index.ts',
     'model.ts',
     'native/',
     'pipeline.ts',
+    'physical/',
     'service.ts',
     'surface/',
     'ttsc/',
@@ -16,4 +18,5 @@ export default defineLayout({
     'value/',
   ],
   exact: true,
+  ignore: ['native/**'],
 })

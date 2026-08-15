@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
-import type { AnalysisStore } from '../../analysis/index.ts'
+import type { AnalysisStore, AnalysisTelemetrySink } from '../../analysis/index.ts'
 import { selectAnalysisStore } from '../../analysis/index.ts'
 import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
 import type { TypeSpecApplicationService } from '../index.ts'
+import type { CodegraphApplicationSessionOptions } from '../analysis/index.ts'
 import { createTypeSpecApplicationService } from '../service.ts'
 
 export interface NodeTypeSpecApplicationOptions {
@@ -15,6 +16,8 @@ export interface NodeTypeSpecApplicationOptions {
   readonly repository?: string
   readonly maximumRetainedSnapshots?: number
   readonly maximumRetainedGenerations?: number
+  readonly telemetry?: AnalysisTelemetrySink
+  readonly native?: CodegraphApplicationSessionOptions
 }
 
 /** Node-owned store/native composition around the portable headless application service. */
@@ -33,6 +36,7 @@ export async function createNodeTypeSpecApplicationService(
               // Physical isolation belongs to the store namespace, never semantic identities.
               namespace: `worktree:${createHash('sha256').update(root).digest('hex')}`,
               maximumRetainedGenerations,
+              ...(options.telemetry ? { telemetry: options.telemetry } : {}),
             }),
         }
       : {}),
@@ -44,7 +48,8 @@ export async function createNodeTypeSpecApplicationService(
       repository: options.repository ?? (await repositoryKey(root)),
       maximumRetainedSnapshots: options.maximumRetainedSnapshots,
       analysis: { store, maximumRetainedGenerations },
-      native: { cacheDirectory: options.cacheDirectory },
+      ...(options.telemetry ? { telemetry: options.telemetry } : {}),
+      ...(options.native ? { native: options.native } : {}),
     })
     return ownStore(application, store)
   } catch (error) {

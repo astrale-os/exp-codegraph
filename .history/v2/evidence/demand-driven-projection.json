@@ -1,0 +1,118 @@
+{
+  "format": "astrale.codegraph.v2.demand-driven-projection-qualification",
+  "version": 1,
+  "status": "qualified",
+  "qualifiedRequirements": [
+    "V2-ANA-012"
+  ],
+  "invariants": {
+    "exactSelectedFactEnvelopes": true,
+    "stableUniverseAcrossProjectionPlans": true,
+    "stableSourceManifestAcrossProjectionPlans": true,
+    "unrequestedSemanticPhasesExecuted": 0,
+    "moduleBoundaryChangesGenerationOnly": true
+  },
+  "codegraph": {
+    "project": "tsconfig.json",
+    "modules": 35,
+    "fullMs": 90875.84,
+    "universe": "project-universe:84020989b519784286d75d39a6fcd6c5120a40f61f561af8746b54d408105c60",
+    "sourceManifest": "source-manifest:a466362708a896c4cee712ae63b30ccaf970a8dcd1aee6e03bb52eb366b13b76",
+    "module": {
+      "facts": 35,
+      "elapsedMs": 1717.12,
+      "fullOverSelected": 52.923407,
+      "digest": "e08e201674d603913c1d4e3ea520d30f604eff6bd5e73a3d34108e20c313397b",
+      "exactSelectedFacts": true,
+      "semanticPhases": [
+        "projection.modules"
+      ]
+    },
+    "body": {
+      "facts": 3805,
+      "elapsedMs": 69506.5,
+      "fullOverSelected": 1.307444,
+      "digest": "de3f346217ec1c8cf94dd43a014433c50457d5abbe0aa86cee45687eee180310",
+      "exactSelectedFacts": true,
+      "semanticPhases": [
+        "projection.bodies"
+      ]
+    }
+  },
+  "kernel": {
+    "project": "core/tsconfig.json",
+    "modules": 115,
+    "fullMs": 22614.79,
+    "universe": "project-universe:4bd69f87da53e501c1d8e7162838b20ae832b8fb83e4fe01a5c438b716c0b96f",
+    "sourceManifest": "source-manifest:1b2cd4c431a27f2beb592199830037c54a3963e9e8b316943acacda1b7ff3ec7",
+    "module": {
+      "facts": 115,
+      "elapsedMs": 8379.87,
+      "fullOverSelected": 2.698704,
+      "digest": "1ccf7340dbac7dd447b892e99b4b3fd0c25617b22a80d5936fc7175cb52b826f",
+      "exactSelectedFacts": true,
+      "semanticPhases": [
+        "projection.modules"
+      ]
+    },
+    "body": {
+      "facts": 1028,
+      "elapsedMs": 11583.78,
+      "fullOverSelected": 1.952281,
+      "digest": "ccc37f82234d70614837fa61fa172cea58c405684d2ddf4aea608a972b1c6b1f",
+      "exactSelectedFacts": true,
+      "semanticPhases": [
+        "projection.bodies"
+      ]
+    }
+  },
+  "regression": {
+    "rejectedBodyFacts": 3805,
+    "differingBodyFacts": 3,
+    "cause": "SignatureToStringEx alias expansion and truncation depended on unrelated checker walks.",
+    "correction": "Resolved call signatures use stable fully-qualified parameter and return type rendering.",
+    "witnesses": [
+      {
+        "key": "function-body\u0000symbol:10517d5810862854db8b7bdf07df8da052998dd94a4adc95e831592183385163",
+        "path": "$.payload.body.calls[1].signature",
+        "expected": "(expected: ExpectedDeclaration, observed: ObservedDeclaration, options?: { readonly prefix?: string; readonly expectedParameters?: NonNullable<ExpectedDeclaration['typeParameters']>; readonly observedParameters?: NonNullable<ObservedDeclaration['typeParameters']>; }): void",
+        "actual": "(expected: ExpectedDeclaration, observed: ObservedDeclaration, options?: { readonly prefix?: string; readonly expectedParameters?: readonly ExpectedTypeParameter[]; readonly observedParameters?: readonly import(\"../../../../analysis/typescript/index.ts\").ObservedTypeParameter[]; }): void"
+      },
+      {
+        "key": "function-body\u0000symbol:d415190ddc5555214ac4783017fa18764e58cddc9fc112ee37bc747bdc3e8f81",
+        "path": "$.payload.body.calls[23].signature",
+        "expected": "(catalogRoot: string, checker: ts.TypeChecker, symbol: ts.Symbol, exportPaths: readonly (readonly string[])[], semantics: DeclarationSurfaceSemantics): { declaration: ObservedDeclaration; references: ReadonlyMap<string, ts.Symbol>; }",
+        "actual": "(catalogRoot: string, checker: ts.TypeChecker, symbol: ts.Symbol, exportPaths: readonly (readonly string[])[], semantics: DeclarationSurfaceSemantics): { declaration: ObservedDeclaration; references: ReadonlyMap<...>; }"
+      },
+      {
+        "key": "function-body\u0000symbol:f07299d5c2992dc2bd3c06461b5e3ff116372083be3b2169c0d7980aa21ce4be",
+        "path": "$.payload.body.calls[21].signature",
+        "expected": "(root: string, reader: TypeSpecApplicationReader, fact: ApplicationModulePresentationFact | undefined): Promise<{ readonly architecture?: MarkdownResource; readonly icon?: ViewerSpecification['icon']; readonly history: readonly HistoryResource[]; readonly diagnostics: readonly Diagnostic[]; }>",
+        "actual": "(root: string, reader: TypeSpecApplicationReader, fact: ApplicationModulePresentationFact | undefined): Promise<{ readonly architecture?: MarkdownResource; readonly icon?: import(\"../specification/index.ts\").ModuleIconResource | undefined; readonly history: readonly HistoryResource[]; readonly diagnostics: readonly Diagnostic[]; }>"
+      }
+    ]
+  },
+  "provenance": {
+    "kernelRevision": "683ae7980ef07f4b8d36d6425bbbccc00c00fe41",
+    "nativeSha256": "ba089198292f16edd20c3b83992b19f4866f5b7541e99373fa418476f9b91ef9",
+    "artifacts": {
+      "micro": {
+        "sha256": "02f1e8ebb6a7c9cade60b2756f19cbab7e3899cb9e8d25cfc8ce3f620a3a2df7"
+      },
+      "codegraph": {
+        "sha256": "c72b8e73436c0ad4872c1d81097baf21d74618e72d6100a3307d40a15c966955"
+      },
+      "kernel": {
+        "sha256": "e73bdfb4027837142e4f19b85c594f7738254b8d26e2d427abef24bfbc07f141"
+      },
+      "rejected": {
+        "sha256": "3dc88081e471c38fbec95fe6b420a3872e2c7af62e6016aea91e6d45abfdd71f"
+      }
+    },
+    "commands": [
+      "node qualification/v2/experiments/projection-plan.ts --native-binary <binary> --output <artifact>",
+      "node qualification/v2/experiments/projection-project.ts --target codegraph --root . --project tsconfig.json --native-binary <binary> --output <artifact> --require-exact",
+      "node qualification/v2/experiments/projection-project.ts --target kernel --root <clean-kernel> --project core/tsconfig.json --native-binary <binary> --output <artifact> --require-exact"
+    ]
+  }
+}

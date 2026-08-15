@@ -10,6 +10,7 @@ import {
   type ViteDevServer,
 } from 'vite'
 
+import type { CodegraphApplicationSessionOptions } from '../application/analysis/index.ts'
 import { createLiveSpecsPlugin, type LiveSpecsOptions } from './live-plugin.ts'
 import { DEV_SERVER_WATCH_IGNORES } from './watch.ts'
 
@@ -19,6 +20,8 @@ export interface DevOptions {
   open?: boolean
   verify?: boolean
   cache?: boolean
+  /** Explicit native analyzer for source-checkout development and controlled qualification. */
+  native?: CodegraphApplicationSessionOptions
 }
 
 export interface RunningDevServer {
@@ -57,6 +60,7 @@ export function createDevelopmentServer(
       allowedRoots,
       verify: options.verify ?? false,
       cache: options.cache ?? true,
+      ...(options.native ? { native: options.native } : {}),
     })
 
     let server: ViteDevServer | undefined

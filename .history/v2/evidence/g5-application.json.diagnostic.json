@@ -1,0 +1,43 @@
+{
+  "format": "astrale.codegraph.v2.application-cut-diagnostic-measurements",
+  "version": 1,
+  "status": "diagnostic-only",
+  "measurements": {
+    "coldFullMs": 381897.14,
+    "warmFullMs": 1429.33,
+    "focusedSelectionMs": 923.94,
+    "affectedPrivateEditMs": 906.17,
+    "affectedPrivateEditSpeedup": 28.73,
+    "nativeStartupMs": 328.88,
+    "sqliteBytes": 345833472,
+    "maximumRssMiB": 2935.41,
+    "rssByPhase": {
+      "cold": {
+        "currentRssMiB": 2692.98,
+        "maximumRssMiB": 2935.41
+      },
+      "warm": {
+        "currentRssMiB": 2552.25,
+        "maximumRssMiB": 2935.41
+      },
+      "focused": {
+        "currentRssMiB": 2566.14,
+        "maximumRssMiB": 2935.41
+      }
+    }
+  },
+  "limits": {
+    "maximumConcurrentSpecificationCompilations": 4,
+    "maximumRetainedSnapshots": 2,
+    "maximumFocusedCheckMilliseconds": 12000,
+    "maximumColdFullCheckMilliseconds": 300000,
+    "maximumWarmFullCheckMilliseconds": 20000,
+    "maximumNativeStartupMilliseconds": 3000,
+    "maximumSQLiteBytes": 536870912,
+    "maximumCheckHeapMiB": 1280,
+    "maximumInteractiveHeapMiB": 3584
+  },
+  "violations": [
+    "cold full check 381897.14 exceeded governed maximum 300000"
+  ]
+}

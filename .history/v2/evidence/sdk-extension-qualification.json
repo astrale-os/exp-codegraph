@@ -1,0 +1,46 @@
+{
+  "format": "astrale.typespec.v2.sdk-extension-qualification",
+  "version": 1,
+  "status": "qualified",
+  "consumer": {
+    "imports": [
+      "@astrale-os/codegraph/analysis",
+      "@astrale-os/codegraph/analysis/typescript"
+    ],
+    "privateImports": 0,
+    "externalPackageBoundaryLoaded": true
+  },
+  "semantics": {
+    "canonicalIdentity": true,
+    "sameNameCollisionRejected": true,
+    "directCalls": 9,
+    "forwardedCalls": 1,
+    "valueStates": [
+      "ambiguous",
+      "known",
+      "unknown",
+      "unsupported"
+    ],
+    "callbackKinds": [
+      "direct",
+      "returned"
+    ],
+    "partialNativeBodyScopedToCompleteSDKFacts": true
+  },
+  "materialization": {
+    "twoRootPortableIdentity": true,
+    "sqliteReopenEquivalent": true,
+    "incrementalEqualsCold": true,
+    "noChangeReusedGeneration": true,
+    "unrelatedCapabilityName": "fixture.sdk.builder-analysis",
+    "outputNamespace": "fixture.sdk.builder-call"
+  },
+  "performance": {
+    "coldMemoryMs": 258.74,
+    "warmMemoryMs": 0.49,
+    "coldSQLiteMs": 222.21,
+    "incrementalEditMs": 54.72,
+    "coldRebuildMs": 214.85,
+    "sqliteBytes": 1097728
+  }
+}

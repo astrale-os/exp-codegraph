@@ -3,6 +3,7 @@ import { isAbsolute, relative } from 'node:path'
 
 import type { Fact, FactShard, FactShardReference } from '../facts/index.ts'
 import { shardReference } from '../facts/index.ts'
+import { bindPhysicalFact } from '../facts/representation/index.ts'
 import type { AnalysisGeneration, FactTransaction } from '../generation/index.ts'
 import { generationIdentity } from '../generation/index.ts'
 import type { FactShardKey, PassId, ProjectUniverseId, SourceId } from '../identity/index.ts'
@@ -20,7 +21,7 @@ import type {
   TypeScriptAnalysisService,
   TypeScriptRefreshResult,
 } from './model.ts'
-import { materializeNativeTransaction } from './universe-transaction.ts'
+import { materializeNativeDelta, materializeNativeTransaction } from './universe-transaction.ts'
 
 /**
  * Compose one private resident compiler lineage with portable passes and publish
@@ -74,6 +75,7 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
         id: ++this.#request,
         kind: 'refresh',
         ...(nativeBase ? { base: nativeBase.id } : {}),
+        ...(nativeBase ? { baseSequence: nativeBase.sequence } : {}),
         ...(options.changed ? { changed: [...options.changed].sort() } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
       },
@@ -90,22 +92,44 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
 
     let nativeTransaction: FactTransaction | undefined
     let changedNamespaces = new Set<string>()
-    if (response.kind === 'transaction') {
-      changedNamespaces = transactionNamespaces(this.#nativeShards, response.transaction)
-      const materialized = await materializeNativeTransaction(
-        this.#nativeStore,
-        activeUniverse,
-        nativeBase,
-        response.transaction,
-        { signal: options.signal },
-      )
+    if (response.kind === 'transaction' || response.kind === 'delta') {
+      const materialized = response.kind === 'delta'
+        ? await materializeNativeDelta(
+            this.#nativeStore,
+            nativeBase,
+            response.delta,
+            { signal: options.signal },
+          )
+        : await materializeNativeTransaction(
+            this.#nativeStore,
+            activeUniverse,
+            nativeBase,
+            response.transaction,
+            { signal: options.signal },
+          )
+      const admitted = materialized.transaction
+        ?? (response.kind === 'transaction' ? response.transaction : undefined)
+      if (!admitted) throw new Error('Native delta materialization omitted its transaction.')
+      changedNamespaces = transactionNamespaces(this.#nativeShards, admitted)
       if (materialized.rollover) {
         this.#nativeShards.clear()
         this.#portableShards.clear()
       }
-      applyShards(this.#nativeShards, response.transaction)
-      nativeTransaction = response.transaction
+      applyShards(this.#nativeShards, admitted)
+      nativeTransaction = admitted
+      if (this.#session.acknowledge) {
+        await this.#session.acknowledge(
+          {
+            id: ++this.#request,
+            generation: materialized.generation.id,
+            sequence: materialized.generation.sequence,
+          },
+          { signal: options.signal },
+        )
+      }
       this.#universe = materialized.generation.universe
+    } else if (response.kind === 'acknowledged') {
+      throw new Error('Native analysis acknowledged a generation without a commit request.')
     } else if (!nativeBase || response.generation !== nativeBase.id) {
       throw new Error('Native analysis reported unchanged for a non-current private generation.')
     }
@@ -326,7 +350,6 @@ function replacePortableShards(
 function applyShards(shards: Map<FactShardKey, FactShard>, transaction: FactTransaction): void {
   for (const key of transaction.deletes) shards.delete(key)
   for (const shard of transaction.upserts) shards.set(shard.key, shard)
-  for (const [key, shard] of shards) shards.set(key, bindGeneration(shard, transaction.next.id))
 }
 
 function publishTransaction(
@@ -388,7 +411,7 @@ function uniqueSchemas(
 }
 
 function bindGeneration(shard: FactShard, generation: Fact['generation']): FactShard {
-  return { ...shard, facts: shard.facts.map((fact) => ({ ...fact, generation })) }
+  return { ...shard, facts: shard.facts.map((fact) => bindPhysicalFact(fact, generation)) }
 }
 
 function changedSources(

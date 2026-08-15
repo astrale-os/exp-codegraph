@@ -2,15 +2,35 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { createInterface } from 'node:readline'
+import type { Readable } from 'node:stream'
 
-import type { Completeness, Fact, FactShard, FactShardReference, SourceSpan } from '../facts/index.ts'
+import type {
+  Completeness,
+  Fact,
+  FactShard,
+  FactShardReference,
+  SourceSpan,
+} from '../facts/index.ts'
+import { validateFactShard } from '../facts/index.ts'
 import type { FactTransaction } from '../generation/index.ts'
 import { admitAnalysisId, portablePath } from '../identity/index.ts'
+import type { AnalysisTelemetryEvent, AnalysisTelemetrySink } from '../profiling/index.ts'
+import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
+import {
+  admitFactPayloadCodecs,
+  admittedFactShardPayloadBytes,
+  createFactWithPhysicalPayload,
+  createFactWithSemanticPayload,
+  physicalPayloadForTransport,
+  type FactPayloadCodec,
+  type FactPayloadCodecMap,
+} from '../facts/representation/index.ts'
 import type {
   NativeAnalysisRequest,
   NativeAnalysisResponse,
   NativeAnalysisSession,
   NativeAnalysisSessionFactory,
+  NativeFactDelta,
   NativeProjectDescriptor,
 } from './model.ts'
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from './model.ts'
@@ -22,17 +42,28 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly maximumFrameBytes?: number
   readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
+  /** Maximum encoded physical bytes assembled before semantic decoding. */
+  readonly maximumPhysicalTransactionBytes?: number
   readonly maximumErrorBytes?: number
+  /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
+  readonly telemetry?: AnalysisTelemetrySink
+  /** Explicit physical payload capabilities negotiated with the native producer. */
+  readonly payloadCodecs?: readonly FactPayloadCodec[]
 }
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
   maximumFrameBytes: 64 * 1_024 * 1_024,
   transactionChunkFrameBytes: 8 * 1_024 * 1_024,
-  maximumTransactionBytes: 256 * 1_024 * 1_024,
+  // The richest frozen Kernel project retains 268,454,479 semantic payload
+  // bytes. Keep a finite measured ceiling with modest headroom; ordinary
+  // demand-driven requests remain far below it.
+  maximumTransactionBytes: 384 * 1_024 * 1_024,
+  maximumPhysicalTransactionBytes: 512 * 1_024 * 1_024,
   maximumErrorBytes: 1 * 1_024 * 1_024,
 })
 
 interface TransactionAssembly {
+  readonly payloadKind: 'transaction' | 'delta'
   readonly bytes: number
   readonly chunks: number
   readonly sha256: string
@@ -46,6 +77,7 @@ interface PendingRequest {
   reject(error: Error): void
   removeAbort?(): void
   assembly?: TransactionAssembly
+  startedNs?: bigint
 }
 
 type NativeAnalysisWireFrame =
@@ -54,6 +86,7 @@ type NativeAnalysisWireFrame =
       readonly id: number
       readonly protocolVersion: number
       readonly kind: 'transaction-start'
+      readonly payloadKind: 'transaction' | 'delta'
       readonly encoding: 'base64-json'
       readonly bytes: number
       readonly chunks: number
@@ -70,6 +103,7 @@ type NativeAnalysisWireFrame =
       readonly id: number
       readonly protocolVersion: number
       readonly kind: 'transaction-end'
+      readonly payloadKind: 'transaction' | 'delta'
       readonly bytes: number
       readonly chunks: number
       readonly sha256: string
@@ -90,6 +124,9 @@ export function createProcessNativeAnalysisSessionFactory(
   const maximumTransactionBytes =
     options.maximumTransactionBytes ??
     DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumTransactionBytes
+  const maximumPhysicalTransactionBytes =
+    options.maximumPhysicalTransactionBytes ??
+    DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumPhysicalTransactionBytes
   const maximumErrorBytes =
     options.maximumErrorBytes ?? DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumErrorBytes
   validateLimit(maximumFrameBytes, 'maximumFrameBytes')
@@ -98,11 +135,14 @@ export function createProcessNativeAnalysisSessionFactory(
     throw new RangeError('transactionChunkFrameBytes must not exceed maximumFrameBytes.')
   }
   validateLimit(maximumTransactionBytes, 'maximumTransactionBytes')
+  validateLimit(maximumPhysicalTransactionBytes, 'maximumPhysicalTransactionBytes')
   validateLimit(maximumErrorBytes, 'maximumErrorBytes')
+  const payloadCodecs = admitFactPayloadCodecs(options.payloadCodecs)
   return {
     async open(project, openOptions = {}) {
       openOptions.signal?.throwIfAborted()
       validateProject(project)
+      const telemetry = options.telemetry
       const child = spawn(
         options.command,
         [
@@ -118,24 +158,43 @@ export function createProcessNativeAnalysisSessionFactory(
           JSON.stringify(
             [...(project.modules ?? [])].sort((left, right) => left.id.localeCompare(right.id)),
           ),
+          ...(payloadCodecs.size
+            ? [
+                '--payload-codecs-json',
+                JSON.stringify([...payloadCodecs.keys()].sort()),
+              ]
+            : []),
           '--maximum-frame-bytes',
           String(maximumFrameBytes),
           '--transaction-chunk-frame-bytes',
           String(transactionChunkFrameBytes),
           '--maximum-transaction-bytes',
           String(maximumTransactionBytes),
+          '--maximum-physical-transaction-bytes',
+          String(maximumPhysicalTransactionBytes),
+          ...(telemetry ? ['--telemetry-fd', '3'] : []),
         ],
         {
           cwd: project.root,
           env: { ...process.env, ...options.environment },
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: telemetry ? ['pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
         },
       )
+      if (telemetry) {
+        const channel = (child.stdio as unknown as readonly (Readable | null)[])[3]
+        if (channel) {
+          const lines = createInterface({ input: channel, crlfDelay: Infinity })
+          lines.on('line', (line) => receiveTelemetry(line, telemetry))
+        }
+      }
       return await ProcessNativeAnalysisSession.open(
         child,
         maximumFrameBytes,
         maximumTransactionBytes,
+        maximumPhysicalTransactionBytes,
         maximumErrorBytes,
+        telemetry,
+        payloadCodecs,
         openOptions.signal,
       )
     },
@@ -150,16 +209,25 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   readonly #child: ChildProcessWithoutNullStreams
   readonly #maximumFrameBytes: number
   readonly #maximumTransactionBytes: number
+  readonly #maximumPhysicalTransactionBytes: number
+  readonly #telemetry: AnalysisTelemetrySink | undefined
+  readonly #payloadCodecs: FactPayloadCodecMap
 
   private constructor(
     child: ChildProcessWithoutNullStreams,
     maximumFrameBytes: number,
     maximumTransactionBytes: number,
+    maximumPhysicalTransactionBytes: number,
     maximumErrorBytes: number,
+    telemetry: AnalysisTelemetrySink | undefined,
+    payloadCodecs: FactPayloadCodecMap,
   ) {
     this.#child = child
     this.#maximumFrameBytes = maximumFrameBytes
     this.#maximumTransactionBytes = maximumTransactionBytes
+    this.#maximumPhysicalTransactionBytes = maximumPhysicalTransactionBytes
+    this.#telemetry = telemetry
+    this.#payloadCodecs = payloadCodecs
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
       if (this.#stderr.length < maximumErrorBytes) {
@@ -167,7 +235,18 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       }
     })
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
-    lines.on('line', (line) => this.receive(line))
+    lines.on('line', (line) => {
+      const started = telemetry ? process.hrtime.bigint() : 0n
+      this.receive(line)
+      if (telemetry) {
+        dispatchAnalysisTelemetry(telemetry, {
+          component: 'transport',
+          phase: 'frame.receive',
+          durationNs: Number(process.hrtime.bigint() - started),
+          metrics: { wireBytes: Buffer.byteLength(line) + 1 },
+        })
+      }
+    })
     child.once('error', (error) => this.fail(error))
     child.once('exit', (code, signal) => {
       if (!this.#disposed || this.#pending.size) {
@@ -184,14 +263,20 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     child: ChildProcessWithoutNullStreams,
     maximumFrameBytes: number,
     maximumTransactionBytes: number,
+    maximumPhysicalTransactionBytes: number,
     maximumErrorBytes: number,
+    telemetry: AnalysisTelemetrySink | undefined,
+    payloadCodecs: FactPayloadCodecMap,
     signal?: AbortSignal,
   ): Promise<ProcessNativeAnalysisSession> {
     const session = new ProcessNativeAnalysisSession(
       child,
       maximumFrameBytes,
       maximumTransactionBytes,
+      maximumPhysicalTransactionBytes,
       maximumErrorBytes,
+      telemetry,
+      payloadCodecs,
     )
     if (signal) {
       if (signal.aborted) {
@@ -211,8 +296,13 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     validateRequest(request)
     if (this.#pending.has(request.id)) throw new Error(`Duplicate native request id ${request.id}.`)
     options.signal?.throwIfAborted()
+    const started = this.#telemetry ? process.hrtime.bigint() : 0n
     return new Promise((resolve, reject) => {
-      const entry: PendingRequest = { resolve, reject }
+      const entry: PendingRequest = {
+        resolve,
+        reject,
+        ...(this.#telemetry ? { startedNs: started } : {}),
+      }
       if (options.signal) {
         const abort = () => void this.abort(options.signal!.reason)
         options.signal.addEventListener('abort', abort, { once: true })
@@ -228,8 +318,34 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       }
       this.#child.stdin.write(frame, (error) => {
         if (error) this.fail(error)
+        else if (this.#telemetry) {
+          dispatchAnalysisTelemetry(this.#telemetry, {
+            component: 'transport',
+            phase: 'request.write',
+            request: request.id,
+            durationNs: Number(process.hrtime.bigint() - started),
+            metrics: { wireBytes: Buffer.byteLength(frame) },
+          })
+        }
       })
     })
+  }
+
+  async acknowledge(
+    acknowledgement: {
+      readonly id: number
+      readonly generation: import('../identity/index.ts').AnalysisGenerationId
+      readonly sequence: number
+    },
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const response = await this.request(
+      { ...acknowledgement, kind: 'acknowledge' },
+      options,
+    )
+    if (response.kind !== 'acknowledged' || response.generation !== acknowledgement.generation) {
+      throw new Error('Native analysis did not acknowledge the committed generation.')
+    }
   }
 
   async dispose(): Promise<void> {
@@ -256,7 +372,11 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     }
     let frame: NativeAnalysisWireFrame
     try {
-      frame = validateWireFrame(JSON.parse(line))
+      frame = validateWireFrame(
+        JSON.parse(line),
+        this.#payloadCodecs,
+        this.#maximumTransactionBytes,
+      )
     } catch (error) {
       this.fail(new Error('Native analysis returned an invalid protocol frame.', { cause: error }))
       return
@@ -283,8 +403,10 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
         throw new TypeError('A streamed transaction was interrupted by a terminal response.')
       }
       if (
-        frame.kind === 'transaction' &&
-        Buffer.byteLength(JSON.stringify(frame.transaction)) > this.#maximumTransactionBytes
+        (frame.kind === 'transaction' || frame.kind === 'delta') &&
+        encodedPhysicalPayloadBytes(
+          frame.kind === 'transaction' ? frame.transaction : frame.delta,
+        ) > this.#maximumPhysicalTransactionBytes
       ) {
         throw new RangeError('Native analysis transaction exceeds the configured transaction limit.')
       }
@@ -299,13 +421,14 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     frame: Extract<NativeAnalysisWireFrame, { readonly kind: 'transaction-start' }>,
   ): void {
     if (pending.assembly) throw new TypeError('A transaction stream is already active.')
-    if (frame.bytes > this.#maximumTransactionBytes) {
+    if (frame.bytes > this.#maximumPhysicalTransactionBytes) {
       throw new RangeError('Native analysis transaction exceeds the configured transaction limit.')
     }
     if (frame.chunks > frame.bytes) {
       throw new TypeError('Transaction chunk count exceeds its announced byte length.')
     }
     pending.assembly = {
+      payloadKind: frame.payloadKind,
       bytes: frame.bytes,
       chunks: frame.chunks,
       sha256: frame.sha256,
@@ -348,7 +471,8 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     if (
       frame.bytes !== assembly.bytes ||
       frame.chunks !== assembly.chunks ||
-      frame.sha256 !== assembly.sha256
+      frame.sha256 !== assembly.sha256 ||
+      frame.payloadKind !== assembly.payloadKind
     ) {
       throw new TypeError('Transaction end metadata does not match its start frame.')
     }
@@ -365,25 +489,56 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     const serialized = Buffer.concat(assembly.parts, assembly.bytes)
     const digest = createHash('sha256').update(serialized).digest('hex')
     if (digest !== assembly.sha256) throw new TypeError('Transaction stream digest is invalid.')
-    let transaction: FactTransaction
+    let payload: FactTransaction | NativeFactDelta
     try {
-      transaction = validateTransaction(JSON.parse(serialized.toString('utf8')))
+      const parsed: unknown = JSON.parse(serialized.toString('utf8'))
+      payload = assembly.payloadKind === 'transaction'
+        ? validateTransaction(parsed, this.#payloadCodecs, this.#maximumTransactionBytes)
+        : validateDelta(parsed, this.#payloadCodecs, this.#maximumTransactionBytes)
     } catch (error) {
       throw new TypeError('Transaction stream does not contain a valid transaction.', {
         cause: error,
       })
     }
-    this.resolve(frame.id, pending, {
-      id: frame.id,
-      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
-      kind: 'transaction',
-      transaction,
-    })
+    this.resolve(
+      frame.id,
+      pending,
+      assembly.payloadKind === 'transaction'
+        ? {
+            id: frame.id,
+            protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+            kind: 'transaction',
+            transaction: payload as FactTransaction,
+          }
+        : {
+            id: frame.id,
+            protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+            kind: 'delta',
+            delta: payload as NativeFactDelta,
+          },
+    )
   }
 
   private resolve(id: number, pending: PendingRequest, response: NativeAnalysisResponse): void {
     this.#pending.delete(id)
     pending.removeAbort?.()
+    if (this.#telemetry && pending.startedNs !== undefined) {
+      dispatchAnalysisTelemetry(this.#telemetry, {
+        component: 'transport',
+        phase: 'request.roundtrip',
+        request: id,
+        durationNs: Number(process.hrtime.bigint() - pending.startedNs),
+        metrics: {
+          responseKind: response.kind,
+          ...(pending.assembly
+            ? {
+                transactionBytes: pending.assembly.bytes,
+                transactionChunks: pending.assembly.chunks,
+              }
+            : {}),
+        },
+      })
+    }
     pending.resolve(response)
   }
 
@@ -414,6 +569,63 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   private assertOpen(): void {
     if (this.#failure) throw this.#failure
     if (this.#disposed) throw new Error('Native analysis session is disposed.')
+  }
+}
+
+function encodedPhysicalPayloadBytes(value: FactTransaction | NativeFactDelta): number {
+  const upserts = value.upserts.map((shard) => ({
+    key: shard.key,
+    digest: shard.digest,
+    namespace: shard.namespace,
+    schemaVersion: shard.schemaVersion,
+    completion: shard.completion,
+    facts: shard.facts.map((fact) => {
+      const physicalPayload = physicalPayloadForTransport(fact)
+      return {
+        id: fact.id,
+        generation: fact.generation,
+        namespace: fact.namespace,
+        schemaVersion: fact.schemaVersion,
+        kind: fact.kind,
+        subject: fact.subject,
+        completeness: fact.completeness,
+        provenance: fact.provenance,
+        ...(physicalPayload ? { physicalPayload } : { payload: fact.payload }),
+      }
+    }),
+    ...(shard.capabilities ? { capabilities: shard.capabilities } : {}),
+  }))
+  const encoded = 'manifest' in value
+    ? { ...value, upserts }
+    : {
+        protocolVersion: value.protocolVersion,
+        base: value.base,
+        next: value.next,
+        upserts,
+        deletes: value.deletes,
+      }
+  return Buffer.byteLength(JSON.stringify(encoded))
+}
+
+function receiveTelemetry(line: string, sink: AnalysisTelemetrySink): void {
+  try {
+    const input: unknown = JSON.parse(line)
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return
+    const value = input as Partial<AnalysisTelemetryEvent>
+    if (
+      value.format !== 'astrale.codegraph.analysis-telemetry' ||
+      value.version !== 1 ||
+      value.component !== 'native' ||
+      typeof value.phase !== 'string' ||
+      !value.phase
+    ) return
+    try {
+      sink(value as AnalysisTelemetryEvent)
+    } catch {
+      // Telemetry observers are diagnostic-only.
+    }
+  } catch {
+    // A malformed diagnostic stream never invalidates the semantic protocol stream.
   }
 }
 
@@ -449,9 +661,27 @@ function validateRequest(request: NativeAnalysisRequest): void {
   if (request.kind === 'refresh' && request.changed?.some((path) => !path || path.includes('\0'))) {
     throw new TypeError('Native changed path is invalid.')
   }
+  if (
+    request.kind === 'refresh'
+    && ((request.base === undefined) !== (request.baseSequence === undefined)
+      || (request.baseSequence !== undefined
+        && (!Number.isSafeInteger(request.baseSequence) || request.baseSequence < 1)))
+  ) {
+    throw new TypeError('Native refresh base and positive baseSequence must occur together.')
+  }
+  if (
+    request.kind === 'acknowledge'
+    && (!Number.isSafeInteger(request.sequence) || request.sequence < 1)
+  ) {
+    throw new TypeError('Native acknowledgement sequence is invalid.')
+  }
 }
 
-function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
+function validateWireFrame(
+  input: unknown,
+  payloadCodecs: FactPayloadCodecMap,
+  maximumSemanticPayloadBytes: number,
+): NativeAnalysisWireFrame {
   if (!input || typeof input !== 'object') throw new TypeError('Response must be an object.')
   const value = input as Record<string, unknown>
   if (!Number.isSafeInteger(value.id) || (value.id as number) < 1) {
@@ -463,10 +693,12 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
   if (
     ![
       'transaction',
+      'delta',
       'transaction-start',
       'transaction-chunk',
       'transaction-end',
       'unchanged',
+      'acknowledged',
       'error',
     ].includes(String(value.kind))
   ) {
@@ -478,6 +710,7 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
       id: value.id as number,
       protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
       kind: 'transaction-start',
+      payloadKind: requiredPayloadKind(value.payloadKind),
       encoding: 'base64-json',
       bytes: requiredInteger(value.bytes, 'bytes', 1),
       chunks: requiredInteger(value.chunks, 'chunks', 1),
@@ -498,6 +731,7 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
       id: value.id as number,
       protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
       kind: 'transaction-end',
+      payloadKind: requiredPayloadKind(value.payloadKind),
       bytes: requiredInteger(value.bytes, 'bytes', 1),
       chunks: requiredInteger(value.chunks, 'chunks', 1),
       sha256: requiredDigest(value.sha256, 'sha256'),
@@ -508,7 +742,19 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
       id: value.id as number,
       protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
       kind: 'transaction',
-      transaction: validateTransaction(value.transaction),
+      transaction: validateTransaction(
+        value.transaction,
+        payloadCodecs,
+        maximumSemanticPayloadBytes,
+      ),
+    }
+  }
+  if (value.kind === 'delta') {
+    return {
+      id: value.id as number,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'delta',
+      delta: validateDelta(value.delta, payloadCodecs, maximumSemanticPayloadBytes),
     }
   }
   if (value.kind === 'unchanged') {
@@ -519,11 +765,22 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
       generation: admitAnalysisId('generation', requiredString(value.generation, 'generation')),
     }
   }
+  if (value.kind === 'acknowledged') {
+    return {
+      id: value.id as number,
+      protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
+      kind: 'acknowledged',
+      generation: admitAnalysisId(
+        'generation',
+        requiredString(value.generation, 'generation'),
+      ),
+    }
+  }
   if (
     value.kind === 'error' &&
     (typeof value.code !== 'string' ||
       typeof value.message !== 'string' ||
-      typeof value.retryable !== 'boolean')
+      (value.retryable !== undefined && typeof value.retryable !== 'boolean'))
   ) {
     throw new TypeError('Error response is invalid.')
   }
@@ -533,13 +790,24 @@ function validateWireFrame(input: unknown): NativeAnalysisWireFrame {
     kind: 'error',
     code: value.code as string,
     message: value.message as string,
-    retryable: value.retryable as boolean,
+    // Early protocol-v1 producers omitted the false value from their JSON
+    // envelope. Absence is therefore the canonical backwards-compatible false.
+    retryable: value.retryable === true,
   }
 }
 
 function requiredDigest(input: unknown, path: string): string {
   if (typeof input !== 'string' || !/^[a-f0-9]{64}$/u.test(input)) {
     throw new TypeError(`${path} must be a lowercase SHA-256 digest.`)
+  }
+  return input
+}
+
+function requiredPayloadKind(input: unknown): 'transaction' | 'delta' {
+  // Protocol-v1 transaction streams predate the explicit payload discriminator.
+  if (input === undefined) return 'transaction'
+  if (input !== 'transaction' && input !== 'delta') {
+    throw new TypeError('Transaction payload kind is invalid.')
   }
   return input
 }
@@ -555,12 +823,16 @@ function decodeBase64(value: string): Uint8Array {
   return decoded
 }
 
-function validateTransaction(input: unknown): FactTransaction {
+function validateTransaction(
+  input: unknown,
+  payloadCodecs: FactPayloadCodecMap,
+  maximumSemanticPayloadBytes: number,
+): FactTransaction {
   const value = requiredRecord(input, 'transaction')
   const next = requiredRecord(value.next, 'transaction.next')
   const producer = requiredRecord(next.producer, 'transaction.next.producer')
   const base = optionalString(value.base, 'transaction.base')
-  return {
+  const transaction: FactTransaction = {
     protocolVersion: requiredInteger(value.protocolVersion, 'transaction.protocolVersion', 1),
     ...(base ? { base: admitAnalysisId('generation', base) } : {}),
     next: {
@@ -593,11 +865,34 @@ function validateTransaction(input: unknown): FactTransaction {
       validateReference(entry, `transaction.manifest[${index}]`),
     ),
     upserts: requiredArray(value.upserts, 'transaction.upserts').map((entry, index) =>
-      validateShard(entry, `transaction.upserts[${index}]`),
+      validateShard(entry, `transaction.upserts[${index}]`, payloadCodecs),
     ),
     deletes: stringArray(value.deletes, 'transaction.deletes').map((key) =>
       admitAnalysisId('fact-shard-key', key),
     ),
+  }
+  admitWireShards(transaction.upserts, maximumSemanticPayloadBytes)
+  return transaction
+}
+
+function validateDelta(
+  input: unknown,
+  payloadCodecs: FactPayloadCodecMap,
+  maximumSemanticPayloadBytes: number,
+): NativeFactDelta {
+  const value = requiredRecord(input, 'delta')
+  const parsed = validateTransaction(
+    { ...value, manifest: [] },
+    payloadCodecs,
+    maximumSemanticPayloadBytes,
+  )
+  if (!parsed.base) throw new TypeError('delta.base is required.')
+  return {
+    protocolVersion: parsed.protocolVersion,
+    base: parsed.base,
+    next: parsed.next,
+    upserts: parsed.upserts,
+    deletes: parsed.deletes,
   }
 }
 
@@ -615,7 +910,11 @@ function validateReference(input: unknown, path: string): FactShardReference {
   }
 }
 
-function validateShard(input: unknown, path: string): FactShard {
+function validateShard(
+  input: unknown,
+  path: string,
+  payloadCodecs: FactPayloadCodecMap,
+): FactShard {
   const value = requiredRecord(input, path)
   return {
     key: admitAnalysisId('fact-shard-key', requiredString(value.key, `${path}.key`)),
@@ -627,15 +926,24 @@ function validateShard(input: unknown, path: string): FactShard {
     schemaVersion: requiredInteger(value.schemaVersion, `${path}.schemaVersion`, 1),
     completion: validateCompleteness(value.completion, `${path}.completion`),
     facts: requiredArray(value.facts, `${path}.facts`).map((fact, index) =>
-      validateFact(fact, `${path}.facts[${index}]`),
+      validateFact(fact, `${path}.facts[${index}]`, payloadCodecs),
     ),
   }
 }
 
-function validateFact(input: unknown, path: string): Fact {
+function validateFact(
+  input: unknown,
+  path: string,
+  payloadCodecs: FactPayloadCodecMap,
+): Fact {
   const value = requiredRecord(input, path)
   const provenance = requiredRecord(value.provenance, `${path}.provenance`)
-  return {
+  const hasPayload = Object.hasOwn(value, 'payload')
+  const hasPhysicalPayload = Object.hasOwn(value, 'physicalPayload')
+  if (hasPayload === hasPhysicalPayload) {
+    throw new TypeError(`${path} must contain exactly one semantic or physical payload.`)
+  }
+  const fields: Omit<Fact, 'payload'> = {
     id: admitAnalysisId('fact', requiredString(value.id, `${path}.id`)),
     generation: admitAnalysisId(
       'generation',
@@ -662,7 +970,30 @@ function validateFact(input: unknown, path: string): Fact {
         admitAnalysisId('fact', id),
       ),
     },
-    payload: value.payload,
+  }
+  return hasPhysicalPayload
+    ? createFactWithPhysicalPayload(
+        fields,
+        value.physicalPayload,
+        payloadCodecs,
+        `${path}.physicalPayload`,
+      )
+    : createFactWithSemanticPayload(fields, value.payload)
+}
+
+function admitWireShards(shards: readonly FactShard[], maximumSemanticPayloadBytes: number): void {
+  let semanticPayloadBytes = 0
+  for (const shard of shards) {
+    const diagnostics = validateFactShard(shard)
+    if (diagnostics.length) {
+      throw new TypeError(`Native shard ${shard.key} is invalid: ${diagnostics.join(', ')}`)
+    }
+    semanticPayloadBytes += admittedFactShardPayloadBytes(shard) ?? 0
+    if (semanticPayloadBytes > maximumSemanticPayloadBytes) {
+      throw new RangeError(
+        'Native analysis transaction exceeds the configured decoded semantic payload limit.',
+      )
+    }
   }
 }
 

@@ -29,6 +29,7 @@ export type {
   FactShardReference,
   SourceSpan,
 } from '../facts/.spec/api.js'
+export type { FactPayloadCodec } from '../facts/representation/.spec/api.js'
 export { factShardDigest, shardReference, validateFactShard } from '../facts/.spec/api.js'
 export type {
   AnalysisGeneration,
@@ -79,6 +80,12 @@ export type {
   VerifiedSourceText,
 } from '../source/.spec/api.js'
 export { createNodeSourceTextReader, readVerifiedSourceText } from '../source/.spec/api.js'
+export type {
+  AnalysisTelemetryEvent,
+  AnalysisTelemetryMetric,
+  AnalysisTelemetrySink,
+} from '../profiling/.spec/api.js'
+export { ANALYSIS_TELEMETRY_FORMAT } from '../profiling/.spec/api.js'
 export type {
   NativeAnalysisRequest,
   NativeAnalysisResponse,

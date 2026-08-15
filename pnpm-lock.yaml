@@ -56,9 +56,6 @@ importers:
       ts-json-schema-generator:
         specifier: ^2.9.0
         version: 2.9.0
-      ttsc:
-        specifier: 0.25.0
-        version: 0.25.0
       typescript:
         specifier: ~6.0.3
         version: 6.0.3
@@ -78,9 +75,33 @@ importers:
       '@typescript/native-preview':
         specifier: 7.0.0-dev.20260707.2
         version: 7.0.0-dev.20260707.2
+      ttsc:
+        specifier: 0.25.0
+        version: 0.25.0
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(yaml@2.9.0))
+    optionalDependencies:
+      '@astrale-os/codegraph-native-darwin-arm64':
+        specifier: workspace:*
+        version: link:native-packages/darwin-arm64
+      '@astrale-os/codegraph-native-darwin-x64':
+        specifier: workspace:*
+        version: link:native-packages/darwin-x64
+      '@astrale-os/codegraph-native-linux-arm64':
+        specifier: workspace:*
+        version: link:native-packages/linux-arm64
+      '@astrale-os/codegraph-native-linux-x64':
+        specifier: workspace:*
+        version: link:native-packages/linux-x64
+
+  native-packages/darwin-arm64: {}
+
+  native-packages/darwin-x64: {}
+
+  native-packages/linux-arm64: {}
+
+  native-packages/linux-x64: {}
 
 packages:
 

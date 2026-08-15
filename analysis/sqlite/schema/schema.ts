@@ -1,4 +1,4 @@
-export const SQLITE_ANALYSIS_SCHEMA_VERSION = 4
+export const SQLITE_ANALYSIS_SCHEMA_VERSION = 7
 
 /**
  * Durable rows are split between immutable generation metadata, reusable
@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS analysis_shards (
   completion_json TEXT NOT NULL,
   capabilities_json TEXT NOT NULL,
   fact_count INTEGER NOT NULL,
+  payload_layout TEXT NOT NULL,
   PRIMARY KEY (store_namespace, shard_digest)
 ) STRICT;
 
@@ -109,6 +110,16 @@ CREATE INDEX IF NOT EXISTS analysis_facts_by_subject
   ON analysis_facts(store_namespace, subject, fact_id);
 CREATE INDEX IF NOT EXISTS analysis_facts_by_completeness
   ON analysis_facts(store_namespace, completeness_kind, fact_id);
+CREATE TABLE IF NOT EXISTS analysis_shard_payloads (
+  store_namespace TEXT NOT NULL,
+  shard_digest TEXT NOT NULL,
+  encoding TEXT NOT NULL,
+  payloads_blob BLOB NOT NULL,
+  PRIMARY KEY (store_namespace, shard_digest),
+  FOREIGN KEY (store_namespace, shard_digest)
+    REFERENCES analysis_shards(store_namespace, shard_digest)
+    ON DELETE CASCADE
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS analysis_fact_evidence (
   store_namespace TEXT NOT NULL,

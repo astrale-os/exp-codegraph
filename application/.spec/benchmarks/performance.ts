@@ -2,7 +2,7 @@ import { defineBenchmark } from '@astrale-os/codegraph/authoring'
 
 export const TYPESPEC_COLD_FULL = defineBenchmark({
   id: 'TYPESPEC-COLD-FULL',
-  statement: 'Bounds a cold full Kernel qualification through the headless application service.',
+  statement: 'Records a cold full Kernel qualification through the headless application service.',
   workload: 'Refresh and qualify the complete Kernel specification corpus with an empty durable cache.',
   metrics: ['duration', 'peak-memory', 'sqlite-bytes', 'native-startup'],
 })

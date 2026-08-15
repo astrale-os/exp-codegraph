@@ -1,4 +1,4 @@
-import type { Completeness, Fact, FactShard } from '../../facts/index.ts'
+import type { Completeness, Fact, FactHeader, FactShard } from '../../facts/index.ts'
 import type { AnalysisGeneration } from '../../generation/index.ts'
 import type {
   AnalysisGenerationId,
@@ -14,6 +14,12 @@ import type {
 } from '../../identity/index.ts'
 
 import { stableJson } from '../../identity/model.ts'
+import {
+  createFactWithStoredPayload,
+  immutableFact,
+  type FactPayloadCodecMap,
+  type StoredFactPayload,
+} from '../../facts/representation/index.ts'
 
 export interface GenerationRow {
   readonly universe: string
@@ -36,6 +42,7 @@ export interface ShardRow {
   readonly completion_json: string
   readonly capabilities_json: string
   readonly fact_count: number
+  readonly payload_layout: string
 }
 
 export interface FactRow {
@@ -51,6 +58,8 @@ export interface FactRow {
   readonly pass_version: string
   readonly payload_json: string
 }
+
+export type FactHeaderRow = Omit<FactRow, 'payload_json'>
 
 export interface EvidenceRow {
   readonly shard_digest: string
@@ -108,7 +117,31 @@ export function factFromRows(
   generation: AnalysisGenerationId,
   evidence: readonly EvidenceRow[],
   inputs: readonly InputRow[],
+  payload: StoredFactPayload,
+  payloadCodecs: FactPayloadCodecMap,
 ): Fact {
+  return immutableFact(createFactWithStoredPayload({
+    id: row.fact_id as FactId,
+    generation,
+    namespace: row.fact_namespace,
+    schemaVersion: row.schema_version,
+    kind: row.kind,
+    subject: row.subject,
+    completeness: parseCompleteness(
+      row.completeness_json,
+      row.completeness_kind,
+      `fact ${row.fact_id}`,
+    ),
+    provenance: provenanceFromRows(row, evidence, inputs),
+  }, payload, payloadCodecs, `fact ${row.fact_id} payload`))
+}
+
+export function factHeaderFromRows(
+  row: FactHeaderRow,
+  generation: AnalysisGenerationId,
+  evidence: readonly EvidenceRow[],
+  inputs: readonly InputRow[],
+): FactHeader {
   return immutable({
     id: row.fact_id as FactId,
     generation,
@@ -121,23 +154,30 @@ export function factFromRows(
       row.completeness_kind,
       `fact ${row.fact_id}`,
     ),
-    provenance: {
-      pass: row.pass_id as PassId,
-      passVersion: row.pass_version,
-      evidence: [...evidence]
-        .sort((left, right) => left.ordinal - right.ordinal)
-        .map((entry) => ({
-          source: entry.source_id as SourceId,
-          revision: entry.source_revision as SourceRevisionId,
-          start: entry.start_offset,
-          end: entry.end_offset,
-        })),
-      inputs: [...inputs]
-        .sort((left, right) => left.ordinal - right.ordinal)
-        .map((entry) => entry.input_fact_id as FactId),
-    },
-    payload: parseJson(row.payload_json, `fact ${row.fact_id} payload`),
+    provenance: provenanceFromRows(row, evidence, inputs),
   })
+}
+
+function provenanceFromRows(
+  row: FactHeaderRow,
+  evidence: readonly EvidenceRow[],
+  inputs: readonly InputRow[],
+): FactHeader['provenance'] {
+  return {
+    pass: row.pass_id as PassId,
+    passVersion: row.pass_version,
+    evidence: [...evidence]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((entry) => ({
+        source: entry.source_id as SourceId,
+        revision: entry.source_revision as SourceRevisionId,
+        start: entry.start_offset,
+        end: entry.end_offset,
+      })),
+    inputs: [...inputs]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((entry) => entry.input_fact_id as FactId),
+  }
 }
 
 export function encodeJson(value: unknown): string {

@@ -17,6 +17,30 @@ export interface ValidatedTransaction {
 }
 
 /**
+ * Recheck only the causal base after acquiring the writer lock. The complete
+ * transaction was admitted synchronously immediately before BEGIN IMMEDIATE;
+ * immutable shards cannot change while this connection waits for that lock.
+ */
+export function validateSQLiteTransactionBase(
+  database: DatabaseSync,
+  storeNamespace: string,
+  transaction: FactTransaction,
+  expectedCurrentSequence: number | undefined,
+): void {
+  const current = loadCurrentGeneration(database, storeNamespace, transaction.next.universe)
+  if (
+    current?.id !== transaction.base ||
+    current?.sequence !== expectedCurrentSequence ||
+    transaction.next.sequence !== (current?.sequence ?? 0) + 1
+  ) {
+    throw new TransactionError(
+      'BASE_STALE',
+      `BASE_STALE:expected=${transaction.base ?? '<none>'}:actual=${current?.id ?? '<none>'}`,
+    )
+  }
+}
+
+/**
  * Validate a delta against indexed current membership. Unchanged shards are
  * never inflated into one in-memory snapshot.
  */
@@ -72,44 +96,11 @@ function validateFactClosure(
   transaction: FactTransaction,
   currentSequence: number | undefined,
 ): void {
-  const replaced = new Set<string>([
+  const replaced = [...new Set<string>([
     ...transaction.deletes,
     ...transaction.upserts.map((shard) => shard.key),
-  ])
+  ])].sort()
   const facts = new Map<FactId, readonly FactId[]>()
-  if (currentSequence !== undefined) {
-    const rows = database
-      .prepare(
-        `SELECT member.shard_key, fact.fact_id, input.input_fact_id, input.ordinal
-         FROM analysis_generation_shards AS member
-         JOIN analysis_facts AS fact
-           ON fact.store_namespace = member.store_namespace
-          AND fact.shard_digest = member.shard_digest
-         LEFT JOIN analysis_fact_inputs AS input
-           ON input.store_namespace = fact.store_namespace
-          AND input.shard_digest = fact.shard_digest
-          AND input.fact_id = fact.fact_id
-         WHERE member.store_namespace = ?
-           AND member.universe = ?
-           AND member.generation_sequence = ?
-         ORDER BY fact.fact_id, input.ordinal`,
-      )
-      .all(storeNamespace, transaction.next.universe, currentSequence) as {
-      readonly shard_key: string
-      readonly fact_id: FactId
-      readonly input_fact_id: FactId | null
-      readonly ordinal: number | null
-    }[]
-    for (const row of rows) {
-      if (replaced.has(row.shard_key)) continue
-      const inputs = facts.get(row.fact_id) ?? []
-      if (row.input_fact_id !== null) {
-        facts.set(row.fact_id, [...inputs, row.input_fact_id])
-      } else if (!facts.has(row.fact_id)) {
-        facts.set(row.fact_id, [])
-      }
-    }
-  }
   for (const shard of transaction.upserts) {
     for (const fact of shard.facts) {
       if (facts.has(fact.id)) {
@@ -121,16 +112,118 @@ function validateFactClosure(
       facts.set(fact.id, fact.provenance.inputs)
     }
   }
-  for (const [fact, inputs] of facts) {
+  if (currentSequence === undefined) {
+    for (const [fact, inputs] of facts) {
+      for (const input of inputs) {
+        if (!facts.has(input)) unavailableInput(fact, input)
+      }
+    }
+    return
+  }
+
+  const externalInputs = new Set<FactId>()
+  for (const inputs of facts.values()) {
     for (const input of inputs) {
-      if (!facts.has(input)) {
-        throw new TransactionError(
-          'SHARD_INVALID',
-          `Fact ${fact} names unavailable derivation input ${input}.`,
-        )
+      if (!facts.has(input)) externalInputs.add(input)
+    }
+  }
+  const requested = [...new Set<FactId>([...facts.keys(), ...externalInputs])]
+  const available = new Set(
+    (database
+      .prepare(
+        `SELECT DISTINCT fact.fact_id
+         FROM analysis_facts AS fact
+         WHERE fact.store_namespace = ?
+           AND fact.fact_id IN (SELECT value FROM json_each(?))
+           AND EXISTS (
+             SELECT 1
+             FROM analysis_generation_shards AS member
+             WHERE member.store_namespace = fact.store_namespace
+               AND member.universe = ?
+               AND member.generation_sequence = ?
+               AND member.shard_digest = fact.shard_digest
+               AND member.shard_key NOT IN (SELECT value FROM json_each(?))
+           )`,
+      )
+      .all(
+        storeNamespace,
+        JSON.stringify(requested),
+        transaction.next.universe,
+        currentSequence,
+        JSON.stringify(replaced),
+      ) as unknown as { readonly fact_id: FactId }[])
+      .map((row) => row.fact_id),
+  )
+  for (const [fact, inputs] of facts) {
+    if (available.has(fact)) {
+      throw new TransactionError(
+        'SHARD_INVALID',
+        `Fact identity ${fact} occurs in more than one materialized shard.`,
+      )
+    }
+    for (const input of inputs) {
+      if (!facts.has(input) && !available.has(input)) {
+        unavailableInput(fact, input)
       }
     }
   }
+
+  if (!replaced.length) return
+  const replacedFacts = database
+    .prepare(
+      `SELECT fact.fact_id
+       FROM analysis_generation_shards AS member
+       JOIN analysis_facts AS fact
+         ON fact.store_namespace = member.store_namespace
+        AND fact.shard_digest = member.shard_digest
+       WHERE member.store_namespace = ?
+         AND member.universe = ?
+         AND member.generation_sequence = ?
+         AND member.shard_key IN (SELECT value FROM json_each(?))`,
+    )
+    .all(
+      storeNamespace,
+      transaction.next.universe,
+      currentSequence,
+      JSON.stringify(replaced),
+    ) as unknown as { readonly fact_id: FactId }[]
+  const removed = replacedFacts.map((row) => row.fact_id).filter((fact) => !facts.has(fact))
+  if (!removed.length) return
+  const consumer = database
+    .prepare(
+      `SELECT input.fact_id, input.input_fact_id
+       FROM analysis_fact_inputs AS input
+       WHERE input.store_namespace = ?
+         AND input.input_fact_id IN (SELECT value FROM json_each(?))
+         AND EXISTS (
+           SELECT 1
+           FROM analysis_generation_shards AS member
+           WHERE member.store_namespace = input.store_namespace
+             AND member.universe = ?
+             AND member.generation_sequence = ?
+             AND member.shard_digest = input.shard_digest
+             AND member.shard_key NOT IN (SELECT value FROM json_each(?))
+         )
+       ORDER BY input.fact_id, input.input_fact_id
+       LIMIT 1`,
+    )
+    .get(
+      storeNamespace,
+      JSON.stringify(removed),
+      transaction.next.universe,
+      currentSequence,
+      JSON.stringify(replaced),
+    ) as { readonly fact_id: FactId; readonly input_fact_id: FactId } | undefined
+  if (consumer) {
+    unavailableInput(consumer.fact_id, consumer.input_fact_id)
+  }
+}
+
+function unavailableInput(fact: FactId, input: FactId): never {
+  throw new TransactionError(
+    'SHARD_INVALID',
+    `Fact ${fact} names unavailable derivation input ${input}.`,
+  )
 }
 
 function failValidation(diagnostics: readonly string[]): never {

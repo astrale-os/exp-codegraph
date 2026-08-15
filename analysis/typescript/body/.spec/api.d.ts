@@ -1,6 +1,5 @@
 import type { SourceSpan } from '../../../facts/.spec/api.js'
 import type { OccurrenceId, SymbolId } from '../../../identity/.spec/api.js'
-
 export type BodyOccurrenceKind =
   | 'statement'
   | 'expression'

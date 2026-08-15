@@ -33,7 +33,10 @@ export interface TypeScriptFactPayloadByKind {
 export type TypeScriptFactKind = keyof TypeScriptFactPayloadByKind
 export type TypeScriptFact<Kind extends TypeScriptFactKind> = Fact<
   TypeScriptFactPayloadByKind[Kind]
->
+> & { readonly namespace: (typeof TYPESCRIPT_FACT_NAMESPACES)[Kind] }
+export type AnyTypeScriptFact = {
+  readonly [Kind in TypeScriptFactKind]: TypeScriptFact<Kind>
+}[TypeScriptFactKind]
 export type TypeScriptFactFilter = Omit<FactFilter, 'namespaces'>
 
 export interface TypeScriptFactPage<Kind extends TypeScriptFactKind> {
@@ -57,6 +60,8 @@ export interface TypeScriptFactReader {
     kind: Kind,
     filter?: TypeScriptFactFilter,
   ): AsyncIterable<TypeScriptFact<Kind>>
+  /** Validate every base TypeScript namespace in one generation-pinned store traversal. */
+  exportAll(filter?: TypeScriptFactFilter): AsyncIterable<AnyTypeScriptFact>
 }
 
 export class TypeScriptFactContractError extends Error {

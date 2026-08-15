@@ -190,8 +190,8 @@ async function benchmarkReferenceStore(checkpointFile: string, temporary: string
   for (const [, transaction] of checkpoint.transactions) {
     const started = performance.now()
     const query = await store.open(transaction.next.universe)
-    const page = await query.facts({}, { limit: 100 })
-    facts += page.total ?? page.facts.length
+    const page = await query.facts({}, { limit: 100, includeTotal: true })
+    facts += page.total!
     await query.dispose()
     queries.push(performance.now() - started)
   }

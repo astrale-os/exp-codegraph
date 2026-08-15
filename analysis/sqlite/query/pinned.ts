@@ -1,30 +1,45 @@
 import type { DatabaseSync } from 'node:sqlite'
 
-import type { Completeness, Fact, FactShardReference } from '../../facts/index.ts'
+import type { Completeness, Fact, FactHeader, FactShardReference } from '../../facts/index.ts'
 import type { AnalysisGeneration } from '../../generation/index.ts'
 import type { FactId } from '../../identity/index.ts'
 import type {
   AnalysisQuery,
   CapabilityStatus,
   FactFilter,
+  FactHeaderPage,
   FactPage,
   PageRequest,
 } from '../../query/index.ts'
 
 import { combineCompleteness } from '../../internal/completeness.ts'
+import type { FactPayloadCodecMap } from '../../facts/representation/index.ts'
 import {
   factFromRows,
+  factHeaderFromRows,
   parseCapabilities,
   parseJson,
   type EvidenceRow,
   type FactRow,
+  type FactHeaderRow,
   type InputRow,
 } from '../materialization/model.ts'
 import { loadManifest } from '../materialization/read.ts'
+import {
+  loadShardPayloads,
+  persistedFactPayload,
+  ShardPayloadCache,
+} from '../materialization/payload.ts'
 import { decodeSQLiteCursor, encodeSQLiteCursor } from './cursor.ts'
 import { buildSQLiteFactFilter } from './filter.ts'
 
 interface QueryFactRow extends FactRow {
+  readonly evidence_json: string
+  readonly inputs_json: string
+  readonly payload_layout: string
+}
+
+interface QueryFactHeaderRow extends FactHeaderRow {
   readonly evidence_json: string
   readonly inputs_json: string
 }
@@ -35,16 +50,25 @@ export class SQLitePinnedQuery implements AnalysisQuery {
   readonly #storeNamespace: string
   readonly generation: AnalysisGeneration
   readonly #release: () => void | Promise<void>
+  readonly #payloadCodecs: FactPayloadCodecMap
+  readonly #payloads: ShardPayloadCache
+  readonly #maximumDecompressedShardPayloadBytes: number
 
   constructor(
     database: DatabaseSync,
     storeNamespace: string,
     generation: AnalysisGeneration,
+    payloadCodecs: FactPayloadCodecMap,
+    maximumDecompressedShardPayloadBytes: number,
+    maximumCachedShardPayloadBytes: number,
     release: () => void | Promise<void>,
   ) {
     this.#database = database
     this.#storeNamespace = storeNamespace
     this.generation = generation
+    this.#payloadCodecs = payloadCodecs
+    this.#maximumDecompressedShardPayloadBytes = maximumDecompressedShardPayloadBytes
+    this.#payloads = new ShardPayloadCache(maximumCachedShardPayloadBytes)
     this.#release = release
   }
 
@@ -130,6 +154,91 @@ export class SQLitePinnedQuery implements AnalysisQuery {
       .map(([capability, completeness]) => ({ capability, completeness }))
   }
 
+  async headers(filter: FactFilter = {}, page: PageRequest = { limit: 100 }): Promise<FactHeaderPage> {
+    this.assertOpen()
+    validatePageLimit(page.limit)
+    const selected = buildSQLiteFactFilter(filter)
+    const lastFact = page.cursor
+      ? decodeSQLiteCursor(page.cursor, this.generation.id, filter)
+      : undefined
+    const baseParameters = [
+      this.#storeNamespace,
+      this.generation.universe,
+      this.generation.sequence,
+      ...selected.parameters,
+    ]
+    const total = page.includeTotal
+      ? this.countFacts(selected.sql, baseParameters)
+      : undefined
+    const rows = this.#database
+      .prepare(
+        `${factHeaderSelectionSql()}
+         WHERE member.store_namespace = ?
+           AND member.universe = ?
+           AND member.generation_sequence = ?
+           ${selected.sql}
+           ${lastFact ? 'AND fact.fact_id > ?' : ''}
+         ORDER BY fact.fact_id
+         LIMIT ?`,
+      )
+      .all(
+        ...baseParameters,
+        ...(lastFact ? [lastFact] : []),
+        page.limit + 1,
+      ) as unknown as QueryFactHeaderRow[]
+    const hasNext = rows.length > page.limit
+    if (hasNext) rows.pop()
+    const headers = rows.map((row) => this.decodeHeader(row))
+    return {
+      headers,
+      ...(hasNext && headers.length
+        ? { nextCursor: encodeSQLiteCursor(this.generation.id, filter, headers.at(-1)!.id) }
+        : {}),
+      ...(total === undefined ? {} : { total }),
+    }
+  }
+
+  async headersById(ids: readonly FactId[]): Promise<readonly FactHeader[]> {
+    this.assertOpen()
+    const unique = [...new Set(ids)].sort()
+    if (!unique.length) return []
+    const results: FactHeader[] = []
+    for (let start = 0; start < unique.length; start += 500) {
+      const chunk = unique.slice(start, start + 500)
+      const rows = this.#database
+        .prepare(
+          `${factHeaderSelectionSql()}
+           WHERE member.store_namespace = ?
+             AND member.universe = ?
+             AND member.generation_sequence = ?
+             AND fact.fact_id IN (${chunk.map(() => '?').join(', ')})
+           ORDER BY fact.fact_id`,
+        )
+        .all(
+          this.#storeNamespace,
+          this.generation.universe,
+          this.generation.sequence,
+          ...chunk,
+        ) as unknown as QueryFactHeaderRow[]
+      results.push(...rows.map((row) => this.decodeHeader(row)))
+    }
+    return results.sort((left, right) => left.id.localeCompare(right.id))
+  }
+
+  async *exportHeaders(filter: FactFilter = {}): AsyncIterable<FactHeader> {
+    this.assertOpen()
+    let cursor: string | undefined
+    do {
+      this.assertOpen()
+      const page = await this.headers(filter, { limit: 1_000, ...(cursor ? { cursor } : {}) })
+      for (const header of page.headers) {
+        this.assertOpen()
+        yield header
+      }
+      cursor = page.nextCursor
+    } while (cursor)
+  }
+
   async facts(filter: FactFilter = {}, page: PageRequest = { limit: 100 }): Promise<FactPage> {
     this.assertOpen()
     validatePageLimit(page.limit)
@@ -143,21 +252,9 @@ export class SQLitePinnedQuery implements AnalysisQuery {
       this.generation.sequence,
       ...selected.parameters,
     ]
-    const total = (
-      this.#database
-        .prepare(
-          `SELECT COUNT(*) AS count
-           FROM analysis_generation_shards AS member
-           JOIN analysis_facts AS fact
-             ON fact.store_namespace = member.store_namespace
-            AND fact.shard_digest = member.shard_digest
-           WHERE member.store_namespace = ?
-             AND member.universe = ?
-             AND member.generation_sequence = ?
-             ${selected.sql}`,
-        )
-        .get(...baseParameters) as { readonly count: number }
-    ).count
+    const total = page.includeTotal
+      ? this.countFacts(selected.sql, baseParameters)
+      : undefined
     const rows = this.#database
       .prepare(
         `${factSelectionSql()}
@@ -184,7 +281,7 @@ export class SQLitePinnedQuery implements AnalysisQuery {
             nextCursor: encodeSQLiteCursor(this.generation.id, filter, facts.at(-1)!.id),
           }
         : {}),
-      total,
+      ...(total === undefined ? {} : { total }),
     }
   }
 
@@ -240,12 +337,56 @@ export class SQLitePinnedQuery implements AnalysisQuery {
   }
 
   private decodeFact(row: QueryFactRow): Fact {
+    // Decode each shard immediately before consuming one of its rows. A bounded
+    // cache may evict earlier shards; bulk-prefetching a page would therefore
+    // make correctness depend on the page's aggregate decompressed size.
+    loadShardPayloads(
+      this.#database,
+      this.#storeNamespace,
+      [row],
+      this.#payloads,
+      this.#maximumDecompressedShardPayloadBytes,
+    )
     const evidence = parseJson(row.evidence_json, `fact ${row.fact_id} evidence`) as EvidenceRow[]
     const inputs = parseJson(row.inputs_json, `fact ${row.fact_id} inputs`) as InputRow[]
     if (!Array.isArray(evidence) || !Array.isArray(inputs)) {
       throw new TypeError(`Persisted fact ${row.fact_id} provenance is invalid.`)
     }
-    return factFromRows(row, this.generation.id, evidence, inputs)
+    return factFromRows(
+      row,
+      this.generation.id,
+      evidence,
+      inputs,
+      persistedFactPayload(row, this.#payloads),
+      this.#payloadCodecs,
+    )
+  }
+
+  private decodeHeader(row: QueryFactHeaderRow): FactHeader {
+    const evidence = parseJson(row.evidence_json, `fact ${row.fact_id} evidence`) as EvidenceRow[]
+    const inputs = parseJson(row.inputs_json, `fact ${row.fact_id} inputs`) as InputRow[]
+    if (!Array.isArray(evidence) || !Array.isArray(inputs)) {
+      throw new TypeError(`Persisted fact ${row.fact_id} provenance is invalid.`)
+    }
+    return factHeaderFromRows(row, this.generation.id, evidence, inputs)
+  }
+
+  private countFacts(sql: string, parameters: readonly (string | number)[]): number {
+    return (
+      this.#database
+        .prepare(
+          `SELECT COUNT(*) AS count
+           FROM analysis_generation_shards AS member
+           JOIN analysis_facts AS fact
+             ON fact.store_namespace = member.store_namespace
+            AND fact.shard_digest = member.shard_digest
+           WHERE member.store_namespace = ?
+             AND member.universe = ?
+             AND member.generation_sequence = ?
+             ${sql}`,
+        )
+        .get(...parameters) as { readonly count: number }
+    ).count
   }
 
   private assertOpen(): void {
@@ -254,7 +395,20 @@ export class SQLitePinnedQuery implements AnalysisQuery {
 }
 
 function factSelectionSql(): string {
-  return `SELECT fact.*,
+  return factEnvelopeSelectionSql('fact.*, shard.payload_layout', true)
+}
+
+function factHeaderSelectionSql(): string {
+  return factEnvelopeSelectionSql(
+    `fact.shard_digest, fact.fact_id, fact.fact_namespace, fact.schema_version,
+     fact.kind, fact.subject, fact.completeness_kind, fact.completeness_json,
+     fact.pass_id, fact.pass_version`,
+    false,
+  )
+}
+
+function factEnvelopeSelectionSql(columns: string, includeShard: boolean): string {
+  return `SELECT ${columns},
     COALESCE((
       SELECT json_group_array(json_object(
         'shard_digest', ordered.shard_digest,
@@ -293,7 +447,10 @@ function factSelectionSql(): string {
   FROM analysis_generation_shards AS member
   JOIN analysis_facts AS fact
     ON fact.store_namespace = member.store_namespace
-   AND fact.shard_digest = member.shard_digest`
+   AND fact.shard_digest = member.shard_digest
+  ${includeShard ? `JOIN analysis_shards AS shard
+    ON shard.store_namespace = fact.store_namespace
+   AND shard.shard_digest = fact.shard_digest` : ''}`
 }
 
 function validatePageLimit(limit: number): void {

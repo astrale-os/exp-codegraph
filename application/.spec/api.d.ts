@@ -1,6 +1,7 @@
 import type { QualificationSnapshot } from '../../conformance/.spec/api.js'
 import type { AnalysisStore } from '../../analysis/query/.spec/api.js'
 import type { AnalysisQuery } from '../../analysis/query/.spec/api.js'
+import type { AnalysisTelemetrySink } from '../../analysis/profiling/.spec/api.js'
 import type { PassId, ProjectUniverseId, SourceId } from '../../analysis/identity/.spec/api.js'
 import type {
   RepositorySourceRead,
@@ -113,13 +114,13 @@ export interface TypeSpecApplicationOptions {
   readonly root: string
   readonly repository?: string
   readonly maximumRetainedSnapshots?: number
+  readonly telemetry?: AnalysisTelemetrySink
   readonly analysis?: {
     readonly store?: AnalysisStore
     readonly maximumRetainedGenerations?: number
   }
   readonly native?: {
     readonly binary?: string
-    readonly cacheDirectory?: string
     readonly environment?: Readonly<Record<string, string | undefined>>
     readonly maximumFrameBytes?: number
     readonly transactionChunkFrameBytes?: number

@@ -151,3 +151,18 @@ or unqualified drift decisions.
 
 The automated checker protects structural completeness. Semantic review remains mandatory because
 no ledger can prove that an implementation actually satisfies the decision it cites.
+
+## Thin specification spine
+
+`.spec` governs durable contracts and meaningful architectural invariants; it is not a recursive
+physical-file inventory. Keep normative APIs, laws, limits, benchmarks, capabilities, substitutable
+ports, stable public/headless module boundaries, and deliberate dependency direction under
+specification governance.
+
+Exact file-by-file layouts are inappropriate for volatile private implementation areas such as
+native extractor internals, physical codecs, profiling, and qualification or experiment harnesses.
+Those areas are governed by TypeScript or Go compilation, focused architecture tests, negative
+import scans, differential semantics, and runtime qualification. A private implementation receives
+a `.spec` artifact only when it exposes a durable contract or the artifact enforces an architectural
+invariant stronger than physical bookkeeping. Parent layouts may still name a stable child-module
+boundary without enumerating that child's leaf files.

@@ -3,16 +3,28 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { FactShard } from '../../facts/index.ts'
 import type { AnalysisGeneration, FactTransaction } from '../../generation/index.ts'
 import type { MaterializedGeneration } from '../../internal/state.ts'
+import { DEFAULT_SQLITE_ANALYSIS_LIMITS } from '../limits.ts'
 
 import { encodeJson, type ShardRow } from './model.ts'
+import {
+  encodeShardPayloads,
+  SQLITE_INLINE_PAYLOAD_LAYOUT,
+  SQLITE_SHARD_PAYLOAD_LAYOUT,
+  type PreparedShardPayload,
+} from './payload.ts'
 
 export function writeTransaction(
   database: DatabaseSync,
   storeNamespace: string,
   transaction: FactTransaction,
+  payloads: ReadonlyMap<string, PreparedShardPayload>,
 ): void {
   writeGeneration(database, storeNamespace, transaction.next)
-  for (const shard of transaction.upserts) writeShard(database, storeNamespace, shard)
+  for (const shard of transaction.upserts) {
+    const payload = payloads.get(shard.digest)
+    if (!payload) throw new Error(`Prepared payload is unavailable for shard ${shard.digest}.`)
+    writeShard(database, storeNamespace, shard, payload)
+  }
   const membership = database.prepare(
     `INSERT INTO analysis_generation_shards
       (store_namespace, universe, generation_sequence, shard_key, shard_digest)
@@ -51,7 +63,15 @@ export function writeMaterializedGeneration(
      VALUES (?, ?, ?, ?, ?)`,
   )
   for (const shard of materialized.shards.values()) {
-    writeShard(database, storeNamespace, shard)
+    writeShard(
+      database,
+      storeNamespace,
+      shard,
+      encodeShardPayloads(
+        shard.facts,
+        DEFAULT_SQLITE_ANALYSIS_LIMITS.maximumDecompressedShardPayloadBytes,
+      ),
+    )
     membership.run(
       storeNamespace,
       materialized.generation.universe,
@@ -89,7 +109,13 @@ function writeGeneration(
     )
 }
 
-function writeShard(database: DatabaseSync, storeNamespace: string, shard: FactShard): void {
+function writeShard(
+  database: DatabaseSync,
+  storeNamespace: string,
+  shard: FactShard,
+  preparedPayloads: PreparedShardPayload,
+): void {
+  const payloadLayout = preparedPayloads.layout
   const existing = database
     .prepare(
       `SELECT * FROM analysis_shards
@@ -113,8 +139,8 @@ function writeShard(database: DatabaseSync, storeNamespace: string, shard: FactS
     .prepare(
       `INSERT INTO analysis_shards
         (store_namespace, shard_digest, shard_key, fact_namespace, schema_version,
-         completion_kind, completion_json, capabilities_json, fact_count)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         completion_kind, completion_json, capabilities_json, fact_count, payload_layout)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       storeNamespace,
@@ -126,6 +152,7 @@ function writeShard(database: DatabaseSync, storeNamespace: string, shard: FactS
       encodeJson(shard.completion),
       encodeJson(shard.capabilities ?? []),
       shard.facts.length,
+      payloadLayout,
     )
   const factStatement = database.prepare(
     `INSERT INTO analysis_facts
@@ -145,7 +172,22 @@ function writeShard(database: DatabaseSync, storeNamespace: string, shard: FactS
       (store_namespace, shard_digest, fact_id, ordinal, input_fact_id)
      VALUES (?, ?, ?, ?, ?)`,
   )
-  for (const fact of shard.facts) {
+  if (payloadLayout === SQLITE_SHARD_PAYLOAD_LAYOUT) {
+    database
+      .prepare(
+        `INSERT INTO analysis_shard_payloads
+          (store_namespace, shard_digest, encoding, payloads_blob)
+         VALUES (?, ?, ?, ?)`,
+      )
+      .run(storeNamespace, shard.digest, preparedPayloads.encoding, preparedPayloads.payloads)
+  }
+  for (const [payloadOrdinal, fact] of shard.facts.entries()) {
+    const payloadJson = payloadLayout === SQLITE_INLINE_PAYLOAD_LAYOUT
+      ? (preparedPayloads as Extract<PreparedShardPayload, { readonly layout: typeof SQLITE_INLINE_PAYLOAD_LAYOUT }>).payloads[payloadOrdinal]
+      : encodeJson(payloadOrdinal)
+    if (payloadJson === undefined) {
+      throw new Error(`Prepared inline payload is unavailable for fact ${fact.id}.`)
+    }
     factStatement.run(
       storeNamespace,
       shard.digest,
@@ -158,7 +200,7 @@ function writeShard(database: DatabaseSync, storeNamespace: string, shard: FactS
       encodeJson(fact.completeness),
       fact.provenance.pass,
       fact.provenance.passVersion,
-      encodeJson(fact.payload),
+      payloadJson,
     )
     fact.provenance.evidence.forEach((evidence, ordinal) => {
       evidenceStatement.run(

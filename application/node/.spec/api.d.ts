@@ -1,4 +1,8 @@
-import type { TypeSpecApplicationService } from '../../.spec/api.js'
+import type {
+  TypeSpecApplicationOptions,
+  TypeSpecApplicationService,
+} from '../../.spec/api.js'
+import type { AnalysisTelemetrySink } from '../../../analysis/profiling/.spec/api.js'
 
 export interface NodeTypeSpecApplicationOptions {
   readonly root: string
@@ -7,6 +11,8 @@ export interface NodeTypeSpecApplicationOptions {
   readonly repository?: string
   readonly maximumRetainedSnapshots?: number
   readonly maximumRetainedGenerations?: number
+  readonly telemetry?: AnalysisTelemetrySink
+  readonly native?: TypeSpecApplicationOptions['native']
 }
 
 export function createNodeTypeSpecApplicationService(

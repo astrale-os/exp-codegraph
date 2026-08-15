@@ -7,6 +7,7 @@ export default defineLayout({
     'lifecycle/',
     'lifecycle/leases.ts',
     'lifecycle/retention.ts',
+    'limits.ts',
     'materialization/',
     'materialization/model.ts',
     'materialization/read.ts',
@@ -24,4 +25,6 @@ export default defineLayout({
     'store.ts',
   ],
   exact: true,
+  // Storage codecs and migration mechanics are private implementation details.
+  ignore: ['materialization/payload.ts'],
 })

@@ -18,6 +18,7 @@ afterEach(async () => {
 
 describe('headless V2 CLI', () => {
   it('parses check, changed, test, verify, init, and development workflows', () => {
+    expect(parseCommand(['--version'], {})).toEqual({ name: 'version' })
     expect(parseCommand(['check', '.', '--select', 'module'], {})).toMatchObject({
       name: 'check',
       select: ['module'],
@@ -40,6 +41,11 @@ describe('headless V2 CLI', () => {
       name: 'dev',
       port: 0,
     })
+  })
+
+  it('reports the package version without initializing native analysis', async () => {
+    const result = await run(['--version'])
+    expect(result).toEqual({ code: 0, stdout: '0.1.0\n', stderr: '' })
   })
 
   it('checks a convention-only specification through the application service', async () => {

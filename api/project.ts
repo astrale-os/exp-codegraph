@@ -57,7 +57,9 @@ interface DeclarationEntry {
   readonly ambientEffects: boolean
 }
 
-const MAX_API_SOURCES = 128
+// Keep the byte ceiling as the primary admission bound. Real hierarchical public contracts can
+// legitimately cross more than 128 small declaration fragments without becoming unsafe to parse.
+const MAX_API_SOURCES = 192
 const MAX_API_SOURCE_BYTES = 8 * 1024 * 1024
 
 export function compileDeclarationApi(options: CompileApiOptions): ApiCompilation {
@@ -939,7 +941,11 @@ function issueDiagnostic(
     ...(issue.location?.file
       ? {
           range: {
-            file: displayPath(issue.location.file, root),
+            // Surface observations already expose catalog-relative coordinates. Resolving those
+            // a second time would bind them to process.cwd() instead of the analyzed project.
+            file: isAbsolute(issue.location.file)
+              ? displayPath(issue.location.file, root)
+              : portable(issue.location.file),
             start: { line: issue.location.line, column: issue.location.column, offset: 0 },
             end: { line: issue.location.line, column: issue.location.column, offset: 0 },
           },

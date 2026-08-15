@@ -37,6 +37,7 @@ const CHECK_PROFILES = [
 const TEST_PROFILES = [SPECIFICATION_VALIDITY_PROFILE_ID, MODULE_TEST_EVIDENCE_PROFILE_ID] as const
 
 export interface CliServices {
+  version(): Promise<string>
   initializeModule(root: string): Promise<string>
   createApplication(root: string, cache: boolean): Promise<TypeSpecApplicationService>
   startDev(options: Extract<CliCommand, { name: 'dev' }>): Promise<RunningDevServer>
@@ -66,6 +67,10 @@ export async function runCommand(
   if (command.name === 'help') {
     output.out(USAGE)
     return { exitCode: command.successful ? 0 : 2 }
+  }
+  if (command.name === 'version') {
+    output.out(await services.version())
+    return { exitCode: 0 }
   }
   if (command.name === 'init') {
     const api = await services.initializeModule(command.root)
@@ -158,7 +163,7 @@ export async function runCommand(
 }
 
 function refreshOptions(
-  command: Exclude<CliCommand, { name: 'help' | 'init' | 'dev' }>,
+  command: Exclude<CliCommand, { name: 'help' | 'version' | 'init' | 'dev' }>,
   changed: ChangedSpecificationScope | undefined,
 ): TypeSpecApplicationRefreshOptions {
   if (command.name === 'check' || command.name === 'changed') {

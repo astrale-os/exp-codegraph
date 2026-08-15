@@ -4,15 +4,20 @@ const (
 	protocolVersion = 1
 	producerVersion = "0.1.0"
 	ttscVersion     = "0.25.0"
-	passVersion     = "1.0.0"
+	passVersion     = "1.1.0"
 )
 
+const typescriptBodyPayloadCodec = "typescript.body.packed/1"
+
 type request struct {
-	ID         int      `json:"id"`
-	Kind       string   `json:"kind"`
-	Base       string   `json:"base,omitempty"`
-	Changed    []string `json:"changed,omitempty"`
-	Invalidate bool     `json:"invalidate,omitempty"`
+	ID           int      `json:"id"`
+	Kind         string   `json:"kind"`
+	Base         string   `json:"base,omitempty"`
+	BaseSequence int      `json:"baseSequence,omitempty"`
+	Generation   string   `json:"generation,omitempty"`
+	Sequence     int      `json:"sequence,omitempty"`
+	Changed      []string `json:"changed,omitempty"`
+	Invalidate   bool     `json:"invalidate,omitempty"`
 }
 
 type response struct {
@@ -20,10 +25,19 @@ type response struct {
 	ProtocolVersion int              `json:"protocolVersion"`
 	Kind            string           `json:"kind"`
 	Transaction     *factTransaction `json:"transaction,omitempty"`
+	Delta           *factDelta       `json:"delta,omitempty"`
 	Generation      string           `json:"generation,omitempty"`
 	Code            string           `json:"code,omitempty"`
 	Message         string           `json:"message,omitempty"`
 	Retryable       bool             `json:"retryable,omitempty"`
+}
+
+type factDelta struct {
+	ProtocolVersion int                `json:"protocolVersion"`
+	Base            string             `json:"base"`
+	Next            analysisGeneration `json:"next"`
+	Upserts         []factShard        `json:"upserts"`
+	Deletes         []string           `json:"deletes"`
 }
 
 type producerIdentity struct {
@@ -71,15 +85,16 @@ type provenance struct {
 }
 
 type fact struct {
-	ID            string       `json:"id"`
-	Generation    string       `json:"generation"`
-	Namespace     string       `json:"namespace"`
-	SchemaVersion int          `json:"schemaVersion"`
-	Kind          string       `json:"kind"`
-	Subject       string       `json:"subject"`
-	Completeness  completeness `json:"completeness"`
-	Provenance    provenance   `json:"provenance"`
-	Payload       any          `json:"payload"`
+	ID              string                   `json:"id"`
+	Generation      string                   `json:"generation"`
+	Namespace       string                   `json:"namespace"`
+	SchemaVersion   int                      `json:"schemaVersion"`
+	Kind            string                   `json:"kind"`
+	Subject         string                   `json:"subject"`
+	Completeness    completeness             `json:"completeness"`
+	Provenance      provenance               `json:"provenance"`
+	Payload         any                      `json:"payload,omitempty"`
+	PhysicalPayload *physicalPayloadEnvelope `json:"physicalPayload,omitempty"`
 }
 
 type factShard struct {
@@ -100,6 +115,7 @@ type factShardReference struct {
 }
 
 type sourceRecord struct {
+	Physical   string
 	Path       string
 	Source     string
 	Revision   string
@@ -325,7 +341,27 @@ type functionBodyIR struct {
 
 type bodyFactPayload struct {
 	Body         functionBodyIR `json:"body"`
-	Calls        []resolvedCall `json:"calls"`
 	Values       map[string]any `json:"values"`
 	Completeness completeness   `json:"completeness"`
+}
+
+type physicalPayloadEnvelope struct {
+	Codec string `json:"codec"`
+	Data  any    `json:"data"`
+}
+
+type packedBodyData struct {
+	Constants    []string     `json:"c"`
+	Symbols      []string     `json:"s"`
+	Texts        []string     `json:"t"`
+	Parameters   []int        `json:"p"`
+	Occurrences  [][]any      `json:"o"`
+	Relations    [][]any      `json:"r"`
+	Blocks       [][]any      `json:"b"`
+	Edges        [][]any      `json:"e"`
+	Definitions  [][]any      `json:"d"`
+	Calls        [][]any      `json:"a"`
+	Summary      []any        `json:"u"`
+	Values       [][]any      `json:"v"`
+	Completeness completeness `json:"q"`
 }

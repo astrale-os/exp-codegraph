@@ -16,11 +16,6 @@ export type {
   SpecificationSnapshot,
   SpecificationSnapshotId,
 } from './snapshot/index.ts'
-export {
-  contractDiagnostics,
-  editableResourceSources,
-  resourceSources,
-} from './model.ts'
 export type {
   BenchmarkResource,
   BenchmarkSpecification,
@@ -61,4 +56,3 @@ export type {
   TextResource,
   SvgIconElement,
 } from './resource/index.ts'
-export type { ModuleSpecification, SpecModule } from './model.ts'

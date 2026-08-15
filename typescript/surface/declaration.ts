@@ -1421,9 +1421,15 @@ function reportUnsupportedDeclaredShape(
   issues: ObservationIssue[],
 ): void {
   if (!declaration) return
+  const ownIndexSignatures =
+    ts.isInterfaceDeclaration(declaration) || ts.isClassDeclaration(declaration)
+      ? declaration.members.filter(ts.isIndexSignatureDeclaration).length
+      : 0
   for (const [label, count] of [
     ['construct', checker.getSignaturesOfType(type, ts.SignatureKind.Construct).length],
-    ['index', checker.getIndexInfosOfType(type).length],
+    // Inherited index semantics are already represented by the explicit heritage identity. Only
+    // an index signature authored on this declaration would otherwise disappear from the model.
+    ['index', ownIndexSignatures],
   ] as const) {
     if (count === 0) continue
     issues.push({

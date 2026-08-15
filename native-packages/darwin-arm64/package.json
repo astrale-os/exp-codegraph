@@ -1,0 +1,27 @@
+{
+  "cpu": [
+    "arm64"
+  ],
+  "description": "Opaque Darwin arm64 native artifact for @astrale-os/codegraph",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "exports": {
+    "./manifest.json": "./manifest.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "bin",
+    "manifest.json",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "license": "Apache-2.0",
+  "name": "@astrale-os/codegraph-native-darwin-arm64",
+  "os": [
+    "darwin"
+  ],
+  "preferUnplugged": true,
+  "type": "module",
+  "version": "0.1.0"
+}

@@ -68,9 +68,33 @@ describe('published package', () => {
       './analysis/sqlite',
       './conformance',
       './repository',
+      './schema',
       './specification',
       './package.json',
     ])
+  })
+
+  it('keeps compilers and native source out of ordinary production installs', async () => {
+    const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>
+      devDependencies: Record<string, string>
+      optionalDependencies: Record<string, string>
+    }
+    expect(manifest.dependencies).not.toHaveProperty('ttsc')
+    expect(manifest.devDependencies.ttsc).toBe('0.25.0')
+    expect(Object.keys(manifest.optionalDependencies).sort()).toEqual([
+      '@astrale-os/codegraph-native-darwin-arm64',
+      '@astrale-os/codegraph-native-darwin-x64',
+      '@astrale-os/codegraph-native-linux-arm64',
+      '@astrale-os/codegraph-native-linux-x64',
+    ])
+
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-production-files-'))
+    temporary.push(root)
+    const installed = join(root, 'consumer/node_modules/@astrale-os/codegraph')
+    await stagePublishedFiles(installed)
+    await expect(stat(join(installed, 'analysis/typescript/native'))).rejects.toThrow()
+    await expect(stat(join(installed, 'analysis/typescript/ttsc'))).rejects.toThrow()
   })
 
   it('contains no compiler outputs orphaned by a source move or deletion', async () => {
@@ -110,6 +134,8 @@ describe('published package', () => {
     await chmod(installed, 0o555)
     try {
       const cli = join(installed, 'dist/cli.js')
+      const version = await run(process.execPath, [cli, '--version'])
+      expect(version).toMatchObject({ stdout: '0.1.0\n', stderr: '' })
       const result = await run(process.execPath, [cli, 'check', current.root], {
         env: { ...process.env, CI: 'true' },
       })
@@ -130,7 +156,7 @@ describe('published package', () => {
         [
           '--input-type=module',
           '--eval',
-          "const [tooling,analysis,typescript,sqlite,repository,specification,conformance] = await Promise.all([import('@astrale-os/codegraph'),import('@astrale-os/codegraph/analysis'),import('@astrale-os/codegraph/analysis/typescript'),import('@astrale-os/codegraph/analysis/sqlite'),import('@astrale-os/codegraph/repository'),import('@astrale-os/codegraph/specification'),import('@astrale-os/codegraph/conformance')]); process.stdout.write(String([tooling.createTypeSpecApplicationService,analysis.createMemoryAnalysisStore,typescript.createTypeScriptAnalysisService,sqlite.createSQLiteAnalysisStore,repository.inventoryRepository,specification.compileSpecificationSnapshot,conformance.qualifySpecification].every(value => typeof value === 'function')))",
+          "const [tooling,analysis,typescript,sqlite,repository,schema,specification,conformance] = await Promise.all([import('@astrale-os/codegraph'),import('@astrale-os/codegraph/analysis'),import('@astrale-os/codegraph/analysis/typescript'),import('@astrale-os/codegraph/analysis/sqlite'),import('@astrale-os/codegraph/repository'),import('@astrale-os/codegraph/schema'),import('@astrale-os/codegraph/specification'),import('@astrale-os/codegraph/conformance')]); process.stdout.write(String([tooling.createTypeSpecApplicationService,analysis.createMemoryAnalysisStore,typescript.createTypeScriptAnalysisService,sqlite.createSQLiteAnalysisStore,repository.inventoryRepository,schema.validateSchemaFile,specification.compileSpecificationSnapshot,conformance.qualifySpecification].every(value => typeof value === 'function')))",
         ],
         { cwd: consumer },
       )
@@ -179,7 +205,7 @@ async function stagePublishedFiles(target: string): Promise<void> {
   await mkdir(target, { recursive: true })
   await cp(join(packageRoot, 'package.json'), join(target, 'package.json'))
 
-  for (const entry of manifest.files) {
+  for (const entry of manifest.files.filter((value) => !value.startsWith('!'))) {
     if (entry.startsWith('*.')) {
       const suffix = entry.slice(1)
       const matches = (await readdir(packageRoot)).filter((file) => file.endsWith(suffix))
@@ -187,6 +213,10 @@ async function stagePublishedFiles(target: string): Promise<void> {
     } else {
       await cp(join(packageRoot, entry), join(target, entry), { recursive: true })
     }
+  }
+  for (const entry of manifest.files.filter((value) => value.startsWith('!'))) {
+    const excluded = entry.slice(1).replace(/\/\*\*$/u, '')
+    await rm(join(target, excluded), { recursive: true, force: true })
   }
 }
 

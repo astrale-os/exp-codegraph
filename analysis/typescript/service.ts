@@ -5,12 +5,16 @@ import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../protocol/index.ts'
 import type { NativeAnalysisSession } from '../protocol/index.ts'
 import type { ProjectUniverseId, SourceId } from '../identity/index.ts'
 import { deriveAnalysisId, portablePath } from '../identity/index.ts'
+import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
 import type {
   TypeScriptAnalysisService,
   TypeScriptAnalysisServiceOptions,
   TypeScriptRefreshResult,
 } from './model.ts'
-import { materializeNativeTransaction } from './universe-transaction.ts'
+import {
+  materializeNativeDelta,
+  materializeNativeTransaction,
+} from './universe-transaction.ts'
 
 export async function createTypeScriptAnalysisService(
   options: TypeScriptAnalysisServiceOptions,
@@ -47,20 +51,26 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
   ): Promise<TypeScriptRefreshResult> {
     this.assertOpen()
     const started = performance.now()
+    const request = this.#request + 1
     const activeUniverse = this.#universe
+    let phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
     const current = activeUniverse
       ? await this.#options.store.current(activeUniverse)
       : undefined
+    this.emit('store.current', request, phaseStarted)
+    phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
     const response = await this.#session.request(
       {
         id: ++this.#request,
         kind: 'refresh',
         ...(current ? { base: current.id } : {}),
+        ...(current ? { baseSequence: current.sequence } : {}),
         ...(options.changed ? { changed: [...options.changed].sort() } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
       },
       { signal: options.signal },
     )
+    this.emit('native.request', request, phaseStarted, { responseKind: response.kind })
     if (response.protocolVersion !== NATIVE_ANALYSIS_PROTOCOL_VERSION) {
       throw new Error(
         `Native analysis protocol ${response.protocolVersion} is incompatible with ${NATIVE_ANALYSIS_PROTOCOL_VERSION}.`,
@@ -81,18 +91,47 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         durationMs: performance.now() - started,
       }
     }
-    const materialized = await materializeNativeTransaction(
-      this.#options.store,
-      activeUniverse,
-      current,
-      response.transaction,
-      { signal: options.signal },
-    )
+    if (response.kind === 'acknowledged') {
+      throw new Error('Native analysis acknowledged a generation without a commit request.')
+    }
+    phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
+    const materialized = response.kind === 'delta'
+      ? await materializeNativeDelta(
+          this.#options.store,
+          current,
+          response.delta,
+          { signal: options.signal },
+        )
+      : await materializeNativeTransaction(
+          this.#options.store,
+          activeUniverse,
+          current,
+          response.transaction,
+          { signal: options.signal },
+        )
+    const transaction = materialized.transaction
+      ?? (response.kind === 'transaction' ? response.transaction : undefined)
+    if (!transaction) throw new Error('Native delta materialization omitted its transaction.')
+    this.emit('transaction.materialize', request, phaseStarted, {
+      manifestShards: transaction.manifest.length,
+      upsertShards: transaction.upserts.length,
+      deleteShards: transaction.deletes.length,
+    })
+    if (this.#session.acknowledge) {
+      await this.#session.acknowledge(
+        {
+          id: ++this.#request,
+          generation: materialized.generation.id,
+          sequence: materialized.generation.sequence,
+        },
+        { signal: options.signal },
+      )
+    }
     this.#universe = materialized.generation.universe
     const universe = materialized.generation.universe
     const changedSources = [
       ...new Set([
-        ...response.transaction.upserts
+        ...transaction.upserts
           .filter((shard) => shard.namespace === 'typescript.source')
           .flatMap((shard) =>
             shard.facts.map(
@@ -108,7 +147,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
     ].sort()
     const invalidatedPasses = [
       ...new Set(
-        response.transaction.upserts.flatMap((shard) =>
+        transaction.upserts.flatMap((shard) =>
           shard.facts.map((fact) => fact.provenance.pass),
         ),
       ),
@@ -135,6 +174,22 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
 
   private assertOpen(): void {
     if (this.#disposed) throw new Error('TypeScript analysis service is disposed.')
+  }
+
+  private emit(
+    phase: string,
+    request: number,
+    started: bigint,
+    metrics?: Readonly<Record<string, string | number | boolean>>,
+  ): void {
+    if (!this.#options.telemetry) return
+    dispatchAnalysisTelemetry(this.#options.telemetry, {
+      component: 'analysis',
+      phase,
+      request,
+      durationNs: Number(process.hrtime.bigint() - started),
+      ...(metrics ? { metrics } : {}),
+    })
   }
 }
 

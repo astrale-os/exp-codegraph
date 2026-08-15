@@ -1,0 +1,1 @@
+{"version":3,"file":"limits.js","sourceRoot":"","sources":["../../../analysis/sqlite/limits.ts"],"names":[],"mappings":"AAEA,MAAM,CAAC,MAAM,sCAAsC,GACjD,aAAa,CAAA;AAEf,MAAM,CAAC,MAAM,8BAA8B,GAAG,MAAM,CAAC,MAAM,CAAC;IAC1D,oCAAoC,EAAE,EAAE,GAAG,KAAK,GAAG,KAAK;IACxD,8BAA8B,EAAE,EAAE,GAAG,KAAK,GAAG,KAAK;CACnD,CAAC,CAAA"}

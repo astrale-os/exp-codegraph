@@ -12,6 +12,7 @@ export default defineLayout({
     'memory/',
     'pass/',
     'policy/',
+    'profiling/',
     'protocol/',
     'query/',
     'source/',

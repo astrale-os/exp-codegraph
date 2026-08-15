@@ -121,3 +121,11 @@ export interface QualifySpecificationOptions {
   readonly requestedProfiles?: readonly string[]
   readonly signal?: AbortSignal
 }
+
+export interface QualifySpecificationsOptions {
+  readonly specifications: readonly SpecificationSnapshot[]
+  readonly analysis: AnalysisSnapshotSet
+  readonly profiles: readonly ConformanceProfile[]
+  readonly requestedProfiles?: readonly string[]
+  readonly signal?: AbortSignal
+}

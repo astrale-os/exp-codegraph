@@ -9,6 +9,8 @@ import type {
   AnalysisSnapshotSet,
   AnalysisStore,
 } from '../query/index.ts'
+import type { AnalysisTelemetrySink } from '../profiling/index.ts'
+import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
 import {
   createQuery,
   createSnapshotSet,
@@ -18,6 +20,7 @@ import {
 
 export interface MemoryAnalysisStoreOptions {
   readonly maximumRetainedGenerations?: number
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 interface RetainedGeneration {
@@ -31,12 +34,14 @@ export function createMemoryAnalysisStore(options: MemoryAnalysisStoreOptions = 
 
 class MemoryAnalysisStore implements AnalysisStore {
   readonly #maximumRetained: number
+  readonly #telemetry: AnalysisTelemetrySink | undefined
   readonly #universes = new Map<ProjectUniverseId, Map<number, RetainedGeneration>>()
   readonly #current = new Map<ProjectUniverseId, number>()
   #disposed = false
 
   constructor(options: MemoryAnalysisStoreOptions) {
     this.#maximumRetained = options.maximumRetainedGenerations ?? 4
+    this.#telemetry = options.telemetry
     if (!Number.isSafeInteger(this.#maximumRetained) || this.#maximumRetained < 1) {
       throw new RangeError('maximumRetainedGenerations must be a positive integer.')
     }
@@ -53,6 +58,7 @@ class MemoryAnalysisStore implements AnalysisStore {
   ): Promise<void> {
     this.assertOpen()
     options.signal?.throwIfAborted()
+    const started = this.#telemetry ? process.hrtime.bigint() : 0n
     const universe = transaction.next.universe
     const next = materializeTransaction(this.currentValue(universe), transaction)
     options.signal?.throwIfAborted()
@@ -64,6 +70,19 @@ class MemoryAnalysisStore implements AnalysisStore {
     retained.set(next.generation.sequence, { value: next, leases: 0 })
     this.#current.set(universe, next.generation.sequence)
     this.collect(universe)
+    if (this.#telemetry) {
+      dispatchAnalysisTelemetry(this.#telemetry, {
+        component: 'memory-store',
+        phase: 'transaction.commit',
+        durationNs: Number(process.hrtime.bigint() - started),
+        metrics: {
+          manifestShards: transaction.manifest.length,
+          upsertShards: transaction.upserts.length,
+          deleteShards: transaction.deletes.length,
+          upsertFacts: transaction.upserts.reduce((total, shard) => total + shard.facts.length, 0),
+        },
+      })
+    }
   }
 
   async open(

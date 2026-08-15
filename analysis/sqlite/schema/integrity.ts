@@ -2,13 +2,17 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import { randomUUID } from 'node:crypto'
 
-import { parseMaterialized, serializeMaterialized } from '../../internal/state.ts'
+import type { FactId } from '../../identity/index.ts'
+import type { FactPayloadCodecMap } from '../../facts/representation/index.ts'
+import { validateFactTransaction } from '../../generation/index.ts'
 import { encodeJson, generationFromRow, type GenerationRow } from '../materialization/model.ts'
 import { loadManifest, loadMaterializedGeneration } from '../materialization/read.ts'
 
 export function verifySQLiteAnalysisIntegrity(
   database: DatabaseSync,
   storeNamespace: string,
+  payloadCodecs: FactPayloadCodecMap,
+  maximumDecompressedShardPayloadBytes: number,
 ): readonly string[] {
   const integrity = database.prepare('PRAGMA quick_check').all() as {
     readonly quick_check: string
@@ -47,8 +51,35 @@ export function verifySQLiteAnalysisIntegrity(
         generation.sequence,
       )
       manifestJson = encodeJson(manifest)
-      const materialized = loadMaterializedGeneration(database, storeNamespace, generation)
-      parseMaterialized(serializeMaterialized(materialized))
+      const materialized = loadMaterializedGeneration(
+        database,
+        storeNamespace,
+        generation,
+        payloadCodecs,
+        maximumDecompressedShardPayloadBytes,
+      )
+      const diagnostics = [...validateFactTransaction({
+        protocolVersion: generation.producer.protocolVersion,
+        next: generation,
+        manifest,
+        upserts: [...materialized.shards.values()],
+        deletes: [],
+      })]
+      const identities = new Set<FactId>()
+      for (const shard of materialized.shards.values()) {
+        for (const fact of shard.facts) {
+          if (identities.has(fact.id)) diagnostics.push(`FACT_ID_DUPLICATE:${fact.id}`)
+          identities.add(fact.id)
+        }
+      }
+      for (const shard of materialized.shards.values()) {
+        for (const fact of shard.facts) {
+          for (const input of fact.provenance.inputs) {
+            if (!identities.has(input)) diagnostics.push(`FACT_INPUT_UNAVAILABLE:${fact.id}:${input}`)
+          }
+        }
+      }
+      if (diagnostics.length) throw new Error([...new Set(diagnostics)].sort().join(', '))
     } catch (error) {
       invalid.push({
         row,

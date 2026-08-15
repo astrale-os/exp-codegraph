@@ -115,12 +115,12 @@ async function defaultBase(root: string): Promise<string> {
 async function nearestSpecificationOwner(
   root: string,
   source: string,
-): Promise<{ readonly path: string; readonly profile: 'convention' | 'legacy' } | undefined> {
+): Promise<{ readonly path: string } | undefined> {
   const normalized = source.split('/').join(sep)
   let directory = dirname(resolve(root, normalized))
   while (within(root, directory)) {
     if (await isFile(resolve(directory, '.spec/api.d.ts'))) {
-      return { path: portable(relative(root, directory)) || '.', profile: 'convention' }
+      return { path: portable(relative(root, directory)) || '.' }
     }
     if (directory === resolve(root)) break
     directory = dirname(directory)

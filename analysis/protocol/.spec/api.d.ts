@@ -1,5 +1,8 @@
-import type { FactTransaction } from '../../generation/.spec/api.js'
-import type { AnalysisGenerationId } from '../../identity/.spec/api.js'
+import type { FactShard } from '../../facts/.spec/api.js'
+import type { FactPayloadCodec } from '../../facts/representation/.spec/api.js'
+import type { AnalysisGeneration, FactTransaction } from '../../generation/.spec/api.js'
+import type { AnalysisGenerationId, FactShardKey } from '../../identity/.spec/api.js'
+import type { AnalysisTelemetrySink } from '../../profiling/.spec/api.js'
 
 export const NATIVE_ANALYSIS_PROTOCOL_VERSION: number
 
@@ -28,10 +31,33 @@ export type NativeAnalysisRequest =
       readonly id: number
       readonly kind: 'refresh'
       readonly base?: AnalysisGenerationId
+      /** Required with `base`; binds restart/adoption to the store's exact sequence. */
+      readonly baseSequence?: number
       readonly changed?: readonly string[]
       readonly invalidate?: boolean
     }
+  | {
+      readonly id: number
+      readonly kind: 'acknowledge'
+      readonly generation: AnalysisGenerationId
+      readonly sequence: number
+    }
   | { readonly id: number; readonly kind: 'dispose' }
+
+export interface NativeAnalysisAcknowledgement {
+  readonly id: number
+  readonly generation: AnalysisGenerationId
+  readonly sequence: number
+}
+
+/** Wire-efficient affected-shard update; stores reconstruct the complete manifest. */
+export interface NativeFactDelta {
+  readonly protocolVersion: number
+  readonly base: AnalysisGenerationId
+  readonly next: AnalysisGeneration
+  readonly upserts: readonly FactShard[]
+  readonly deletes: readonly FactShardKey[]
+}
 
 export type NativeAnalysisResponse =
   | {
@@ -39,6 +65,12 @@ export type NativeAnalysisResponse =
       readonly protocolVersion: number
       readonly kind: 'transaction'
       readonly transaction: FactTransaction
+    }
+  | {
+      readonly id: number
+      readonly protocolVersion: number
+      readonly kind: 'delta'
+      readonly delta: NativeFactDelta
     }
   | {
       readonly id: number
@@ -54,6 +86,12 @@ export type NativeAnalysisResponse =
       readonly message: string
       readonly retryable: boolean
     }
+  | {
+      readonly id: number
+      readonly protocolVersion: number
+      readonly kind: 'acknowledged'
+      readonly generation: AnalysisGenerationId
+    }
 
 /** One framed, cancellation-aware native session; transport owns no global process state. */
 export interface NativeAnalysisSession {
@@ -62,6 +100,11 @@ export interface NativeAnalysisSession {
     request: NativeAnalysisRequest,
     options?: { readonly signal?: AbortSignal },
   ): Promise<NativeAnalysisResponse>
+  /** Atomically publish a transaction only after the application store commits it. */
+  acknowledge?(
+    acknowledgement: NativeAnalysisAcknowledgement,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<void>
 }
 
 export interface NativeAnalysisSessionFactory {
@@ -79,15 +122,22 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly maximumFrameBytes?: number
   /** Preferred frame ceiling for chunks within a streamed transaction. */
   readonly transactionChunkFrameBytes?: number
-  /** Maximum decoded bytes in one complete semantic transaction. */
+  /** Maximum decoded semantic Fact-payload bytes in one response. */
   readonly maximumTransactionBytes?: number
+  /** Maximum encoded physical bytes assembled before semantic decoding. */
+  readonly maximumPhysicalTransactionBytes?: number
   readonly maximumErrorBytes?: number
+  /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
+  readonly telemetry?: AnalysisTelemetrySink
+  /** Explicit physical payload capabilities negotiated with the native producer. */
+  readonly payloadCodecs?: readonly FactPayloadCodec[]
 }
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS: Readonly<{
   readonly maximumFrameBytes: number
   readonly transactionChunkFrameBytes: number
   readonly maximumTransactionBytes: number
+  readonly maximumPhysicalTransactionBytes: number
   readonly maximumErrorBytes: number
 }>
 

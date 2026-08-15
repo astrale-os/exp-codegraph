@@ -213,6 +213,7 @@ describe('headless repository statistics', () => {
       root: current.root,
     })
     const grouping = createRepositoryPathOwnershipGrouping('module', [
+      { root: '.', key: 'root', label: 'Root' },
       { root: 'core', key: 'core' },
       { root: 'core/child', key: 'child', label: 'Child' },
     ])
@@ -228,7 +229,7 @@ describe('headless repository statistics', () => {
     ).toEqual([
       ['child', 'Child', 1],
       ['core', 'core', 1],
-      ['unassigned', 'unassigned', 1],
+      ['root', 'Root', 1],
     ])
     expect(() =>
       createRepositoryPathOwnershipGrouping('module', [

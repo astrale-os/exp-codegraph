@@ -119,6 +119,7 @@ describe('module architecture', () => {
         'analysis',
         'application',
         'conformance',
+        'repository',
         'source',
         'specification',
       ]),

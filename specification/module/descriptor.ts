@@ -6,13 +6,14 @@ import type {
   CapabilitySpecification,
   LawSpecification,
   StateSpecification,
-} from '../model.ts'
+} from '../resource/index.ts'
 import type { TestEvidenceReference } from '../../authoring/evidence.ts'
 
 import {
   AUTHORING_SPECIFIER,
   authoringHelperBinding,
   calledObjectLiteral as descriptorObject,
+  isAuthoringSpecifier,
   literalProperty as property,
   literalPropertyName as propertyName,
   nodeDiagnostic as diagnostic,
@@ -51,7 +52,7 @@ export function compileDescriptor<Kind extends DescriptorKind>(
     if (ts.isImportDeclaration(statement)) {
       if (
         !ts.isStringLiteral(statement.moduleSpecifier) ||
-        statement.moduleSpecifier.text !== AUTHORING_SPECIFIER
+        !isAuthoringSpecifier(statement.moduleSpecifier.text)
       ) {
         diagnostics.push(
           diagnostic(

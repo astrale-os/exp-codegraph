@@ -1,6 +1,7 @@
 package main
 
 import (
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -8,6 +9,8 @@ import (
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimchecker "github.com/microsoft/typescript-go/shim/checker"
 )
+
+var signatureImportPattern = regexp.MustCompile(`import\("([^"]+)"\)`)
 
 type bodyBuilder struct {
 	x           *extractor
@@ -29,7 +32,7 @@ type bodyBuilder struct {
 	recursion   bool
 }
 
-func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) []factShard {
+func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([]factShard, error) {
 	var shards []factShard
 	walkFile(file, func(node *shimast.Node) bool {
 		if !shimast.IsFunctionLike(node) || node.Body() == nil {
@@ -51,14 +54,29 @@ func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) []
 		completion := payload.Completeness
 		span := x.span(file, node)
 		entry := x.newFact(bodyNamespace, "function-body", owner, payload, []sourceSpan{span}, completion)
-		shards = append(shards, finishShard(bodyNamespace, owner, completion, []fact{entry}))
+		shard := finishShard(bodyNamespace, owner, completion, []fact{entry})
+		if x.payloadCodecs[typescriptBodyPayloadCodec] {
+			packed, err := packBodyPayload(payload, span)
+			if err != nil {
+				// The walker cannot return an error directly; retain it for the
+				// enclosing source projection to report after traversal.
+				x.bodyPackingError = err
+				return false
+			}
+			shard.Facts[0].Payload = nil
+			shard.Facts[0].PhysicalPayload = &packed
+		}
+		shards = append(shards, shard)
 		// A nested function owns its body and will be visited by the outer file
 		// walk independently. Continuing here discovers it without attributing
 		// its occurrences to the outer function.
 		return true
 	})
+	if x.bodyPackingError != nil {
+		return nil, x.bodyPackingError
+	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	return shards
+	return shards, nil
 }
 
 func (x *extractor) functionID(node *shimast.Node) string {
@@ -101,6 +119,17 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	}
 
 	b.walkOwned(b.body)
+	// An expression-bodied arrow semantically returns its root expression. A
+	// nested function literal is opaque to the outer body: retain one value
+	// occurrence for the literal, never its independently owned occurrences.
+	if function.Kind == shimast.KindArrowFunction && b.body.Kind != shimast.KindBlock {
+		returned := b.occurrence[b.body]
+		if returned == "" {
+			returned = b.addOccurrence(b.body, "expression")
+			b.values[returned] = b.value(b.body)
+		}
+		b.returns = append(b.returns, returned)
+	}
 	controlFlow := buildControlFlow(b)
 	b.buildRelations(b.body)
 	b.finishDefinitionUses()
@@ -138,7 +167,7 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 		},
 	}
 	return bodyFactPayload{
-		Body: ir, Calls: b.calls, Values: b.values, Completeness: controlFlow.completion,
+		Body: ir, Values: b.values, Completeness: controlFlow.completion,
 	}
 }
 
@@ -146,7 +175,7 @@ func (b *bodyBuilder) buildRelations(node *shimast.Node) {
 	if node == nil {
 		return
 	}
-	if node != b.body && shimast.IsFunctionLike(node) {
+	if shimast.IsFunctionLike(node) {
 		return
 	}
 	parent := b.occurrence[node]
@@ -169,7 +198,7 @@ func (b *bodyBuilder) walkOwned(node *shimast.Node) {
 	if node == nil {
 		return
 	}
-	if node != b.body && shimast.IsFunctionLike(node) {
+	if shimast.IsFunctionLike(node) {
 		return
 	}
 	kind := bodyKind(node)
@@ -283,7 +312,7 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	signature := b.x.checker.GetResolvedSignature(node)
 	if signature != nil {
-		result.Signature = b.x.checker.SignatureToStringEx(signature, node, 0, nil)
+		result.Signature = b.canonicalSignature(signature, node)
 	}
 	parameters := shimchecker.Signature_parameters(signature)
 	rest := shimchecker.Signature_hasRestParameter(signature)
@@ -308,6 +337,103 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	result.Callbacks = sortedUnique(result.Callbacks)
 	return result
+}
+
+// canonicalSignature avoids checker-display cache state entering portable body
+// facts. SignatureToStringEx may choose authored aliases, expanded types, or
+// truncation according to unrelated earlier checker walks. Formatting each
+// resolved parameter and return type with ttsc's stable fully-qualified type
+// renderer preserves the useful call shape while making projection plans
+// byte-semantically equivalent.
+func (b *bodyBuilder) canonicalSignature(signature *shimchecker.Signature, node *shimast.Node) string {
+	parameters := []string{}
+	for _, parameter := range shimchecker.Signature_parameters(signature) {
+		declaration := firstDeclaration(parameter)
+		if declaration == nil {
+			declaration = node
+		}
+		parameterType := shimchecker.Checker_getTypeOfSymbolAtLocation(
+			b.x.checker, parameter, declaration,
+		)
+		typeDisplay := shimchecker.Checker_typeToStringFullyQualified(
+			b.x.checker, parameterType, declaration,
+		)
+		if typeDisplay == "" {
+			typeDisplay = "unknown"
+		}
+		name := stableSymbolName(parameter)
+		if name == "" {
+			name = "<anonymous>"
+		}
+		optional := parameter.Flags&shimast.SymbolFlagsOptional != 0
+		rest := false
+		if declaration.Kind == shimast.KindParameter {
+			value := declaration.AsParameterDeclaration()
+			optional = optional || value.QuestionToken != nil || value.Initializer != nil
+			rest = value.DotDotDotToken != nil
+		}
+		prefix := ""
+		if rest {
+			prefix = "..."
+		}
+		suffix := ""
+		if optional {
+			suffix = "?"
+		}
+		parameters = append(parameters, prefix+name+suffix+": "+portableSignature(typeDisplay))
+	}
+	returnType := shimchecker.Checker_getReturnTypeOfSignature(b.x.checker, signature)
+	returnDisplay := shimchecker.Checker_typeToStringFullyQualified(b.x.checker, returnType, node)
+	if returnDisplay == "" {
+		returnDisplay = "unknown"
+	}
+	return "(" + strings.Join(parameters, ", ") + "): " + portableSignature(returnDisplay)
+}
+
+// portableSignature removes package-manager and checkout coordinates that the
+// checker may spell inside import types. Those paths describe the same public
+// package type but otherwise make body facts depend on whether node_modules is
+// physical, symlinked, or relocated with the repository.
+func portableSignature(display string) string {
+	return signatureImportPattern.ReplaceAllStringFunc(display, func(input string) string {
+		matches := signatureImportPattern.FindStringSubmatch(input)
+		if len(matches) != 2 {
+			return input
+		}
+		if specifier, ok := installedPackageSpecifier(matches[1]); ok {
+			return `import("` + specifier + `")`
+		}
+		return input
+	})
+}
+
+func installedPackageSpecifier(input string) (string, bool) {
+	value := strings.ReplaceAll(input, `\`, "/")
+	marker := "node_modules/"
+	index := strings.LastIndex(value, "/"+marker)
+	if index >= 0 {
+		value = value[index+len(marker)+1:]
+	} else if index = strings.LastIndex(value, marker); index >= 0 {
+		value = value[index+len(marker):]
+	} else {
+		return "", false
+	}
+	parts := strings.Split(value, "/")
+	packageParts := 1
+	if len(parts) != 0 && strings.HasPrefix(parts[0], "@") {
+		packageParts = 2
+	}
+	if len(parts) < packageParts || strings.Join(parts[:packageParts], "/") == "" {
+		return "", false
+	}
+	remainder := parts[packageParts:]
+	if len(remainder) != 0 {
+		last := remainder[len(remainder)-1]
+		if last == "index.js" || last == "index.ts" || last == "index.d.ts" {
+			remainder = remainder[:len(remainder)-1]
+		}
+	}
+	return strings.Join(append(parts[:packageParts], remainder...), "/"), true
 }
 
 func (b *bodyBuilder) callbackTarget(node *shimast.Node) string {
@@ -337,6 +463,11 @@ func (b *bodyBuilder) value(node *shimast.Node) any {
 	}
 	if node == nil {
 		return unknownValue("VALUE_ABSENT", "The argument has no expression.")
+	}
+	if shimast.IsFunctionLike(node) {
+		return map[string]any{
+			"kind": "unsupported", "construct": node.KindString(), "evidence": []string{},
+		}
 	}
 	switch node.Kind {
 	case shimast.KindStringLiteral, shimast.KindNoSubstitutionTemplateLiteral:
