@@ -2,7 +2,6 @@ import type { NativeAnalysisSessionFactory } from '../../analysis/index.ts'
 
 import { createProcessNativeAnalysisSessionFactory } from '../../analysis/index.ts'
 import { resolvePackagedNativeAnalysis } from '../../analysis/typescript/distribution/index.ts'
-import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../../analysis/typescript/index.ts'
 
 export interface CodegraphApplicationSessionOptions {
   readonly binary?: string
@@ -25,7 +24,6 @@ export function createCodegraphApplicationSessionFactory(
       openOptions?.signal?.throwIfAborted()
       return createProcessNativeAnalysisSessionFactory({
         command: native.command,
-        payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS,
         ...(options.maximumFrameBytes !== undefined
           ? { maximumFrameBytes: options.maximumFrameBytes }
           : {}),

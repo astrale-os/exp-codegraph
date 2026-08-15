@@ -173,5 +173,7 @@ The candidate therefore passes semantic transparency, corruption/admission cover
 body target, the wire reduction, and median query compatibility. It does **not** pass the original
 two-times database-or-RSS gate on its own or the cold no-regression confidence gate. The physical
 representation remains a useful bounded wire/materialization mechanism, but EXP-002 is not
-graduated and its frozen thresholds are not revised post hoc. EXP-003 owns the independently measured
-store-wide database effect. Kernel holdout evidence remains absent.
+graduated and its frozen thresholds are not revised post hoc. It is therefore not negotiated by the
+ordinary application composition; explicit experiments and specialized consumers may still opt in
+through the generic codec seam. EXP-003 owns the independently measured store-wide database effect.
+Kernel holdout evidence remains absent.
