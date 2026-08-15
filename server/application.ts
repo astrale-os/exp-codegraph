@@ -1,4 +1,5 @@
 import type { TypeSpecApplicationService } from '../application/index.ts'
+import type { CodegraphApplicationSessionOptions } from '../application/analysis/index.ts'
 import { createNodeTypeSpecApplicationService } from '../application/node/index.ts'
 import { defaultTypeSpecCacheDirectory } from '../cache/file-store.ts'
 
@@ -6,6 +7,7 @@ import { defaultTypeSpecCacheDirectory } from '../cache/file-store.ts'
 export function createServerApplicationService(
   root: string,
   cache: boolean,
+  native?: CodegraphApplicationSessionOptions,
 ): Promise<TypeSpecApplicationService> {
   return createNodeTypeSpecApplicationService({
     root,
@@ -13,5 +15,6 @@ export function createServerApplicationService(
     persistence: cache ? 'advisory' : 'memory',
     maximumRetainedSnapshots: 2,
     maximumRetainedGenerations: 2,
+    ...(native ? { native } : {}),
   })
 }

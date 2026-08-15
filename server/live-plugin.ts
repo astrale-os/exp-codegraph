@@ -8,6 +8,7 @@ import type {
   TypeSpecApplicationService,
   TypeSpecApplicationSnapshot,
 } from '../application/index.ts'
+import type { CodegraphApplicationSessionOptions } from '../application/analysis/index.ts'
 import type { SourceEditRequest, SourceEditResponse } from '../application/interaction/editing.ts'
 import type { SpecRevealResponse } from '../application/interaction/reveal.ts'
 import type { VerificationRunRequest, VerificationRunResponse } from '../application/interaction/qualification.ts'
@@ -58,12 +59,17 @@ export interface LiveSpecsOptions {
   allowedRoots: string[]
   verify: boolean
   cache?: boolean
+  native?: CodegraphApplicationSessionOptions
   services?: LiveSpecsServices
 }
 
 export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
   const { root, allowedRoots, verify } = options
-  const services = options.services ?? defaultServices
+  const services = options.services ?? {
+    ...defaultServices,
+    createApplication: (applicationRoot: string, cache: boolean) =>
+      createServerApplicationService(applicationRoot, cache, options.native),
+  }
   const applicationPromise = services.createApplication(root, options.cache !== false)
   let application: TypeSpecApplicationService | undefined
   let reader: TypeSpecApplicationReader | undefined

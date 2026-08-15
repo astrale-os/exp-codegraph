@@ -1,6 +1,7 @@
 import { access, readFile, symlink, writeFile } from 'node:fs/promises'
 import { request } from 'node:http'
-import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -15,6 +16,7 @@ import {
 } from '../application/interaction/reveal.ts'
 import { startDev, type RunningDevServer } from '../server/index.ts'
 import { DEV_SERVER_WATCH_IGNORES } from '../server/watch.ts'
+import { resolveTtscNativeAnalysis } from '../analysis/typescript/ttsc/index.ts'
 import {
   VERIFICATION_ENDPOINT,
   VERIFICATION_HEADER,
@@ -236,7 +238,18 @@ describe('universal specification dev server', () => {
   it('runs and hot-reloads the built-in module verifier without sidecars', async () => {
     const current = await fixture(moduleVerificationFiles())
     fixtures.push(current)
-    const running = await startDev({ root: current.root, port: 0, verify: true, cache: false })
+    const native = await resolveTtscNativeAnalysis({
+      root: resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+      config: 'tsconfig.json',
+      cacheDirectory: join(tmpdir(), 'codegraph-test-ttsc'),
+    })
+    const running = await startDev({
+      root: current.root,
+      port: 0,
+      verify: true,
+      cache: false,
+      native: { binary: native.command },
+    })
     servers.push(running)
 
     const initial = await running.server.ssrLoadModule('virtual:spec-catalog-index')
@@ -309,7 +322,7 @@ describe('universal specification dev server', () => {
         { timeout: 5_000 },
       )
       .toBe('pass')
-  }, 30_000)
+  }, 120_000)
 
   it('publishes every dependent Spec revision together and retains the previous generation', async () => {
     const current = await fixture({

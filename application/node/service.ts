@@ -6,6 +6,7 @@ import type { AnalysisStore } from '../../analysis/index.ts'
 import { selectAnalysisStore } from '../../analysis/index.ts'
 import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
 import type { TypeSpecApplicationService } from '../index.ts'
+import type { CodegraphApplicationSessionOptions } from '../analysis/index.ts'
 import { createTypeSpecApplicationService } from '../service.ts'
 
 export interface NodeTypeSpecApplicationOptions {
@@ -15,6 +16,7 @@ export interface NodeTypeSpecApplicationOptions {
   readonly repository?: string
   readonly maximumRetainedSnapshots?: number
   readonly maximumRetainedGenerations?: number
+  readonly native?: CodegraphApplicationSessionOptions
 }
 
 /** Node-owned store/native composition around the portable headless application service. */
@@ -44,6 +46,7 @@ export async function createNodeTypeSpecApplicationService(
       repository: options.repository ?? (await repositoryKey(root)),
       maximumRetainedSnapshots: options.maximumRetainedSnapshots,
       analysis: { store, maximumRetainedGenerations },
+      ...(options.native ? { native: options.native } : {}),
     })
     return ownStore(application, store)
   } catch (error) {
