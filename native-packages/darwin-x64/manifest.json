@@ -1,1 +1,13 @@
-{"format":"astrale.codegraph.native-artifact","version":1,"packageVersion":"0.1.0","protocolVersion":1,"artifact":null}
+{
+  "artifact": {
+    "bytes": 28648544,
+    "executable": "bin/codegraph-native",
+    "package": "@astrale-os/codegraph-native-darwin-x64",
+    "sha256": "94e14df7c2f07de5774b3782935bfe0bf630c366515ad9a792efa6ded84a2b83",
+    "target": "darwin-x64"
+  },
+  "format": "astrale.codegraph.native-artifact",
+  "packageVersion": "0.1.0",
+  "protocolVersion": 1,
+  "version": 1
+}
