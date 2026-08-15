@@ -41,3 +41,9 @@ export const SQLITE_COLD_EQUIVALENCE = defineLaw({
   statement:
     'After create, edit, delete, rename, configuration change, branch-like churn, and recurrence, normalized incremental facts equal a clean materialization of the same producer transaction.',
 })
+
+export const SQLITE_PHYSICAL_PAYLOAD_TRANSPARENCY = defineLaw({
+  id: 'SQLITE-PHYSICAL-PAYLOAD-TRANSPARENCY',
+  statement:
+    'Shard payload compression, ordinals, and storage codecs are private, explicitly tagged, decompression-bounded, and cache-bounded materialization details: generation identities and typed query results are identical to unrestricted semantic Fact payloads, and corrupt, missing, ambiguous, or incomplete physical membership is rejected rather than inferred.',
+})

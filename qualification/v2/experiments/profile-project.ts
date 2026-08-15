@@ -3,9 +3,12 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import {
   createMemoryAnalysisStore,
+  deriveAnalysisId,
+  runAnalysisPolicies,
   type AnalysisGenerationId,
   type AnalysisTelemetryEvent,
   type AnalysisTelemetrySink,
@@ -13,6 +16,11 @@ import {
   type ProjectUniverseId,
 } from '../../../analysis/index.ts'
 import { createSQLiteAnalysisStore } from '../../../analysis/sqlite/index.ts'
+import {
+  createTypeScriptFactReader,
+  TYPESCRIPT_FACT_PAYLOAD_CODECS,
+} from '../../../analysis/typescript/index.ts'
+import { createBoundedValueEvaluator } from '../../../analysis/typescript/value/index.ts'
 import { resolveApplicationModuleBoundaries } from '../../../application/analysis/index.ts'
 import {
   discoverSpecificationDirectories,
@@ -27,6 +35,11 @@ const root = await resolveApplicationRoot(requiredArgument('--root'))
 const binary = resolve(requiredArgument('--native-binary'))
 const output = argument('--output')
 const selectedProject = argument('--project')
+const compact = process.argv.includes('--compact')
+const backend = requiredBackend(argument('--backend') ?? 'both')
+const payloadMaterialization = requiredPayloadMaterialization(
+  argument('--materialization') ?? 'shard-brotli',
+)
 const temporary = await mkdtemp(join(tmpdir(), 'codegraph-profile-project-'))
 const events: (AnalysisTelemetryEvent & {
   readonly context: { readonly backend: 'memory' | 'sqlite'; readonly project: string }
@@ -45,55 +58,68 @@ try {
     : projects
   if (!selected.size) throw new Error(`No analyzable project matched ${selectedProject ?? root}.`)
 
-  const memory = createMemoryAnalysisStore({
-    maximumRetainedGenerations: 1,
-    telemetry: scopedTelemetry('memory'),
-  })
   const memoryResults = new Map<string, Awaited<ReturnType<typeof runProject>>>()
-  try {
-    for (const [project, modules] of selected) {
-      memoryResults.set(project, await runProject('memory', project, modules, memory))
+  if (backend !== 'sqlite') {
+    const memory = createMemoryAnalysisStore({
+      maximumRetainedGenerations: 1,
+      telemetry: scopedTelemetry('memory'),
+    })
+    try {
+      for (const [project, modules] of selected) {
+        memoryResults.set(project, await runProject('memory', project, modules, memory))
+      }
+    } finally {
+      await memory.dispose()
     }
-  } finally {
-    await memory.dispose()
   }
 
   const sqliteFile = join(temporary, 'profile.sqlite')
-  const sqlite = await createSQLiteAnalysisStore({
-    file: sqliteFile,
-    namespace: `profile-${target}`,
-    maximumRetainedGenerations: 1,
-    telemetry: scopedTelemetry('sqlite'),
-  })
   const sqliteResults = new Map<string, Awaited<ReturnType<typeof runProject>>>()
-  try {
-    for (const [project, modules] of selected) {
-      sqliteResults.set(project, await runProject('sqlite', project, modules, sqlite))
+  if (backend !== 'memory') {
+    const sqlite = await createSQLiteAnalysisStore({
+      file: sqliteFile,
+      namespace: `profile-${target}`,
+      maximumRetainedGenerations: 1,
+      telemetry: scopedTelemetry('sqlite'),
+      payloadMaterialization,
+      ...(compact ? { payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS } : {}),
+    })
+    try {
+      for (const [project, modules] of selected) {
+        sqliteResults.set(project, await runProject('sqlite', project, modules, sqlite))
+      }
+    } finally {
+      await sqlite.dispose()
     }
-  } finally {
-    await sqlite.dispose()
   }
 
   const projectsResult = [...selected].map(([project, modules]) => {
-    const memory = memoryResults.get(project)!
-    const sqlite = sqliteResults.get(project)!
-    assert.equal(memory.generation, sqlite.generation)
-    assert.equal(memory.semanticDigest, sqlite.semanticDigest)
-    assert.equal(memory.boundFactDigest, sqlite.boundFactDigest)
+    const memory = memoryResults.get(project)
+    const sqlite = sqliteResults.get(project)
+    const observed = memory ?? sqlite
+    if (!observed) throw new Error(`No backend analyzed ${project}.`)
+    if (memory && sqlite) {
+      assert.equal(memory.generation, sqlite.generation)
+      assert.equal(memory.semanticDigest, sqlite.semanticDigest)
+      assert.equal(memory.boundFactDigest, sqlite.boundFactDigest)
+    }
     return {
       project,
       modules: modules.length,
-      generation: memory.generation,
-      universe: memory.universe,
-      memoryMs: memory.elapsedMs,
-      sqliteMs: sqlite.elapsedMs,
-      facts: memory.facts,
-      factBytes: memory.factBytes,
-      namespaceBytes: memory.namespaceBytes,
-      bodyFieldBytes: memory.bodyFieldBytes,
-      bodyOccurrenceFieldBytes: memory.bodyOccurrenceFieldBytes,
-      semanticDigest: memory.semanticDigest,
-      boundFactDigest: memory.boundFactDigest,
+      generation: observed.generation,
+      universe: observed.universe,
+      ...(memory ? { memoryMs: memory.elapsedMs, memoryQueryMs: memory.queryMs } : {}),
+      ...(sqlite ? { sqliteMs: sqlite.elapsedMs, sqliteQueryMs: sqlite.queryMs } : {}),
+      facts: observed.facts,
+      factBytes: observed.factBytes,
+      namespaceBytes: observed.namespaceBytes,
+      bodyFieldBytes: observed.bodyFieldBytes,
+      bodyOccurrenceFieldBytes: observed.bodyOccurrenceFieldBytes,
+      semanticDigest: observed.semanticDigest,
+      boundFactDigest: observed.boundFactDigest,
+      manifestDigest: observed.manifestDigest,
+      sourceManifest: observed.sourceManifest,
+      queryWorkloads: observed.queryWorkloads,
     }
   })
   const result = {
@@ -101,10 +127,18 @@ try {
     version: 1,
     target,
     native: createHash('sha256').update(await readFile(binary)).digest('hex'),
+    compact,
+    backend,
+    payloadMaterialization,
     specifications: specifications.length,
     boundaries: resolution.boundaries.length,
     projects: projectsResult,
-    sqliteBytes: (await stat(sqliteFile)).size,
+    ...(backend !== 'memory'
+      ? {
+          sqliteBytes: (await stat(sqliteFile)).size,
+          sqliteAttribution: sqliteStorageAttribution(sqliteFile),
+        }
+      : {}),
     process: {
       memoryUsage: process.memoryUsage(),
       resourceUsage: process.resourceUsage(),
@@ -120,8 +154,11 @@ try {
       version: result.version,
       target: result.target,
       native: result.native,
+      compact: result.compact,
+      backend: result.backend,
+      payloadMaterialization: result.payloadMaterialization,
       projects: result.projects,
-      sqliteBytes: result.sqliteBytes,
+      ...('sqliteBytes' in result ? { sqliteBytes: result.sqliteBytes } : {}),
       telemetryEvents: result.events.length,
       output: destination,
     }, null, 2)}\n`)
@@ -146,13 +183,19 @@ async function runProject(
     binary,
     store,
     telemetry: scopedTelemetry(backend, project),
+    ...(compact ? { payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS } : {}),
   })
   try {
+    const queryStarted = performance.now()
     const summary = await summarizeGeneration(target, project, store, analyzed.generation)
+    const fullTypedMs = Math.round((performance.now() - queryStarted) * 100) / 100
+    const queryWorkloads = await benchmarkQueries(store, analyzed.generation)
     return {
       generation: analyzed.generation.id as AnalysisGenerationId,
       universe: analyzed.generation.universe as ProjectUniverseId,
       elapsedMs: analyzed.elapsedMs,
+      queryMs: fullTypedMs,
+      queryWorkloads: { fullTypedMs, ...queryWorkloads },
       facts: summary.facts,
       factBytes: summary.factBytes,
       namespaceBytes: summary.namespaceBytes,
@@ -160,10 +203,140 @@ async function runProject(
       bodyOccurrenceFieldBytes: summary.bodyOccurrenceFieldBytes,
       semanticDigest: summary.semanticDigest,
       boundFactDigest: summary.boundFactDigest,
+      manifestDigest: summary.manifestDigest,
+      sourceManifest: analyzed.generation.sourceManifest,
     }
   } finally {
     await analyzed.service.dispose()
   }
+}
+
+async function benchmarkQueries(
+  store: import('../../../analysis/index.ts').AnalysisStore,
+  generation: import('../../../analysis/index.ts').AnalysisGeneration,
+) {
+  const discovery = await store.open(generation.universe, generation.id)
+  let bodyFact: Awaited<ReturnType<ReturnType<typeof createTypeScriptFactReader>['facts']>>['facts'][number] | undefined
+  let valueOccurrence: string | undefined
+  try {
+    const page = await createTypeScriptFactReader(discovery).facts('body', {}, { limit: 1_000 })
+    bodyFact = page.facts[0]
+    valueOccurrence = page.facts
+      .flatMap((fact) => Object.keys(fact.payload.values))
+      .sort()[0]
+  } finally {
+    await discovery.dispose()
+  }
+
+  let pointMs: number | undefined
+  if (bodyFact) {
+    const query = await store.open(generation.universe, generation.id)
+    try {
+      const started = performance.now()
+      const facts = await createTypeScriptFactReader(query).factsById('body', [bodyFact.id])
+      assert.equal(facts.length, 1)
+      pointMs = round(performance.now() - started)
+    } finally {
+      await query.dispose()
+    }
+  }
+
+  const pageQuery = await store.open(generation.universe, generation.id)
+  let firstPageMs: number
+  let nextPageMs: number | undefined
+  try {
+    const reader = createTypeScriptFactReader(pageQuery)
+    let started = performance.now()
+    const first = await reader.facts('body', {}, { limit: 100 })
+    firstPageMs = round(performance.now() - started)
+    if (first.nextCursor) {
+      started = performance.now()
+      await reader.facts('body', {}, { limit: 100, cursor: first.nextCursor })
+      nextPageMs = round(performance.now() - started)
+    }
+  } finally {
+    await pageQuery.dispose()
+  }
+
+  let evaluatorMs: number | undefined
+  let evaluatorIndexMs: number | undefined
+  if (valueOccurrence) {
+    const query = await store.open(generation.universe, generation.id)
+    try {
+      let started = performance.now()
+      const evaluator = await createBoundedValueEvaluator({ query })
+      evaluatorIndexMs = round(performance.now() - started)
+      started = performance.now()
+      await evaluator.evaluate(valueOccurrence as import('../../../analysis/index.ts').OccurrenceId)
+      evaluatorMs = round(performance.now() - started)
+    } finally {
+      await query.dispose()
+    }
+  }
+
+  const policyQuery = await store.open(generation.universe, generation.id)
+  let policyMs: number
+  try {
+    const started = performance.now()
+    await runAnalysisPolicies({
+      query: policyQuery,
+      policies: [
+        {
+          manifest: {
+            id: deriveAnalysisId('policy', 'qualification.query-workload', {}),
+            version: '1.0.0',
+            requiresCapabilities: [],
+            inputs: [],
+            rules: ['body-page'],
+            limits: { page: 100 },
+          },
+          async evaluate(context) {
+            const page = await context.query.facts(
+              { namespaces: ['typescript.body'] },
+              { limit: 100 },
+            )
+            return [{
+              rule: 'body-page',
+              status: 'pass' as const,
+              diagnostics: [],
+              matched: page.facts.length,
+              total: page.total ?? page.facts.length,
+            }]
+          },
+        },
+      ],
+    })
+    policyMs = round(performance.now() - started)
+  } finally {
+    await policyQuery.dispose()
+  }
+
+  return {
+    ...(pointMs === undefined ? {} : { pointMs }),
+    firstPageMs,
+    ...(nextPageMs === undefined ? {} : { nextPageMs }),
+    ...(evaluatorIndexMs === undefined ? {} : { evaluatorIndexMs }),
+    ...(evaluatorMs === undefined ? {} : { evaluatorMs }),
+    policyMs,
+  }
+}
+
+function sqliteStorageAttribution(file: string): Readonly<Record<string, number>> {
+  const database = new DatabaseSync(file, { readOnly: true })
+  try {
+    const rows = database
+      .prepare('SELECT name, SUM(pgsize) AS bytes FROM dbstat GROUP BY name ORDER BY name')
+      .all() as { readonly name: string; readonly bytes: number }[]
+    return Object.fromEntries(rows.map((row) => [row.name, row.bytes]))
+  } catch {
+    return {}
+  } finally {
+    database.close()
+  }
+}
+
+function round(value: number): number {
+  return Math.round(value * 100) / 100
 }
 
 function scopedTelemetry(
@@ -202,5 +375,19 @@ function requiredArgument(name: string): string {
 
 function requiredTarget(value: string): SelfHostTargetId {
   if (value !== 'codegraph' && value !== 'kernel') throw new Error('--target must be codegraph or kernel.')
+  return value
+}
+
+function requiredBackend(value: string): 'memory' | 'sqlite' | 'both' {
+  if (value !== 'memory' && value !== 'sqlite' && value !== 'both') {
+    throw new Error('--backend must be memory, sqlite, or both.')
+  }
+  return value
+}
+
+function requiredPayloadMaterialization(value: string): 'inline-json' | 'shard-brotli' {
+  if (value !== 'inline-json' && value !== 'shard-brotli') {
+    throw new Error('--materialization must be inline-json or shard-brotli.')
+  }
   return value
 }

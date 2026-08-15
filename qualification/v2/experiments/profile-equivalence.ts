@@ -13,6 +13,7 @@ import { stableJson } from '../../../analysis/identity/model.ts'
 import {
   createTypeScriptAnalysisService,
   TYPESCRIPT_FACT_NAMESPACES,
+  TYPESCRIPT_FACT_PAYLOAD_CODECS,
 } from '../../../analysis/typescript/index.ts'
 
 const binary = requiredArgument('--native-binary')
@@ -35,7 +36,9 @@ try {
   )
   await writeFile(
     join(temporary, 'src/index.ts'),
-    `export function choose(value: number): string {
+    `export const nestedCallback = () => () => 'nested'
+
+export function choose(value: number): string {
   const prefix = 'value'
   return value > 0 ? \`${'${prefix}'}:${'${value}'}\` : 'none'
 }
@@ -43,8 +46,8 @@ try {
   )
 
   const events: AnalysisTelemetryEvent[] = []
-  const plain = await analyze(undefined)
-  const profiled = await analyze((event) => events.push(event))
+  const plain = await analyze(undefined, false)
+  const profiled = await analyze((event) => events.push(event), true)
   assert.equal(profiled.semantic, plain.semantic)
   assert(events.some((event) => event.component === 'native' && event.phase === 'compiler.open'))
   assert(events.some((event) => event.component === 'native' && event.phase === 'projection.bodies'))
@@ -65,6 +68,7 @@ try {
 
 async function analyze(
   telemetry: ((event: AnalysisTelemetryEvent) => void) | undefined,
+  compact: boolean,
 ): Promise<{ readonly semantic: string; readonly digest: string; readonly facts: number }> {
   const store = createMemoryAnalysisStore({
     maximumRetainedGenerations: 1,
@@ -72,6 +76,7 @@ async function analyze(
   })
   const sessions = createProcessNativeAnalysisSessionFactory({
     command: resolve(binary),
+    ...(compact ? { payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS } : {}),
     ...(telemetry ? { telemetry } : {}),
   })
   const service = await createTypeScriptAnalysisService({
@@ -97,6 +102,21 @@ async function analyze(
     try {
       const facts: Fact[] = []
       for await (const fact of query.export()) facts.push(fact)
+      const owners = new Map<string, string>()
+      for (const fact of facts.filter((candidate) => candidate.namespace === 'typescript.body')) {
+        const payload = fact.payload as import('../../../analysis/typescript/index.ts').TypeScriptBodyFacts
+        for (const occurrence of payload.body.occurrences) {
+          const owner = owners.get(occurrence.id)
+          assert(
+            owner === undefined || owner === occurrence.owner,
+            `Occurrence ${occurrence.id} has multiple function owners.`,
+          )
+          owners.set(occurrence.id, occurrence.owner)
+        }
+        if (payload.body.occurrences.some((occurrence) => occurrence.syntax === 'ArrowFunction')) {
+          assert.equal(payload.body.summary.returns.length, 1)
+        }
+      }
       const semantic = stableJson({
         generation: refreshed.generation,
         transaction: refreshed.transaction,

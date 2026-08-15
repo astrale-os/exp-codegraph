@@ -21,6 +21,7 @@ import { TransactionError, validateFactTransaction } from '../generation/index.t
 import { deriveAnalysisId } from '../identity/index.ts'
 import { stableJson } from '../identity/model.ts'
 import { combineCompleteness } from './completeness.ts'
+import { bindPhysicalFact, immutableFact } from '../facts/representation/index.ts'
 
 export interface MaterializedGeneration {
   readonly generation: AnalysisGeneration
@@ -385,7 +386,10 @@ function immutable<Value>(value: Value): Value {
     for (const entry of value.values()) immutable(entry)
     return Object.freeze(value)
   }
-  for (const entry of Object.values(value as Record<string, unknown>)) immutable(entry)
+  for (const entry of Object.values(value as Record<string, unknown>)) {
+    if (isFact(entry)) immutableFact(entry)
+    else immutable(entry)
+  }
   return Object.freeze(value)
 }
 
@@ -398,7 +402,18 @@ function bindShard(shard: FactShard, generation: AnalysisGenerationId): FactShar
 }
 
 function bindFact(fact: Fact, generation: AnalysisGenerationId): Fact {
-  return fact.generation === generation ? fact : { ...fact, generation }
+  return bindPhysicalFact(fact, generation)
+}
+
+function isFact(value: unknown): value is Fact {
+  return Boolean(
+    value &&
+    typeof value === 'object' &&
+    typeof (value as Partial<Fact>).id === 'string' &&
+    typeof (value as Partial<Fact>).namespace === 'string' &&
+    typeof (value as Partial<Fact>).generation === 'string' &&
+    Object.hasOwn(value, 'payload'),
+  )
 }
 
 function byKey(left: FactShardReference, right: FactShardReference): number {

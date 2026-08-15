@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import type { AnalysisStore } from '../../analysis/index.ts'
 import { selectAnalysisStore } from '../../analysis/index.ts'
 import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
+import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../../analysis/typescript/index.ts'
 import type { TypeSpecApplicationService } from '../index.ts'
 import type { CodegraphApplicationSessionOptions } from '../analysis/index.ts'
 import { createTypeSpecApplicationService } from '../service.ts'
@@ -35,6 +36,7 @@ export async function createNodeTypeSpecApplicationService(
               // Physical isolation belongs to the store namespace, never semantic identities.
               namespace: `worktree:${createHash('sha256').update(root).digest('hex')}`,
               maximumRetainedGenerations,
+              payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS,
             }),
         }
       : {}),

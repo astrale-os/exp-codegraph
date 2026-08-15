@@ -9,6 +9,7 @@ import {
   type AnalysisTelemetrySink,
   type CapabilityStatus,
   type Fact,
+  type FactPayloadCodec,
   type NativeModuleBoundary,
 } from '../../../analysis/index.ts'
 import {
@@ -43,6 +44,7 @@ export interface AnalyzeProjectOptions {
   readonly binary: string
   readonly store: AnalysisStore
   readonly telemetry?: AnalysisTelemetrySink
+  readonly payloadCodecs?: readonly FactPayloadCodec[]
 }
 
 export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
@@ -52,6 +54,7 @@ export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
 }> {
   const sessions = createProcessNativeAnalysisSessionFactory({
     command: options.binary,
+    ...(options.payloadCodecs ? { payloadCodecs: options.payloadCodecs } : {}),
     ...(options.telemetry ? { telemetry: options.telemetry } : {}),
   })
   const service = await createTypeScriptAnalysisService({

@@ -38,10 +38,10 @@ func run(arguments []string) int {
 }
 
 type commandOptions struct {
-	cwd, config, universe, capabilitiesJSON, modulesJSON string
-	maximumFrameBytes, transactionChunkFrameBytes        int
-	maximumTransactionBytes                              int
-	telemetryFD                                          int
+	cwd, config, universe, capabilitiesJSON, modulesJSON, payloadCodecsJSON string
+	maximumFrameBytes, transactionChunkFrameBytes                           int
+	maximumTransactionBytes, maximumPhysicalTransactionBytes                int
+	telemetryFD                                                             int
 }
 
 func parseOptions(command string, arguments []string) (commandOptions, error) {
@@ -52,9 +52,11 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	universe := flags.String("universe", "", "portable project universe identity")
 	capabilities := flags.String("capabilities-json", "[]", "sorted native capability JSON")
 	modules := flags.String("modules-json", "[]", "portable module boundary JSON")
+	payloadCodecs := flags.String("payload-codecs-json", "[]", "supported physical fact payload codec JSON")
 	maximumFrameBytes := flags.Int("maximum-frame-bytes", 64*1024*1024, "maximum JSONL frame bytes")
 	transactionChunkFrameBytes := flags.Int("transaction-chunk-frame-bytes", 8*1024*1024, "preferred streamed transaction frame bytes")
-	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", 256*1024*1024, "maximum assembled transaction bytes")
+	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", 256*1024*1024, "maximum decoded semantic fact payload bytes")
+	maximumPhysicalTransactionBytes := flags.Int("maximum-physical-transaction-bytes", 256*1024*1024, "maximum assembled physical transaction bytes")
 	telemetryFD := flags.Int("telemetry-fd", -1, "optional diagnostic NDJSON descriptor")
 	_ = flags.String("plugins-json", "", "ttsc compatibility")
 	_ = flags.Bool("emit", false, "ttsc compatibility")
@@ -75,7 +77,7 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	if *universe == "" {
 		*universe = deriveID("project-universe", "typescript.native.default", map[string]any{"config": *config})
 	}
-	if *maximumFrameBytes < 1024 || *transactionChunkFrameBytes < 1024 || *maximumTransactionBytes < 1024 {
+	if *maximumFrameBytes < 1024 || *transactionChunkFrameBytes < 1024 || *maximumTransactionBytes < 1024 || *maximumPhysicalTransactionBytes < 1024 {
 		return commandOptions{}, fmt.Errorf("native frame and transaction limits must be at least 1024 bytes")
 	}
 	if *transactionChunkFrameBytes > *maximumFrameBytes {
@@ -83,10 +85,11 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	}
 	return commandOptions{
 		cwd: *cwd, config: *config, universe: *universe,
-		capabilitiesJSON: *capabilities, modulesJSON: *modules,
+		capabilitiesJSON: *capabilities, modulesJSON: *modules, payloadCodecsJSON: *payloadCodecs,
 		maximumFrameBytes: *maximumFrameBytes, transactionChunkFrameBytes: *transactionChunkFrameBytes,
-		maximumTransactionBytes: *maximumTransactionBytes,
-		telemetryFD:             *telemetryFD,
+		maximumTransactionBytes:         *maximumTransactionBytes,
+		maximumPhysicalTransactionBytes: *maximumPhysicalTransactionBytes,
+		telemetryFD:                     *telemetryFD,
 	}, nil
 }
 
@@ -119,6 +122,21 @@ func decodeModules(value string) ([]moduleBoundary, error) {
 	return modules, nil
 }
 
+func decodePayloadCodecs(value string) (map[string]bool, error) {
+	var codecs []string
+	if err := json.Unmarshal([]byte(value), &codecs); err != nil {
+		return nil, err
+	}
+	result := make(map[string]bool, len(codecs))
+	for _, codec := range codecs {
+		if codec == "" || result[codec] {
+			return nil, fmt.Errorf("payload codecs require unique non-empty identities")
+		}
+		result[codec] = true
+	}
+	return result, nil
+}
+
 func runCheck(arguments []string) int {
 	options, err := parseOptions("check", arguments)
 	if err != nil {
@@ -134,13 +152,18 @@ func runCheck(arguments []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	payloadCodecs, err := decodePayloadCodecs(options.payloadCodecsJSON)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
 	telemetry, err := openNativeTelemetry(options.telemetryFD)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 	defer telemetry.close()
-	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, telemetry)
+	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, payloadCodecs, options.maximumTransactionBytes, telemetry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -168,13 +191,18 @@ func runServe(arguments []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
+	payloadCodecs, err := decodePayloadCodecs(options.payloadCodecsJSON)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
 	telemetry, err := openNativeTelemetry(options.telemetryFD)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
 	defer telemetry.close()
-	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, telemetry)
+	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, payloadCodecs, options.maximumTransactionBytes, telemetry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -280,7 +308,7 @@ func runServe(arguments []string) int {
 			writeErr = writeTransactionResponse(
 				output, input.ID, transaction,
 				options.maximumFrameBytes, options.transactionChunkFrameBytes,
-				options.maximumTransactionBytes, telemetry,
+				options.maximumPhysicalTransactionBytes, telemetry,
 			)
 		} else {
 			writeErr = writeDeltaResponse(
@@ -290,7 +318,7 @@ func runServe(arguments []string) int {
 					Upserts: transaction.Upserts, Deletes: transaction.Deletes,
 				},
 				options.maximumFrameBytes, options.transactionChunkFrameBytes,
-				options.maximumTransactionBytes, telemetry,
+				options.maximumPhysicalTransactionBytes, telemetry,
 			)
 		}
 		if writeErr != nil {

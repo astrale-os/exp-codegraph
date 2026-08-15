@@ -32,7 +32,7 @@ type bodyBuilder struct {
 	recursion   bool
 }
 
-func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) []factShard {
+func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([]factShard, error) {
 	var shards []factShard
 	walkFile(file, func(node *shimast.Node) bool {
 		if !shimast.IsFunctionLike(node) || node.Body() == nil {
@@ -54,14 +54,29 @@ func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) []
 		completion := payload.Completeness
 		span := x.span(file, node)
 		entry := x.newFact(bodyNamespace, "function-body", owner, payload, []sourceSpan{span}, completion)
-		shards = append(shards, finishShard(bodyNamespace, owner, completion, []fact{entry}))
+		shard := finishShard(bodyNamespace, owner, completion, []fact{entry})
+		if x.payloadCodecs[typescriptBodyPayloadCodec] {
+			packed, err := packBodyPayload(payload, span)
+			if err != nil {
+				// The walker cannot return an error directly; retain it for the
+				// enclosing source projection to report after traversal.
+				x.bodyPackingError = err
+				return false
+			}
+			shard.Facts[0].Payload = nil
+			shard.Facts[0].PhysicalPayload = &packed
+		}
+		shards = append(shards, shard)
 		// A nested function owns its body and will be visited by the outer file
 		// walk independently. Continuing here discovers it without attributing
 		// its occurrences to the outer function.
 		return true
 	})
+	if x.bodyPackingError != nil {
+		return nil, x.bodyPackingError
+	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	return shards
+	return shards, nil
 }
 
 func (x *extractor) functionID(node *shimast.Node) string {
@@ -104,6 +119,17 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	}
 
 	b.walkOwned(b.body)
+	// An expression-bodied arrow semantically returns its root expression. A
+	// nested function literal is opaque to the outer body: retain one value
+	// occurrence for the literal, never its independently owned occurrences.
+	if function.Kind == shimast.KindArrowFunction && b.body.Kind != shimast.KindBlock {
+		returned := b.occurrence[b.body]
+		if returned == "" {
+			returned = b.addOccurrence(b.body, "expression")
+			b.values[returned] = b.value(b.body)
+		}
+		b.returns = append(b.returns, returned)
+	}
 	controlFlow := buildControlFlow(b)
 	b.buildRelations(b.body)
 	b.finishDefinitionUses()
@@ -149,7 +175,7 @@ func (b *bodyBuilder) buildRelations(node *shimast.Node) {
 	if node == nil {
 		return
 	}
-	if node != b.body && shimast.IsFunctionLike(node) {
+	if shimast.IsFunctionLike(node) {
 		return
 	}
 	parent := b.occurrence[node]
@@ -172,7 +198,7 @@ func (b *bodyBuilder) walkOwned(node *shimast.Node) {
 	if node == nil {
 		return
 	}
-	if node != b.body && shimast.IsFunctionLike(node) {
+	if shimast.IsFunctionLike(node) {
 		return
 	}
 	kind := bodyKind(node)
@@ -388,6 +414,11 @@ func (b *bodyBuilder) value(node *shimast.Node) any {
 	}
 	if node == nil {
 		return unknownValue("VALUE_ABSENT", "The argument has no expression.")
+	}
+	if shimast.IsFunctionLike(node) {
+		return map[string]any{
+			"kind": "unsupported", "construct": node.KindString(), "evidence": []string{},
+		}
 	}
 	switch node.Kind {
 	case shimast.KindStringLiteral, shimast.KindNoSubstitutionTemplateLiteral:

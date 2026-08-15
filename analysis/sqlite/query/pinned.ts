@@ -12,6 +12,7 @@ import type {
 } from '../../query/index.ts'
 
 import { combineCompleteness } from '../../internal/completeness.ts'
+import type { FactPayloadCodecMap } from '../../facts/representation/index.ts'
 import {
   factFromRows,
   parseCapabilities,
@@ -21,12 +22,18 @@ import {
   type InputRow,
 } from '../materialization/model.ts'
 import { loadManifest } from '../materialization/read.ts'
+import {
+  loadShardPayloads,
+  persistedFactPayload,
+  ShardPayloadCache,
+} from '../materialization/payload.ts'
 import { decodeSQLiteCursor, encodeSQLiteCursor } from './cursor.ts'
 import { buildSQLiteFactFilter } from './filter.ts'
 
 interface QueryFactRow extends FactRow {
   readonly evidence_json: string
   readonly inputs_json: string
+  readonly payload_layout: string
 }
 
 export class SQLitePinnedQuery implements AnalysisQuery {
@@ -35,16 +42,25 @@ export class SQLitePinnedQuery implements AnalysisQuery {
   readonly #storeNamespace: string
   readonly generation: AnalysisGeneration
   readonly #release: () => void | Promise<void>
+  readonly #payloadCodecs: FactPayloadCodecMap
+  readonly #payloads: ShardPayloadCache
+  readonly #maximumDecompressedShardPayloadBytes: number
 
   constructor(
     database: DatabaseSync,
     storeNamespace: string,
     generation: AnalysisGeneration,
+    payloadCodecs: FactPayloadCodecMap,
+    maximumDecompressedShardPayloadBytes: number,
+    maximumCachedShardPayloadBytes: number,
     release: () => void | Promise<void>,
   ) {
     this.#database = database
     this.#storeNamespace = storeNamespace
     this.generation = generation
+    this.#payloadCodecs = payloadCodecs
+    this.#maximumDecompressedShardPayloadBytes = maximumDecompressedShardPayloadBytes
+    this.#payloads = new ShardPayloadCache(maximumCachedShardPayloadBytes)
     this.#release = release
   }
 
@@ -240,12 +256,29 @@ export class SQLitePinnedQuery implements AnalysisQuery {
   }
 
   private decodeFact(row: QueryFactRow): Fact {
+    // Decode each shard immediately before consuming one of its rows. A bounded
+    // cache may evict earlier shards; bulk-prefetching a page would therefore
+    // make correctness depend on the page's aggregate decompressed size.
+    loadShardPayloads(
+      this.#database,
+      this.#storeNamespace,
+      [row],
+      this.#payloads,
+      this.#maximumDecompressedShardPayloadBytes,
+    )
     const evidence = parseJson(row.evidence_json, `fact ${row.fact_id} evidence`) as EvidenceRow[]
     const inputs = parseJson(row.inputs_json, `fact ${row.fact_id} inputs`) as InputRow[]
     if (!Array.isArray(evidence) || !Array.isArray(inputs)) {
       throw new TypeError(`Persisted fact ${row.fact_id} provenance is invalid.`)
     }
-    return factFromRows(row, this.generation.id, evidence, inputs)
+    return factFromRows(
+      row,
+      this.generation.id,
+      evidence,
+      inputs,
+      persistedFactPayload(row, this.#payloads),
+      this.#payloadCodecs,
+    )
   }
 
   private assertOpen(): void {
@@ -254,7 +287,7 @@ export class SQLitePinnedQuery implements AnalysisQuery {
 }
 
 function factSelectionSql(): string {
-  return `SELECT fact.*,
+  return `SELECT fact.*, shard.payload_layout,
     COALESCE((
       SELECT json_group_array(json_object(
         'shard_digest', ordered.shard_digest,
@@ -293,7 +326,10 @@ function factSelectionSql(): string {
   FROM analysis_generation_shards AS member
   JOIN analysis_facts AS fact
     ON fact.store_namespace = member.store_namespace
-   AND fact.shard_digest = member.shard_digest`
+   AND fact.shard_digest = member.shard_digest
+  JOIN analysis_shards AS shard
+    ON shard.store_namespace = fact.store_namespace
+   AND shard.shard_digest = fact.shard_digest`
 }
 
 function validatePageLimit(limit: number): void {

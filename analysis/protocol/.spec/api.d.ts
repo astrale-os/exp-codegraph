@@ -1,4 +1,5 @@
 import type { FactShard } from '../../facts/.spec/api.js'
+import type { FactPayloadCodec } from '../../facts/representation/.spec/api.js'
 import type { AnalysisGeneration, FactTransaction } from '../../generation/.spec/api.js'
 import type { AnalysisGenerationId, FactShardKey } from '../../identity/.spec/api.js'
 import type { AnalysisTelemetrySink } from '../../profiling/.spec/api.js'
@@ -121,17 +122,22 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly maximumFrameBytes?: number
   /** Preferred frame ceiling for chunks within a streamed transaction. */
   readonly transactionChunkFrameBytes?: number
-  /** Maximum decoded bytes in one complete semantic transaction. */
+  /** Maximum decoded semantic Fact-payload bytes in one response. */
   readonly maximumTransactionBytes?: number
+  /** Maximum encoded physical bytes assembled before semantic decoding. */
+  readonly maximumPhysicalTransactionBytes?: number
   readonly maximumErrorBytes?: number
   /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
   readonly telemetry?: AnalysisTelemetrySink
+  /** Explicit physical payload capabilities negotiated with the native producer. */
+  readonly payloadCodecs?: readonly FactPayloadCodec[]
 }
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS: Readonly<{
   readonly maximumFrameBytes: number
   readonly transactionChunkFrameBytes: number
   readonly maximumTransactionBytes: number
+  readonly maximumPhysicalTransactionBytes: number
   readonly maximumErrorBytes: number
 }>
 

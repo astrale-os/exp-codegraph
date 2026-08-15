@@ -7,9 +7,20 @@ import type { AnalysisGenerationId, ProjectUniverseId, SourceManifestId } from '
 import type { AnalysisQuery, AnalysisSnapshotSet, AnalysisStore } from '../query/index.ts'
 import type { AnalysisTelemetrySink } from '../profiling/index.ts'
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
+import {
+  admitFactPayloadCodecs,
+  type FactPayloadCodec,
+  type FactPayloadCodecMap,
+} from '../facts/representation/index.ts'
 
 import { SQLiteLeaseRegistry } from './lifecycle/leases.ts'
 import { collectSQLiteGenerations } from './lifecycle/retention.ts'
+import {
+  DEFAULT_SQLITE_ANALYSIS_LIMITS,
+  DEFAULT_SQLITE_PAYLOAD_MATERIALIZATION,
+  type SQLitePayloadMaterialization,
+} from './limits.ts'
+import { prepareShardPayloads } from './materialization/payload.ts'
 import { loadCurrentGeneration, loadGeneration } from './materialization/read.ts'
 import { validateSQLiteTransaction } from './materialization/validate.ts'
 import { writeTransaction } from './materialization/write.ts'
@@ -26,6 +37,11 @@ export interface SQLiteAnalysisStoreOptions {
   readonly maximumRetainedGenerations?: number
   readonly requireDurability?: boolean
   readonly telemetry?: AnalysisTelemetrySink
+  /** Private physical payloads explicitly supported by this materializer. */
+  readonly payloadCodecs?: readonly FactPayloadCodec[]
+  readonly payloadMaterialization?: SQLitePayloadMaterialization
+  readonly maximumDecompressedShardPayloadBytes?: number
+  readonly maximumCachedShardPayloadBytes?: number
 }
 
 export async function createSQLiteAnalysisStore(
@@ -46,13 +62,20 @@ export async function createSQLiteAnalysisStore(
        PRAGMA foreign_keys = ON;`,
     )
     migrateSQLiteAnalysisSchema(database)
-    const quarantined = verifySQLiteAnalysisIntegrity(database, options.namespace)
+    const payloadCodecs = admitFactPayloadCodecs(options.payloadCodecs)
+    const quarantined = verifySQLiteAnalysisIntegrity(
+      database,
+      options.namespace,
+      payloadCodecs,
+      options.maximumDecompressedShardPayloadBytes ??
+        DEFAULT_SQLITE_ANALYSIS_LIMITS.maximumDecompressedShardPayloadBytes,
+    )
     if (quarantined.length) {
       throw new Error(
         `Analysis SQLite quarantined ${quarantined.length} invalid derived generation(s): ${quarantined.join(', ')}`,
       )
     }
-    return new SQLiteAnalysisStore(database, options)
+    return new SQLiteAnalysisStore(database, options, payloadCodecs)
   } catch (error) {
     database.close()
     throw error
@@ -64,14 +87,25 @@ class SQLiteAnalysisStore implements AnalysisStore {
   readonly #maximumRetained: number
   readonly #database: DatabaseSync
   readonly #options: SQLiteAnalysisStoreOptions
+  readonly #payloadCodecs: FactPayloadCodecMap
+  readonly #maximumDecompressedShardPayloadBytes: number
+  readonly #maximumCachedShardPayloadBytes: number
   #disposed = false
 
   constructor(
     database: DatabaseSync,
     options: SQLiteAnalysisStoreOptions,
+    payloadCodecs: FactPayloadCodecMap,
   ) {
     this.#database = database
     this.#options = options
+    this.#payloadCodecs = payloadCodecs
+    this.#maximumDecompressedShardPayloadBytes =
+      options.maximumDecompressedShardPayloadBytes ??
+      DEFAULT_SQLITE_ANALYSIS_LIMITS.maximumDecompressedShardPayloadBytes
+    this.#maximumCachedShardPayloadBytes =
+      options.maximumCachedShardPayloadBytes ??
+      DEFAULT_SQLITE_ANALYSIS_LIMITS.maximumCachedShardPayloadBytes
     const leaseTimeout = options.leaseTimeoutMs ?? 60_000
     this.#maximumRetained = options.maximumRetainedGenerations ?? 2
     this.#leases = new SQLiteLeaseRegistry(database, options.namespace, leaseTimeout)
@@ -96,6 +130,14 @@ class SQLiteAnalysisStore implements AnalysisStore {
     validateSQLiteTransaction(this.#database, this.#options.namespace, transaction)
     this.emit('transaction.validate-before-lock', phaseStarted, transaction)
     options.signal?.throwIfAborted()
+    phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
+    const payloads = prepareShardPayloads(
+      transaction.upserts,
+      this.#maximumDecompressedShardPayloadBytes,
+      this.#options.payloadMaterialization ?? DEFAULT_SQLITE_PAYLOAD_MATERIALIZATION,
+    )
+    this.emit('transaction.encode-payloads', phaseStarted, transaction)
+    options.signal?.throwIfAborted()
     this.#database.exec('BEGIN IMMEDIATE')
     try {
       phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
@@ -103,7 +145,7 @@ class SQLiteAnalysisStore implements AnalysisStore {
       this.emit('transaction.validate-locked', phaseStarted, transaction)
       options.signal?.throwIfAborted()
       phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
-      writeTransaction(this.#database, this.#options.namespace, transaction)
+      writeTransaction(this.#database, this.#options.namespace, transaction, payloads)
       this.emit('transaction.write', phaseStarted, transaction)
       phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
       collectSQLiteGenerations(
@@ -142,8 +184,14 @@ class SQLiteAnalysisStore implements AnalysisStore {
       throw error
     }
     this.#leases.start(lease)
-    return new SQLitePinnedQuery(this.#database, this.#options.namespace, selected, () =>
-      this.#leases.release(lease),
+    return new SQLitePinnedQuery(
+      this.#database,
+      this.#options.namespace,
+      selected,
+      this.#payloadCodecs,
+      this.#maximumDecompressedShardPayloadBytes,
+      this.#maximumCachedShardPayloadBytes,
+      () => this.#leases.release(lease),
     )
   }
 
@@ -223,5 +271,26 @@ function validateOptions(options: SQLiteAnalysisStoreOptions): void {
   const maximumRetained = options.maximumRetainedGenerations ?? 2
   if (!Number.isSafeInteger(maximumRetained) || maximumRetained < 1) {
     throw new RangeError('maximumRetainedGenerations must be a positive integer.')
+  }
+  const maximumDecompressed =
+    options.maximumDecompressedShardPayloadBytes ??
+    DEFAULT_SQLITE_ANALYSIS_LIMITS.maximumDecompressedShardPayloadBytes
+  const maximumCached =
+    options.maximumCachedShardPayloadBytes ??
+    DEFAULT_SQLITE_ANALYSIS_LIMITS.maximumCachedShardPayloadBytes
+  if (!Number.isSafeInteger(maximumDecompressed) || maximumDecompressed < 1_024) {
+    throw new RangeError('maximumDecompressedShardPayloadBytes must be an integer of at least 1024.')
+  }
+  if (!Number.isSafeInteger(maximumCached) || maximumCached < maximumDecompressed) {
+    throw new RangeError(
+      'maximumCachedShardPayloadBytes must be an integer at least as large as one decompressed shard.',
+    )
+  }
+  if (
+    options.payloadMaterialization !== undefined &&
+    options.payloadMaterialization !== 'inline-json' &&
+    options.payloadMaterialization !== 'shard-brotli'
+  ) {
+    throw new TypeError('payloadMaterialization must be inline-json or shard-brotli.')
   }
 }

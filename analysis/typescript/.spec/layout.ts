@@ -10,6 +10,7 @@ export default defineLayout({
     'model.ts',
     'native/',
     'pipeline.ts',
+    'physical/',
     'service.ts',
     'surface/',
     'ttsc/',

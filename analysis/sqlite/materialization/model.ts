@@ -14,6 +14,12 @@ import type {
 } from '../../identity/index.ts'
 
 import { stableJson } from '../../identity/model.ts'
+import {
+  createFactWithStoredPayload,
+  immutableFact,
+  type FactPayloadCodecMap,
+  type StoredFactPayload,
+} from '../../facts/representation/index.ts'
 
 export interface GenerationRow {
   readonly universe: string
@@ -36,6 +42,7 @@ export interface ShardRow {
   readonly completion_json: string
   readonly capabilities_json: string
   readonly fact_count: number
+  readonly payload_layout: string
 }
 
 export interface FactRow {
@@ -108,8 +115,10 @@ export function factFromRows(
   generation: AnalysisGenerationId,
   evidence: readonly EvidenceRow[],
   inputs: readonly InputRow[],
+  payload: StoredFactPayload,
+  payloadCodecs: FactPayloadCodecMap,
 ): Fact {
-  return immutable({
+  return immutableFact(createFactWithStoredPayload({
     id: row.fact_id as FactId,
     generation,
     namespace: row.fact_namespace,
@@ -136,8 +145,7 @@ export function factFromRows(
         .sort((left, right) => left.ordinal - right.ordinal)
         .map((entry) => entry.input_fact_id as FactId),
     },
-    payload: parseJson(row.payload_json, `fact ${row.fact_id} payload`),
-  })
+  }, payload, payloadCodecs, `fact ${row.fact_id} payload`))
 }
 
 export function encodeJson(value: unknown): string {

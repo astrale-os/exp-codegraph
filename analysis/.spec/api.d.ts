@@ -29,6 +29,7 @@ export type {
   FactShardReference,
   SourceSpan,
 } from '../facts/.spec/api.js'
+export type { FactPayloadCodec } from '../facts/representation/.spec/api.js'
 export { factShardDigest, shardReference, validateFactShard } from '../facts/.spec/api.js'
 export type {
   AnalysisGeneration,

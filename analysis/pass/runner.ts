@@ -1,5 +1,6 @@
 import type { Completeness, Fact, FactShard, FactShardReference } from '../facts/index.ts'
 import { factShardDigest, shardReference, validateFactShard } from '../facts/index.ts'
+import { bindPhysicalFact } from '../facts/representation/index.ts'
 import { generationIdentity, type FactTransaction } from '../generation/index.ts'
 import type { FactId, FactShardKey, PassId } from '../identity/index.ts'
 import { deriveAnalysisId } from '../identity/index.ts'
@@ -248,7 +249,7 @@ function completionShard(
 function bindGeneration(shard: FactShard, generation: Fact['generation']): FactShard {
   return {
     ...shard,
-    facts: shard.facts.map((fact) => ({ ...fact, generation })),
+    facts: shard.facts.map((fact) => bindPhysicalFact(fact, generation)),
   }
 }
 

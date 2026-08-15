@@ -3,6 +3,7 @@ import { isAbsolute, relative } from 'node:path'
 
 import type { Fact, FactShard, FactShardReference } from '../facts/index.ts'
 import { shardReference } from '../facts/index.ts'
+import { bindPhysicalFact } from '../facts/representation/index.ts'
 import type { AnalysisGeneration, FactTransaction } from '../generation/index.ts'
 import { generationIdentity } from '../generation/index.ts'
 import type { FactShardKey, PassId, ProjectUniverseId, SourceId } from '../identity/index.ts'
@@ -411,7 +412,7 @@ function uniqueSchemas(
 }
 
 function bindGeneration(shard: FactShard, generation: Fact['generation']): FactShard {
-  return { ...shard, facts: shard.facts.map((fact) => ({ ...fact, generation })) }
+  return { ...shard, facts: shard.facts.map((fact) => bindPhysicalFact(fact, generation)) }
 }
 
 function changedSources(

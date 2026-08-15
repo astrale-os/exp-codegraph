@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -34,17 +35,22 @@ var supportedCapabilities = []string{
 }
 
 type extractor struct {
-	root       string
-	universe   string
-	checker    *shimchecker.Checker
-	sources    map[string]sourceRecord
-	symbolIDs  map[*shimast.Symbol]string
-	symbolSeen map[string]symbolFactPayload
-	modules    []moduleBoundary
+	root                        string
+	universe                    string
+	checker                     *shimchecker.Checker
+	sources                     map[string]sourceRecord
+	symbolIDs                   map[*shimast.Symbol]string
+	symbolSeen                  map[string]symbolFactPayload
+	modules                     []moduleBoundary
+	payloadCodecs               map[string]bool
+	bodyPackingError            error
+	maximumSemanticPayloadBytes int
+	semanticPayloadBytes        int
+	payloadEncodingError        error
 }
 
-func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
-	x, files, records := prepareExtractor(root, universe, program, modules, nil, nil, telemetry, requestID)
+func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
+	x, files, records := prepareExtractor(root, universe, program, modules, payloadCodecs, maximumSemanticPayloadBytes, nil, nil, telemetry, requestID)
 	var shards []factShard
 	phase := time.Now()
 	shards = append(shards, x.projectShard(program))
@@ -60,7 +66,17 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	}
 	shards = append(shards, moduleShards...)
 	telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(moduleShards)})
-	shards = append(shards, x.sourceShards(files, nil, telemetry, requestID)...)
+	sourceShards, err := x.sourceShards(files, nil, telemetry, requestID)
+	if err != nil {
+		return nil, nil, err
+	}
+	shards = append(shards, sourceShards...)
+	telemetry.record(requestID, "facts.semantic-payloads", time.Now(), map[string]any{
+		"bytes": x.semanticPayloadBytes,
+	})
+	if x.payloadEncodingError != nil {
+		return nil, nil, x.payloadEncodingError
+	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, records, nil
 }
@@ -73,6 +89,8 @@ func prepareExtractor(
 	root, universe string,
 	program *driver.Program,
 	modules []moduleBoundary,
+	payloadCodecs map[string]bool,
+	maximumSemanticPayloadBytes int,
 	prior map[string]sourceRecord,
 	selected map[string]bool,
 	telemetry *nativeTelemetry,
@@ -81,7 +99,8 @@ func prepareExtractor(
 	x := &extractor{
 		root: root, universe: universe, checker: program.Checker,
 		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
-		symbolSeen: map[string]symbolFactPayload{}, modules: modules,
+		symbolSeen: map[string]symbolFactPayload{}, modules: modules, payloadCodecs: payloadCodecs,
+		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
 	}
 	files := program.SourceFiles()
 	sort.Slice(files, func(i, j int) bool { return files[i].FileName() < files[j].FileName() })
@@ -122,7 +141,7 @@ func (x *extractor) sourceShards(
 	selected map[string]bool,
 	telemetry *nativeTelemetry,
 	requestID int,
-) []factShard {
+) ([]factShard, error) {
 	var shards []factShard
 	phase := time.Now()
 	selectedCount := 0
@@ -177,13 +196,16 @@ func (x *extractor) sourceShards(
 		if !ok {
 			continue
 		}
-		bodies := x.bodyShards(file, record)
+		bodies, err := x.bodyShards(file, record)
+		if err != nil {
+			return nil, err
+		}
 		bodyShards += len(bodies)
 		shards = append(shards, bodies...)
 	}
 	telemetry.record(requestID, "projection.bodies", phase, map[string]any{"shards": bodyShards})
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	return shards
+	return shards, nil
 }
 
 func (x *extractor) projectShard(program *driver.Program) factShard {
@@ -304,6 +326,21 @@ func (x *extractor) newFact(
 	evidence []sourceSpan,
 	completion completeness,
 ) fact {
+	if x.payloadEncodingError == nil {
+		encoded, err := json.Marshal(payload)
+		if err != nil {
+			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)
+		} else {
+			x.semanticPayloadBytes += len(encoded)
+			if x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
+				x.payloadEncodingError = fmt.Errorf(
+					"semantic fact payloads exceed configured limit: bytes=%d limit=%d",
+					x.semanticPayloadBytes,
+					x.maximumSemanticPayloadBytes,
+				)
+			}
+		}
+	}
 	if evidence == nil {
 		evidence = []sourceSpan{}
 	}

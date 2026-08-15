@@ -37,20 +37,22 @@ type pendingGeneration struct {
 }
 
 type analyzer struct {
-	root         string
-	config       string
-	universe     string
-	capabilities []string
-	modules      []moduleBoundary
-	session      *driver.Session
-	states       map[string]generationState
-	current      string
-	pendingFull  bool
-	pending      *pendingGeneration
-	telemetry    *nativeTelemetry
+	root                        string
+	config                      string
+	universe                    string
+	capabilities                []string
+	modules                     []moduleBoundary
+	payloadCodecs               map[string]bool
+	maximumSemanticPayloadBytes int
+	session                     *driver.Session
+	states                      map[string]generationState
+	current                     string
+	pendingFull                 bool
+	pending                     *pendingGeneration
+	telemetry                   *nativeTelemetry
 }
 
-func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, telemetry *nativeTelemetry) (*analyzer, error) {
+func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry) (*analyzer, error) {
 	started := time.Now()
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -80,7 +82,9 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 	}
 	return &analyzer{
 		root: root, config: config, universe: universe, capabilities: capabilities, modules: modules,
-		session: session, states: map[string]generationState{}, telemetry: telemetry,
+		payloadCodecs:               payloadCodecs,
+		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
+		session:                     session, states: map[string]generationState{}, telemetry: telemetry,
 	}, nil
 }
 
@@ -346,7 +350,7 @@ func (a *analyzer) extract(
 	requestID int,
 ) ([]factShard, []sourceRecord, map[string]bool, error) {
 	if selection.full {
-		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.telemetry, requestID)
+		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.payloadCodecs, a.maximumSemanticPayloadBytes, a.telemetry, requestID)
 		return shards, sources, nil, err
 	}
 	selected := make(map[string]bool, len(selection.files))
@@ -355,6 +359,8 @@ func (a *analyzer) extract(
 	}
 	x, files, sources := prepareExtractor(
 		a.root, universe, a.session.Program(), a.modules,
+		a.payloadCodecs,
+		a.maximumSemanticPayloadBytes,
 		base.sources, selected, a.telemetry, requestID,
 	)
 	replaced := map[string]bool{}
@@ -387,7 +393,17 @@ func (a *analyzer) extract(
 	}
 	shards = append(shards, modules...)
 	a.telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(modules)})
-	shards = append(shards, x.sourceShards(files, selected, a.telemetry, requestID)...)
+	sourceShards, err := x.sourceShards(files, selected, a.telemetry, requestID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	shards = append(shards, sourceShards...)
+	a.telemetry.record(requestID, "facts.semantic-payloads", time.Now(), map[string]any{
+		"bytes": x.semanticPayloadBytes,
+	})
+	if x.payloadEncodingError != nil {
+		return nil, nil, nil, x.payloadEncodingError
+	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, sources, replaced, nil
 }
@@ -458,10 +474,14 @@ func recordFactBytes(telemetry *nativeTelemetry, requestID int, shards []factSha
 	started := time.Now()
 	bytesByNamespace := map[string]int{}
 	factsByNamespace := map[string]int{}
+	bodyPhysicalFieldBytes := map[string]int{}
 	for _, shard := range shards {
 		for _, fact := range shard.Facts {
 			bytesByNamespace[fact.Namespace] += len(stableJSON(fact))
 			factsByNamespace[fact.Namespace]++
+			if fact.Namespace == bodyNamespace && fact.PhysicalPayload != nil {
+				addPackedBodyFieldBytes(bodyPhysicalFieldBytes, fact.PhysicalPayload)
+			}
 		}
 	}
 	telemetry.record(requestID, "facts.measure", started, map[string]any{
@@ -469,9 +489,51 @@ func recordFactBytes(telemetry *nativeTelemetry, requestID int, shards []factSha
 	})
 	for namespace, bytes := range bytesByNamespace {
 		telemetry.record(requestID, "facts.namespace", time.Now(), map[string]any{
-			"namespace": namespace, "facts": factsByNamespace[namespace], "semanticJsonBytes": bytes,
+			"namespace": namespace, "facts": factsByNamespace[namespace], "physicalJsonBytes": bytes,
 		})
 	}
+	fields := make([]string, 0, len(bodyPhysicalFieldBytes))
+	for field := range bodyPhysicalFieldBytes {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	for _, field := range fields {
+		telemetry.record(requestID, "facts.body-physical-field", time.Now(), map[string]any{
+			"field": field, "bytes": bodyPhysicalFieldBytes[field],
+		})
+	}
+}
+
+func addPackedBodyFieldBytes(
+	values map[string]int,
+	payload *physicalPayloadEnvelope,
+) {
+	packed, ok := payload.Data.(packedBodyData)
+	if !ok {
+		return
+	}
+	fields := []struct {
+		name  string
+		value any
+	}{
+		{"constants", packed.Constants},
+		{"symbols", packed.Symbols},
+		{"texts", packed.Texts},
+		{"parameters", packed.Parameters},
+		{"occurrences", packed.Occurrences},
+		{"relations", packed.Relations},
+		{"blocks", packed.Blocks},
+		{"edges", packed.Edges},
+		{"definitions", packed.Definitions},
+		{"calls", packed.Calls},
+		{"summary", packed.Summary},
+		{"values", packed.Values},
+		{"completeness", packed.Completeness},
+	}
+	for _, field := range fields {
+		values[field.name] += len(stableJSON(field.value))
+	}
+	values["envelope"] += len(stableJSON(payload))
 }
 
 func (a *analyzer) projectUniverse() (string, []map[string]any, error) {

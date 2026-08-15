@@ -7,6 +7,8 @@ const (
 	passVersion     = "1.0.0"
 )
 
+const typescriptBodyPayloadCodec = "typescript.body.packed/1"
+
 type request struct {
 	ID           int      `json:"id"`
 	Kind         string   `json:"kind"`
@@ -83,15 +85,16 @@ type provenance struct {
 }
 
 type fact struct {
-	ID            string       `json:"id"`
-	Generation    string       `json:"generation"`
-	Namespace     string       `json:"namespace"`
-	SchemaVersion int          `json:"schemaVersion"`
-	Kind          string       `json:"kind"`
-	Subject       string       `json:"subject"`
-	Completeness  completeness `json:"completeness"`
-	Provenance    provenance   `json:"provenance"`
-	Payload       any          `json:"payload"`
+	ID              string                   `json:"id"`
+	Generation      string                   `json:"generation"`
+	Namespace       string                   `json:"namespace"`
+	SchemaVersion   int                      `json:"schemaVersion"`
+	Kind            string                   `json:"kind"`
+	Subject         string                   `json:"subject"`
+	Completeness    completeness             `json:"completeness"`
+	Provenance      provenance               `json:"provenance"`
+	Payload         any                      `json:"payload,omitempty"`
+	PhysicalPayload *physicalPayloadEnvelope `json:"physicalPayload,omitempty"`
 }
 
 type factShard struct {
@@ -340,4 +343,25 @@ type bodyFactPayload struct {
 	Body         functionBodyIR `json:"body"`
 	Values       map[string]any `json:"values"`
 	Completeness completeness   `json:"completeness"`
+}
+
+type physicalPayloadEnvelope struct {
+	Codec string `json:"codec"`
+	Data  any    `json:"data"`
+}
+
+type packedBodyData struct {
+	Constants    []string     `json:"c"`
+	Symbols      []string     `json:"s"`
+	Texts        []string     `json:"t"`
+	Parameters   []int        `json:"p"`
+	Occurrences  [][]any      `json:"o"`
+	Relations    [][]any      `json:"r"`
+	Blocks       [][]any      `json:"b"`
+	Edges        [][]any      `json:"e"`
+	Definitions  [][]any      `json:"d"`
+	Calls        [][]any      `json:"a"`
+	Summary      []any        `json:"u"`
+	Values       [][]any      `json:"v"`
+	Completeness completeness `json:"q"`
 }
