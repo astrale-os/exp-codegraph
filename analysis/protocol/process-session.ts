@@ -155,16 +155,24 @@ export function createProcessNativeAnalysisSessionFactory(
           JSON.stringify(
             [...(project.modules ?? [])].sort((left, right) => left.id.localeCompare(right.id)),
           ),
-          '--payload-codecs-json',
-          JSON.stringify([...payloadCodecs.keys()].sort()),
+          ...(payloadCodecs.size
+            ? [
+                '--payload-codecs-json',
+                JSON.stringify([...payloadCodecs.keys()].sort()),
+              ]
+            : []),
           '--maximum-frame-bytes',
           String(maximumFrameBytes),
           '--transaction-chunk-frame-bytes',
           String(transactionChunkFrameBytes),
           '--maximum-transaction-bytes',
           String(maximumTransactionBytes),
-          '--maximum-physical-transaction-bytes',
-          String(maximumPhysicalTransactionBytes),
+          ...(options.maximumPhysicalTransactionBytes === undefined
+            ? []
+            : [
+                '--maximum-physical-transaction-bytes',
+                String(maximumPhysicalTransactionBytes),
+              ]),
           ...(telemetry ? ['--telemetry-fd', '3'] : []),
         ],
         {
@@ -773,7 +781,7 @@ function validateWireFrame(
     value.kind === 'error' &&
     (typeof value.code !== 'string' ||
       typeof value.message !== 'string' ||
-      typeof value.retryable !== 'boolean')
+      (value.retryable !== undefined && typeof value.retryable !== 'boolean'))
   ) {
     throw new TypeError('Error response is invalid.')
   }
@@ -783,7 +791,9 @@ function validateWireFrame(
     kind: 'error',
     code: value.code as string,
     message: value.message as string,
-    retryable: value.retryable as boolean,
+    // Early protocol-v1 producers omitted the false value from their JSON
+    // envelope. Absence is therefore the canonical backwards-compatible false.
+    retryable: value.retryable === true,
   }
 }
 

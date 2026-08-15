@@ -306,11 +306,24 @@ describe('TypeSpec V2 generic analysis foundation', () => {
       sidecar,
       `
 import { createInterface } from 'node:readline'
+const unsupported = ['--payload-codecs-json', '--maximum-physical-transaction-bytes']
+  .filter((argument) => process.argv.includes(argument))
+if (unsupported.length) throw new Error('unexpected optional arguments: ' + unsupported.join(','))
 const lines = createInterface({ input: process.stdin })
 lines.on('line', (line) => {
   const request = JSON.parse(line)
   if (request.kind === 'dispose') process.exit(0)
   if (request.changed?.includes('hang')) return
+  if (request.changed?.includes('legacy-error')) {
+    process.stdout.write(JSON.stringify({
+      id: request.id,
+      protocolVersion: 1,
+      kind: 'error',
+      code: 'LEGACY_ERROR',
+      message: 'legacy protocol-v1 omitted false retryability'
+    }) + '\\n')
+    return
+  }
   if (request.changed?.includes('malformed')) {
     process.stdout.write(JSON.stringify({
       id: request.id,
@@ -357,8 +370,20 @@ lines.on('line', (line) => {
       kind: 'unchanged',
       generation,
     })
+    expect(await session.request({
+      id: 2,
+      kind: 'refresh',
+      changed: ['legacy-error'],
+    })).toEqual({
+      id: 2,
+      protocolVersion: 1,
+      kind: 'error',
+      code: 'LEGACY_ERROR',
+      message: 'legacy protocol-v1 omitted false retryability',
+      retryable: false,
+    })
     await session.dispose()
-    expect(() => session.request({ id: 2, kind: 'refresh' })).toThrow('disposed')
+    expect(() => session.request({ id: 3, kind: 'refresh' })).toThrow('disposed')
 
     const aborted = await factory.open(project)
     const controller = new AbortController()

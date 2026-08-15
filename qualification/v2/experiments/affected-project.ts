@@ -26,6 +26,7 @@ const binary = resolve(requiredArgument('--native-binary'))
 const project = argument('--project') ?? 'tsconfig.json'
 const changed = argument('--changed') ?? 'analysis/generation/model.ts'
 const backend = requiredBackend(argument('--backend') ?? 'memory')
+const legacyNative = process.argv.includes('--legacy-native')
 const temporary = await mkdtemp(`${tmpdir()}${sep}codegraph-affected-project-`)
 const mirror = resolve(temporary, 'mirror')
 const events: AnalysisTelemetryEvent[] = []
@@ -71,6 +72,7 @@ try {
       })
   const baseline = await analyzeProject({
     target, root: mirror, project, modules, binary, store,
+    ...(legacyNative ? { legacyEagerCommit: true } : {}),
     telemetry: (event) => events.push(event),
   })
   const sqliteBefore = backend === 'sqlite'
@@ -98,6 +100,7 @@ try {
     : createMemoryAnalysisStore()
   const cold = await analyzeProject({
     target, root: mirror, project, modules, binary, store: coldStore,
+    ...(legacyNative ? { legacyEagerCommit: true } : {}),
   })
   process.stderr.write(`cold oracle ${cold.elapsedMs} ms\n`)
   try {
@@ -156,12 +159,17 @@ try {
       backend,
       project,
       changed,
+      nativePublication: legacyNative ? 'legacy-eager' : 'commit-late',
       sourcesProjected: sourceProjection?.metrics?.sources,
       incrementalMs: round(incrementalMs),
       coldMs: cold.elapsedMs,
       speedup: round(cold.elapsedMs / incrementalMs),
       manifestShards: incremental!.transaction.manifest.length,
       upsertShards: incremental!.transaction.upserts.length,
+      upsertFacts: incremental!.transaction.upserts.reduce(
+        (count, shard) => count + shard.facts.length,
+        0,
+      ),
       deleteShards: incremental!.transaction.deletes.length,
       generation: incremental!.generation.id,
       exactColdEquality: true,
