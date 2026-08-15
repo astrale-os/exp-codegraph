@@ -68,6 +68,10 @@
       "types": "./repository/index.ts",
       "import": "./dist/repository/index.js"
     },
+    "./schema": {
+      "types": "./schema/index.ts",
+      "import": "./dist/schema/index.js"
+    },
     "./specification": {
       "types": "./specification/index.ts",
       "import": "./dist/specification/index.js"

@@ -68,6 +68,7 @@ describe('published package', () => {
       './analysis/sqlite',
       './conformance',
       './repository',
+      './schema',
       './specification',
       './package.json',
     ])
@@ -155,7 +156,7 @@ describe('published package', () => {
         [
           '--input-type=module',
           '--eval',
-          "const [tooling,analysis,typescript,sqlite,repository,specification,conformance] = await Promise.all([import('@astrale-os/codegraph'),import('@astrale-os/codegraph/analysis'),import('@astrale-os/codegraph/analysis/typescript'),import('@astrale-os/codegraph/analysis/sqlite'),import('@astrale-os/codegraph/repository'),import('@astrale-os/codegraph/specification'),import('@astrale-os/codegraph/conformance')]); process.stdout.write(String([tooling.createTypeSpecApplicationService,analysis.createMemoryAnalysisStore,typescript.createTypeScriptAnalysisService,sqlite.createSQLiteAnalysisStore,repository.inventoryRepository,specification.compileSpecificationSnapshot,conformance.qualifySpecification].every(value => typeof value === 'function')))",
+          "const [tooling,analysis,typescript,sqlite,repository,schema,specification,conformance] = await Promise.all([import('@astrale-os/codegraph'),import('@astrale-os/codegraph/analysis'),import('@astrale-os/codegraph/analysis/typescript'),import('@astrale-os/codegraph/analysis/sqlite'),import('@astrale-os/codegraph/repository'),import('@astrale-os/codegraph/schema'),import('@astrale-os/codegraph/specification'),import('@astrale-os/codegraph/conformance')]); process.stdout.write(String([tooling.createTypeSpecApplicationService,analysis.createMemoryAnalysisStore,typescript.createTypeScriptAnalysisService,sqlite.createSQLiteAnalysisStore,repository.inventoryRepository,schema.validateSchemaFile,specification.compileSpecificationSnapshot,conformance.qualifySpecification].every(value => typeof value === 'function')))",
         ],
         { cwd: consumer },
       )
