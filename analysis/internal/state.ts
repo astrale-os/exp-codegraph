@@ -249,7 +249,7 @@ class PinnedQuery implements AnalysisQuery {
       ...(next < matching.length
         ? { nextCursor: encodeCursor(this.generation.id, signature, next) }
         : {}),
-      total: matching.length,
+      ...(page.includeTotal ? { total: matching.length } : {}),
     }
   }
 
@@ -285,7 +285,7 @@ class PinnedQuery implements AnalysisQuery {
       ...(next < matching.length
         ? { nextCursor: encodeCursor(this.generation.id, signature, next) }
         : {}),
-      total: matching.length,
+      ...(page.includeTotal ? { total: matching.length } : {}),
     }
   }
 

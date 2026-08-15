@@ -297,23 +297,28 @@ class StagedQuery implements AnalysisQuery {
     if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 10_000) {
       throw new RangeError('Fact page limit must be an integer from 1 through 10000.')
     }
-    if (!this.#allowedNamespaces.size) return { headers: [], total: 0 }
+    if (!this.#allowedNamespaces.size) {
+      return { headers: [], ...(page.includeTotal ? { total: 0 } : {}) }
+    }
     const selected = this.inputFilter(filter)
     const start = decodeStagedCursor(page.cursor)
     const headers: FactHeader[] = []
     let index = 0
     let hasNext = false
     for await (const header of this.exportHeaders(selected)) {
-      if (index++ < start) continue
-      if (headers.length === page.limit) {
-        hasNext = true
-        break
+      const position = index++
+      if (position < start) continue
+      if (headers.length < page.limit) {
+        headers.push(header)
+        continue
       }
-      headers.push(header)
+      hasNext = true
+      if (!page.includeTotal) break
     }
     return {
       headers,
       ...(hasNext ? { nextCursor: String(start + headers.length) } : {}),
+      ...(page.includeTotal ? { total: index } : {}),
     }
   }
 
@@ -366,23 +371,28 @@ class StagedQuery implements AnalysisQuery {
     if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 10_000) {
       throw new RangeError('Fact page limit must be an integer from 1 through 10000.')
     }
-    if (!this.#allowedNamespaces.size) return { facts: [], total: 0 }
+    if (!this.#allowedNamespaces.size) {
+      return { facts: [], ...(page.includeTotal ? { total: 0 } : {}) }
+    }
     const selected = this.inputFilter(filter)
     const start = decodeStagedCursor(page.cursor)
     const facts: Fact[] = []
     let index = 0
     let hasNext = false
     for await (const fact of this.export(selected)) {
-      if (index++ < start) continue
-      if (facts.length === page.limit) {
-        hasNext = true
-        break
+      const position = index++
+      if (position < start) continue
+      if (facts.length < page.limit) {
+        facts.push(fact)
+        continue
       }
-      facts.push(fact)
+      hasNext = true
+      if (!page.includeTotal) break
     }
     return {
       facts,
       ...(hasNext ? { nextCursor: String(start + facts.length) } : {}),
+      ...(page.includeTotal ? { total: index } : {}),
     }
   }
 

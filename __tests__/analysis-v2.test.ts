@@ -649,7 +649,8 @@ lines.on('line', (line) => {
       await store.commit(first)
       const pinned = await store.open(first.next.universe)
       try {
-        const page = await pinned.facts({}, { limit: 2 })
+        expect((await pinned.facts({}, { limit: 2 })).total).toBeUndefined()
+        const page = await pinned.facts({}, { limit: 2, includeTotal: true })
         const expected = first.upserts[0]!.facts.map((fact) => fact.payload)
         expect(page.facts.map((fact) => fact.payload)).toEqual(expected.slice(0, 2))
         expect(page.total).toBe(3)
@@ -1030,6 +1031,8 @@ lines.on('line', (line) => {
         for (const query of [memoryQuery, sqliteQuery]) {
           const page = await query.headers({}, { limit: 1 })
           expect(page.headers).toHaveLength(1)
+          expect(page.total).toBeUndefined()
+          expect((await query.headers({}, { limit: 1, includeTotal: true })).total).toBe(1)
           expect(Object.hasOwn(page.headers[0]!, 'payload')).toBe(false)
           expect(page.headers[0]).toEqual(factHeader(transaction.upserts[0]!.facts[0]!))
           expect(await query.headersById([original.id])).toEqual(page.headers)
@@ -1117,8 +1120,8 @@ lines.on('line', (line) => {
         const left = await memory.open(transaction.next.universe)
         const right = await sqlite.open(transaction.next.universe)
         try {
-          const leftPage = await left.facts(filter, { limit: 1 })
-          const rightPage = await right.facts(filter, { limit: 1 })
+          const leftPage = await left.facts(filter, { limit: 1, includeTotal: true })
+          const rightPage = await right.facts(filter, { limit: 1, includeTotal: true })
           expect(rightPage.facts).toEqual(leftPage.facts)
           expect(rightPage.total).toBe(leftPage.total)
           if (rightPage.nextCursor) {
@@ -1126,8 +1129,8 @@ lines.on('line', (line) => {
               (await right.facts(filter, { limit: 1, cursor: rightPage.nextCursor })).facts,
             ).toEqual((await left.facts(filter, { limit: 10 })).facts.slice(1))
           }
-          const leftHeaders = await left.headers(filter, { limit: 1 })
-          const rightHeaders = await right.headers(filter, { limit: 1 })
+          const leftHeaders = await left.headers(filter, { limit: 1, includeTotal: true })
+          const rightHeaders = await right.headers(filter, { limit: 1, includeTotal: true })
           expect(rightHeaders.headers).toEqual(leftHeaders.headers)
           expect(rightHeaders.total).toBe(leftHeaders.total)
           expect(Boolean(rightHeaders.nextCursor)).toBe(Boolean(leftHeaders.nextCursor))
@@ -1911,8 +1914,17 @@ process.exit(0)
             await expect(
               context.query.facts({ namespaces: ['fixture.undeclared'] }),
             ).rejects.toThrow('undeclared input namespace fixture.undeclared')
-            expect((await context.query.headers()).headers).toHaveLength(1)
+            const headers = await context.query.headers()
+            expect(headers.headers).toHaveLength(1)
+            expect(headers.total).toBeUndefined()
+            expect(
+              (await context.query.headers({}, { limit: 100, includeTotal: true })).total,
+            ).toBe(1)
             const inputs = await context.query.facts()
+            expect(inputs.total).toBeUndefined()
+            expect(
+              (await context.query.facts({}, { limit: 100, includeTotal: true })).total,
+            ).toBe(1)
             return {
               completion: { kind: 'complete' },
               shards: [passShard(manifest, context.generation.id, inputs.facts)],
@@ -1937,8 +1949,8 @@ process.exit(0)
           producer,
         })
         expect(result.executed).toEqual([manifest.id])
-        expect(exports).toEqual([['fixture.values']])
-        expect(headerExports).toEqual([['fixture.values']])
+        expect(exports).toEqual([['fixture.values'], ['fixture.values']])
+        expect(headerExports).toEqual([['fixture.values'], ['fixture.values']])
       } finally {
         await query.dispose()
       }

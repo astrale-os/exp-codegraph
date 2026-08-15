@@ -22,6 +22,8 @@ export interface FactFilter {
 export interface PageRequest {
   readonly limit: number
   readonly cursor?: string
+  /** Request the exact filtered cardinality; implementations omit it otherwise. */
+  readonly includeTotal?: boolean
 }
 
 export interface FactPage {

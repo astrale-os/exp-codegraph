@@ -167,7 +167,9 @@ export class SQLitePinnedQuery implements AnalysisQuery {
       this.generation.sequence,
       ...selected.parameters,
     ]
-    const total = this.countFacts(selected.sql, baseParameters)
+    const total = page.includeTotal
+      ? this.countFacts(selected.sql, baseParameters)
+      : undefined
     const rows = this.#database
       .prepare(
         `${factHeaderSelectionSql()}
@@ -192,7 +194,7 @@ export class SQLitePinnedQuery implements AnalysisQuery {
       ...(hasNext && headers.length
         ? { nextCursor: encodeSQLiteCursor(this.generation.id, filter, headers.at(-1)!.id) }
         : {}),
-      total,
+      ...(total === undefined ? {} : { total }),
     }
   }
 
@@ -250,7 +252,9 @@ export class SQLitePinnedQuery implements AnalysisQuery {
       this.generation.sequence,
       ...selected.parameters,
     ]
-    const total = this.countFacts(selected.sql, baseParameters)
+    const total = page.includeTotal
+      ? this.countFacts(selected.sql, baseParameters)
+      : undefined
     const rows = this.#database
       .prepare(
         `${factSelectionSql()}
@@ -277,7 +281,7 @@ export class SQLitePinnedQuery implements AnalysisQuery {
             nextCursor: encodeSQLiteCursor(this.generation.id, filter, facts.at(-1)!.id),
           }
         : {}),
-      total,
+      ...(total === undefined ? {} : { total }),
     }
   }
 

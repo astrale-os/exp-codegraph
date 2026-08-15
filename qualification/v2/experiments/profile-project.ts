@@ -278,6 +278,19 @@ async function benchmarkQueries(
     await headerPageQuery.dispose()
   }
 
+  const headerTotalQuery = await store.open(generation.universe, generation.id)
+  let headerFirstPageWithTotalMs: number
+  try {
+    const started = performance.now()
+    await headerTotalQuery.headers(
+      { namespaces: ['typescript.body'] },
+      { limit: 100, includeTotal: true },
+    )
+    headerFirstPageWithTotalMs = round(performance.now() - started)
+  } finally {
+    await headerTotalQuery.dispose()
+  }
+
   const headerScanQuery = await store.open(generation.universe, generation.id)
   let headerFullScanMs: number
   let headerFullScanFacts = 0
@@ -319,6 +332,20 @@ async function benchmarkQueries(
     }
   } finally {
     await pageQuery.dispose()
+  }
+
+  const pageTotalQuery = await store.open(generation.universe, generation.id)
+  let firstPageWithTotalMs: number
+  try {
+    const started = performance.now()
+    await createTypeScriptFactReader(pageTotalQuery).facts(
+      'body',
+      {},
+      { limit: 100, includeTotal: true },
+    )
+    firstPageWithTotalMs = round(performance.now() - started)
+  } finally {
+    await pageTotalQuery.dispose()
   }
 
   let evaluatorMs: number | undefined
@@ -379,11 +406,13 @@ async function benchmarkQueries(
     ...(selectiveHydrationMs === undefined ? {} : { selectiveHydrationMs }),
     ...(headerPointMs === undefined ? {} : { headerPointMs }),
     headerFirstPageMs,
+    headerFirstPageWithTotalMs,
     ...(headerNextPageMs === undefined ? {} : { headerNextPageMs }),
     headerFullScanMs,
     headerFullScanFacts,
     ...(pointMs === undefined ? {} : { pointMs }),
     firstPageMs,
+    firstPageWithTotalMs,
     ...(nextPageMs === undefined ? {} : { nextPageMs }),
     ...(evaluatorIndexMs === undefined ? {} : { evaluatorIndexMs }),
     ...(evaluatorMs === undefined ? {} : { evaluatorMs }),
