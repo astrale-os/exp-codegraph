@@ -325,7 +325,6 @@ type functionBodyIR struct {
 
 type bodyFactPayload struct {
 	Body         functionBodyIR `json:"body"`
-	Calls        []resolvedCall `json:"calls"`
 	Values       map[string]any `json:"values"`
 	Completeness completeness   `json:"completeness"`
 }

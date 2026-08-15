@@ -1,30 +1,25 @@
 import type { NativeAnalysisSessionFactory } from '../../analysis/index.ts'
 
 import { createProcessNativeAnalysisSessionFactory } from '../../analysis/index.ts'
-import { resolveTtscNativeAnalysis } from '../../analysis/typescript/ttsc/index.ts'
+import { resolvePackagedNativeAnalysis } from '../../analysis/typescript/distribution/index.ts'
 
-export interface TtscApplicationSessionOptions {
+export interface CodegraphApplicationSessionOptions {
   readonly binary?: string
-  readonly cacheDirectory?: string
   readonly environment?: NodeJS.ProcessEnv
   readonly maximumFrameBytes?: number
   readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
 }
 
-/** Lazily resolve the qualified ttsc plugin when the first implementation project is analyzed. */
-export function createTtscApplicationSessionFactory(
-  options: TtscApplicationSessionOptions = {},
+/** Lazily admit the packaged or explicit native analyzer when a project is first analyzed. */
+export function createCodegraphApplicationSessionFactory(
+  options: CodegraphApplicationSessionOptions = {},
 ): NativeAnalysisSessionFactory {
   return {
     async open(project, openOptions) {
       openOptions?.signal?.throwIfAborted()
-      const native = await resolveTtscNativeAnalysis({
-        root: project.root,
-        config: project.config,
+      const native = await resolvePackagedNativeAnalysis({
         ...(options.binary ? { binary: options.binary } : {}),
-        ...(options.cacheDirectory ? { cacheDirectory: options.cacheDirectory } : {}),
-        ...(options.environment ? { environment: options.environment } : {}),
       })
       openOptions?.signal?.throwIfAborted()
       return createProcessNativeAnalysisSessionFactory({

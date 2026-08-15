@@ -16,7 +16,7 @@ import type {
   NativeProjectDescriptor,
 } from '../protocol/index.ts'
 import type { AnalysisStore } from '../query/index.ts'
-import type { FunctionBodyIR, ResolvedCall } from './body/index.ts'
+import type { FunctionBodyIR } from './body/index.ts'
 import type {
   ObservationIssue,
   ObservedDeclaration,
@@ -110,7 +110,6 @@ export interface TypeScriptOccurrenceFact {
 
 export interface TypeScriptBodyFacts {
   readonly body: FunctionBodyIR
-  readonly calls: readonly ResolvedCall[]
   readonly values: Readonly<Record<string, ValueResult<unknown>>>
   readonly completeness: Completeness
 }

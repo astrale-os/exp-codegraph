@@ -5,3 +5,4 @@ coverage/
 .DS_Store
 .astrale-spec-cache/
 .codegraph-cache/
+.cache/

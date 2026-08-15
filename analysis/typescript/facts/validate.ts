@@ -57,7 +57,6 @@ export function validateTypeScriptFactPayload(
 function validateBody(value: Record<string, unknown>, diagnostics: string[]): void {
   if (!bodyShape(value.body)) diagnostics.push('body:invalid-shape')
   else diagnostics.push(...validateFunctionBodyIR(value.body).map((code) => `body:${code}`))
-  requireArray(value, 'calls', diagnostics, call)
   if (!record(value.values) || Object.values(value.values).some((item) => !valueResult(item))) {
     diagnostics.push('values:invalid')
   }
@@ -99,21 +98,6 @@ function bodyShape(value: unknown): value is FunctionBodyIR {
     Array.isArray(value.definitions) &&
     Array.isArray(value.calls) &&
     record(value.summary)
-  )
-}
-
-function call(value: unknown): boolean {
-  return (
-    record(value) &&
-    string(value.occurrence) &&
-    optionalStringValue(value.target) &&
-    optionalStringValue(value.signature) &&
-    optionalStringValue(value.receiver) &&
-    strings(value.typeArguments) &&
-    strings(value.arguments) &&
-    Array.isArray(value.bindings) &&
-    strings(value.callbacks) &&
-    typeof value.dynamic === 'boolean'
   )
 }
 

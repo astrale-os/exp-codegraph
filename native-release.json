@@ -1,0 +1,13 @@
+{
+  "format": "astrale.codegraph.native-release",
+  "version": 1,
+  "packageVersion": "0.1.0",
+  "protocolVersion": 1,
+  "sourceRevision": "0000000000000000000000000000000000000000",
+  "toolchain": {
+    "ttsc": "0.25.0",
+    "typescriptGo": "v0.0.0-20260429010842-56ab4af42157",
+    "go": "go1.26.5"
+  },
+  "artifacts": {}
+}

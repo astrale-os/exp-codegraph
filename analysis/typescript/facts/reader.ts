@@ -5,6 +5,7 @@ import {
   TypeScriptFactContractError,
   type TypeScriptFact,
   type TypeScriptFactKind,
+  type AnyTypeScriptFact,
   type TypeScriptFactReader,
 } from './model.ts'
 import { validateTypeScriptFactPayload } from './validate.ts'
@@ -32,7 +33,32 @@ export function createTypeScriptFactReader(query: AnalysisQuery): TypeScriptFact
         yield admit(kind, fact)
       }
     },
+    async *exportAll(filter = {}) {
+      for await (const fact of query.export({
+        ...filter,
+        namespaces: Object.values(TYPESCRIPT_FACT_NAMESPACES),
+      })) {
+        yield admitAny(fact)
+      }
+    },
   }
+}
+
+const kindByNamespace = new Map<string, TypeScriptFactKind>(
+  Object.entries(TYPESCRIPT_FACT_NAMESPACES).map(([kind, namespace]) => [
+    namespace,
+    kind as TypeScriptFactKind,
+  ]),
+)
+
+function admitAny(fact: Fact): AnyTypeScriptFact {
+  const kind = kindByNamespace.get(fact.namespace)
+  if (!kind) {
+    throw new TypeScriptFactContractError('project', fact.id, [
+      `namespace:${fact.namespace}`,
+    ])
+  }
+  return admit(kind, fact) as AnyTypeScriptFact
 }
 
 function admit<Kind extends TypeScriptFactKind>(

@@ -1794,6 +1794,10 @@ process.exit(0)
         const page = await reader.facts('body', {}, { limit: 10 })
         expect(page.facts).toHaveLength(2)
         expect(page.facts[0]?.payload.body.function).toMatch(/^symbol:/u)
+        const all = []
+        for await (const fact of reader.exportAll()) all.push(fact)
+        expect(all).toHaveLength(2)
+        expect(all.every((fact) => fact.namespace === 'typescript.body')).toBe(true)
       } finally {
         await query.dispose()
       }
@@ -1816,6 +1820,11 @@ process.exit(0)
       await expect(
         createTypeScriptFactReader(malformedQuery).facts('body', {}, { limit: 1 }),
       ).rejects.toMatchObject({ code: 'TYPESCRIPT_FACT_CONTRACT_INVALID', kind: 'body' })
+      await expect(async () => {
+        for await (const _fact of createTypeScriptFactReader(malformedQuery).exportAll()) {
+          // Admission happens before a malformed fact becomes visible to the consumer.
+        }
+      }).rejects.toMatchObject({ code: 'TYPESCRIPT_FACT_CONTRACT_INVALID', kind: 'body' })
     } finally {
       await store.dispose()
     }
@@ -2240,7 +2249,7 @@ function bodyEvaluationTransaction(): {
     subject: body.function,
     completeness: { kind: 'complete' } as const,
     provenance: { pass: passId, passVersion: '1.0.0', evidence: [], inputs: [] },
-    payload: { body, calls: body.calls, values, completeness: { kind: 'complete' } },
+    payload: { body, values, completeness: { kind: 'complete' } },
   })
   const facts = [
     makeFact(helperBody, {}),

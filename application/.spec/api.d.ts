@@ -119,7 +119,6 @@ export interface TypeSpecApplicationOptions {
   }
   readonly native?: {
     readonly binary?: string
-    readonly cacheDirectory?: string
     readonly environment?: Readonly<Record<string, string | undefined>>
     readonly maximumFrameBytes?: number
     readonly transactionChunkFrameBytes?: number

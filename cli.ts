@@ -5,6 +5,7 @@ import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.ts'
 import { parseCommand, USAGE } from './cli/parse.ts'
 import { terminalText } from './cli/report.ts'
 import { runCommand } from './cli/run.ts'
+import { readCodegraphVersion } from './cli/version.ts'
 import { startDev } from './server/start.ts'
 import { initializeModuleSpecification } from './specification/module/init.ts'
 
@@ -12,6 +13,7 @@ try {
   const result = await runCommand(
     parseCommand(process.argv.slice(2)),
     {
+      version: readCodegraphVersion,
       initializeModule: initializeModuleSpecification,
       createApplication: createCliApplicationService,
       startDev,

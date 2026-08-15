@@ -44,7 +44,6 @@ export async function createNodeTypeSpecApplicationService(
       repository: options.repository ?? (await repositoryKey(root)),
       maximumRetainedSnapshots: options.maximumRetainedSnapshots,
       analysis: { store, maximumRetainedGenerations },
-      native: { cacheDirectory: options.cacheDirectory },
     })
     return ownStore(application, store)
   } catch (error) {

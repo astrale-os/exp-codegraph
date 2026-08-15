@@ -4,6 +4,7 @@ export default defineLayout({
   entries: [
     'body/',
     'dependency.ts',
+    'distribution/',
     'facts/',
     'index.ts',
     'model.ts',

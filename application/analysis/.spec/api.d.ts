@@ -55,9 +55,8 @@ export interface ApplicationModuleBoundaries {
   readonly diagnostics: readonly Diagnostic[]
 }
 
-export interface TtscApplicationSessionOptions {
+export interface CodegraphApplicationSessionOptions {
   readonly binary?: string
-  readonly cacheDirectory?: string
   readonly environment?: Readonly<Record<string, string | undefined>>
   readonly maximumFrameBytes?: number
   readonly transactionChunkFrameBytes?: number
@@ -73,8 +72,8 @@ export function validateApplicationModuleBoundaries(
   values: readonly NativeModuleBoundary[],
 ): ApplicationModuleBoundaries
 
-export function createTtscApplicationSessionFactory(
-  options?: TtscApplicationSessionOptions,
+export function createCodegraphApplicationSessionFactory(
+  options?: CodegraphApplicationSessionOptions,
 ): NativeAnalysisSessionFactory
 
 export function createApplicationAnalysisWorkspace(

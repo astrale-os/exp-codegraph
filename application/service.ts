@@ -24,6 +24,7 @@ import type {
 } from './model.ts'
 
 import {
+  APPLICATION_REPOSITORY_EXCLUDES,
   discoverSpecificationDirectories,
   resolveApplicationRoot,
 } from './discovery/index.ts'
@@ -44,9 +45,9 @@ import { compileSpecificationSnapshots } from '../specification/index.ts'
 import { deriveAnalysisId } from '../analysis/index.ts'
 import {
   createApplicationAnalysisWorkspace,
-  createTtscApplicationSessionFactory,
+  createCodegraphApplicationSessionFactory,
   type ApplicationAnalysisWorkspaceOptions,
-  type TtscApplicationSessionOptions,
+  type CodegraphApplicationSessionOptions,
 } from './analysis/index.ts'
 import { assertSpecificationInventory, createApplicationSnapshot } from './snapshot/index.ts'
 import { selectApplicationSpecifications } from './selection/index.ts'
@@ -70,7 +71,7 @@ export interface TypeSpecApplicationOptions {
   readonly repository?: string
   readonly maximumRetainedSnapshots?: number
   readonly analysis?: Omit<ApplicationAnalysisWorkspaceOptions, 'root' | 'repository' | 'sessions'>
-  readonly native?: TtscApplicationSessionOptions
+  readonly native?: CodegraphApplicationSessionOptions
 }
 
 /** Assemble specification, exact analysis, and qualification without coupling them to a UI. */
@@ -92,7 +93,7 @@ export async function createTypeSpecApplicationServiceWithDependencies(
     createApplicationAnalysisWorkspace({
       root,
       repository,
-      sessions: createTtscApplicationSessionFactory(options.native),
+      sessions: createCodegraphApplicationSessionFactory(options.native),
       ...options.analysis,
     })
   return new HeadlessTypeSpecApplicationService(root, repository, {
@@ -191,7 +192,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     const inventory = await this.#dependencies.inventory({
       repository: this.#repository,
       root: this.#root,
-      scope: { exclude: APPLICATION_INVENTORY_EXCLUDES },
+      scope: { exclude: APPLICATION_REPOSITORY_EXCLUDES },
       ...(options.signal ? { signal: options.signal } : {}),
     })
     assertSpecificationInventory(specifications, inventory)
@@ -500,15 +501,3 @@ function applicationProfiles(
     ? replaced
     : [...replaced, layout]
 }
-
-const APPLICATION_INVENTORY_EXCLUDES = [
-  '.git/**',
-  'node_modules/**',
-  '**/node_modules/**',
-  'dist/**',
-  '**/dist/**',
-  'coverage/**',
-  '**/coverage/**',
-  '.cache/**',
-  '**/.cache/**',
-] as const

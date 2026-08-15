@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 
 export const USAGE = `Usage:
+  cg --version
   cg init [module-directory]
   cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--quiet] [--no-cache]
   cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]
@@ -11,6 +12,7 @@ export const USAGE = `Usage:
 
 export type CliCommand =
   | { name: 'help'; successful: boolean }
+  | { name: 'version' }
   | { name: 'init'; root: string }
   | {
       name: 'check'
@@ -59,6 +61,10 @@ export function parseCommand(
   const args = [...input]
   const cache = persistentCacheByDefault(environment)
   const command = args.shift()
+  if (command === '--version' || command === '-v') {
+    if (args.length) return usageError()
+    return { name: 'version' }
+  }
   if (!command || command === '--help' || command === '-h') {
     return { name: 'help', successful: Boolean(command) }
   }

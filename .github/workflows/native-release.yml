@@ -1,0 +1,130 @@
+name: Native release qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-release.yml'
+      - 'analysis/typescript/distribution/**'
+      - 'analysis/typescript/native/**'
+      - 'analysis/protocol/**'
+      - 'native-packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'qualification/v2/extension/**'
+      - 'qualification/v2/release/**'
+      - 'qualification/v2/ttsc/fixtures/**'
+      - 'scripts/native/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/native-release.yml'
+      - 'analysis/typescript/distribution/**'
+      - 'analysis/typescript/native/**'
+      - 'analysis/protocol/**'
+      - 'native-packages/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'qualification/v2/extension/**'
+      - 'qualification/v2/release/**'
+      - 'qualification/v2/ttsc/fixtures/**'
+      - 'scripts/native/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and qualify ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
+        with:
+          frozen-lockfile: 'true'
+      - name: Build exact native artifact
+        run: pnpm native:build -- --target ${{ matrix.target }} --output .native-output/${{ matrix.target }}
+      - name: Qualify native semantics and extension boundary
+        run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native
+      - name: Upload qualified native artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.target }}
+          path: .native-output/${{ matrix.target }}
+          if-no-files-found: error
+
+  assemble:
+    name: Assemble exact release manifests and packages
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
+        with:
+          frozen-lockfile: 'true'
+      - name: Download every native target
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: '*-*'
+          path: .native-input
+      - name: Assemble and validate release
+        run: pnpm native:assemble -- --input .native-input && pnpm native:assert-release
+      - name: Pack consumer and opaque artifact packages
+        run: |
+          mkdir -p release
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            pnpm --dir native-packages/$target pack --pack-destination ../../release
+          done
+          pnpm pack --pack-destination release
+      - name: Upload assembled package set
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codegraph-release
+          path: release/*.tgz
+          if-no-files-found: error
+
+  packed-consumer:
+    name: Install and execute ${{ matrix.target }} packages
+    needs: assemble
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
+        with:
+          frozen-lockfile: 'true'
+      - name: Download assembled packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codegraph-release
+          path: release
+      - name: Prove offline packed installation and native execution
+        run: node qualification/v2/release/packed-consumer.mjs --release-directory release
