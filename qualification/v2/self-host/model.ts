@@ -49,6 +49,7 @@ export interface SelfHostFactSummary {
   readonly factBytes: number
   readonly namespaces: Readonly<Record<string, number>>
   readonly namespaceBytes: Readonly<Record<string, number>>
+  readonly namespaceDigests: Readonly<Record<string, string>>
   readonly kinds: Readonly<Record<string, number>>
   /** Additive serialized members of the TypeScript body payload and nested IR object. */
   readonly bodyFieldBytes: Readonly<Record<string, number>>

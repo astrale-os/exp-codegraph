@@ -1,6 +1,6 @@
 # EXP-004: Demand-driven native projection
 
-Status: implemented; Codegraph diagnostic passed; Kernel and governed benchmark evidence pending
+Status: qualified; implementation accepted by V2-REV-022
 
 Date: 2026-08-15
 
@@ -69,13 +69,26 @@ Raw diagnostic artifacts are `/private/tmp/codegraph-module-only-profile.json` a
 `/private/tmp/codegraph-all-capabilities-profile.json`. They are temporary diagnostic inputs, not
 governed evidence and not release qualification.
 
-## Remaining qualification
+## Full-corpus qualification
 
-- Repeat exact projection equivalence on the frozen Codegraph corpus rather than only the
-  adversarial microproject.
-- Run Kernel as a clean holdout using only Kernel-owned `.spec` modules.
-- Retain configuration/root/plugin fallback and cold-equivalence coverage.
-- Measure representative shallow, body-only, and rich consumer plans in fresh counterbalanced
-  processes before adopting a performance limit.
-- Continue the DAG through portable passes, query hydration, and policy inputs; native selectivity
-  alone does not prove end-to-end proportional work.
+The first real-corpus differential rejected the candidate: three of 3,805 Codegraph body facts used
+different checker display strings when symbol discovery ran before body projection. The witnesses
+were alias expansion, imported type spelling, and `...` truncation inside resolved call signatures.
+The native adapter now composes signatures from stable fully-qualified parameter and return type
+rendering, and native semantic pass version 1.1.0 records the behavior change.
+
+Generated evidence now proves exact selected fact envelopes, stable universes and source manifests,
+and zero unrequested semantic phases on both corpora:
+
+| Corpus | Rich cold | Module-only | Ratio | Body-only | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Codegraph | 90,875.84 ms | 1,717.12 ms | 52.92x | 69,506.50 ms | 1.31x |
+| Kernel core | 22,614.79 ms | 8,379.87 ms | 2.70x | 11,583.78 ms | 1.95x |
+
+This graduates namespace demand and explains the next boundary: catalogs should remain shallow,
+while body consumers pay real body cost. Function-scoped extraction is deliberately deferred until
+the SDK extension supplies a concrete candidate selector and completeness contract; the modest
+Codegraph body-only ratio does not justify another speculative redesign.
+
+The authoritative result is `.history/v2/evidence/demand-driven-projection.json`; the earlier
+diagnostic timings remain historical triggers only.

@@ -312,9 +312,7 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	signature := b.x.checker.GetResolvedSignature(node)
 	if signature != nil {
-		result.Signature = portableSignature(
-			b.x.checker.SignatureToStringEx(signature, node, 0, nil),
-		)
+		result.Signature = b.canonicalSignature(signature, node)
 	}
 	parameters := shimchecker.Signature_parameters(signature)
 	rest := shimchecker.Signature_hasRestParameter(signature)
@@ -339,6 +337,57 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	result.Callbacks = sortedUnique(result.Callbacks)
 	return result
+}
+
+// canonicalSignature avoids checker-display cache state entering portable body
+// facts. SignatureToStringEx may choose authored aliases, expanded types, or
+// truncation according to unrelated earlier checker walks. Formatting each
+// resolved parameter and return type with ttsc's stable fully-qualified type
+// renderer preserves the useful call shape while making projection plans
+// byte-semantically equivalent.
+func (b *bodyBuilder) canonicalSignature(signature *shimchecker.Signature, node *shimast.Node) string {
+	parameters := []string{}
+	for _, parameter := range shimchecker.Signature_parameters(signature) {
+		declaration := firstDeclaration(parameter)
+		if declaration == nil {
+			declaration = node
+		}
+		parameterType := shimchecker.Checker_getTypeOfSymbolAtLocation(
+			b.x.checker, parameter, declaration,
+		)
+		typeDisplay := shimchecker.Checker_typeToStringFullyQualified(
+			b.x.checker, parameterType, declaration,
+		)
+		if typeDisplay == "" {
+			typeDisplay = "unknown"
+		}
+		name := stableSymbolName(parameter)
+		if name == "" {
+			name = "<anonymous>"
+		}
+		optional := parameter.Flags&shimast.SymbolFlagsOptional != 0
+		rest := false
+		if declaration.Kind == shimast.KindParameter {
+			value := declaration.AsParameterDeclaration()
+			optional = optional || value.QuestionToken != nil || value.Initializer != nil
+			rest = value.DotDotDotToken != nil
+		}
+		prefix := ""
+		if rest {
+			prefix = "..."
+		}
+		suffix := ""
+		if optional {
+			suffix = "?"
+		}
+		parameters = append(parameters, prefix+name+suffix+": "+portableSignature(typeDisplay))
+	}
+	returnType := shimchecker.Checker_getReturnTypeOfSignature(b.x.checker, signature)
+	returnDisplay := shimchecker.Checker_typeToStringFullyQualified(b.x.checker, returnType, node)
+	if returnDisplay == "" {
+		returnDisplay = "unknown"
+	}
+	return "(" + strings.Join(parameters, ", ") + "): " + portableSignature(returnDisplay)
 }
 
 // portableSignature removes package-manager and checkout coordinates that the

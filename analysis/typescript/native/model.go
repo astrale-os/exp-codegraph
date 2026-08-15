@@ -4,7 +4,7 @@ const (
 	protocolVersion = 1
 	producerVersion = "0.1.0"
 	ttscVersion     = "0.25.0"
-	passVersion     = "1.0.0"
+	passVersion     = "1.1.0"
 )
 
 const typescriptBodyPayloadCodec = "typescript.body.packed/1"

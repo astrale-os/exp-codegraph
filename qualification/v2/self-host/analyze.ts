@@ -103,6 +103,7 @@ async function summarizeQuery(
   const capabilities = await query.capabilities()
   const namespaces: Record<string, number> = {}
   const namespaceBytes: Record<string, number> = {}
+  const namespaceHashers = new Map<string, ReturnType<typeof createHash>>()
   const kinds: Record<string, number> = {}
   const bodyFieldBytes: Record<string, number> = {}
   const bodyOccurrenceFieldBytes: Record<string, number> = {}
@@ -131,6 +132,9 @@ async function summarizeQuery(
     factBytes += bytes
     namespaces[fact.namespace] = (namespaces[fact.namespace] ?? 0) + 1
     namespaceBytes[fact.namespace] = (namespaceBytes[fact.namespace] ?? 0) + bytes
+    const namespaceHasher = namespaceHashers.get(fact.namespace) ?? createHash('sha256')
+    namespaceHasher.update(String(bytes)).update(':').update(encoded).update('\n')
+    namespaceHashers.set(fact.namespace, namespaceHasher)
     kinds[fact.kind] = (kinds[fact.kind] ?? 0) + 1
     if (fact.completeness.kind !== 'complete') {
       const reasonCodes = fact.completeness.reasons.map((reason) => reason.code).sort()
@@ -239,6 +243,11 @@ async function summarizeQuery(
     factBytes,
     namespaces: sortedRecord(namespaces),
     namespaceBytes: sortedRecord(namespaceBytes),
+    namespaceDigests: Object.fromEntries(
+      [...namespaceHashers]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([namespace, hasher]) => [namespace, hasher.digest('hex')]),
+    ),
     kinds: sortedRecord(kinds),
     bodyFieldBytes: sortedRecord(bodyFieldBytes),
     bodyOccurrenceFieldBytes: sortedRecord(bodyOccurrenceFieldBytes),

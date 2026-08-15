@@ -19,6 +19,7 @@ import {
 } from '../../../analysis/typescript/index.ts'
 
 const binary = resolve(requiredArgument('--native-binary'))
+const output = argument('--output')
 const temporary = await mkdtemp(join(tmpdir(), 'codegraph-projection-plan-'))
 const namespaces = Object.values(TYPESCRIPT_FACT_NAMESPACES).sort()
 
@@ -59,6 +60,21 @@ try {
 export function call(value: string): string {
   return value.toUpperCase()
 }
+
+interface ExpectedTypeParameter { readonly name: string }
+interface ExpectedDeclaration { readonly typeParameters?: readonly ExpectedTypeParameter[] }
+
+function compare(
+  expected: ExpectedDeclaration,
+  options?: { readonly expectedParameters?: NonNullable<ExpectedDeclaration['typeParameters']> },
+): void {
+  void expected
+  void options
+}
+
+export function compareAlias(expected: ExpectedDeclaration): void {
+  compare(expected, { expectedParameters: expected.typeParameters })
+}
 `,
   )
 
@@ -88,7 +104,7 @@ export function call(value: string): string {
   assert.notEqual(changedBoundary.generation, originalBoundary.generation)
   assert.notDeepEqual(changedBoundary.facts, originalBoundary.facts)
 
-  process.stdout.write(`${JSON.stringify({
+  const result = {
     format: 'astrale.codegraph.projection-plan-equivalence',
     version: 1,
     full: {
@@ -102,7 +118,21 @@ export function call(value: string): string {
     stableUniverseAcrossProjectionPlans: true,
     moduleBoundaryChangesGenerationOnly: true,
     unrequestedSemanticStagesExecuted: 0,
-  }, null, 2)}\n`)
+  }
+  const serialized = `${JSON.stringify(result, null, 2)}\n`
+  if (output) {
+    const destination = resolve(output)
+    await writeFile(destination, serialized, 'utf8')
+    process.stdout.write(`${JSON.stringify({
+      format: result.format,
+      exactNamespaceProjection: result.exactNamespaceProjection,
+      stableUniverseAcrossProjectionPlans: result.stableUniverseAcrossProjectionPlans,
+      unrequestedSemanticStagesExecuted: result.unrequestedSemanticStagesExecuted,
+      output: destination,
+    }, null, 2)}\n`)
+  } else {
+    process.stdout.write(serialized)
+  }
 } finally {
   await rm(temporary, { recursive: true, force: true })
 }
@@ -197,10 +227,14 @@ function digest(value: unknown): string {
 }
 
 function requiredArgument(name: string): string {
-  const index = process.argv.indexOf(name)
-  const value = index < 0 ? undefined : process.argv[index + 1]
+  const value = argument(name)
   if (!value) throw new Error(`${name} is required.`)
   return value
+}
+
+function argument(name: string): string | undefined {
+  const index = process.argv.indexOf(name)
+  return index < 0 ? undefined : process.argv[index + 1]
 }
 
 function round(value: number): number {
