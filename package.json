@@ -1,6 +1,7 @@
 {
   "name": "@astrale-os/codegraph",
   "version": "0.1.0",
+  "packageManager": "pnpm@11.13.1",
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
   "license": "Apache-2.0",
   "repository": {
