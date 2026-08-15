@@ -13,6 +13,7 @@ import {
   deriveAnalysisId,
   createProcessNativeAnalysisSessionFactory,
   createNodeSourceTextReader,
+  factHeader,
   factShardDigest,
   generationIdentity,
   planPasses,
@@ -47,6 +48,7 @@ import { materializeTransaction, serializeMaterialized } from '../analysis/inter
 import { stableJson } from '../analysis/identity/model.ts'
 import {
   admitFactPayloadCodecs,
+  bindPhysicalFact,
   createFactWithPhysicalPayload,
 } from '../analysis/facts/representation/index.ts'
 import { createMemoryAnalysisStore } from '../analysis/memory/index.ts'
@@ -957,6 +959,98 @@ lines.on('line', (line) => {
     expect(decodes).toBe(afterIdentity + 2)
   })
 
+  it('selects memory and SQLite headers without decoding physical payloads', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-header-hydration-'))
+    temporary.push(root)
+    const semantic = buildTransaction({ sequence: 1, values: ['semantic'] })
+    const original = semantic.upserts[0]!.facts[0]!
+    let decodes = 0
+    const codec = {
+      id: 'qualification.header-counted/1',
+      decode(data: unknown) {
+        decodes += 1
+        return { data }
+      },
+    }
+    const codecs = admitFactPayloadCodecs([codec])
+    const physical = createFactWithPhysicalPayload(
+      {
+        id: original.id,
+        generation: original.generation,
+        namespace: original.namespace,
+        schemaVersion: original.schemaVersion,
+        kind: original.kind,
+        subject: original.subject,
+        completeness: original.completeness,
+        provenance: original.provenance,
+      },
+      { codec: codec.id, data: 'physical' },
+      codecs,
+      'header qualification fact',
+    )
+    const draft = {
+      key: semantic.upserts[0]!.key,
+      namespace: physical.namespace,
+      schemaVersion: physical.schemaVersion,
+      completion: { kind: 'complete' } as const,
+      facts: [physical],
+    }
+    const shard = { ...draft, digest: factShardDigest(draft) }
+    const manifest = [shardReference(shard)]
+    const generation = generationIdentity(
+      {
+        universe: semantic.next.universe,
+        producer: semantic.next.producer,
+        sourceManifest: semantic.next.sourceManifest,
+        capabilities: semantic.next.capabilities,
+      },
+      manifest,
+    )
+    const transaction: FactTransaction = {
+      protocolVersion: 1,
+      next: { ...semantic.next, id: generation },
+      manifest,
+      upserts: [{ ...shard, facts: [bindPhysicalFact(physical, generation)] }],
+      deletes: [],
+    }
+    const memory = createMemoryAnalysisStore()
+    const sqlite = await createSQLiteAnalysisStore({
+      file: join(root, 'analysis.sqlite'),
+      namespace: 'header-hydration',
+      payloadCodecs: [codec],
+      payloadMaterialization: 'shard-brotli',
+    })
+    try {
+      await memory.commit(transaction)
+      await sqlite.commit(transaction)
+      const afterCommit = decodes
+      const memoryQuery = await memory.open(transaction.next.universe)
+      const sqliteQuery = await sqlite.open(transaction.next.universe)
+      try {
+        for (const query of [memoryQuery, sqliteQuery]) {
+          const page = await query.headers({}, { limit: 1 })
+          expect(page.headers).toHaveLength(1)
+          expect(Object.hasOwn(page.headers[0]!, 'payload')).toBe(false)
+          expect(page.headers[0]).toEqual(factHeader(transaction.upserts[0]!.facts[0]!))
+          expect(await query.headersById([original.id])).toEqual(page.headers)
+          const exported = []
+          for await (const header of query.exportHeaders()) exported.push(header)
+          expect(exported).toEqual(page.headers)
+        }
+        expect(decodes).toBe(afterCommit)
+        expect((await memoryQuery.factsById([original.id]))[0]!.payload).toEqual({ data: 'physical' })
+        expect((await sqliteQuery.factsById([original.id]))[0]!.payload).toEqual({ data: 'physical' })
+        expect(decodes).toBe(afterCommit + 2)
+      } finally {
+        await sqliteQuery.dispose()
+        await memoryQuery.dispose()
+      }
+    } finally {
+      await sqlite.dispose()
+      await memory.dispose()
+    }
+  })
+
   it('binds snapshot-set identity to the exact repository inventory revision', async () => {
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-snapshot-inventory-'))
     temporary.push(root)
@@ -1031,6 +1125,17 @@ lines.on('line', (line) => {
             expect(
               (await right.facts(filter, { limit: 1, cursor: rightPage.nextCursor })).facts,
             ).toEqual((await left.facts(filter, { limit: 10 })).facts.slice(1))
+          }
+          const leftHeaders = await left.headers(filter, { limit: 1 })
+          const rightHeaders = await right.headers(filter, { limit: 1 })
+          expect(rightHeaders.headers).toEqual(leftHeaders.headers)
+          expect(rightHeaders.total).toBe(leftHeaders.total)
+          expect(Boolean(rightHeaders.nextCursor)).toBe(Boolean(leftHeaders.nextCursor))
+          expect(rightHeaders.headers).toEqual(leftPage.facts.map(factHeader))
+          if (rightHeaders.nextCursor) {
+            expect(
+              (await right.headers(filter, { limit: 1, cursor: rightHeaders.nextCursor })).headers,
+            ).toEqual((await left.headers(filter, { limit: 10 })).headers.slice(1))
           }
         } finally {
           await right.dispose()
@@ -1774,10 +1879,17 @@ process.exit(0)
       const query = await store.open(base.next.universe)
       try {
         const exports: (readonly string[] | undefined)[] = []
+        const headerExports: (readonly string[] | undefined)[] = []
         const observed: AnalysisQuery = {
           generation: query.generation,
           manifest: () => query.manifest(),
           capabilities: () => query.capabilities(),
+          headers: (filter, page) => query.headers(filter, page),
+          headersById: (ids) => query.headersById(ids),
+          exportHeaders(filter = {}) {
+            headerExports.push(filter.namespaces)
+            return query.exportHeaders(filter)
+          },
           facts: (filter, page) => query.facts(filter, page),
           factsById: (ids) => query.factsById(ids),
           export(filter = {}) {
@@ -1799,6 +1911,7 @@ process.exit(0)
             await expect(
               context.query.facts({ namespaces: ['fixture.undeclared'] }),
             ).rejects.toThrow('undeclared input namespace fixture.undeclared')
+            expect((await context.query.headers()).headers).toHaveLength(1)
             const inputs = await context.query.facts()
             return {
               completion: { kind: 'complete' },
@@ -1825,6 +1938,7 @@ process.exit(0)
         })
         expect(result.executed).toEqual([manifest.id])
         expect(exports).toEqual([['fixture.values']])
+        expect(headerExports).toEqual([['fixture.values']])
       } finally {
         await query.dispose()
       }
@@ -2349,6 +2463,9 @@ process.exit(0)
         dispose: async () => undefined,
         manifest: async () => [],
         capabilities: async () => [],
+        headers: async () => ({ headers: [] }),
+        headersById: async () => [],
+        async *exportHeaders() {},
         facts: async () => ({ facts: [malformed] }),
         factsById: async () => [malformed],
         async *export() {

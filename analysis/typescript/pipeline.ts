@@ -350,7 +350,6 @@ function replacePortableShards(
 function applyShards(shards: Map<FactShardKey, FactShard>, transaction: FactTransaction): void {
   for (const key of transaction.deletes) shards.delete(key)
   for (const shard of transaction.upserts) shards.set(shard.key, shard)
-  for (const [key, shard] of shards) shards.set(key, bindGeneration(shard, transaction.next.id))
 }
 
 function publishTransaction(

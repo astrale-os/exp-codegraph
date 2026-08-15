@@ -1,5 +1,5 @@
-import type { Completeness, Fact, FactShard, FactShardReference } from '../facts/index.ts'
-import { factShardDigest, shardReference, validateFactShard } from '../facts/index.ts'
+import type { Completeness, Fact, FactHeader, FactShard, FactShardReference } from '../facts/index.ts'
+import { factHeader, factShardDigest, shardReference, validateFactShard } from '../facts/index.ts'
 import { bindPhysicalFact } from '../facts/representation/index.ts'
 import { generationIdentity, type FactTransaction } from '../generation/index.ts'
 import type { FactId, FactShardKey, PassId } from '../identity/index.ts'
@@ -8,6 +8,7 @@ import type {
   AnalysisQuery,
   CapabilityStatus,
   FactFilter,
+  FactHeaderPage,
   FactPage,
   PageRequest,
 } from '../query/index.ts'
@@ -254,7 +255,9 @@ class StagedQuery implements AnalysisQuery {
   readonly #base: AnalysisQuery
   readonly #references: readonly FactShardReference[]
   readonly #stagedFacts: readonly Fact[]
+  readonly #stagedHeaders: readonly FactHeader[]
   readonly #stagedById: ReadonlyMap<FactId, Fact>
+  readonly #stagedHeaderById: ReadonlyMap<FactId, FactHeader>
   readonly #status: readonly CapabilityStatus[]
   readonly #allowedNamespaces: ReadonlySet<string>
 
@@ -273,7 +276,9 @@ class StagedQuery implements AnalysisQuery {
       .filter((shard) => this.#allowedNamespaces.has(shard.namespace))
       .flatMap((shard) => shard.facts.map((fact) => bindPhysicalFact(fact, base.generation.id)))
       .sort(byFact)
+    this.#stagedHeaders = this.#stagedFacts.map(factHeader)
     this.#stagedById = new Map(this.#stagedFacts.map((fact) => [fact.id, fact]))
+    this.#stagedHeaderById = new Map(this.#stagedHeaders.map((header) => [header.id, header]))
     this.#status = status
   }
 
@@ -285,6 +290,75 @@ class StagedQuery implements AnalysisQuery {
   async capabilities(): Promise<readonly CapabilityStatus[]> {
     this.assertOpen()
     return this.#status
+  }
+
+  async headers(filter: FactFilter = {}, page: PageRequest = { limit: 100 }): Promise<FactHeaderPage> {
+    this.assertOpen()
+    if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 10_000) {
+      throw new RangeError('Fact page limit must be an integer from 1 through 10000.')
+    }
+    if (!this.#allowedNamespaces.size) return { headers: [], total: 0 }
+    const selected = this.inputFilter(filter)
+    const start = decodeStagedCursor(page.cursor)
+    const headers: FactHeader[] = []
+    let index = 0
+    let hasNext = false
+    for await (const header of this.exportHeaders(selected)) {
+      if (index++ < start) continue
+      if (headers.length === page.limit) {
+        hasNext = true
+        break
+      }
+      headers.push(header)
+    }
+    return {
+      headers,
+      ...(hasNext ? { nextCursor: String(start + headers.length) } : {}),
+    }
+  }
+
+  async headersById(ids: readonly FactId[]): Promise<readonly FactHeader[]> {
+    this.assertOpen()
+    if (!this.#allowedNamespaces.size) return []
+    const wanted = [...new Set(ids)].sort()
+    const staged = wanted.flatMap((id) => {
+      const header = this.#stagedHeaderById.get(id)
+      return header ? [header] : []
+    })
+    const stagedIds = new Set(staged.map((header) => header.id))
+    const base = await this.#base.headersById(wanted.filter((id) => !stagedIds.has(id)))
+    for (const header of base) this.assertInputNamespace(header.namespace)
+    return [...base, ...staged].sort(byHeader)
+  }
+
+  async *exportHeaders(filter: FactFilter = {}): AsyncIterable<FactHeader> {
+    this.assertOpen()
+    if (!this.#allowedNamespaces.size) return
+    const selected = this.inputFilter(filter)
+    const staged = this.#stagedHeaders.filter((header) => matchesHeader(header, selected))
+    const base = this.#base.exportHeaders(selected)[Symbol.asyncIterator]()
+    let baseValue = await base.next()
+    let stagedIndex = 0
+    try {
+      while (!baseValue.done || stagedIndex < staged.length) {
+        this.assertOpen()
+        const baseHeader = baseValue.done ? undefined : baseValue.value
+        const stagedHeader = staged[stagedIndex]
+        if (!baseHeader || (stagedHeader && stagedHeader.id.localeCompare(baseHeader.id) < 0)) {
+          yield stagedHeader!
+          stagedIndex++
+          continue
+        }
+        if (stagedHeader?.id === baseHeader.id) {
+          throw new Error(`Staged portable fact collides with base fact ${baseHeader.id}.`)
+        }
+        this.assertInputNamespace(baseHeader.namespace)
+        yield baseHeader
+        baseValue = await base.next()
+      }
+    } finally {
+      await base.return?.()
+    }
   }
 
   async facts(filter: FactFilter = {}, page: PageRequest = { limit: 100 }): Promise<FactPage> {
@@ -425,6 +499,21 @@ function matches(fact: Fact, filter: FactFilter): boolean {
   return true
 }
 
+function matchesHeader(header: FactHeader, filter: FactFilter): boolean {
+  if (filter.namespaces && !filter.namespaces.includes(header.namespace)) return false
+  if (filter.kinds && !filter.kinds.includes(header.kind)) return false
+  if (filter.subjects && !filter.subjects.includes(header.subject)) return false
+  if (filter.completeness && !filter.completeness.includes(header.completeness.kind)) return false
+  if (
+    filter.sources &&
+    !header.provenance.evidence.some((evidence) => filter.sources!.includes(evidence.source))
+  ) {
+    return false
+  }
+  if (filter.symbols && !filter.symbols.some((symbol) => header.subject === symbol)) return false
+  return true
+}
+
 function decodeStagedCursor(cursor: string | undefined): number {
   if (cursor === undefined) return 0
   const value = Number(cursor)
@@ -458,5 +547,9 @@ function byShard(left: FactShard, right: FactShard): number {
 }
 
 function byFact(left: Fact, right: Fact): number {
+  return left.id.localeCompare(right.id)
+}
+
+function byHeader(left: FactHeader, right: FactHeader): number {
   return left.id.localeCompare(right.id)
 }

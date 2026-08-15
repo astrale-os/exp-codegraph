@@ -1,4 +1,4 @@
-import type { Completeness, Fact, FactShard, FactShardReference } from '../facts/index.ts'
+import type { Completeness, Fact, FactHeader, FactShard, FactShardReference } from '../facts/index.ts'
 import type { AnalysisGeneration, FactTransaction } from '../generation/index.ts'
 import type {
   AnalysisGenerationId,
@@ -12,11 +12,12 @@ import type {
   AnalysisSnapshotSet,
   CapabilityStatus,
   FactFilter,
+  FactHeaderPage,
   FactPage,
   PageRequest,
 } from '../query/index.ts'
 
-import { shardReference } from '../facts/index.ts'
+import { factHeader, shardReference } from '../facts/index.ts'
 import { TransactionError, validateFactTransaction } from '../generation/index.ts'
 import { deriveAnalysisId } from '../identity/index.ts'
 import { stableJson } from '../identity/model.ts'
@@ -163,7 +164,9 @@ export function createSnapshotSet(
 class PinnedQuery implements AnalysisQuery {
   readonly generation: AnalysisGeneration
   readonly #facts: readonly Fact[]
+  readonly #headers: readonly FactHeader[]
   readonly #byId: ReadonlyMap<FactId, Fact>
+  readonly #headerById: ReadonlyMap<FactId, FactHeader>
   readonly #manifest: readonly FactShardReference[]
   readonly #shardCompletion: readonly [string, Completeness, readonly string[]][]
   readonly #namespaceCapabilities: ReadonlyMap<string, readonly string[]>
@@ -179,7 +182,9 @@ class PinnedQuery implements AnalysisQuery {
     this.#facts = [...materialized.shards.values()]
       .flatMap((shard) => shard.facts.map((fact) => bindFact(fact, materialized.generation.id)))
       .sort((left, right) => left.id.localeCompare(right.id))
+    this.#headers = this.#facts.map(factHeader)
     this.#byId = new Map(this.#facts.map((fact) => [fact.id, fact]))
+    this.#headerById = new Map(this.#headers.map((header) => [header.id, header]))
     this.#manifest = [...materialized.shards.values()].map(shardReference).sort(byKey)
     this.#shardCompletion = [...materialized.shards.values()].map((shard) => [
       shard.namespace,
@@ -226,6 +231,42 @@ class PinnedQuery implements AnalysisQuery {
     return [...completion]
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([capability, value]) => ({ capability, completeness: value }))
+  }
+
+  async headers(filter: FactFilter = {}, page: PageRequest = { limit: 100 }): Promise<FactHeaderPage> {
+    this.assertOpen()
+    const limit = page.limit
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+      throw new RangeError('Fact page limit must be an integer from 1 through 10000.')
+    }
+    const signature = filterSignature(filter)
+    const start = page.cursor ? decodeCursor(page.cursor, this.generation.id, signature) : 0
+    const matching = this.#headers.filter((header) => matchesHeader(header, filter))
+    const headers = matching.slice(start, start + limit)
+    const next = start + headers.length
+    return {
+      headers,
+      ...(next < matching.length
+        ? { nextCursor: encodeCursor(this.generation.id, signature, next) }
+        : {}),
+      total: matching.length,
+    }
+  }
+
+  async headersById(ids: readonly FactId[]): Promise<readonly FactHeader[]> {
+    this.assertOpen()
+    return [...new Set(ids)].sort().flatMap((id) => {
+      const header = this.#headerById.get(id)
+      return header ? [header] : []
+    })
+  }
+
+  async *exportHeaders(filter: FactFilter = {}): AsyncIterable<FactHeader> {
+    this.assertOpen()
+    for (const header of this.#headers) {
+      this.assertOpen()
+      if (matchesHeader(header, filter)) yield header
+    }
   }
 
   async facts(filter: FactFilter = {}, page: PageRequest = { limit: 100 }): Promise<FactPage> {
@@ -348,6 +389,21 @@ function matches(fact: Fact, filter: FactFilter): boolean {
     return false
   }
   if (filter.symbols && !filter.symbols.some((symbol) => fact.subject === symbol)) return false
+  return true
+}
+
+function matchesHeader(header: FactHeader, filter: FactFilter): boolean {
+  if (filter.namespaces && !filter.namespaces.includes(header.namespace)) return false
+  if (filter.kinds && !filter.kinds.includes(header.kind)) return false
+  if (filter.subjects && !filter.subjects.includes(header.subject)) return false
+  if (filter.completeness && !filter.completeness.includes(header.completeness.kind)) return false
+  if (
+    filter.sources &&
+    !header.provenance.evidence.some((evidence) => filter.sources!.includes(evidence.source))
+  ) {
+    return false
+  }
+  if (filter.symbols && !filter.symbols.some((symbol) => header.subject === symbol)) return false
   return true
 }
 

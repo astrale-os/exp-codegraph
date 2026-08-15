@@ -52,6 +52,9 @@ export interface Fact<Payload = unknown> {
   readonly payload: Payload
 }
 
+/** Complete portable fact envelope without semantic payload hydration. */
+export type FactHeader = Omit<Fact, 'payload'>
+
 export interface FactShardReference {
   readonly key: FactShardKey
   readonly digest: FactShardDigest

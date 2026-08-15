@@ -5,13 +5,14 @@ import {
   certifyFactShard,
   payloadForSemanticIdentity,
 } from './representation/index.ts'
-import type { Completeness, Fact, FactShard, FactShardReference } from './types.ts'
+import type { Completeness, Fact, FactHeader, FactShard, FactShardReference } from './types.ts'
 
 export type {
   AnalysisFailure,
   AnalysisLimit,
   Completeness,
   Fact,
+  FactHeader,
   FactProvenance,
   FactShard,
   FactShardReference,
@@ -19,6 +20,20 @@ export type {
 } from './types.ts'
 
 const textEncoder = new TextEncoder()
+
+/** Read a fact envelope without invoking a lazy semantic payload getter. */
+export function factHeader(fact: Fact): FactHeader {
+  return {
+    id: fact.id,
+    generation: fact.generation,
+    namespace: fact.namespace,
+    schemaVersion: fact.schemaVersion,
+    kind: fact.kind,
+    subject: fact.subject,
+    completeness: fact.completeness,
+    provenance: fact.provenance,
+  }
+}
 
 export function factShardDigest(shard: Omit<FactShard, 'digest'>): FactShardDigest {
   const { digest: _digest, ...semantic } = shard as FactShard

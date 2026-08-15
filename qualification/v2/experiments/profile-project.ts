@@ -19,6 +19,7 @@ import { createSQLiteAnalysisStore } from '../../../analysis/sqlite/index.ts'
 import {
   createTypeScriptFactReader,
   TYPESCRIPT_FACT_PAYLOAD_CODECS,
+  type TypeScriptFact,
 } from '../../../analysis/typescript/index.ts'
 import { createBoundedValueEvaluator } from '../../../analysis/typescript/value/index.ts'
 import { resolveApplicationModuleBoundaries } from '../../../application/analysis/index.ts'
@@ -220,16 +221,74 @@ async function benchmarkQueries(
   generation: import('../../../analysis/index.ts').AnalysisGeneration,
 ) {
   const discovery = await store.open(generation.universe, generation.id)
-  let bodyFact: Awaited<ReturnType<ReturnType<typeof createTypeScriptFactReader>['facts']>>['facts'][number] | undefined
+  let bodyFact: TypeScriptFact<'body'> | undefined
   let valueOccurrence: string | undefined
+  let headerDiscoveryMs: number
+  let selectiveHydrationMs: number | undefined
   try {
-    const page = await createTypeScriptFactReader(discovery).facts('body', {}, { limit: 1_000 })
-    bodyFact = page.facts[0]
-    valueOccurrence = page.facts
-      .flatMap((fact) => Object.keys(fact.payload.values))
-      .sort()[0]
+    let started = performance.now()
+    const page = await discovery.headers(
+      { namespaces: ['typescript.body'] },
+      { limit: 1_000 },
+    )
+    headerDiscoveryMs = round(performance.now() - started)
+    const header = page.headers[0]
+    if (header) {
+      started = performance.now()
+      bodyFact = (await createTypeScriptFactReader(discovery).factsById('body', [header.id]))[0]
+      selectiveHydrationMs = round(performance.now() - started)
+      valueOccurrence = bodyFact ? Object.keys(bodyFact.payload.values).sort()[0] : undefined
+    }
   } finally {
     await discovery.dispose()
+  }
+
+  let headerPointMs: number | undefined
+  if (bodyFact) {
+    const query = await store.open(generation.universe, generation.id)
+    try {
+      const started = performance.now()
+      const headers = await query.headersById([bodyFact.id])
+      assert.equal(headers.length, 1)
+      headerPointMs = round(performance.now() - started)
+    } finally {
+      await query.dispose()
+    }
+  }
+
+  const headerPageQuery = await store.open(generation.universe, generation.id)
+  let headerFirstPageMs: number
+  let headerNextPageMs: number | undefined
+  try {
+    let started = performance.now()
+    const first = await headerPageQuery.headers(
+      { namespaces: ['typescript.body'] },
+      { limit: 100 },
+    )
+    headerFirstPageMs = round(performance.now() - started)
+    if (first.nextCursor) {
+      started = performance.now()
+      await headerPageQuery.headers(
+        { namespaces: ['typescript.body'] },
+        { limit: 100, cursor: first.nextCursor },
+      )
+      headerNextPageMs = round(performance.now() - started)
+    }
+  } finally {
+    await headerPageQuery.dispose()
+  }
+
+  const headerScanQuery = await store.open(generation.universe, generation.id)
+  let headerFullScanMs: number
+  let headerFullScanFacts = 0
+  try {
+    const started = performance.now()
+    for await (const _header of headerScanQuery.exportHeaders({ namespaces: ['typescript.body'] })) {
+      headerFullScanFacts++
+    }
+    headerFullScanMs = round(performance.now() - started)
+  } finally {
+    await headerScanQuery.dispose()
   }
 
   let pointMs: number | undefined
@@ -316,6 +375,13 @@ async function benchmarkQueries(
   }
 
   return {
+    headerDiscoveryMs,
+    ...(selectiveHydrationMs === undefined ? {} : { selectiveHydrationMs }),
+    ...(headerPointMs === undefined ? {} : { headerPointMs }),
+    headerFirstPageMs,
+    ...(headerNextPageMs === undefined ? {} : { headerNextPageMs }),
+    headerFullScanMs,
+    headerFullScanFacts,
     ...(pointMs === undefined ? {} : { pointMs }),
     firstPageMs,
     ...(nextPageMs === undefined ? {} : { nextPageMs }),
