@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { changedSpecificationScope } from '../cli/changes.ts'
 import { fixture, type Fixture } from './fixture.ts'
@@ -10,7 +10,10 @@ import { fixture, type Fixture } from './fixture.ts'
 const exec = promisify(execFile)
 const fixtures: Fixture[] = []
 
-afterEach(async () => Promise.all(fixtures.splice(0).map((current) => current.remove())))
+afterEach(async () => {
+  vi.unstubAllEnvs()
+  await Promise.all(fixtures.splice(0).map((current) => current.remove()))
+})
 
 describe('changed specification scope', () => {
   it('maps local implementation changes to their nearest specification owner', async () => {
@@ -97,6 +100,7 @@ describe('changed specification scope', () => {
   })
 
   it('chooses the nearest remote ancestor instead of an unrelated remote default', async () => {
+    vi.stubEnv('GITHUB_BASE_REF', 'main')
     const current = await repository({
       'module/.spec/api.d.ts': 'export interface API {}\n',
       'module/index.ts': 'export const version = 1\n',

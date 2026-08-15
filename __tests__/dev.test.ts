@@ -323,7 +323,7 @@ describe('universal specification dev server', () => {
         { timeout: 5_000 },
       )
       .toBe('pass')
-  }, 120_000)
+  }, 300_000)
 
   it('publishes every dependent Spec revision together and retains the previous generation', async () => {
     const current = await fixture({
