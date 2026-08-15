@@ -18,4 +18,5 @@ export default defineLayout({
     'value/',
   ],
   exact: true,
+  ignore: ['native/**'],
 })

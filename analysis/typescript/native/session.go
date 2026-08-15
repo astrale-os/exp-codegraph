@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimcompiler "github.com/microsoft/typescript-go/shim/compiler"
 	shimcore "github.com/microsoft/typescript-go/shim/core"
 	shimtsoptions "github.com/microsoft/typescript-go/shim/tsoptions"
@@ -16,17 +17,20 @@ import (
 )
 
 type generationState struct {
-	generation     analysisGeneration
-	manifest       []factShardReference
-	digests        map[string]string
-	sources        map[string]sourceRecord
-	sourceShards   map[string][]string
-	sourceManifest string
+	generation         analysisGeneration
+	manifest           []factShardReference
+	digests            map[string]string
+	sources            map[string]sourceRecord
+	sourceShards       map[string][]string
+	moduleDependencies []dependencyPayload
+	sourceManifest     string
 }
 
 type refreshSelection struct {
-	full  bool
-	files []string
+	full               bool
+	files              []string
+	allModules         bool
+	diagnosticsChanged bool
 }
 
 type pendingGeneration struct {
@@ -282,7 +286,8 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	state := generationState{
 		generation: generation, manifest: manifest, digests: digests,
 		sources: sourceRecordMap(sources), sourceShards: mergeSourceShardOwnership(base, sources, shards, selection.full),
-		sourceManifest: sourceManifest,
+		moduleDependencies: mergeModuleDependencies(base.moduleDependencies, shards, selection.full),
+		sourceManifest:     sourceManifest,
 	}
 	if adopting && generationID == input.Base {
 		state.generation.Sequence = input.BaseSequence
@@ -330,10 +335,10 @@ func (a *analyzer) install(state generationState, universe string, rollover bool
 }
 
 // extract produces a complete snapshot for uncertain changes and only
-// replacement shards for compiler-proven private edits. Module facts remain a
-// conservative global projection until their surface/dependency/diagnostic
-// pieces are physically split; rebuilding them is cheap relative to body
-// extraction and preserves cold equivalence without repository exceptions.
+// replacement shards for compiler-proven private edits. Module facts retain
+// their public monolithic schema, but private edits reproject only their owning
+// module boundaries. Public shape, dependency, global diagnostic, topology,
+// configuration, and uncertain changes conservatively select every module.
 func (a *analyzer) extract(
 	universe string,
 	selection refreshSelection,
@@ -358,8 +363,29 @@ func (a *analyzer) extract(
 	replaced := map[string]bool{}
 	for _, reference := range base.manifest {
 		switch reference.Namespace {
-		case projectNamespace, diagnosticNamespace, moduleNamespace:
-			replaced[reference.Key] = true
+		case diagnosticNamespace:
+			if selection.diagnosticsChanged {
+				replaced[reference.Key] = true
+			}
+		case moduleNamespace:
+			if selection.allModules {
+				replaced[reference.Key] = true
+			}
+		case projectNamespace:
+			// The compiler universe already proved configuration and root-set
+			// stability, so the project fact is unchanged in this lineage.
+			continue
+		}
+	}
+	selectedModules := map[string]bool{}
+	if a.projection.modules && !selection.allModules {
+		for file := range selected {
+			if owner := x.moduleOwner(file); owner != nil {
+				selectedModules[owner.ID] = true
+			}
+		}
+		for module := range selectedModules {
+			replaced[deriveID("fact-shard-key", moduleNamespace, map[string]any{"owner": module})] = true
 		}
 	}
 	for file := range selected {
@@ -376,12 +402,7 @@ func (a *analyzer) extract(
 		"capabilities": strings.Join(a.projection.capabilities(), ","),
 		"stages":       strings.Join(a.projection.stages(), ","),
 	})
-	if a.projection.project {
-		phase := time.Now()
-		shards = append(shards, x.projectShard(a.session.Program()))
-		a.telemetry.record(requestID, "projection.project", phase, nil)
-	}
-	if a.projection.diagnostics {
+	if a.projection.diagnostics && selection.diagnosticsChanged {
 		phase := time.Now()
 		diagnostic := x.diagnosticShard(a.session.Program())
 		shards = append(shards, diagnostic)
@@ -389,7 +410,13 @@ func (a *analyzer) extract(
 	}
 	if a.projection.modules {
 		phase := time.Now()
-		modules, err := x.moduleShards(a.session.Program())
+		var modules []factShard
+		var err error
+		if selection.allModules {
+			modules, err = x.moduleShards(a.session.Program())
+		} else if len(selectedModules) != 0 {
+			modules, err = x.moduleShardsFor(a.session.Program(), selectedModules, base.moduleDependencies)
+		}
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -455,6 +482,38 @@ func mergeSourceShardOwnership(
 		owners[source] = sortedUnique(owners[source])
 	}
 	return owners
+}
+
+func mergeModuleDependencies(
+	base []dependencyPayload,
+	shards []factShard,
+	full bool,
+) []dependencyPayload {
+	replaced := map[string]bool{}
+	for _, shard := range shards {
+		if shard.Namespace == moduleNamespace && len(shard.Facts) == 1 {
+			replaced[shard.Facts[0].Subject] = true
+		}
+	}
+	edges := []dependencyPayload{}
+	if !full {
+		for _, edge := range base {
+			if !replaced[edge.SourceModule] {
+				edges = append(edges, edge)
+			}
+		}
+	}
+	for _, shard := range shards {
+		if shard.Namespace != moduleNamespace || len(shard.Facts) != 1 {
+			continue
+		}
+		payload, ok := shard.Facts[0].Payload.(moduleFactPayload)
+		if !ok {
+			continue
+		}
+		edges = append(edges, payload.Dependencies...)
+	}
+	return deduplicateDependencies(edges)
 }
 
 func shardSourceOwner(shard factShard) string {
@@ -700,6 +759,7 @@ func (a *analyzer) apply(changed []string) (refreshSelection, error) {
 		return refreshSelection{full: true}, nil
 	}
 	absolutePaths := make([]string, 0, len(paths))
+	previousFiles := make([]*shimast.SourceFile, 0, len(paths))
 	oldShapes := make(map[string]string, len(paths))
 	full := false
 	for _, path := range paths {
@@ -727,6 +787,16 @@ func (a *analyzer) apply(changed []string) (refreshSelection, error) {
 			oldShapes[absolute] = shape
 		}
 		absolutePaths = append(absolutePaths, absolute)
+		previousFiles = append(previousFiles, source)
+	}
+	trackDiagnostics := a.projection.diagnostics || a.projection.modules
+	previousDiagnostics := diagnosticProjectionFingerprint{}
+	if trackDiagnostics && !full {
+		previousDiagnostics = diagnosticFingerprint(a.session.Program(), previousFiles)
+	}
+	previousDependencies := ""
+	if a.projection.modules && !full {
+		previousDependencies = a.moduleDependencyFingerprint(a.session.Program(), previousFiles)
 	}
 	selected := make([]string, 0, len(absolutePaths))
 	public := []string{}
@@ -754,6 +824,7 @@ func (a *analyzer) apply(changed []string) (refreshSelection, error) {
 	if full {
 		return refreshSelection{full: true}, nil
 	}
+	updatedFiles := make([]*shimast.SourceFile, 0, len(absolutePaths))
 	for _, absolute := range absolutePaths {
 		updated := a.session.Program().SourceFile(absolute)
 		if updated == nil || updated.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(updated) {
@@ -766,11 +837,27 @@ func (a *analyzer) apply(changed []string) (refreshSelection, error) {
 		if shape != oldShapes[absolute] {
 			public = append(public, updated.FileName())
 		}
+		updatedFiles = append(updatedFiles, updated)
 	}
 	if len(public) != 0 {
 		selected = affectedSourceClosure(a.session.Program(), selected, public)
 	}
-	return refreshSelection{files: sortedUnique(selected)}, nil
+	selection := refreshSelection{
+		files:              sortedUnique(selected),
+		allModules:         len(public) != 0,
+		diagnosticsChanged: len(public) != 0,
+	}
+	if trackDiagnostics {
+		current := diagnosticFingerprint(a.session.Program(), updatedFiles)
+		selection.diagnosticsChanged = selection.diagnosticsChanged || current.all != previousDiagnostics.all
+		if current.global != previousDiagnostics.global {
+			selection.allModules = true
+		}
+	}
+	if a.projection.modules && a.moduleDependencyFingerprint(a.session.Program(), updatedFiles) != previousDependencies {
+		selection.allModules = true
+	}
+	return selection, nil
 }
 
 // affectedSourceClosure expands declaration-shape changes through the exact

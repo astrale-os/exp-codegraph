@@ -56,10 +56,12 @@ or commit failure therefore cannot expose a native-only intermediate generation.
 
 Incremental extraction is ownership-driven. The resident compiler proves whether an edit preserved
 its import graph and declaration shape. Private edits replace only source-owned symbol, occurrence,
-and body shards; public-shape changes expand through TypeScript's reverse dependencies. Monolithic
-module observations are conservatively rebuilt until their surface, outbound dependency, diagnostic,
-and inventory projections become independent physical shards. Native transport sends only the
-resulting delta, and the process advances its private base only after application-store acknowledgement.
+and body shards; public-shape changes expand through TypeScript's reverse dependencies. The public
+module observation remains complete and monolithic, while the private projector recomposes only
+affected semantic owners from current owner inputs plus retained canonical outbound dependencies.
+Dependency, global-diagnostic, public-shape, topology, configuration, plugin, or uncertain changes
+conservatively expand the module projection. Native transport sends only the resulting delta, and
+the process advances its private base only after application-store acknowledgement.
 
 The caller describes requested project inputs but never supplies a universe identifier. After the
 resident compiler loads the complete configuration chain, project-reference roots, compiler and

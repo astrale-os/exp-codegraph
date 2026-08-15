@@ -57,28 +57,33 @@ times baseline and its upper interval must be reported rather than hidden.
 
 The rejected first selective-source candidate failed exact incremental/cold equality because it
 reused a monolithic module fact when body-derived error codes and other source-owned observations
-could change. That candidate remains rejected.
+could change. Rebuilding all module observations restored soundness but left the Kernel holdout at
+15,358.41 ms versus a 28,359.81 ms cold oracle: only 1.85 times faster despite selecting one source.
 
-The replacement candidate retains compact shard references plus an explicit source-to-shard owner
-index, reprojects one source for a private edit, expands public shape changes through TypeScript's
-canonical reverse dependency graph, and conservatively rebuilds monolithic module observations. It
-publishes commit-late and transmits only the affected upserts/deletes after a base exists. One
-diagnostic Codegraph mirror run measured 4,511.53 ms for a private function-body comment versus a
-115,924.72 ms independent cold oracle (25.70 times); it projected one source, sent 15 upserts and
-four deletes in 699,455 wire bytes, and produced the exact same generation identity. This passes the
-single-run wall threshold but is not yet the required counterbalanced qualification.
+The first owner-selective module candidate then ran in approximately 805 ms but also failed exact
+equality. Exact witnesses showed that a same-offset diagnostic retained its previous source revision
+and that one selected module contained 31 inbound dependencies while its cold fact contained 70.
+The corrected projector fingerprints source revisions contributing diagnostics and privately retains
+canonical outbound edges from unchanged module owners when recomposing the selected public fact.
+Public-shape, dependency, global-diagnostic, topology, configuration, plugin, and uncertain changes
+still expand conservatively.
 
-Eight adversarial microproject changes—private body, public shape, import graph, ambient scope,
-create, delete, rename, and configuration—reconstructed facts exactly equal to their cold oracle.
-The public change selected the three-source reverse closure; every uncertain/topology case selected
-a complete rebuild. An injected application-store failure replayed the pending native candidate and
-then matched cold, proving commit-late recovery. Six alternating cold microproject samples per arm
-had effectively identical medians (baseline 209.8/208.6 ms; candidate 209.8/208.0 ms), so no cold
-regression is visible at fixture scale.
+Current same-implementation diagnostic results are:
 
-Remaining before graduation: the frozen five-pair Codegraph benchmark with distribution statistics,
-the Kernel holdout, SQLite no-rewrite evidence, and full governed qualification. These measurements
-remain diagnostic-only until all four are complete.
+| Corpus | Private edit | Independent cold | Ratio | Scope | Wire bytes | Native cumulative allocation | Exact generation |
+| --- | ---: | ---: | ---: | --- | ---: | ---: | --- |
+| Codegraph | 996.99 ms | 88,031.74 ms | 88.30x | 1 source, 1 module | 699,554 | 420,843,032 | yes |
+| Kernel core | 826.69 ms | 24,709.47 ms | 29.89x | 1 source, 1 module | 886,090 | 472,392,776 | yes |
+
+The corrected adversarial fixture now covers private body, private diagnostic, computed dependency,
+public shape, static import, ambient scope, create, delete, rename, configuration, and failed-commit
+replay. It uses overlapping module boundaries to prove owner selection and retained cross-owner
+dependencies. Every scenario reconstructs the exact independent cold generation; uncertain and
+topology changes select the complete safe fallback.
+
+Remaining before graduation: the frozen counterbalanced Codegraph measurements with distribution
+statistics, the repeated Kernel holdout, SQLite no-reload/no-rewrite evidence, cold-regression proof,
+and full governed qualification. The results above remain diagnostic-only until those are complete.
 
 The qualified post-cleanup attribution baseline contains 303 owned sources and 4,551 shards. One
 instrumented cold memory run spent 69.1 seconds in projection: 21.9 seconds discovering symbols,

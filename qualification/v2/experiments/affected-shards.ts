@@ -29,13 +29,41 @@ const capabilities = [
 const modules = [{
   id: 'fixture.sdk', name: 'FixtureSdk', project: 'tsconfig.json', root: 'src/sdk',
   entrypoint: 'src/sdk/index.ts', facades: [], aliases: [], internals: [],
+}, {
+  id: 'fixture.app', name: 'FixtureApp', project: 'tsconfig.json', root: 'src',
+  entrypoint: 'src/cases.ts', facades: [], aliases: [], internals: ['src/fake.ts'],
 }] as const
 
 try {
   const results = []
   results.push(await scenario('private-body', ['src/cases.ts'], async (root) => {
     await replace(root, 'src/cases.ts', "name: 'known'", "name: 'known-affected-edit'")
-  }, { mode: 'resident-apply', minimumSources: 1, maximumSources: 1 }))
+  }, {
+    mode: 'resident-apply', minimumSources: 1, maximumSources: 1,
+    minimumModules: 1, maximumModules: 1,
+  }))
+  results.push(await scenario('private-diagnostic', ['src/cases.ts'], async (root) => {
+    await replace(
+      root,
+      'src/cases.ts',
+      "export function aliasCase(): MutationOptions {\n  return mutation",
+      "export function aliasCase(): MutationOptions {\n  const mismatch: string = 1\n  void mismatch\n  return mutation",
+    )
+  }, {
+    mode: 'resident-apply', minimumSources: 1, maximumSources: 1,
+    minimumModules: 1, maximumModules: 1, diagnosticsProjected: true,
+  }))
+  results.push(await scenario('computed-dependency', ['src/cases.ts'], async (root) => {
+    await replace(
+      root,
+      'src/cases.ts',
+      "export function unknownCase(): MutationOptions {\n  return mutation",
+      "export function unknownCase(): MutationOptions {\n  void import(runtimeName)\n  return mutation",
+    )
+  }, {
+    mode: 'resident-apply', minimumSources: 1, maximumSources: 1,
+    minimumModules: 2,
+  }))
   results.push(await scenario('public-shape', ['src/sdk/builder.ts'], async (root) => {
     await replace(
       root,
@@ -43,7 +71,7 @@ try {
       '>(options: Options): Options {',
       '>(options: Options, marker?: string): Options {\n  void marker',
     )
-  }, { mode: 'resident-apply', minimumSources: 2 }))
+  }, { mode: 'resident-apply', minimumSources: 2, minimumModules: 2 }))
   results.push(await scenario('import-graph', ['src/cases.ts'], async (root) => {
     await replace(
       root,
@@ -146,6 +174,9 @@ async function scenario(
     readonly mode: 'resident-apply' | 'resident-full'
     readonly minimumSources?: number
     readonly maximumSources?: number
+    readonly minimumModules?: number
+    readonly maximumModules?: number
+    readonly diagnosticsProjected?: boolean
     readonly universeChanged?: boolean
   },
 ) {
@@ -178,6 +209,20 @@ async function scenario(
   const projected = Number(projection?.metrics?.sources)
   if (expected.minimumSources !== undefined) assert(projected >= expected.minimumSources)
   if (expected.maximumSources !== undefined) assert(projected <= expected.maximumSources)
+  const moduleProjection = [...events].reverse().find(
+    (entry) => entry.component === 'native'
+      && entry.phase === 'projection.modules',
+  )
+  const projectedModules = Number(moduleProjection?.metrics?.shards)
+  if (expected.minimumModules !== undefined) assert(projectedModules >= expected.minimumModules)
+  if (expected.maximumModules !== undefined) assert(projectedModules <= expected.maximumModules)
+  const diagnosticProjection = [...events].reverse().find(
+    (entry) => entry.component === 'native'
+      && entry.phase === 'projection.diagnostics',
+  )
+  if (expected.diagnosticsProjected !== undefined) {
+    assert.equal(Boolean(diagnosticProjection), expected.diagnosticsProjected)
+  }
   if (expected.universeChanged) assert.notEqual(incremental!.generation.universe, baseline!.generation.universe)
 
   const coldStore = createMemoryAnalysisStore()
@@ -210,6 +255,8 @@ async function scenario(
     name,
     mode: expected.mode,
     projectedSources: projected,
+    projectedModules,
+    diagnosticsProjected: Boolean(diagnosticProjection),
     incrementalMs: round(incrementalMs),
     coldMs: round(coldMs),
     manifestShards: incremental!.transaction.manifest.length,

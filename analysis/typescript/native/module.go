@@ -25,11 +25,23 @@ type moduleObservation struct {
 }
 
 func (x *extractor) moduleShards(program *driver.Program) ([]factShard, error) {
+	return x.moduleShardsFor(program, nil, nil)
+}
+
+// moduleShardsFor composes the unchanged public module-fact schema for only
+// the selected semantic owners. Ownership selection is an incremental
+// execution detail; a resulting module fact is byte-identical to its fact in a
+// complete cold projection.
+func (x *extractor) moduleShardsFor(
+	program *driver.Program,
+	selected map[string]bool,
+	retainedDependencies []dependencyPayload,
+) ([]factShard, error) {
 	observations := map[string]*moduleObservation{}
 	currentProject := filepath.Clean(program.ParsedConfig.ConfigName())
 	for _, boundary := range x.modules {
 		configuredProject := filepath.Clean(filepath.Join(x.root, filepath.FromSlash(boundary.Project)))
-		if configuredProject != currentProject {
+		if configuredProject != currentProject || (selected != nil && !selected[boundary.ID]) {
 			continue
 		}
 		observation, err := x.observeModule(program, boundary)
@@ -41,8 +53,26 @@ func (x *extractor) moduleShards(program *driver.Program) ([]factShard, error) {
 	if len(observations) == 0 {
 		return []factShard{}, nil
 	}
-	x.attachCompilerDiagnostics(program.Diagnostics(), observations)
+	diagnostics := program.Diagnostics()
+	if selected != nil {
+		files := []*shimast.SourceFile{}
+		for _, source := range program.SourceFiles() {
+			owner := x.moduleOwner(source.FileName())
+			if owner != nil && selected[owner.ID] {
+				files = append(files, source)
+			}
+		}
+		diagnostics = program.DiagnosticsForFiles(files)
+	}
+	x.attachCompilerDiagnostics(diagnostics, observations)
 	edges, dependencyIssues := x.observeModuleDependencies(program)
+	if selected != nil {
+		for _, edge := range retainedDependencies {
+			if !selected[edge.SourceModule] {
+				edges = append(edges, edge)
+			}
+		}
+	}
 	for module, issues := range dependencyIssues {
 		if observation := observations[module]; observation != nil {
 			observation.payload.Issues = append(observation.payload.Issues, issues...)
