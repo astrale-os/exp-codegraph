@@ -1,0 +1,10 @@
+name: Native release qualification
+
+# The default branch keeps this dispatch anchor so feature refs can run their complete matrix.
+on: workflow_dispatch
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Select a Codegraph feature ref containing the complete native release workflow."
