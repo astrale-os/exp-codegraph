@@ -33,7 +33,8 @@ export function createRepositoryPathOwnershipGrouping(id, owners) {
     };
 }
 function normalizeRoot(root) {
-    const normalized = portablePath(root.trim()).replace(/^\.\//u, '').replace(/\/$/u, '') || '.';
+    const input = root.trim().replace(/^\.\//u, '').replace(/\/$/u, '') || '.';
+    const normalized = input === '.' ? input : portablePath(input);
     if (normalized.startsWith('/') || normalized === '..' || normalized.startsWith('../')) {
         throw new Error(`Repository statistics ownership root must be repository-relative: ${root}.`);
     }
