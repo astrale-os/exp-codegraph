@@ -1766,6 +1766,73 @@ process.exit(0)
     }
   })
 
+  it('hydrates only declared portable-pass inputs and rejects undeclared reads', async () => {
+    const store = createMemoryAnalysisStore()
+    try {
+      const base = buildTransaction({ sequence: 1, values: ['input'] })
+      await store.commit(base)
+      const query = await store.open(base.next.universe)
+      try {
+        const exports: (readonly string[] | undefined)[] = []
+        const observed: AnalysisQuery = {
+          generation: query.generation,
+          manifest: () => query.manifest(),
+          capabilities: () => query.capabilities(),
+          facts: (filter, page) => query.facts(filter, page),
+          factsById: (ids) => query.factsById(ids),
+          export(filter = {}) {
+            exports.push(filter.namespaces)
+            return query.export(filter)
+          },
+          async dispose() {},
+        }
+        const manifest = pass(
+          'selective-input',
+          ['fixture.selective'],
+          ['fixture.values'],
+          [{ namespace: 'fixture.values', minimumVersion: 1, maximumVersion: 1 }],
+          [{ namespace: 'fixture.selective', version: 1 }],
+        ) as PortablePass['manifest']
+        const implementation: PortablePass = {
+          manifest,
+          async run(context) {
+            await expect(
+              context.query.facts({ namespaces: ['fixture.undeclared'] }),
+            ).rejects.toThrow('undeclared input namespace fixture.undeclared')
+            const inputs = await context.query.facts()
+            return {
+              completion: { kind: 'complete' },
+              shards: [passShard(manifest, context.generation.id, inputs.facts)],
+              diagnostics: [],
+            }
+          },
+        }
+        const producer: ProducerIdentity = {
+          id: deriveAnalysisId('producer', 'qualification-selective-pass', { version: 1 }),
+          name: 'qualification-selective-pass',
+          version: '1.0.0',
+          protocolVersion: 1,
+        }
+        const plan = planPasses([manifest], ['fixture.selective'], {
+          availableCapabilities: ['fixture.values'],
+          availableSchemas: [{ namespace: 'fixture.values', version: 1 }],
+        })
+        const result = await runPortablePasses({
+          plan,
+          passes: [implementation],
+          query: observed,
+          producer,
+        })
+        expect(result.executed).toEqual([manifest.id])
+        expect(exports).toEqual([['fixture.values']])
+      } finally {
+        await query.dispose()
+      }
+    } finally {
+      await store.dispose()
+    }
+  })
+
   it('publishes native and portable analysis atomically while retaining private native lineage', async () => {
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-pipeline-'))
     temporary.push(root)

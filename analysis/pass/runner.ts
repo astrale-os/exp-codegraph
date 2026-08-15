@@ -25,14 +25,11 @@ export async function runPortablePasses(
   const implementations = new Map(options.passes.map((pass) => [pass.manifest.id, pass]))
   const nativeManifest = await options.query.manifest()
   const baseCapabilities = await options.query.capabilities()
-  let facts = await exportedFacts(options.query)
   const carried = [...(options.carriedShards ?? [])].sort(byShard)
   assertCarriedShards(nativeManifest, carried)
   const baseManifest = [...nativeManifest, ...carried.map(shardReference)].sort(byKey)
   let manifest = [...baseManifest]
   const outputs = new Map<FactShardKey, FactShard>(carried.map((shard) => [shard.key, shard]))
-  facts.push(...carried.flatMap((shard) => shard.facts))
-  facts.sort(byFact)
   const executed: PassId[] = []
   const unavailable: PassId[] = []
   const diagnostics: Fact[] = []
@@ -48,10 +45,11 @@ export async function runPortablePasses(
       throw new Error(`Portable pass ${planned.id} has no exact implementation.`)
     }
     const query = new StagedQuery(
-      options.query.generation,
+      options.query,
       manifest,
-      facts,
+      outputs.values(),
       mergeCapabilityStatus(baseCapabilities, outputs.values()),
+      planned.inputs.map((input) => input.namespace),
     )
     let output: PassOutput
     try {
@@ -77,7 +75,6 @@ export async function runPortablePasses(
     diagnostics.push(...output.diagnostics)
     const namespaces = new Set(planned.outputs.map((schema) => schema.namespace))
     for (const namespace of namespaces) replacedNamespaces.add(namespace)
-    facts = facts.filter((fact) => !namespaces.has(fact.namespace))
     manifest = manifest.filter((reference) => !namespaces.has(reference.namespace))
     for (const [key, shard] of [...outputs]) {
       if (namespaces.has(shard.namespace)) outputs.delete(key)
@@ -87,10 +84,8 @@ export async function runPortablePasses(
       if (existing) throw new Error(`Portable passes emitted duplicate shard key ${shard.key}.`)
       outputs.set(shard.key, shard)
       manifest.push(shardReference(shard))
-      facts.push(...shard.facts)
     }
     manifest.sort(byKey)
-    facts.sort(byFact)
   }
 
   if (!executed.length && !carried.length) {
@@ -256,19 +251,29 @@ function bindGeneration(shard: FactShard, generation: Fact['generation']): FactS
 class StagedQuery implements AnalysisQuery {
   #disposed = false
   readonly generation: AnalysisQuery['generation']
+  readonly #base: AnalysisQuery
   readonly #references: readonly FactShardReference[]
   readonly #stagedFacts: readonly Fact[]
+  readonly #stagedById: ReadonlyMap<FactId, Fact>
   readonly #status: readonly CapabilityStatus[]
+  readonly #allowedNamespaces: ReadonlySet<string>
 
   constructor(
-    generation: AnalysisQuery['generation'],
+    base: AnalysisQuery,
     references: readonly FactShardReference[],
-    stagedFacts: readonly Fact[],
+    stagedShards: Iterable<FactShard>,
     status: readonly CapabilityStatus[],
+    allowedNamespaces: readonly string[],
   ) {
-    this.generation = generation
-    this.#references = references
-    this.#stagedFacts = stagedFacts
+    this.generation = base.generation
+    this.#base = base
+    this.#allowedNamespaces = new Set(allowedNamespaces)
+    this.#references = references.filter((reference) => this.#allowedNamespaces.has(reference.namespace))
+    this.#stagedFacts = [...stagedShards]
+      .filter((shard) => this.#allowedNamespaces.has(shard.namespace))
+      .flatMap((shard) => shard.facts.map((fact) => bindPhysicalFact(fact, base.generation.id)))
+      .sort(byFact)
+    this.#stagedById = new Map(this.#stagedFacts.map((fact) => [fact.id, fact]))
     this.#status = status
   }
 
@@ -287,28 +292,67 @@ class StagedQuery implements AnalysisQuery {
     if (!Number.isSafeInteger(page.limit) || page.limit < 1 || page.limit > 10_000) {
       throw new RangeError('Fact page limit must be an integer from 1 through 10000.')
     }
-    const matching = this.#stagedFacts.filter((fact) => matches(fact, filter))
+    if (!this.#allowedNamespaces.size) return { facts: [], total: 0 }
+    const selected = this.inputFilter(filter)
     const start = decodeStagedCursor(page.cursor)
-    const facts = matching.slice(start, start + page.limit)
-    const next = start + facts.length
+    const facts: Fact[] = []
+    let index = 0
+    let hasNext = false
+    for await (const fact of this.export(selected)) {
+      if (index++ < start) continue
+      if (facts.length === page.limit) {
+        hasNext = true
+        break
+      }
+      facts.push(fact)
+    }
     return {
       facts,
-      ...(next < matching.length ? { nextCursor: String(next) } : {}),
-      total: matching.length,
+      ...(hasNext ? { nextCursor: String(start + facts.length) } : {}),
     }
   }
 
   async factsById(ids: readonly FactId[]): Promise<readonly Fact[]> {
     this.assertOpen()
-    const wanted = new Set(ids)
-    return this.#stagedFacts.filter((fact) => wanted.has(fact.id))
+    if (!this.#allowedNamespaces.size) return []
+    const wanted = [...new Set(ids)].sort()
+    const staged = wanted.flatMap((id) => {
+      const fact = this.#stagedById.get(id)
+      return fact ? [fact] : []
+    })
+    const stagedIds = new Set(staged.map((fact) => fact.id))
+    const base = await this.#base.factsById(wanted.filter((id) => !stagedIds.has(id)))
+    for (const fact of base) this.assertInputNamespace(fact.namespace)
+    return [...base, ...staged].sort(byFact)
   }
 
   async *export(filter: FactFilter = {}): AsyncIterable<Fact> {
     this.assertOpen()
-    for (const fact of this.#stagedFacts) {
-      this.assertOpen()
-      if (matches(fact, filter)) yield fact
+    if (!this.#allowedNamespaces.size) return
+    const selected = this.inputFilter(filter)
+    const staged = this.#stagedFacts.filter((fact) => matches(fact, selected))
+    const base = this.#base.export(selected)[Symbol.asyncIterator]()
+    let baseValue = await base.next()
+    let stagedIndex = 0
+    try {
+      while (!baseValue.done || stagedIndex < staged.length) {
+        this.assertOpen()
+        const baseFact = baseValue.done ? undefined : baseValue.value
+        const stagedFact = staged[stagedIndex]
+        if (!baseFact || (stagedFact && stagedFact.id.localeCompare(baseFact.id) < 0)) {
+          yield stagedFact!
+          stagedIndex++
+          continue
+        }
+        if (stagedFact?.id === baseFact.id) {
+          throw new Error(`Staged portable fact collides with base fact ${baseFact.id}.`)
+        }
+        this.assertInputNamespace(baseFact.namespace)
+        yield baseFact
+        baseValue = await base.next()
+      }
+    } finally {
+      await base.return?.()
     }
   }
 
@@ -319,12 +363,20 @@ class StagedQuery implements AnalysisQuery {
   private assertOpen(): void {
     if (this.#disposed) throw new Error('Staged pass query is disposed.')
   }
-}
 
-async function exportedFacts(query: AnalysisQuery): Promise<Fact[]> {
-  const facts: Fact[] = []
-  for await (const fact of query.export()) facts.push(fact)
-  return facts.sort(byFact)
+  private inputFilter(filter: FactFilter): FactFilter {
+    if (filter.namespaces) {
+      for (const namespace of filter.namespaces) this.assertInputNamespace(namespace)
+      return filter
+    }
+    return { ...filter, namespaces: [...this.#allowedNamespaces].sort() }
+  }
+
+  private assertInputNamespace(namespace: string): void {
+    if (!this.#allowedNamespaces.has(namespace)) {
+      throw new Error(`Portable pass queried undeclared input namespace ${namespace}.`)
+    }
+  }
 }
 
 function mergeCapabilityStatus(
