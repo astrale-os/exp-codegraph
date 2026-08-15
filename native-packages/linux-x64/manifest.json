@@ -1,9 +1,9 @@
 {
   "artifact": {
-    "bytes": 28144784,
+    "bytes": 28145840,
     "executable": "bin/codegraph-native",
     "package": "@astrale-os/codegraph-native-linux-x64",
-    "sha256": "be9cdbc069663d690dbdc268817825aebfcf6ec4b870a0b0b7998579e115f6a5",
+    "sha256": "12f77cea3c3929a51fb0007d214bd7963a6ffe79eeb6c78111c71750cd4be162",
     "target": "linux-x64"
   },
   "format": "astrale.codegraph.native-artifact",

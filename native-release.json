@@ -1,38 +1,38 @@
 {
   "artifacts": {
     "darwin-arm64": {
-      "bytes": 27585394,
+      "bytes": 27585474,
       "executable": "bin/codegraph-native",
       "package": "@astrale-os/codegraph-native-darwin-arm64",
-      "sha256": "198cb7e8ca39ff22c9deeff7891800fac56c35c3e9e87a7e40bc222a1737a963",
+      "sha256": "cfdd75e5a061ac2b429344a0d529ef31ff2438408045e30c7ddbbae2bd22e158",
       "target": "darwin-arm64"
     },
     "darwin-x64": {
-      "bytes": 28648544,
+      "bytes": 28648624,
       "executable": "bin/codegraph-native",
       "package": "@astrale-os/codegraph-native-darwin-x64",
-      "sha256": "94e14df7c2f07de5774b3782935bfe0bf630c366515ad9a792efa6ded84a2b83",
+      "sha256": "fdafe788e888ba521352899e639bbc01ad331e5e09461e8fc02a764b96118917",
       "target": "darwin-x64"
     },
     "linux-arm64": {
-      "bytes": 26835519,
+      "bytes": 26835911,
       "executable": "bin/codegraph-native",
       "package": "@astrale-os/codegraph-native-linux-arm64",
-      "sha256": "c63c5859e96e8d8ea225f9b19c47c7e9447da17aa4db6a4fa5d4d2b20eee4170",
+      "sha256": "c9b217d0eee5a88ed98dbddfbaa3ff528c6f34323b1457af8d75ea40ca4617fe",
       "target": "linux-arm64"
     },
     "linux-x64": {
-      "bytes": 28144784,
+      "bytes": 28145840,
       "executable": "bin/codegraph-native",
       "package": "@astrale-os/codegraph-native-linux-x64",
-      "sha256": "be9cdbc069663d690dbdc268817825aebfcf6ec4b870a0b0b7998579e115f6a5",
+      "sha256": "12f77cea3c3929a51fb0007d214bd7963a6ffe79eeb6c78111c71750cd4be162",
       "target": "linux-x64"
     }
   },
   "format": "astrale.codegraph.native-release",
   "packageVersion": "0.1.0",
   "protocolVersion": 1,
-  "sourceRevision": "4003e99e038279478bb89e7d4c7d0ccb8b2eb994",
+  "sourceRevision": "ff9b5ed522d960b35fc466a9984abe01c12e54f6",
   "toolchain": {
     "go": "go1.26.5",
     "ttsc": "0.25.0",

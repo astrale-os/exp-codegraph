@@ -1,9 +1,9 @@
 {
   "artifact": {
-    "bytes": 28648544,
+    "bytes": 28648624,
     "executable": "bin/codegraph-native",
     "package": "@astrale-os/codegraph-native-darwin-x64",
-    "sha256": "94e14df7c2f07de5774b3782935bfe0bf630c366515ad9a792efa6ded84a2b83",
+    "sha256": "fdafe788e888ba521352899e639bbc01ad331e5e09461e8fc02a764b96118917",
     "target": "darwin-x64"
   },
   "format": "astrale.codegraph.native-artifact",
