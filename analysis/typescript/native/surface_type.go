@@ -268,7 +268,7 @@ func (n *nativeTypeNormalizer) normalize(t *shimchecker.Type, node *shimast.Node
 			}
 			return n.unsupported(t, node, "unresolved this-type owner")
 		case shimast.KindLiteralType:
-			return literalFromText(nodeText(shimast.GetSourceFileOfNode(node), node), t)
+			return literalFromTypeNode(node, t)
 		}
 	}
 	if t == nil {
@@ -750,11 +750,8 @@ func (n *nativeTypeNormalizer) callable(signature *shimchecker.Signature, fallba
 	}
 	parameters := []any{}
 	typeParameterNodes := []*shimast.Node{}
-	if declaration != nil {
-		switch declaration.Kind {
-		case shimast.KindFunctionDeclaration, shimast.KindFunctionType, shimast.KindConstructorType, shimast.KindMethodSignature, shimast.KindMethodDeclaration, shimast.KindCallSignature, shimast.KindConstructSignature:
-			typeParameterNodes = declaration.TypeParameters()
-		}
+	if declaration != nil && callableCanDeclareTypeParameters(declaration.Kind) {
+		typeParameterNodes = declaration.TypeParameters()
 	}
 	scope := n.x.typeParameterScope(declaration)
 	restore := n.bindTypeParameters(typeParameterNodes, scope)
@@ -1329,6 +1326,37 @@ func checkerTypeContainsParameter(checker *shimchecker.Checker, t *shimchecker.T
 }
 
 func primitive(name string) map[string]any { return map[string]any{"kind": "primitive", "name": name} }
+
+func callableCanDeclareTypeParameters(kind shimast.Kind) bool {
+	switch kind {
+	case shimast.KindFunctionDeclaration, shimast.KindFunctionExpression, shimast.KindArrowFunction,
+		shimast.KindFunctionType, shimast.KindConstructorType, shimast.KindMethodSignature,
+		shimast.KindMethodDeclaration, shimast.KindCallSignature, shimast.KindConstructSignature:
+		return true
+	default:
+		return false
+	}
+}
+
+func literalFromTypeNode(node *shimast.Node, t *shimchecker.Type) any {
+	literal := node.AsLiteralTypeNode().Literal
+	if literal != nil && (literal.Kind == shimast.KindStringLiteral || literal.Kind == shimast.KindNoSubstitutionTemplateLiteral) {
+		return literalFromSyntax(
+			literal.Kind,
+			literal.Text(),
+			nodeText(shimast.GetSourceFileOfNode(node), node),
+			t,
+		)
+	}
+	return literalFromText(nodeText(shimast.GetSourceFileOfNode(node), node), t)
+}
+
+func literalFromSyntax(kind shimast.Kind, value string, authored string, t *shimchecker.Type) any {
+	if kind == shimast.KindStringLiteral || kind == shimast.KindNoSubstitutionTemplateLiteral {
+		return map[string]any{"kind": "literal", "value": value}
+	}
+	return literalFromText(authored, t)
+}
 
 func literalFromText(text string, t *shimchecker.Type) any {
 	text = strings.TrimSpace(text)
