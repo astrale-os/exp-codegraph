@@ -1,6 +1,6 @@
 # EXP-003: bounded shard payload materialization
 
-Status: candidate implemented; Codegraph factorial diagnostic complete; compact cold confidence and holdout pending
+Status: closed; explicit archival layout retained, interactive default rejected by V2-REV-023
 
 Frozen: 2026-08-15
 
@@ -79,5 +79,36 @@ the largest median ratio was 1.010 for compact full typed export. The exact pair
 outlier-sensitive confidence intervals remain in the generated artifact.
 
 The Codegraph matrix proves the deterministic size target, semantic transparency, and median query
-compatibility. It does not prove the compact-layout cold-confidence requirement, and no Kernel
-holdout has run. EXP-003 therefore remains diagnostic-only rather than governed acceptance.
+compatibility. It did not prove the compact-layout cold-confidence requirement.
+
+## Short isolated Kernel decision trial
+
+After the noisy historical matrices were retired, one same-revision semantic-body comparison was
+run on Kernel core to decide the production default. Both layouts reconstructed the same generation,
+source manifest, manifest digest, semantic digest, generation-bound fact digest, and 27,976 facts.
+
+| Observation | Inline JSON | Shard Brotli | Result |
+| --- | ---: | ---: | --- |
+| SQLite bytes | 128,303,104 B | 66,236,416 B | shard is 1.937x smaller |
+| cold analysis | 25,639.45 ms | 25,794.74 ms | shard is 0.61% slower |
+| exact point hydration | 2.37 ms | 9.49 ms | shard is 4.00x slower |
+| first hydrated page | 43.48 ms | 333.67 ms | shard is 7.67x slower |
+| evaluator indexing | 470.59 ms | 1,591.58 ms | shard is 3.38x slower |
+| full typed export | 7,003.41 ms | 7,827.31 ms | shard is 11.77% slower |
+
+Diagnostic artifacts are `/private/tmp/codegraph-exp003-kernel-inline.json` with SHA-256
+`e7f5beff6752f311c7f693da1c1b27fe633a8b65aa4974c751e1d9f79a3ae5b2` and
+`/private/tmp/codegraph-exp003-kernel-shard.json` with SHA-256
+`9880cb993c6d1ed9fdedfe07b7a38505cb3e933b7a277878928b9c45a61ac571`.
+They are diagnostic decision inputs, not release qualification.
+
+## Decision
+
+The size reduction is real, but monolithic shard compression violates the intended interactive
+complexity boundary: one selected payload requires reconstructing unrelated sibling payloads. The
+default therefore returns to independently addressable inline JSON. `shard-brotli` remains an
+explicit, bounded option for archival and predominantly full-scan workloads.
+
+No bounded-block redesign is introduced during the application cutover. It would be a distinct
+schema/query experiment and should proceed only if a measured consumer needs both compression and
+low-latency selective hydration.

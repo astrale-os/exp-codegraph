@@ -52,7 +52,10 @@ import {
   createFactWithPhysicalPayload,
 } from '../analysis/facts/representation/index.ts'
 import { createMemoryAnalysisStore } from '../analysis/memory/index.ts'
-import { createSQLiteAnalysisStore } from '../analysis/sqlite/index.ts'
+import {
+  createSQLiteAnalysisStore,
+  DEFAULT_SQLITE_PAYLOAD_MATERIALIZATION,
+} from '../analysis/sqlite/index.ts'
 import {
   validateFunctionBodyIR,
   type FunctionBodyIR,
@@ -89,6 +92,10 @@ describe('TypeSpec V2 generic analysis foundation', () => {
       maximumErrorBytes: 1 * 1_024 * 1_024,
     })
     expect(Object.isFrozen(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS)).toBe(true)
+  })
+
+  it('defaults SQLite to independently addressable payloads', () => {
+    expect(DEFAULT_SQLITE_PAYLOAD_MATERIALIZATION).toBe('inline-json')
   })
 
   it('canonicalizes Unicode separators exactly across JavaScript and Go', () => {
@@ -1220,6 +1227,12 @@ lines.on('line', (line) => {
       expect(tableCount(database, 'analysis_fact_inputs')).toBe(1)
       expect(
         database
+          .prepare('SELECT DISTINCT payload_layout FROM analysis_shards')
+          .all()
+          .map((row) => (row as { readonly payload_layout: string }).payload_layout),
+      ).toEqual(['inline-json/1'])
+      expect(
+        database
           .prepare('PRAGMA table_info(analysis_shards)')
           .all()
           .map((column) => (column as { readonly name: string }).name),
@@ -1559,7 +1572,11 @@ PRAGMA user_version = 6;
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-sqlite-semantic-corruption-'))
     temporary.push(root)
     const file = join(root, 'analysis.sqlite')
-    const options = { file, namespace: 'semantic-corruption' }
+    const options = {
+      file,
+      namespace: 'semantic-corruption',
+      payloadMaterialization: 'shard-brotli' as const,
+    }
     const transaction = buildTransaction({ sequence: 1, values: ['before-corruption'] })
     const store = await createSQLiteAnalysisStore(options)
     await store.commit(transaction)
@@ -1586,7 +1603,11 @@ PRAGMA user_version = 6;
     const ordinalRoot = await mkdtemp(join(tmpdir(), 'codegraph-sqlite-payload-ordinal-'))
     temporary.push(blobRoot, missingRoot, ordinalRoot)
 
-    const blobOptions = { file: join(blobRoot, 'analysis.sqlite'), namespace: 'blob-corruption' }
+    const blobOptions = {
+      file: join(blobRoot, 'analysis.sqlite'),
+      namespace: 'blob-corruption',
+      payloadMaterialization: 'shard-brotli' as const,
+    }
     const blobTransaction = buildTransaction({ sequence: 1, values: ['one'] })
     const blobStore = await createSQLiteAnalysisStore(blobOptions)
     await blobStore.commit(blobTransaction)
@@ -1601,6 +1622,7 @@ PRAGMA user_version = 6;
     const missingOptions = {
       file: join(missingRoot, 'analysis.sqlite'),
       namespace: 'missing-payload',
+      payloadMaterialization: 'shard-brotli' as const,
     }
     const missingTransaction = buildTransaction({ sequence: 1, values: ['one'] })
     const missingStore = await createSQLiteAnalysisStore(missingOptions)
@@ -1623,6 +1645,7 @@ PRAGMA user_version = 6;
     const ordinalOptions = {
       file: join(ordinalRoot, 'analysis.sqlite'),
       namespace: 'ordinal-corruption',
+      payloadMaterialization: 'shard-brotli' as const,
     }
     const ordinalTransaction = buildTransaction({ sequence: 1, values: ['one', 'two'] })
     const ordinalStore = await createSQLiteAnalysisStore(ordinalOptions)

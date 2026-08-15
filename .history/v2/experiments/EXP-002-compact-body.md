@@ -1,6 +1,6 @@
 # EXP-002: compact physical TypeScript body representation
 
-Status: candidate implemented; Codegraph factorial diagnostic complete; original RSS/cold gates fail; holdout qualification pending
+Status: closed; optional codec retained, ordinary application adoption rejected by V2-REV-023
 
 Frozen: 2026-08-15
 
@@ -137,10 +137,9 @@ The evidence files are diagnostic artifacts outside Git:
 `/private/tmp/codegraph-current-compact-sqlite.json`, and
 `/private/tmp/codegraph-compact-shard-v2-profile.json`.
 
-No governed acceptance is written from this pair. EXP-002 remains open until the factorial isolates
-each factor, six counterbalanced clean-revision pairs and bootstrap intervals satisfy the frozen
-thresholds, adversarial codec/storage corruption coverage is clean, and the Kernel holdout confirms
-the same semantic and operational result.
+No governed acceptance was written from this pair. The later factorial isolated both physical
+factors and made the production decision possible without treating the historical baseline as a
+permanent performance dependency.
 
 ## Six-pair Codegraph factorial diagnostic
 
@@ -177,3 +176,15 @@ graduated and its frozen thresholds are not revised post hoc. It is therefore no
 ordinary application composition; explicit experiments and specialized consumers may still opt in
 through the generic codec seam. EXP-003 owns the independently measured store-wide database effect.
 Kernel holdout evidence remains absent.
+
+## Decision
+
+V2-REV-023 closes the experiment without weakening its frozen gates. Compact bodies remain an
+explicitly negotiated codec because the implementation is semantically transparent, well bounded,
+and can halve constrained native transport. The ordinary application does not advertise it: the
+candidate failed the two-times database-or-RSS gate and did not establish cold-path neutrality.
+
+No further historical-oracle matrix is required. A future direct compact native builder may reopen
+the decision as a new experiment only if allocation attribution shows that it avoids constructing
+the expanded semantic body in the first place; it may not claim these transport-only results as a
+production qualification.

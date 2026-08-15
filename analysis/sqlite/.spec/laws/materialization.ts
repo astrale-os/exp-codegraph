@@ -53,3 +53,9 @@ export const SQLITE_PHYSICAL_PAYLOAD_TRANSPARENCY = defineLaw({
   statement:
     'Shard payload compression, ordinals, and storage codecs are private, explicitly tagged, decompression-bounded, and cache-bounded materialization details: generation identities and typed query results are identical to unrestricted semantic Fact payloads, and corrupt, missing, ambiguous, or incomplete physical membership is rejected rather than inferred.',
 })
+
+export const SQLITE_SELECTIVE_HYDRATION_DEFAULT = defineLaw({
+  id: 'SQLITE-SELECTIVE-HYDRATION-DEFAULT',
+  statement:
+    'The default SQLite layout independently addresses each semantic payload so hydrating a selected fact never decompresses or reconstructs unselected siblings; whole-shard compression is an explicit archival or full-scan tradeoff.',
+})

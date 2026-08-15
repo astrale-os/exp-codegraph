@@ -10,6 +10,12 @@ payloads remain JSON, but a complete generation is never stored or rewritten as 
 value. The prerelease snapshot-JSON implementation is retained only as migration and correctness
 oracle evidence.
 
+The default payload layout keeps each semantic payload independently addressable. This makes
+header-first selection and exact-ID hydration proportional to the requested facts. Whole-shard
+Brotli materialization remains available explicitly for archival or predominantly full-scan
+workloads, but it is not the interactive default because selecting one fact would otherwise require
+decompressing and reconstructing all payloads owned by its shard.
+
 Internal ownership is hierarchical: `schema/` owns migrations and integrity, `materialization/`
 owns fact encoding, membership validation, and writes, `lifecycle/` owns leases and retention, and
 `query/` owns generation-pinned indexed readers. Each leaf stays small and flat; `store.ts` only
