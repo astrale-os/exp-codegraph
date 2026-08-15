@@ -5,6 +5,7 @@ import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../protocol/index.ts'
 import type { NativeAnalysisSession } from '../protocol/index.ts'
 import type { ProjectUniverseId, SourceId } from '../identity/index.ts'
 import { deriveAnalysisId, portablePath } from '../identity/index.ts'
+import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
 import type {
   TypeScriptAnalysisService,
   TypeScriptAnalysisServiceOptions,
@@ -47,10 +48,14 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
   ): Promise<TypeScriptRefreshResult> {
     this.assertOpen()
     const started = performance.now()
+    const request = this.#request + 1
     const activeUniverse = this.#universe
+    let phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
     const current = activeUniverse
       ? await this.#options.store.current(activeUniverse)
       : undefined
+    this.emit('store.current', request, phaseStarted)
+    phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
     const response = await this.#session.request(
       {
         id: ++this.#request,
@@ -61,6 +66,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
       },
       { signal: options.signal },
     )
+    this.emit('native.request', request, phaseStarted, { responseKind: response.kind })
     if (response.protocolVersion !== NATIVE_ANALYSIS_PROTOCOL_VERSION) {
       throw new Error(
         `Native analysis protocol ${response.protocolVersion} is incompatible with ${NATIVE_ANALYSIS_PROTOCOL_VERSION}.`,
@@ -81,6 +87,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         durationMs: performance.now() - started,
       }
     }
+    phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
     const materialized = await materializeNativeTransaction(
       this.#options.store,
       activeUniverse,
@@ -88,6 +95,11 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
       response.transaction,
       { signal: options.signal },
     )
+    this.emit('transaction.materialize', request, phaseStarted, {
+      manifestShards: response.transaction.manifest.length,
+      upsertShards: response.transaction.upserts.length,
+      deleteShards: response.transaction.deletes.length,
+    })
     this.#universe = materialized.generation.universe
     const universe = materialized.generation.universe
     const changedSources = [
@@ -135,6 +147,22 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
 
   private assertOpen(): void {
     if (this.#disposed) throw new Error('TypeScript analysis service is disposed.')
+  }
+
+  private emit(
+    phase: string,
+    request: number,
+    started: bigint,
+    metrics?: Readonly<Record<string, string | number | boolean>>,
+  ): void {
+    if (!this.#options.telemetry) return
+    dispatchAnalysisTelemetry(this.#options.telemetry, {
+      component: 'analysis',
+      phase,
+      request,
+      durationNs: Number(process.hrtime.bigint() - started),
+      ...(metrics ? { metrics } : {}),
+    })
   }
 }
 

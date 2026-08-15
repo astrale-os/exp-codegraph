@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimchecker "github.com/microsoft/typescript-go/shim/checker"
@@ -42,7 +43,7 @@ type extractor struct {
 	modules    []moduleBoundary
 }
 
-func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary) ([]factShard, []sourceRecord, error) {
+func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
 	x := &extractor{
 		root: root, universe: universe, checker: program.Checker,
 		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
@@ -50,6 +51,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	}
 	files := program.SourceFiles()
 	sort.Slice(files, func(i, j int) bool { return files[i].FileName() < files[j].FileName() })
+	phase := time.Now()
 	for _, file := range files {
 		path, owned := x.ownedPath(file.FileName())
 		if !owned {
@@ -62,14 +64,24 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 			Revision: deriveID("source-revision", source, map[string]any{"digest": digest}),
 		}
 	}
+	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources)})
 	var shards []factShard
 	var records []sourceRecord
-	shards = append(shards, x.projectShard(program), x.diagnosticShard(program))
+	phase = time.Now()
+	shards = append(shards, x.projectShard(program))
+	telemetry.record(requestID, "projection.project", phase, nil)
+	phase = time.Now()
+	diagnostic := x.diagnosticShard(program)
+	shards = append(shards, diagnostic)
+	telemetry.record(requestID, "projection.diagnostics", phase, map[string]any{"facts": len(diagnostic.Facts)})
+	phase = time.Now()
 	moduleShards, err := x.moduleShards(program)
 	if err != nil {
 		return nil, nil, err
 	}
 	shards = append(shards, moduleShards...)
+	telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(moduleShards)})
+	phase = time.Now()
 	for _, file := range files {
 		record, ok := x.sources[file.FileName()]
 		if !ok {
@@ -79,6 +91,8 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		shards = append(shards, x.sourceShard(file, record))
 		x.discoverSymbols(file)
 	}
+	telemetry.record(requestID, "projection.sources-and-symbol-discovery", phase, map[string]any{"sources": len(records)})
+	phase = time.Now()
 	for _, file := range files {
 		record, ok := x.sources[file.FileName()]
 		if !ok {
@@ -87,11 +101,31 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		if shard := x.symbolShard(file, record); len(shard.Facts) != 0 {
 			shards = append(shards, shard)
 		}
+	}
+	telemetry.record(requestID, "projection.symbols", phase, nil)
+	phase = time.Now()
+	for _, file := range files {
+		record, ok := x.sources[file.FileName()]
+		if !ok {
+			continue
+		}
 		if shard := x.occurrenceShard(file, record); len(shard.Facts) != 0 {
 			shards = append(shards, shard)
 		}
-		shards = append(shards, x.bodyShards(file, record)...)
 	}
+	telemetry.record(requestID, "projection.occurrences", phase, nil)
+	phase = time.Now()
+	bodyShards := 0
+	for _, file := range files {
+		record, ok := x.sources[file.FileName()]
+		if !ok {
+			continue
+		}
+		bodies := x.bodyShards(file, record)
+		bodyShards += len(bodies)
+		shards = append(shards, bodies...)
+	}
+	telemetry.record(requestID, "projection.bodies", phase, map[string]any{"shards": bodyShards})
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
 	return shards, records, nil

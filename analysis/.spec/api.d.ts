@@ -80,6 +80,12 @@ export type {
 } from '../source/.spec/api.js'
 export { createNodeSourceTextReader, readVerifiedSourceText } from '../source/.spec/api.js'
 export type {
+  AnalysisTelemetryEvent,
+  AnalysisTelemetryMetric,
+  AnalysisTelemetrySink,
+} from '../profiling/.spec/api.js'
+export { ANALYSIS_TELEMETRY_FORMAT } from '../profiling/.spec/api.js'
+export type {
   NativeAnalysisRequest,
   NativeAnalysisResponse,
   NativeAnalysisSession,

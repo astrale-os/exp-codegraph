@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	shimcore "github.com/microsoft/typescript-go/shim/core"
 	shimtsoptions "github.com/microsoft/typescript-go/shim/tsoptions"
@@ -29,9 +30,11 @@ type analyzer struct {
 	session      *driver.Session
 	states       map[string]generationState
 	current      string
+	telemetry    *nativeTelemetry
 }
 
-func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary) (*analyzer, error) {
+func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, telemetry *nativeTelemetry) (*analyzer, error) {
+	started := time.Now()
 	abs, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -45,6 +48,7 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 		return nil, err
 	}
 	session, diagnostics, err := driver.NewSession(root, config, driver.LoadProgramOptions{ForceNoEmit: true})
+	telemetry.record(0, "compiler.open", started, map[string]any{"configurationDiagnostics": len(diagnostics)})
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +63,7 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 	}
 	return &analyzer{
 		root: root, config: config, universe: universe, capabilities: capabilities, modules: modules,
-		session: session, states: map[string]generationState{},
+		session: session, states: map[string]generationState{}, telemetry: telemetry,
 	}, nil
 }
 
@@ -72,7 +76,27 @@ func (a *analyzer) close() error {
 	return err
 }
 
-func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
+func (a *analyzer) refresh(input request) (transaction *factTransaction, unchanged string, err error) {
+	started := time.Now()
+	var before runtime.MemStats
+	if a.telemetry != nil {
+		runtime.ReadMemStats(&before)
+	}
+	defer func() {
+		metrics := map[string]any{
+			"changedPaths": len(input.Changed), "invalidate": input.Invalidate,
+			"outcome": map[bool]string{true: "error", false: "success"}[err != nil],
+		}
+		if a.telemetry != nil {
+			var after runtime.MemStats
+			runtime.ReadMemStats(&after)
+			metrics["totalAllocatedBytes"] = after.TotalAlloc - before.TotalAlloc
+			metrics["allocations"] = after.Mallocs - before.Mallocs
+			metrics["heapBytes"] = after.HeapAlloc
+			metrics["systemBytes"] = after.Sys
+		}
+		a.telemetry.record(input.ID, "refresh.total", started, metrics)
+	}()
 	if input.Base != a.current {
 		return nil, "", protocolError("BASE_STALE", "The requested base is not the resident analyzer's current private generation.")
 	}
@@ -82,15 +106,21 @@ func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
 	if input.Base != "" && !input.Invalidate && len(input.Changed) == 0 {
 		return nil, input.Base, nil
 	}
+	updateStarted := time.Now()
 	if input.Invalidate {
 		if err := a.rebuild(); err != nil {
 			return nil, "", err
 		}
+		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": "rebuild"})
 	} else if err := a.apply(input.Changed); err != nil {
 		return nil, "", err
+	} else {
+		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": "resident-apply"})
 	}
 
+	universeStarted := time.Now()
 	nextUniverse, configuration, err := a.projectUniverse()
+	a.telemetry.record(input.ID, "universe.project", universeStarted, map[string]any{"configurationFiles": len(configuration)})
 	if err != nil {
 		return nil, "", err
 	}
@@ -105,7 +135,9 @@ func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
 		a.current = ""
 	}
 
-	shards, sources, err := extractProgram(a.root, a.universe, a.session.Program(), a.modules)
+	extractionStarted := time.Now()
+	shards, sources, err := extractProgram(a.root, a.universe, a.session.Program(), a.modules, a.telemetry, input.ID)
+	a.telemetry.record(input.ID, "projection.total", extractionStarted, map[string]any{"shards": len(shards), "sources": len(sources)})
 	if err != nil {
 		return nil, "", err
 	}
@@ -120,7 +152,11 @@ func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
 		}
 	}
 	shards = selected
+	if a.telemetry != nil {
+		recordFactBytes(a.telemetry, input.ID, shards)
+	}
 
+	materializationStarted := time.Now()
 	sourceEntries := make([]map[string]any, 0, len(sources))
 	for _, source := range sources {
 		sourceEntries = append(sourceEntries, map[string]any{"path": source.Path, "revision": source.Revision})
@@ -187,7 +223,7 @@ func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
 	}
 	sort.Slice(upserts, func(i, j int) bool { return upserts[i].Key < upserts[j].Key })
 	sort.Strings(deletes)
-	transaction := &factTransaction{
+	transaction = &factTransaction{
 		ProtocolVersion: protocolVersion, Base: baseID, Next: generation,
 		Manifest: manifest, Upserts: upserts, Deletes: deletes,
 	}
@@ -196,7 +232,30 @@ func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
 	}
 	a.current = generationID
 	a.collectStates()
+	a.telemetry.record(input.ID, "transaction.materialize", materializationStarted, map[string]any{
+		"manifestShards": len(manifest), "upsertShards": len(upserts), "deleteShards": len(deletes),
+	})
 	return transaction, "", nil
+}
+
+func recordFactBytes(telemetry *nativeTelemetry, requestID int, shards []factShard) {
+	started := time.Now()
+	bytesByNamespace := map[string]int{}
+	factsByNamespace := map[string]int{}
+	for _, shard := range shards {
+		for _, fact := range shard.Facts {
+			bytesByNamespace[fact.Namespace] += len(stableJSON(fact))
+			factsByNamespace[fact.Namespace]++
+		}
+	}
+	telemetry.record(requestID, "facts.measure", started, map[string]any{
+		"namespaces": len(bytesByNamespace),
+	})
+	for namespace, bytes := range bytesByNamespace {
+		telemetry.record(requestID, "facts.namespace", time.Now(), map[string]any{
+			"namespace": namespace, "facts": factsByNamespace[namespace], "semanticJsonBytes": bytes,
+		})
+	}
 }
 
 func (a *analyzer) projectUniverse() (string, []map[string]any, error) {

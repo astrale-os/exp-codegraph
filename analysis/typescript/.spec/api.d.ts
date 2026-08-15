@@ -16,6 +16,7 @@ import type {
   NativeProjectDescriptor,
 } from '../../protocol/.spec/api.js'
 import type { AnalysisStore } from '../../query/.spec/api.js'
+import type { AnalysisTelemetrySink } from '../../profiling/.spec/api.js'
 import type { FunctionBodyIR } from '../body/.spec/api.js'
 import type {
   ObservationIssue,
@@ -167,6 +168,7 @@ export interface TypeScriptAnalysisServiceOptions {
   readonly project: NativeProjectDescriptor
   readonly sessions: NativeAnalysisSessionFactory
   readonly store: AnalysisStore
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export interface TypeScriptAnalysisPipelineOptions {

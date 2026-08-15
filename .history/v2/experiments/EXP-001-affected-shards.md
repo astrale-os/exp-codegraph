@@ -58,3 +58,16 @@ times baseline and its upper interval must be reported rather than hidden.
 The first uncommitted selective-source candidate passed the small SDK extension differential but
 failed exact incremental/cold equality on the real Codegraph mirror. It remains diagnostic-only.
 The likely causes must be established by evidence; no result from this candidate qualifies V2.
+
+The qualified post-cleanup attribution baseline contains 303 owned sources and 4,551 shards. One
+instrumented cold memory run spent 69.1 seconds in projection: 21.9 seconds discovering symbols,
+24.7 seconds emitting occurrences, and 20.4 seconds emitting bodies. It allocated approximately
+88.3 GB cumulatively across 1.57 billion allocations before transmitting a 226.9 MB semantic
+transaction as 302.5 MB of framed wire data. Memory materialization added 2.6 seconds; SQLite
+materialization added 7.1 seconds. Profiling on/off reconstructed identical generations,
+transactions, manifests, capabilities, and facts.
+
+This establishes that an affected-source implementation must remove repository-sized work across
+projection, transport, validation, and materialization. A source-local compiler extractor followed
+by a complete manifest, full transaction reconstruction, or whole-generation rebinding does not
+satisfy the scaling invariant even if one wall-time sample improves.

@@ -2,10 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { createInterface } from 'node:readline'
+import type { Readable } from 'node:stream'
 
 import type { Completeness, Fact, FactShard, FactShardReference, SourceSpan } from '../facts/index.ts'
 import type { FactTransaction } from '../generation/index.ts'
 import { admitAnalysisId, portablePath } from '../identity/index.ts'
+import type { AnalysisTelemetryEvent, AnalysisTelemetrySink } from '../profiling/index.ts'
+import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
 import type {
   NativeAnalysisRequest,
   NativeAnalysisResponse,
@@ -23,6 +26,8 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
   readonly maximumErrorBytes?: number
+  /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
@@ -46,6 +51,7 @@ interface PendingRequest {
   reject(error: Error): void
   removeAbort?(): void
   assembly?: TransactionAssembly
+  startedNs?: bigint
 }
 
 type NativeAnalysisWireFrame =
@@ -103,6 +109,7 @@ export function createProcessNativeAnalysisSessionFactory(
     async open(project, openOptions = {}) {
       openOptions.signal?.throwIfAborted()
       validateProject(project)
+      const telemetry = options.telemetry
       const child = spawn(
         options.command,
         [
@@ -124,18 +131,27 @@ export function createProcessNativeAnalysisSessionFactory(
           String(transactionChunkFrameBytes),
           '--maximum-transaction-bytes',
           String(maximumTransactionBytes),
+          ...(telemetry ? ['--telemetry-fd', '3'] : []),
         ],
         {
           cwd: project.root,
           env: { ...process.env, ...options.environment },
-          stdio: ['pipe', 'pipe', 'pipe'],
+          stdio: telemetry ? ['pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
         },
       )
+      if (telemetry) {
+        const channel = (child.stdio as unknown as readonly (Readable | null)[])[3]
+        if (channel) {
+          const lines = createInterface({ input: channel, crlfDelay: Infinity })
+          lines.on('line', (line) => receiveTelemetry(line, telemetry))
+        }
+      }
       return await ProcessNativeAnalysisSession.open(
         child,
         maximumFrameBytes,
         maximumTransactionBytes,
         maximumErrorBytes,
+        telemetry,
         openOptions.signal,
       )
     },
@@ -150,16 +166,19 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   readonly #child: ChildProcessWithoutNullStreams
   readonly #maximumFrameBytes: number
   readonly #maximumTransactionBytes: number
+  readonly #telemetry: AnalysisTelemetrySink | undefined
 
   private constructor(
     child: ChildProcessWithoutNullStreams,
     maximumFrameBytes: number,
     maximumTransactionBytes: number,
     maximumErrorBytes: number,
+    telemetry: AnalysisTelemetrySink | undefined,
   ) {
     this.#child = child
     this.#maximumFrameBytes = maximumFrameBytes
     this.#maximumTransactionBytes = maximumTransactionBytes
+    this.#telemetry = telemetry
     child.stderr.setEncoding('utf8')
     child.stderr.on('data', (chunk: string) => {
       if (this.#stderr.length < maximumErrorBytes) {
@@ -167,7 +186,18 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       }
     })
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
-    lines.on('line', (line) => this.receive(line))
+    lines.on('line', (line) => {
+      const started = telemetry ? process.hrtime.bigint() : 0n
+      this.receive(line)
+      if (telemetry) {
+        dispatchAnalysisTelemetry(telemetry, {
+          component: 'transport',
+          phase: 'frame.receive',
+          durationNs: Number(process.hrtime.bigint() - started),
+          metrics: { wireBytes: Buffer.byteLength(line) + 1 },
+        })
+      }
+    })
     child.once('error', (error) => this.fail(error))
     child.once('exit', (code, signal) => {
       if (!this.#disposed || this.#pending.size) {
@@ -185,6 +215,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     maximumFrameBytes: number,
     maximumTransactionBytes: number,
     maximumErrorBytes: number,
+    telemetry: AnalysisTelemetrySink | undefined,
     signal?: AbortSignal,
   ): Promise<ProcessNativeAnalysisSession> {
     const session = new ProcessNativeAnalysisSession(
@@ -192,6 +223,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       maximumFrameBytes,
       maximumTransactionBytes,
       maximumErrorBytes,
+      telemetry,
     )
     if (signal) {
       if (signal.aborted) {
@@ -211,8 +243,13 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     validateRequest(request)
     if (this.#pending.has(request.id)) throw new Error(`Duplicate native request id ${request.id}.`)
     options.signal?.throwIfAborted()
+    const started = this.#telemetry ? process.hrtime.bigint() : 0n
     return new Promise((resolve, reject) => {
-      const entry: PendingRequest = { resolve, reject }
+      const entry: PendingRequest = {
+        resolve,
+        reject,
+        ...(this.#telemetry ? { startedNs: started } : {}),
+      }
       if (options.signal) {
         const abort = () => void this.abort(options.signal!.reason)
         options.signal.addEventListener('abort', abort, { once: true })
@@ -228,6 +265,15 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       }
       this.#child.stdin.write(frame, (error) => {
         if (error) this.fail(error)
+        else if (this.#telemetry) {
+          dispatchAnalysisTelemetry(this.#telemetry, {
+            component: 'transport',
+            phase: 'request.write',
+            request: request.id,
+            durationNs: Number(process.hrtime.bigint() - started),
+            metrics: { wireBytes: Buffer.byteLength(frame) },
+          })
+        }
       })
     })
   }
@@ -384,6 +430,23 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   private resolve(id: number, pending: PendingRequest, response: NativeAnalysisResponse): void {
     this.#pending.delete(id)
     pending.removeAbort?.()
+    if (this.#telemetry && pending.startedNs !== undefined) {
+      dispatchAnalysisTelemetry(this.#telemetry, {
+        component: 'transport',
+        phase: 'request.roundtrip',
+        request: id,
+        durationNs: Number(process.hrtime.bigint() - pending.startedNs),
+        metrics: {
+          responseKind: response.kind,
+          ...(pending.assembly
+            ? {
+                transactionBytes: pending.assembly.bytes,
+                transactionChunks: pending.assembly.chunks,
+              }
+            : {}),
+        },
+      })
+    }
     pending.resolve(response)
   }
 
@@ -414,6 +477,28 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   private assertOpen(): void {
     if (this.#failure) throw this.#failure
     if (this.#disposed) throw new Error('Native analysis session is disposed.')
+  }
+}
+
+function receiveTelemetry(line: string, sink: AnalysisTelemetrySink): void {
+  try {
+    const input: unknown = JSON.parse(line)
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return
+    const value = input as Partial<AnalysisTelemetryEvent>
+    if (
+      value.format !== 'astrale.codegraph.analysis-telemetry' ||
+      value.version !== 1 ||
+      value.component !== 'native' ||
+      typeof value.phase !== 'string' ||
+      !value.phase
+    ) return
+    try {
+      sink(value as AnalysisTelemetryEvent)
+    } catch {
+      // Telemetry observers are diagnostic-only.
+    }
+  } catch {
+    // A malformed diagnostic stream never invalidates the semantic protocol stream.
   }
 }
 

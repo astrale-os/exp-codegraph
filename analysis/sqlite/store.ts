@@ -5,6 +5,8 @@ import { DatabaseSync } from 'node:sqlite'
 import type { AnalysisGeneration, FactTransaction } from '../generation/index.ts'
 import type { AnalysisGenerationId, ProjectUniverseId, SourceManifestId } from '../identity/index.ts'
 import type { AnalysisQuery, AnalysisSnapshotSet, AnalysisStore } from '../query/index.ts'
+import type { AnalysisTelemetrySink } from '../profiling/index.ts'
+import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
 
 import { SQLiteLeaseRegistry } from './lifecycle/leases.ts'
 import { collectSQLiteGenerations } from './lifecycle/retention.ts'
@@ -23,6 +25,7 @@ export interface SQLiteAnalysisStoreOptions {
   readonly leaseTimeoutMs?: number
   readonly maximumRetainedGenerations?: number
   readonly requireDurability?: boolean
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export async function createSQLiteAnalysisStore(
@@ -85,23 +88,33 @@ class SQLiteAnalysisStore implements AnalysisStore {
   ): Promise<void> {
     this.assertOpen()
     options.signal?.throwIfAborted()
+    const totalStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
     // Validate against indexed membership before acquiring the cross-process
     // writer lock. The same validation is repeated inside the transaction to
     // retain causal stale-base diagnostics under contention.
+    let phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
     validateSQLiteTransaction(this.#database, this.#options.namespace, transaction)
+    this.emit('transaction.validate-before-lock', phaseStarted, transaction)
     options.signal?.throwIfAborted()
     this.#database.exec('BEGIN IMMEDIATE')
     try {
+      phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
       validateSQLiteTransaction(this.#database, this.#options.namespace, transaction)
+      this.emit('transaction.validate-locked', phaseStarted, transaction)
       options.signal?.throwIfAborted()
+      phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
       writeTransaction(this.#database, this.#options.namespace, transaction)
+      this.emit('transaction.write', phaseStarted, transaction)
+      phaseStarted = this.#options.telemetry ? process.hrtime.bigint() : 0n
       collectSQLiteGenerations(
         this.#database,
         this.#options.namespace,
         transaction.next.universe,
         this.#maximumRetained,
       )
+      this.emit('transaction.retention', phaseStarted, transaction)
       this.#database.exec('COMMIT')
+      this.emit('transaction.commit-total', totalStarted, transaction)
     } catch (error) {
       if (this.#database.isTransaction) this.#database.exec('ROLLBACK')
       throw error
@@ -179,6 +192,22 @@ class SQLiteAnalysisStore implements AnalysisStore {
 
   private assertOpen(): void {
     if (this.#disposed) throw new Error('SQLite analysis store is disposed.')
+  }
+
+  private emit(phase: string, started: bigint, transaction: FactTransaction): void {
+    const telemetry = this.#options.telemetry
+    if (!telemetry) return
+    dispatchAnalysisTelemetry(telemetry, {
+      component: 'sqlite-store',
+      phase,
+      durationNs: Number(process.hrtime.bigint() - started),
+      metrics: {
+        manifestShards: transaction.manifest.length,
+        upsertShards: transaction.upserts.length,
+        deleteShards: transaction.deletes.length,
+        upsertFacts: transaction.upserts.reduce((total, shard) => total + shard.facts.length, 0),
+      },
+    })
   }
 }
 

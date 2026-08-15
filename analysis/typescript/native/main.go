@@ -41,6 +41,7 @@ type commandOptions struct {
 	cwd, config, universe, capabilitiesJSON, modulesJSON string
 	maximumFrameBytes, transactionChunkFrameBytes        int
 	maximumTransactionBytes                              int
+	telemetryFD                                          int
 }
 
 func parseOptions(command string, arguments []string) (commandOptions, error) {
@@ -54,6 +55,7 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	maximumFrameBytes := flags.Int("maximum-frame-bytes", 64*1024*1024, "maximum JSONL frame bytes")
 	transactionChunkFrameBytes := flags.Int("transaction-chunk-frame-bytes", 8*1024*1024, "preferred streamed transaction frame bytes")
 	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", 256*1024*1024, "maximum assembled transaction bytes")
+	telemetryFD := flags.Int("telemetry-fd", -1, "optional diagnostic NDJSON descriptor")
 	_ = flags.String("plugins-json", "", "ttsc compatibility")
 	_ = flags.Bool("emit", false, "ttsc compatibility")
 	_ = flags.Bool("noEmit", false, "ttsc compatibility")
@@ -84,6 +86,7 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 		capabilitiesJSON: *capabilities, modulesJSON: *modules,
 		maximumFrameBytes: *maximumFrameBytes, transactionChunkFrameBytes: *transactionChunkFrameBytes,
 		maximumTransactionBytes: *maximumTransactionBytes,
+		telemetryFD:             *telemetryFD,
 	}, nil
 }
 
@@ -131,7 +134,13 @@ func runCheck(arguments []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules)
+	telemetry, err := openNativeTelemetry(options.telemetryFD)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	defer telemetry.close()
+	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, telemetry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -159,7 +168,13 @@ func runServe(arguments []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules)
+	telemetry, err := openNativeTelemetry(options.telemetryFD)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	defer telemetry.close()
+	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, telemetry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -239,6 +254,7 @@ func runServe(arguments []string) int {
 			options.maximumFrameBytes,
 			options.transactionChunkFrameBytes,
 			options.maximumTransactionBytes,
+			telemetry,
 		); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2

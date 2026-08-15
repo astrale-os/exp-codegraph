@@ -753,7 +753,7 @@ compiled. V2 audits every current artifact by the question it owns:
 | `laws/` | Retain falsifiable truths; resolved evidence moves to qualification |
 | `states/` | Retain lifecycle topology; resolved evidence moves to qualification |
 | `limits.ts` | Retain normative measurable limits |
-| `layout.ts` | Retain intended paths; filesystem observation moves to analysis |
+| `layout.ts` | Retain stable intended module/resource boundaries; do not inventory volatile private leaf files; filesystem observation moves to analysis |
 | `examples/` | Retain canonical public consumer intents |
 | `benchmarks/` | Retain stable workloads and metrics |
 | `packages/` | Retain direct external dependency rationale |
@@ -1193,6 +1193,11 @@ Deferral does not permit TypeSpec-specific facts in the generic namespaces. Each
 policy and namespaced derived facts.
 
 ## Changelog
+
+- 2026-08-15 — Clarified that `.spec` is a thin semantic and architectural spine rather than a
+  recursive physical inventory. Stable public/headless boundaries remain specified; volatile native,
+  codec, profiling, and qualification leaf files are governed by compilation, focused architecture
+  tests, negative scans, and differential/runtime qualification. No product semantics changed.
 
 - 2026-08-15 — Retired executable V1 capture and parity implementations at the coordinated
   authority cut while preserving immutable historical witnesses and a generic fail-closed

@@ -201,6 +201,7 @@ describe('TypeSpec V2 generic analysis foundation', () => {
         'memory',
         'pass',
         'policy',
+        'profiling',
         'protocol',
         'query',
         'source',
@@ -212,16 +213,18 @@ describe('TypeSpec V2 generic analysis foundation', () => {
       source: new Set(['identity']),
       pass: new Set(['facts', 'generation', 'identity', 'query']),
       policy: new Set(['facts', 'identity', 'pass', 'query']),
+      profiling: new Set(),
       internal: new Set(['facts', 'generation', 'identity', 'query']),
-      memory: new Set(['generation', 'identity', 'internal', 'query']),
-      protocol: new Set(['facts', 'generation', 'identity']),
-      sqlite: new Set(['facts', 'generation', 'identity', 'internal', 'query']),
+      memory: new Set(['generation', 'identity', 'internal', 'profiling', 'query']),
+      protocol: new Set(['facts', 'generation', 'identity', 'profiling']),
+      sqlite: new Set(['facts', 'generation', 'identity', 'internal', 'profiling', 'query']),
       typescript: new Set([
         'facts',
         'generation',
         'identity',
         'memory',
         'pass',
+        'profiling',
         'protocol',
         'query',
       ]),
@@ -360,6 +363,70 @@ lines.on('line', (line) => {
       malformed.request({ id: 1, kind: 'refresh', changed: ['malformed'] }),
     ).rejects.toThrow('invalid protocol frame')
     await malformed.dispose()
+  })
+
+  it('keeps diagnostic telemetry on a separate descriptor and semantics unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-telemetry-session-'))
+    temporary.push(root)
+    const sidecar = join(root, 'sidecar.mjs')
+    const generation = deriveAnalysisId('generation', 'telemetry-sidecar', {})
+    await writeFile(
+      sidecar,
+      `
+import { writeSync } from 'node:fs'
+import { createInterface } from 'node:readline'
+const profiled = process.argv.includes('--telemetry-fd')
+const lines = createInterface({ input: process.stdin })
+lines.on('line', (line) => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+  if (profiled) writeSync(3, JSON.stringify({
+    format: 'astrale.codegraph.analysis-telemetry',
+    version: 1,
+    component: 'native',
+    phase: 'fixture.refresh',
+    request: request.id,
+    durationNs: 1,
+    metrics: { facts: 0 }
+  }) + '\\n')
+  process.stdout.write(JSON.stringify({
+    id: request.id,
+    protocolVersion: 1,
+    kind: 'unchanged',
+    generation: ${JSON.stringify(generation)}
+  }) + '\\n')
+})
+`,
+    )
+    const project = {
+      root,
+      config: 'tsconfig.json',
+      capabilities: ['fixture'],
+    }
+    const plain = await createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+    }).open(project)
+    const events: import('../analysis/index.ts').AnalysisTelemetryEvent[] = []
+    const profiled = await createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+      telemetry: (event) => events.push(event),
+    }).open(project)
+    const request = { id: 1, kind: 'refresh' as const }
+    const [plainResponse, profiledResponse] = await Promise.all([
+      plain.request(request),
+      profiled.request(request),
+    ])
+    expect(profiledResponse).toEqual(plainResponse)
+    await expect.poll(() => events.some((event) => event.phase === 'fixture.refresh')).toBe(true)
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ component: 'native', phase: 'fixture.refresh', request: 1 }),
+        expect.objectContaining({ component: 'transport', phase: 'request.roundtrip', request: 1 }),
+      ]),
+    )
+    await Promise.all([plain.dispose(), profiled.dispose()])
   })
 
   it('assembles bounded native transaction frames and rejects unsafe stream sequences', async () => {

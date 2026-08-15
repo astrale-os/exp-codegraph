@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 )
 
 const transactionFrameEncoding = "base64-json"
@@ -45,7 +46,9 @@ func writeTransactionResponse(
 	maximumFrameBytes int,
 	transactionChunkFrameBytes int,
 	maximumTransactionBytes int,
+	telemetry *nativeTelemetry,
 ) error {
+	started := time.Now()
 	serialized, err := json.Marshal(transaction)
 	if err != nil {
 		return fmt.Errorf("encode native transaction: %w", err)
@@ -64,8 +67,14 @@ func writeTransactionResponse(
 	if err != nil {
 		return fmt.Errorf("encode native transaction response: %w", err)
 	}
+	counted := &countingWriter{target: output}
 	if len(encodedDirect) <= maximumFrameBytes {
-		return writeEncodedFrame(output, encodedDirect, maximumFrameBytes)
+		err := writeEncodedFrame(counted, encodedDirect, maximumFrameBytes)
+		telemetry.record(id, "transport.serialize-and-write", started, map[string]any{
+			"transactionBytes": len(serialized), "directResponseBytes": len(encodedDirect),
+			"wireBytes": counted.bytes, "chunks": 1, "chunked": false,
+		})
+		return err
 	}
 
 	chunkBytes, err := maximumRawChunkBytes(id, len(serialized), transactionChunkFrameBytes)
@@ -79,7 +88,7 @@ func writeTransactionResponse(
 		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-start",
 		Encoding: transactionFrameEncoding, Bytes: len(serialized), Chunks: chunks, SHA256: digest,
 	}
-	if err := writeFrame(output, start, transactionChunkFrameBytes); err != nil {
+	if err := writeFrame(counted, start, transactionChunkFrameBytes); err != nil {
 		return err
 	}
 	for sequence, offset := 0, 0; offset < len(serialized); sequence, offset = sequence+1, offset+chunkBytes {
@@ -91,14 +100,30 @@ func writeTransactionResponse(
 			ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-chunk",
 			Sequence: sequence, Data: base64.StdEncoding.EncodeToString(serialized[offset:end]),
 		}
-		if err := writeFrame(output, frame, transactionChunkFrameBytes); err != nil {
+		if err := writeFrame(counted, frame, transactionChunkFrameBytes); err != nil {
 			return err
 		}
 	}
-	return writeFrame(output, transactionEndFrame{
+	err = writeFrame(counted, transactionEndFrame{
 		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-end",
 		Bytes: len(serialized), Chunks: chunks, SHA256: digest,
 	}, transactionChunkFrameBytes)
+	telemetry.record(id, "transport.serialize-and-write", started, map[string]any{
+		"transactionBytes": len(serialized), "directResponseBytes": len(encodedDirect),
+		"wireBytes": counted.bytes, "chunks": chunks, "chunked": true,
+	})
+	return err
+}
+
+type countingWriter struct {
+	target io.Writer
+	bytes  int
+}
+
+func (w *countingWriter) Write(value []byte) (int, error) {
+	written, err := w.target.Write(value)
+	w.bytes += written
+	return written, err
 }
 
 func writeFrame(output io.Writer, frame any, maximumFrameBytes int) error {

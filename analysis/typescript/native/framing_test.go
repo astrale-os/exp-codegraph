@@ -38,7 +38,7 @@ func TestWriteTransactionResponseFragmentsOneOversizedShard(t *testing.T) {
 	}
 	const maximumFrameBytes = 1024
 	var output bytes.Buffer
-	if err := writeTransactionResponse(&output, 7, transaction, maximumFrameBytes, maximumFrameBytes, 32*1024); err != nil {
+	if err := writeTransactionResponse(&output, 7, transaction, maximumFrameBytes, maximumFrameBytes, 32*1024, nil); err != nil {
 		t.Fatal(err)
 	}
 	lines := bytes.Split(bytes.TrimSuffix(output.Bytes(), []byte{'\n'}), []byte{'\n'})
@@ -109,7 +109,7 @@ func TestWriteTransactionResponseFragmentsOneOversizedShard(t *testing.T) {
 func TestWriteTransactionResponseRejectsAssembledLimit(t *testing.T) {
 	transaction := &factTransaction{ProtocolVersion: protocolVersion, Deletes: []string{strings.Repeat("x", 2048)}}
 	var output bytes.Buffer
-	err := writeTransactionResponse(&output, 1, transaction, 1024, 1024, 1024)
+	err := writeTransactionResponse(&output, 1, transaction, 1024, 1024, 1024, nil)
 	if err == nil || !strings.Contains(err.Error(), "transaction exceeds configured limit") {
 		t.Fatalf("expected transaction limit error, received %v", err)
 	}

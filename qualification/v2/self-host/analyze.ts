@@ -6,6 +6,7 @@ import {
   type AnalysisGeneration,
   type AnalysisQuery,
   type AnalysisStore,
+  type AnalysisTelemetrySink,
   type CapabilityStatus,
   type Fact,
   type NativeModuleBoundary,
@@ -41,6 +42,7 @@ export interface AnalyzeProjectOptions {
   readonly modules: readonly NativeModuleBoundary[]
   readonly binary: string
   readonly store: AnalysisStore
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
@@ -50,6 +52,7 @@ export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
 }> {
   const sessions = createProcessNativeAnalysisSessionFactory({
     command: options.binary,
+    ...(options.telemetry ? { telemetry: options.telemetry } : {}),
   })
   const service = await createTypeScriptAnalysisService({
     project: {
@@ -60,6 +63,7 @@ export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
     },
     sessions,
     store: options.store,
+    ...(options.telemetry ? { telemetry: options.telemetry } : {}),
   })
   const started = performance.now()
   const refreshed = await service.refresh()

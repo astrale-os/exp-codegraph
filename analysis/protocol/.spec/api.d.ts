@@ -1,5 +1,6 @@
 import type { FactTransaction } from '../../generation/.spec/api.js'
 import type { AnalysisGenerationId } from '../../identity/.spec/api.js'
+import type { AnalysisTelemetrySink } from '../../profiling/.spec/api.js'
 
 export const NATIVE_ANALYSIS_PROTOCOL_VERSION: number
 
@@ -82,6 +83,8 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   /** Maximum decoded bytes in one complete semantic transaction. */
   readonly maximumTransactionBytes?: number
   readonly maximumErrorBytes?: number
+  /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
+  readonly telemetry?: AnalysisTelemetrySink
 }
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS: Readonly<{
