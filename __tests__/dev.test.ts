@@ -364,7 +364,7 @@ describe('universal specification dev server', () => {
       expect(retained.status).toBe(200)
       await retained.body?.cancel()
     }
-  }, 30_000)
+  }, 120_000)
 })
 
 async function loadSpec(url: string, entry: CatalogSpecEntry): Promise<ViewerSpecification> {

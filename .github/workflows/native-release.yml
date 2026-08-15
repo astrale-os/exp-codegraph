@@ -56,6 +56,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
         with:
           frozen-lockfile: 'true'
@@ -76,6 +78,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
         with:
           frozen-lockfile: 'true'
@@ -118,6 +122,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
       - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
         with:
           frozen-lockfile: 'true'
