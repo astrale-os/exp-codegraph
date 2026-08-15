@@ -88,8 +88,8 @@ jobs:
         with:
           pattern: '*-*'
           path: .native-input
-      - name: Assemble and validate release
-        run: pnpm native:assemble -- --input .native-input && pnpm release:check
+      - name: Assemble and validate distributable artifacts
+        run: pnpm native:assemble -- --input .native-input && pnpm native:assert-release && pnpm build
       - name: Pack consumer and opaque artifact packages
         run: |
           mkdir -p release
