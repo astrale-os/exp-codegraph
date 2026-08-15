@@ -27,13 +27,11 @@ try {
     new RegExp(`^astrale-os-codegraph-native-${escapeRegExp(target)}-\\d[^/]*\\.tgz$`, 'u'),
   )
   const consumer = join(temporary, 'consumer')
-  await Promise.all([
-    mkdir(consumer, { recursive: true }),
-    writeFile(
-      join(consumer, 'package.json'),
-      JSON.stringify({ name: '@fixture/codegraph-packed-consumer', private: true, type: 'module' }),
-    ),
-  ])
+  await mkdir(consumer, { recursive: true })
+  await writeFile(
+    join(consumer, 'package.json'),
+    JSON.stringify({ name: '@fixture/codegraph-packed-consumer', private: true, type: 'module' }),
+  )
   const pnpm = 'pnpm'
   await execFile(
     pnpm,
