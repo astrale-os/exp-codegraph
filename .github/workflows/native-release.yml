@@ -90,11 +90,11 @@ jobs:
           path: .native-input
       - name: Assemble and validate distributable artifacts
         run: pnpm native:assemble -- --input .native-input && pnpm native:assert-release && pnpm build
-      - name: Pack consumer and opaque artifact packages
+      - name: Pack consumer and executable artifact packages
         run: |
           mkdir -p release
           for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
-            pnpm --dir native-packages/$target pack --pack-destination ../../release
+            npm --prefix native-packages/$target pack --pack-destination ../../release
           done
           pnpm pack --pack-destination release
       - name: Upload assembled package set
