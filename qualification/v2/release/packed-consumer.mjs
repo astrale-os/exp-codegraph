@@ -94,6 +94,15 @@ try {
     project: {
       root: project,
       config: 'tsconfig.json',
+      capabilities: [
+        'astrale.typescript.module',
+        'typescript.body',
+        'typescript.diagnostic',
+        'typescript.occurrence',
+        'typescript.project',
+        'typescript.source',
+        'typescript.symbol',
+      ],
       modules: [
         {
           id: 'fixture.sdk',
