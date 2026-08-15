@@ -124,14 +124,23 @@ try {
     assert.deepEqual(refreshed.diagnostics, [])
     const query = await store.open(refreshed.generation.universe, refreshed.generation.id)
     try {
-      const facts = await typescript.createTypeScriptFactReader(query).exportAll()
-      assert.equal(facts.diagnostics.length, 0)
-      assert(facts.bodies.length > 0)
-      assert(facts.occurrences.length > 0)
-      assert(facts.modules.length > 0)
-      const states = new Set(
-        facts.bodies.flatMap((fact) => Object.values(fact.payload.values).map((value) => value.kind)),
-      )
+      let diagnostics = 0
+      let bodies = 0
+      let occurrences = 0
+      let modules = 0
+      const states = new Set()
+      for await (const fact of typescript.createTypeScriptFactReader(query).exportAll()) {
+        if (fact.namespace === 'typescript.diagnostic') diagnostics++
+        else if (fact.namespace === 'typescript.body') {
+          bodies++
+          for (const value of Object.values(fact.payload.values)) states.add(value.kind)
+        } else if (fact.namespace === 'typescript.occurrence') occurrences++
+        else if (fact.namespace === 'astrale.typescript.module') modules++
+      }
+      assert.equal(diagnostics, 0)
+      assert(bodies > 0)
+      assert(occurrences > 0)
+      assert(modules > 0)
       assert.deepEqual([...states].sort(), ['ambiguous', 'known', 'unknown', 'unsupported'])
     } finally {
       await query.dispose()
