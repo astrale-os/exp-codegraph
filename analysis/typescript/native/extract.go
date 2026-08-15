@@ -37,6 +37,7 @@ var supportedCapabilities = []string{
 type extractor struct {
 	root                        string
 	universe                    string
+	plan                        projectionPlan
 	checker                     *shimchecker.Checker
 	sources                     map[string]sourceRecord
 	symbolIDs                   map[*shimast.Symbol]string
@@ -49,28 +50,40 @@ type extractor struct {
 	payloadEncodingError        error
 }
 
-func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
-	x, files, records := prepareExtractor(root, universe, program, modules, payloadCodecs, maximumSemanticPayloadBytes, nil, nil, telemetry, requestID)
+func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
+	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, nil, nil, telemetry, requestID)
 	var shards []factShard
-	phase := time.Now()
-	shards = append(shards, x.projectShard(program))
-	telemetry.record(requestID, "projection.project", phase, nil)
-	phase = time.Now()
-	diagnostic := x.diagnosticShard(program)
-	shards = append(shards, diagnostic)
-	telemetry.record(requestID, "projection.diagnostics", phase, map[string]any{"facts": len(diagnostic.Facts)})
-	phase = time.Now()
-	moduleShards, err := x.moduleShards(program)
-	if err != nil {
-		return nil, nil, err
+	telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
+		"capabilities": strings.Join(plan.capabilities(), ","),
+		"stages":       strings.Join(plan.stages(), ","),
+	})
+	if plan.project {
+		phase := time.Now()
+		shards = append(shards, x.projectShard(program))
+		telemetry.record(requestID, "projection.project", phase, nil)
 	}
-	shards = append(shards, moduleShards...)
-	telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(moduleShards)})
-	sourceShards, err := x.sourceShards(files, nil, telemetry, requestID)
-	if err != nil {
-		return nil, nil, err
+	if plan.diagnostics {
+		phase := time.Now()
+		diagnostic := x.diagnosticShard(program)
+		shards = append(shards, diagnostic)
+		telemetry.record(requestID, "projection.diagnostics", phase, map[string]any{"facts": len(diagnostic.Facts)})
 	}
-	shards = append(shards, sourceShards...)
+	if plan.modules {
+		phase := time.Now()
+		moduleShards, err := x.moduleShards(program)
+		if err != nil {
+			return nil, nil, err
+		}
+		shards = append(shards, moduleShards...)
+		telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(moduleShards)})
+	}
+	if plan.sourceOwned() {
+		sourceShards, err := x.sourceShards(files, nil, telemetry, requestID)
+		if err != nil {
+			return nil, nil, err
+		}
+		shards = append(shards, sourceShards...)
+	}
 	telemetry.record(requestID, "facts.semantic-payloads", time.Now(), map[string]any{
 		"bytes": x.semanticPayloadBytes,
 	})
@@ -89,6 +102,7 @@ func prepareExtractor(
 	root, universe string,
 	program *driver.Program,
 	modules []moduleBoundary,
+	plan projectionPlan,
 	payloadCodecs map[string]bool,
 	maximumSemanticPayloadBytes int,
 	prior map[string]sourceRecord,
@@ -97,7 +111,7 @@ func prepareExtractor(
 	requestID int,
 ) (*extractor, []*shimast.SourceFile, []sourceRecord) {
 	x := &extractor{
-		root: root, universe: universe, checker: program.Checker,
+		root: root, universe: universe, plan: plan, checker: program.Checker,
 		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
 		symbolSeen: map[string]symbolFactPayload{}, modules: modules, payloadCodecs: payloadCodecs,
 		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
@@ -143,67 +157,93 @@ func (x *extractor) sourceShards(
 	requestID int,
 ) ([]factShard, error) {
 	var shards []factShard
-	phase := time.Now()
 	selectedCount := 0
 	for _, file := range files {
 		if selected != nil && !selected[file.FileName()] {
 			continue
 		}
-		record, ok := x.sources[file.FileName()]
+		_, ok := x.sources[file.FileName()]
 		if !ok {
 			continue
 		}
 		selectedCount++
-		shards = append(shards, x.sourceShard(file, record))
-		x.discoverSymbols(file)
 	}
-	telemetry.record(requestID, "projection.sources-and-symbol-discovery", phase, map[string]any{"sources": selectedCount})
-	phase = time.Now()
-	for _, file := range files {
-		if selected != nil && !selected[file.FileName()] {
-			continue
+	if x.plan.sources {
+		phase := time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			shards = append(shards, x.sourceShard(file, record))
 		}
-		record, ok := x.sources[file.FileName()]
-		if !ok {
-			continue
-		}
-		if shard := x.symbolShard(file, record); len(shard.Facts) != 0 {
-			shards = append(shards, shard)
-		}
+		telemetry.record(requestID, "projection.sources", phase, map[string]any{"sources": selectedCount})
 	}
-	telemetry.record(requestID, "projection.symbols", phase, nil)
-	phase = time.Now()
-	for _, file := range files {
-		if selected != nil && !selected[file.FileName()] {
-			continue
+	if x.plan.symbols {
+		phase := time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			if _, ok := x.sources[file.FileName()]; ok {
+				x.discoverSymbols(file)
+			}
 		}
-		record, ok := x.sources[file.FileName()]
-		if !ok {
-			continue
+		telemetry.record(requestID, "projection.symbol-discovery", phase, map[string]any{"sources": selectedCount})
+		phase = time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			if shard := x.symbolShard(file, record); len(shard.Facts) != 0 {
+				shards = append(shards, shard)
+			}
 		}
-		if shard := x.occurrenceShard(file, record); len(shard.Facts) != 0 {
-			shards = append(shards, shard)
-		}
+		telemetry.record(requestID, "projection.symbols", phase, map[string]any{"sources": selectedCount})
 	}
-	telemetry.record(requestID, "projection.occurrences", phase, nil)
-	phase = time.Now()
-	bodyShards := 0
-	for _, file := range files {
-		if selected != nil && !selected[file.FileName()] {
-			continue
+	if x.plan.occurrences {
+		phase := time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			if shard := x.occurrenceShard(file, record); len(shard.Facts) != 0 {
+				shards = append(shards, shard)
+			}
 		}
-		record, ok := x.sources[file.FileName()]
-		if !ok {
-			continue
-		}
-		bodies, err := x.bodyShards(file, record)
-		if err != nil {
-			return nil, err
-		}
-		bodyShards += len(bodies)
-		shards = append(shards, bodies...)
+		telemetry.record(requestID, "projection.occurrences", phase, map[string]any{"sources": selectedCount})
 	}
-	telemetry.record(requestID, "projection.bodies", phase, map[string]any{"shards": bodyShards})
+	if x.plan.bodies {
+		phase := time.Now()
+		bodyShards := 0
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			record, ok := x.sources[file.FileName()]
+			if !ok {
+				continue
+			}
+			bodies, err := x.bodyShards(file, record)
+			if err != nil {
+				return nil, err
+			}
+			bodyShards += len(bodies)
+			shards = append(shards, bodies...)
+		}
+		telemetry.record(requestID, "projection.bodies", phase, map[string]any{"sources": selectedCount, "shards": bodyShards})
+	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil
 }

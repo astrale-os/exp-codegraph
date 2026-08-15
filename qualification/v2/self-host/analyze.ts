@@ -45,6 +45,7 @@ export interface AnalyzeProjectOptions {
   readonly store: AnalysisStore
   readonly telemetry?: AnalysisTelemetrySink
   readonly payloadCodecs?: readonly FactPayloadCodec[]
+  readonly capabilities?: readonly string[]
 }
 
 export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
@@ -61,7 +62,7 @@ export async function analyzeProject(options: AnalyzeProjectOptions): Promise<{
     project: {
       root: options.root,
       config: options.project,
-      capabilities: SELF_HOST_NATIVE_CAPABILITIES,
+      capabilities: options.capabilities ?? SELF_HOST_NATIVE_CAPABILITIES,
       modules: options.modules,
     },
     sessions,

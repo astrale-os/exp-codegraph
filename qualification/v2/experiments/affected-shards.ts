@@ -173,7 +173,7 @@ async function scenario(
   assert.equal(compiler?.metrics?.mode, expected.mode)
   const projection = [...events].reverse().find(
     (entry) => entry.component === 'native'
-      && entry.phase === 'projection.sources-and-symbol-discovery',
+      && entry.phase === 'projection.sources',
   )
   const projected = Number(projection?.metrics?.sources)
   if (expected.minimumSources !== undefined) assert(projected >= expected.minimumSources)

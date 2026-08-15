@@ -90,6 +90,12 @@ export const TYPESCRIPT_AFFECTED_SOURCE_CLOSURE = defineLaw({
     'A compiler-proven private edit reprojects only its owning source shards; a declaration-shape change expands through the exact transitive reverse dependency closure, while global scope, import-graph uncertainty, root churn, configuration changes, and mutating plugins fail closed to a complete rebuild.',
 })
 
+export const TYPESCRIPT_DEMAND_DRIVEN_PROJECTION = defineLaw({
+  id: 'TYPESCRIPT-DEMAND-DRIVEN-PROJECTION',
+  statement:
+    'The native adapter executes only the semantic projectors requested by the capability plan and their exact compiler prerequisites; each requested namespace is identical to the corresponding projection of an all-capability cold build, while an unrequested projector emits no facts and performs no semantic traversal.',
+})
+
 export const TYPESCRIPT_ATOMIC_PUBLICATION = defineLaw({
   id: 'TYPESCRIPT-ATOMIC-PUBLICATION',
   statement:

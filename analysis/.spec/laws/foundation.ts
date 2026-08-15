@@ -9,7 +9,7 @@ export const ANALYSIS_PORTABLE_IDENTITY = defineLaw({
 export const ANALYSIS_COMPILER_DERIVED_UNIVERSE = defineLaw({
   id: 'ANALYSIS-COMPILER-DERIVED-UNIVERSE',
   statement:
-    'A compiler project universe is derived only after loading its complete configuration chain, root membership, module boundaries, capabilities, toolchain, protocol, and platform; callers cannot seed or override it, and a changed universe begins a complete lineage.',
+    'A compiler project universe is derived only after loading its complete configuration chain, root membership, compiler and plugin semantics, toolchain, protocol, and platform; callers cannot seed or override it, a changed universe begins a complete lineage, and requested projection capabilities or module-observation boundaries affect generations without renaming that compiler universe.',
 })
 
 export const ANALYSIS_EXPLICIT_COMPLETENESS = defineLaw({

@@ -79,7 +79,7 @@ try {
     )
     const sourceProjection = [...events].reverse().find(
       (event) => event.component === 'native'
-        && event.phase === 'projection.sources-and-symbol-discovery',
+        && event.phase === 'projection.sources',
     )
     const nativeWire = [...events].reverse().find(
       (event) => event.component === 'native'

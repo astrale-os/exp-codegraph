@@ -12,7 +12,9 @@ owners. Facades re-export contracts and do not accumulate orchestration logic.
 
 ```mermaid
 flowchart LR
-  C[ttsc resident Program] --> N[allowlisted native passes]
+  R[requested capabilities] --> D[native projection DAG]
+  C[ttsc resident Program] --> D
+  D --> N[allowlisted native passes]
   N --> S[source / symbol / occurrence facts]
   N --> B[bounded body IR]
   S --> T[private native generation]
@@ -21,6 +23,13 @@ flowchart LR
   P --> A[one complete atomic transaction]
   A --> Q[generation-pinned queries]
 ```
+
+The projection DAG is operational, not a second semantic model. It derives exact native stages from
+the requested capability set, executes only those stages and their compiler prerequisites, and emits
+the same namespace facts as the corresponding projection of an all-capability cold build. A catalog
+request for module facts therefore never walks bodies, CFG, definition-use, or general occurrences.
+Adding demand-driven scope later must extend capability coverage explicitly; it cannot reinterpret
+missing globally scoped facts as negative evidence.
 
 The symbol graph and occurrence stream are complementary. A deduplicated relationship is useful
 for topology, while each call, access, construction, render, assignment, return, and branch remains
@@ -53,7 +62,9 @@ and inventory projections become independent physical shards. Native transport s
 resulting delta, and the process advances its private base only after application-store acknowledgement.
 
 The caller describes requested project inputs but never supplies a universe identifier. After the
-resident compiler loads the complete configuration chain, project-reference roots, module
-boundaries, capabilities, exact toolchain and protocol, and platform, the native adapter derives the
-portable universe. A changed universe starts a complete base-less lineage; restoring identical inputs
-may select the already retained generation for that universe.
+resident compiler loads the complete configuration chain, project-reference roots, compiler and
+plugin semantics, exact toolchain and protocol, and platform, the native adapter derives the
+portable universe. Requested capabilities and module-observation boundaries select a generation in
+that universe; they never rename the compiler project or its stable semantic identities. A changed
+compiler universe starts a complete base-less lineage, while restoring identical compiler inputs may
+select the already retained generation for that universe.

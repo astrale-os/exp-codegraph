@@ -41,6 +41,7 @@ type analyzer struct {
 	config                      string
 	universe                    string
 	capabilities                []string
+	projection                  projectionPlan
 	modules                     []moduleBoundary
 	payloadCodecs               map[string]bool
 	maximumSemanticPayloadBytes int
@@ -82,6 +83,7 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 	}
 	return &analyzer{
 		root: root, config: config, universe: universe, capabilities: capabilities, modules: modules,
+		projection:                  planProjections(capabilities),
 		payloadCodecs:               payloadCodecs,
 		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
 		session:                     session, states: map[string]generationState{}, telemetry: telemetry,
@@ -196,17 +198,6 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	if err != nil {
 		return nil, "", err
 	}
-	wanted := make(map[string]bool, len(a.capabilities))
-	for _, capability := range a.capabilities {
-		wanted[capability] = true
-	}
-	selected := shards[:0]
-	for _, shard := range shards {
-		if wanted[shard.Namespace] {
-			selected = append(selected, shard)
-		}
-	}
-	shards = selected
 	if a.telemetry != nil {
 		recordFactBytes(a.telemetry, input.ID, shards)
 	}
@@ -350,7 +341,7 @@ func (a *analyzer) extract(
 	requestID int,
 ) ([]factShard, []sourceRecord, map[string]bool, error) {
 	if selection.full {
-		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.payloadCodecs, a.maximumSemanticPayloadBytes, a.telemetry, requestID)
+		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, a.maximumSemanticPayloadBytes, a.telemetry, requestID)
 		return shards, sources, nil, err
 	}
 	selected := make(map[string]bool, len(selection.files))
@@ -359,6 +350,7 @@ func (a *analyzer) extract(
 	}
 	x, files, sources := prepareExtractor(
 		a.root, universe, a.session.Program(), a.modules,
+		a.projection,
 		a.payloadCodecs,
 		a.maximumSemanticPayloadBytes,
 		base.sources, selected, a.telemetry, requestID,
@@ -379,25 +371,38 @@ func (a *analyzer) extract(
 			replaced[key] = true
 		}
 	}
-	phase := time.Now()
-	shards := []factShard{x.projectShard(a.session.Program())}
-	a.telemetry.record(requestID, "projection.project", phase, nil)
-	phase = time.Now()
-	diagnostic := x.diagnosticShard(a.session.Program())
-	shards = append(shards, diagnostic)
-	a.telemetry.record(requestID, "projection.diagnostics", phase, map[string]any{"facts": len(diagnostic.Facts)})
-	phase = time.Now()
-	modules, err := x.moduleShards(a.session.Program())
-	if err != nil {
-		return nil, nil, nil, err
+	var shards []factShard
+	a.telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
+		"capabilities": strings.Join(a.projection.capabilities(), ","),
+		"stages":       strings.Join(a.projection.stages(), ","),
+	})
+	if a.projection.project {
+		phase := time.Now()
+		shards = append(shards, x.projectShard(a.session.Program()))
+		a.telemetry.record(requestID, "projection.project", phase, nil)
 	}
-	shards = append(shards, modules...)
-	a.telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(modules)})
-	sourceShards, err := x.sourceShards(files, selected, a.telemetry, requestID)
-	if err != nil {
-		return nil, nil, nil, err
+	if a.projection.diagnostics {
+		phase := time.Now()
+		diagnostic := x.diagnosticShard(a.session.Program())
+		shards = append(shards, diagnostic)
+		a.telemetry.record(requestID, "projection.diagnostics", phase, map[string]any{"facts": len(diagnostic.Facts)})
 	}
-	shards = append(shards, sourceShards...)
+	if a.projection.modules {
+		phase := time.Now()
+		modules, err := x.moduleShards(a.session.Program())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		shards = append(shards, modules...)
+		a.telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(modules)})
+	}
+	if a.projection.sourceOwned() {
+		sourceShards, err := x.sourceShards(files, selected, a.telemetry, requestID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		shards = append(shards, sourceShards...)
+	}
 	a.telemetry.record(requestID, "facts.semantic-payloads", time.Now(), map[string]any{
 		"bytes": x.semanticPayloadBytes,
 	})
@@ -567,8 +572,6 @@ func (a *analyzer) projectUniverse() (string, []map[string]any, error) {
 	universe := deriveID("project-universe", "astrale.analysis.typescript.universe.v1", map[string]any{
 		"configuration": configuration,
 		"roots":         roots,
-		"modules":       a.modules,
-		"capabilities":  a.capabilities,
 		"producer": map[string]any{
 			"name": "ttsc-typescript-go", "version": producerVersion,
 			"ttsc": ttscVersion, "typescriptGo": shimcore.Version(), "protocol": protocolVersion,

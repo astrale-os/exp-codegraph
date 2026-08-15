@@ -35,6 +35,7 @@ const root = await resolveApplicationRoot(requiredArgument('--root'))
 const binary = resolve(requiredArgument('--native-binary'))
 const output = argument('--output')
 const selectedProject = argument('--project')
+const capabilities = optionalCapabilities(argument('--capabilities'))
 const compact = process.argv.includes('--compact')
 const backend = requiredBackend(argument('--backend') ?? 'both')
 const payloadMaterialization = requiredPayloadMaterialization(
@@ -130,6 +131,7 @@ try {
     compact,
     backend,
     payloadMaterialization,
+    capabilities: capabilities ?? 'all',
     specifications: specifications.length,
     boundaries: resolution.boundaries.length,
     projects: projectsResult,
@@ -157,6 +159,7 @@ try {
       compact: result.compact,
       backend: result.backend,
       payloadMaterialization: result.payloadMaterialization,
+      capabilities: result.capabilities,
       projects: result.projects,
       ...('sqliteBytes' in result ? { sqliteBytes: result.sqliteBytes } : {}),
       telemetryEvents: result.events.length,
@@ -184,6 +187,7 @@ async function runProject(
     store,
     telemetry: scopedTelemetry(backend, project),
     ...(compact ? { payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS } : {}),
+    ...(capabilities ? { capabilities } : {}),
   })
   try {
     const queryStarted = performance.now()
@@ -390,4 +394,11 @@ function requiredPayloadMaterialization(value: string): 'inline-json' | 'shard-b
     throw new Error('--materialization must be inline-json or shard-brotli.')
   }
   return value
+}
+
+function optionalCapabilities(value: string | undefined): readonly string[] | undefined {
+  if (value === undefined || value === 'all') return undefined
+  const capabilities = [...new Set(value.split(',').map((entry) => entry.trim()).filter(Boolean))].sort()
+  if (!capabilities.length) throw new Error('--capabilities requires comma-separated native capabilities or all.')
+  return capabilities
 }
