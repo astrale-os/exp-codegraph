@@ -6,8 +6,11 @@ import { parseCommand, USAGE } from './cli/parse.js';
 import { terminalText } from './cli/report.js';
 import { runCommand } from './cli/run.js';
 import { readCodegraphVersion } from './cli/version.js';
-import { startDev } from './server/start.js';
 import { initializeModuleSpecification } from './specification/module/init.js';
+const startDev = async (options) => {
+    const server = await import('./server/start.js');
+    return server.startDev(options);
+};
 try {
     const result = await runCommand(parseCommand(process.argv.slice(2)), {
         version: readCodegraphVersion,
