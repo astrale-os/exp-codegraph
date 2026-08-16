@@ -30,6 +30,7 @@ export function createDevStartupProgress(output) {
     let backend = 'analysis cache';
     let specifications;
     let closed = false;
+    let animation;
     const render = () => {
         if (closed)
             return;
@@ -38,12 +39,17 @@ export function createDevStartupProgress(output) {
         const elapsed = formatElapsed(Date.now() - started);
         output.update?.(`\u001b[36m${DEV_SPINNER[spinner++ % DEV_SPINNER.length]}\u001b[0m \u001b[1m${label}\u001b[0m  \u001b[2m${milestone} · ${elapsed}\u001b[0m`);
     };
-    if (interactive)
-        render();
+    const startAnimation = () => {
+        if (!interactive || animation)
+            return;
+        animation = setInterval(render, DEV_SPINNER_INTERVAL_MS);
+        animation.unref();
+    };
+    if (interactive) {
+        output.update?.('\u001b[36m◆\u001b[0m \u001b[1mOpening durable analysis cache…\u001b[0m');
+    }
     else
         output.out('Initializing specification viewer...');
-    const animation = interactive ? setInterval(render, DEV_SPINNER_INTERVAL_MS) : undefined;
-    animation?.unref();
     return {
         onTelemetry(event) {
             if (closed)
@@ -63,6 +69,7 @@ export function createDevStartupProgress(output) {
             const status = event.metrics?.status;
             if (status === 'started') {
                 active = phase;
+                startAnimation();
                 if (!interactive)
                     output.out(`${devPhaseLabels.get(phase)}...`);
             }

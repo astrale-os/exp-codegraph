@@ -67,6 +67,7 @@ export function createDevStartupProgress(output: CliOutput): DevStartupProgress 
   let backend = 'analysis cache'
   let specifications: number | undefined
   let closed = false
+  let animation: ReturnType<typeof setInterval> | undefined
 
   const render = (): void => {
     if (closed) return
@@ -78,10 +79,17 @@ export function createDevStartupProgress(output: CliOutput): DevStartupProgress 
     )
   }
 
-  if (interactive) render()
-  else output.out('Initializing specification viewer...')
-  const animation = interactive ? setInterval(render, DEV_SPINNER_INTERVAL_MS) : undefined
-  animation?.unref()
+  const startAnimation = (): void => {
+    if (!interactive || animation) return
+    animation = setInterval(render, DEV_SPINNER_INTERVAL_MS)
+    animation.unref()
+  }
+
+  if (interactive) {
+    output.update?.(
+      '\u001b[36m◆\u001b[0m \u001b[1mOpening durable analysis cache…\u001b[0m',
+    )
+  } else output.out('Initializing specification viewer...')
 
   return {
     onTelemetry(event) {
@@ -98,6 +106,7 @@ export function createDevStartupProgress(output: CliOutput): DevStartupProgress 
       const status = event.metrics?.status
       if (status === 'started') {
         active = phase
+        startAnimation()
         if (!interactive) output.out(`${devPhaseLabels.get(phase)}...`)
       } else if (status === 'completed') {
         completed.add(phase)

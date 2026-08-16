@@ -51,6 +51,10 @@ describe('development startup progress', () => {
       clear: () => undefined,
     })
 
+    vi.advanceTimersByTime(1_000)
+    expect(updates).toEqual([
+      '\u001b[36m◆\u001b[0m \u001b[1mOpening durable analysis cache…\u001b[0m',
+    ])
     progress.onTelemetry(telemetry('store.selection', 'completed', { backend: 'durable' }))
     progress.onTelemetry(telemetry('application.inventory', 'started'))
     vi.advanceTimersByTime(1_000)
@@ -60,9 +64,9 @@ describe('development startup progress', () => {
 
     expect(updates.some((message) => message.includes('Inventorying repository'))).toBe(true)
     expect(updates.some((message) => message.includes('Discovering specifications'))).toBe(true)
-    expect(updates.some((message) => message.includes('2/8 · 1s'))).toBe(true)
+    expect(updates.some((message) => message.includes('2/8 · 2s'))).toBe(true)
     expect(updates.every((message) => !message.includes('%'))).toBe(true)
-    expect(messages).toEqual(['✓ Specification viewer ready in 1s · durable cache'])
+    expect(messages).toEqual(['✓ Specification viewer ready in 2s · durable cache'])
   })
 
   it('uses sparse stable lines outside an interactive terminal', () => {
