@@ -1,4 +1,34 @@
-import { isAbsolute, relative, sep } from 'node:path';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+/** Resolve changed paths to the deepest specification owners used by incremental presentation. */
+export function affectedSpecificationSources(snapshot, root, files) {
+    const affected = new Set();
+    for (const file of files) {
+        const source = workspaceSource(root, file);
+        if (!source)
+            continue;
+        const explicit = snapshot.specifications.filter((specification) => explicitSource(specification, source));
+        if (explicit.length) {
+            if (explicit.length > 1) {
+                for (const specification of explicit)
+                    affected.add(specification.source);
+                continue;
+            }
+            const contained = snapshot.specifications.filter((specification) => withinModule(specification, source));
+            const candidates = contained.length ? deepestSpecifications(contained) : explicit;
+            for (const specification of candidates)
+                affected.add(specification.source);
+            continue;
+        }
+        const contained = snapshot.specifications.filter((specification) => withinModule(specification, source));
+        for (const specification of deepestSpecifications(contained))
+            affected.add(specification.source);
+    }
+    return [...affected].sort();
+}
+function deepestSpecifications(values) {
+    const depth = Math.max(...values.map((specification) => specification.root.length), -1);
+    return values.filter((specification) => specification.root.length === depth);
+}
 /** Generated/local trees Vite can prune before they reach semantic change filtering. */
 export const DEV_SERVER_WATCH_IGNORES = [
     '**/.git/**',
@@ -25,7 +55,7 @@ export const DEV_SERVER_WATCH_IGNORES = [
  * Conservative V2 invalidation boundary. Precise affected-pass planning belongs to analysis;
  * the watcher only rejects definitely irrelevant filesystem events.
  */
-export function isWatchedSource(snapshot, root, file, event = 'change') {
+export function isWatchedSource(snapshot, root, file, event = 'change', scope = {}) {
     const source = workspaceSource(root, file);
     if (!source || ignoredWorkspaceOutput(source))
         return false;
@@ -33,10 +63,19 @@ export function isWatchedSource(snapshot, root, file, event = 'change') {
         return true;
     if (!snapshot)
         return false;
+    if (snapshot.specifications.some((specification) => projectConfigurationAffects(specification, source))) {
+        return true;
+    }
     if (snapshot.specifications.some((specification) => explicitSource(specification, source))) {
         return true;
     }
-    if (potentialCodeSource(source))
+    if (potentialSpecificationSource(source) &&
+        snapshot.specifications.some((specification) => withinModule(specification, source)))
+        return true;
+    if (potentialCodeSource(source) &&
+        snapshot.specifications.some((specification) => withinModule(specification, source) &&
+            (scope.compilerAnalysis === true ||
+                scope.compilerSpecifications?.includes(specification.source) === true)))
         return true;
     if (event === 'change')
         return false;
@@ -72,18 +111,38 @@ function specificationSources(specification) {
         ...specification.packages,
         ...specification.packagePatterns,
     ];
-    return new Set(resources.flatMap((resource) => [
-        resource.source,
-        ...('model' in resource && resource.model
-            ? resource.model.sources.map((candidate) => candidate.file)
-            : []),
-    ]));
+    return new Set([
+        specification.module.packageAuthority.source,
+        ...resources.flatMap((resource) => [
+            resource.source,
+            ...('model' in resource && resource.model
+                ? [
+                    ...resource.model.sources.map((candidate) => candidate.file),
+                    ...(resource.model.dependencies ?? []).map((candidate) => candidate.file),
+                ]
+                : []),
+        ]),
+    ]);
+}
+function projectConfigurationAffects(specification, source) {
+    const name = source.split('/').at(-1) ?? '';
+    if (name !== 'package.json' && !/^tsconfig(?:\.[^.]+)*\.json$/u.test(name))
+        return false;
+    const owner = dirname(source);
+    return owner === '.' || specification.root === owner || specification.root.startsWith(`${owner}/`);
 }
 function withinModule(specification, source) {
     return specification.root === '.' || source === specification.root || source.startsWith(`${specification.root}/`);
 }
 function potentialCodeSource(source) {
     return /\.(?:cts|mts|tsx?|cjs|mjs|jsx?)$/u.test(source);
+}
+function potentialSpecificationSource(source) {
+    if (!source.startsWith('.spec/') && !source.includes('/.spec/'))
+        return false;
+    return (/\.(?:d\.ts|ts|schema\.json)$/u.test(source) ||
+        source.endsWith('/architecture.md') ||
+        source.endsWith('/icon.svg'));
 }
 function ignoredWorkspaceOutput(source) {
     const segments = normalize(source).split('/');
@@ -106,7 +165,7 @@ function ignoredWorkspaceOutput(source) {
         name.endsWith('.swo'));
 }
 function workspaceSource(root, file) {
-    const path = relative(root, file);
+    const path = relative(root, isAbsolute(file) ? file : resolve(root, file));
     if (isAbsolute(path) ||
         path === '..' ||
         path.startsWith(`..${sep}`) ||

@@ -49,7 +49,10 @@ describe('published package', () => {
 
     expect(manifest.name).toBe('@astrale-os/codegraph')
     expect(manifest.bin).toEqual({ cg: './dist/cli.js' })
-    expect(manifest.scripts.check).toBe('node --max-old-space-size=1280 cli.ts check .')
+    expect(manifest.scripts.check).toBe('node scripts/check.ts')
+    expect(await readFile(join(packageRoot, 'scripts/check.ts'), 'utf8')).toContain(
+      'check-v1-removal.ts',
+    )
     expect(manifest.scripts.typecheck).toContain('qualification/v2/extension/tsconfig.json')
     expect(workflow).toContain('run: pnpm typecheck\n')
     expect(workflow).toContain('run: pnpm check\n')

@@ -282,6 +282,10 @@ describe('universal specification dev server', () => {
       ]),
     )
 
+    const retainedIndex = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const retained = await loadSpec(running.url, retainedIndex.index.specs[0])
+    expect(retained.verification).toMatchObject({ status: 'pass' })
+
     const implementation = join(current.root, 'module/index.ts')
     await writeFile(implementation, 'export const drift = true\n')
     running.server.watcher.emit('change', implementation)

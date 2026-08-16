@@ -143,6 +143,61 @@ describe('headless TypeSpec V2 application', () => {
     }
   })
 
+  it('recompiles only normative owners affected by an explicit dev change set', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/incremental-corpus', type: 'module' }),
+      'shared/types.d.ts': 'export interface Shared { readonly value: string }\n',
+      'alpha/.spec/api.d.ts': `import type { Shared } from '../../shared/types.js'
+export interface Alpha { readonly value: Shared }
+`,
+      'alpha/src/index.ts': 'export const alpha = true\n',
+      'beta/.spec/api.d.ts': 'export interface Beta { readonly value: string }\n',
+    })
+    fixtures.push(current)
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [] },
+    )
+    try {
+      const first = (await service.refresh()).snapshot
+      const before = new Map(first.specifications.map((value) => [value.source, value]))
+
+      await current.write('alpha/src/index.ts', 'export const alpha = false\n')
+      const implementation = (
+        await service.refresh({ changed: [join(current.root, 'alpha/src/index.ts')] })
+      ).snapshot
+      expect(implementation.specifications[0]).toBe(before.get('alpha/.spec/api.d.ts'))
+      expect(implementation.specifications[1]).toBe(before.get('beta/.spec/api.d.ts'))
+
+      await current.write(
+        'alpha/.spec/api.d.ts',
+        `import type { Shared } from '../../shared/types.js'
+export interface Alpha { readonly value: Shared; readonly changed: true }
+`,
+      )
+      const normative = (
+        await service.refresh({ changed: [join(current.root, 'alpha/.spec/api.d.ts')] })
+      ).snapshot
+      expect(normative.specifications[0]).not.toBe(before.get('alpha/.spec/api.d.ts'))
+      expect(normative.specifications[1]).not.toBe(before.get('beta/.spec/api.d.ts'))
+
+      const afterNormative = new Map(
+        normative.specifications.map((value) => [value.source, value]),
+      )
+      await current.write(
+        'shared/types.d.ts',
+        'export interface Shared { readonly value: number }\n',
+      )
+      const shared = (
+        await service.refresh({ changed: [join(current.root, 'shared/types.d.ts')] })
+      ).snapshot
+      expect(shared.specifications[0]).not.toBe(afterNormative.get('alpha/.spec/api.d.ts'))
+      expect(shared.specifications[1]).not.toBe(afterNormative.get('beta/.spec/api.d.ts'))
+    } finally {
+      await service.dispose()
+    }
+  })
+
   it('expands focused owners through support and optional dependent closures', async () => {
     const current = await fixture({
       'package.json': JSON.stringify({ name: '@fixture/application-selection', type: 'module' }),

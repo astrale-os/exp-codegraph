@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { readFile, realpath } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type {
   AnalysisSnapshotSet,
@@ -204,6 +204,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       }
     }
     const corpusKey = applicationCorpusKey(inventory.revision, options.exclude ?? [])
+    const discoveryKey = applicationDiscoveryKey(options.exclude ?? [])
     let specifications: readonly SpecificationSnapshot[]
     let sources: RepositorySourceService
     let statistics: RepositoryStatisticsReport
@@ -222,16 +223,25 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       })
       discoverMs = performance.now() - phase
       phase = performance.now()
-      specifications = [
-        ...(await this.#dependencies.compile(
-          this.#root,
-          directories,
-          {
-            maximumConcurrency:
-              TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
-          },
-        )),
-      ]
+      specifications =
+        cachedCorpus?.discoveryKey === discoveryKey && (options.changed?.length ?? 0) > 0
+          ? await refreshSpecificationCorpus(
+              this.#root,
+              directories,
+              cachedCorpus.specifications,
+              options.changed ?? [],
+              this.#dependencies.compile,
+            )
+          : [
+              ...(await this.#dependencies.compile(
+                this.#root,
+                directories,
+                {
+                  maximumConcurrency:
+                    TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+                },
+              )),
+            ]
       compileMs = performance.now() - phase
       assertSpecificationInventory(specifications, inventory)
       phase = performance.now()
@@ -253,7 +263,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         ...(options.signal ? { signal: options.signal } : {}),
       })
       statisticsMs = performance.now() - phase
-      this.#corpus = { key: corpusKey, specifications, sources, statistics }
+      this.#corpus = { key: corpusKey, discoveryKey, specifications, sources, statistics }
     }
     const selected = selectApplicationSpecifications(this.#root, specifications, {
       ...(options.select ? { select: options.select } : {}),
@@ -499,6 +509,7 @@ interface ApplicationRecord {
 
 interface ApplicationCorpus {
   readonly key: string
+  readonly discoveryKey: string
   readonly specifications: readonly SpecificationSnapshot[]
   readonly sources: RepositorySourceService
   readonly statistics: RepositoryStatisticsReport
@@ -560,6 +571,139 @@ function applicationRefreshKey(options: TypeSpecApplicationRefreshOptions): stri
 
 function applicationCorpusKey(inventory: string, exclude: readonly string[]): string {
   return JSON.stringify({ inventory, exclude: sortedUnique(exclude) })
+}
+
+function applicationDiscoveryKey(exclude: readonly string[]): string {
+  return JSON.stringify({ exclude: sortedUnique(exclude) })
+}
+
+async function refreshSpecificationCorpus(
+  root: string,
+  directories: readonly string[],
+  previous: readonly SpecificationSnapshot[],
+  changed: readonly string[],
+  compile: typeof compileSpecificationSnapshots,
+): Promise<readonly SpecificationSnapshot[]> {
+  const available = new Map(
+    directories.map((directory) => [portable(relative(root, resolve(directory))), resolve(directory)]),
+  )
+  const retained = new Map(
+    previous.map((specification) => [
+      portable(relative(root, dirname(resolve(root, specification.source)))),
+      specification,
+    ]),
+  )
+  const affected = new Set<string>()
+  for (const directory of available.keys()) {
+    if (!retained.has(directory)) affected.add(directory)
+  }
+  for (const input of changed) {
+    const source = await workspacePath(root, input)
+    if (!source) continue
+    if (
+      source === '.spec/api.d.ts' ||
+      source.endsWith('/.spec/api.d.ts') ||
+      (source.endsWith('.d.ts') && !source.startsWith('.spec/') && !source.includes('/.spec/'))
+    ) {
+      // Public declarations can affect any importing specification. Until the normative compiler
+      // exposes an exact reverse-dependency closure, retaining a dependent snapshot is unsound.
+      for (const directory of available.keys()) affected.add(directory)
+      continue
+    }
+    const owner = specificationDirectory(source)
+    if (owner && available.has(owner)) affected.add(owner)
+    for (const [directory, specification] of retained) {
+      if (!available.has(directory)) continue
+      if (
+        normativeSpecificationSources(specification).has(source) ||
+        packageManifestAffects(source, specification.root)
+      ) affected.add(directory)
+    }
+  }
+  const compiled = affected.size
+    ? await compile(
+        root,
+        [...affected].map((directory) => available.get(directory)!).filter(Boolean),
+        {
+          maximumConcurrency:
+            TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+        },
+      )
+    : []
+  const replacements = new Map(
+    compiled.map((specification) => [
+      portable(relative(root, dirname(resolve(root, specification.source)))),
+      specification,
+    ]),
+  )
+  return [...available.keys()]
+    .map((directory) => replacements.get(directory) ?? retained.get(directory))
+    .filter((value): value is SpecificationSnapshot => value !== undefined)
+    .sort((left, right) => left.source.localeCompare(right.source))
+}
+
+function normativeSpecificationSources(specification: SpecificationSnapshot): ReadonlySet<string> {
+  const resources = [
+    ...(specification.module.api ? [specification.module.api] : []),
+    ...(specification.module.code ? [specification.module.code] : []),
+    ...(specification.module.internal ? [specification.module.internal] : []),
+    ...specification.module.ports,
+    ...specification.schemas,
+    ...specification.examples,
+    ...specification.capabilities,
+    ...specification.flows,
+    ...specification.laws,
+    ...specification.states,
+    ...(specification.limits ? [specification.limits] : []),
+    ...(specification.layout ? [specification.layout] : []),
+    ...specification.benchmarks,
+    ...specification.packages,
+    ...specification.packagePatterns,
+  ]
+  return new Set([
+    specification.module.packageAuthority.source,
+    ...resources.flatMap((resource) => [
+      resource.source,
+      ...('model' in resource && resource.model
+        ? [
+            ...resource.model.sources.map((candidate) => candidate.file),
+            ...(resource.model.dependencies ?? []).map((candidate) => candidate.file),
+          ]
+        : []),
+    ]),
+  ])
+}
+
+function packageManifestAffects(source: string, moduleRoot: string): boolean {
+  if (!source.endsWith('/package.json') && source !== 'package.json') return false
+  const packageRoot = source === 'package.json' ? '.' : source.slice(0, -'/package.json'.length)
+  return packageRoot === '.' || moduleRoot === packageRoot || moduleRoot.startsWith(`${packageRoot}/`)
+}
+
+function specificationDirectory(source: string): string | undefined {
+  const marker = source.indexOf('/.spec/')
+  if (marker >= 0) return `${source.slice(0, marker)}/.spec`
+  return source.startsWith('.spec/') ? '.spec' : undefined
+}
+
+async function workspacePath(root: string, input: string): Promise<string | undefined> {
+  let target = resolve(root, input)
+  try {
+    target = await realpath(target)
+  } catch {
+    try {
+      target = join(await realpath(dirname(target)), basename(target))
+    } catch {
+      return
+    }
+  }
+  const path = relative(root, target)
+  if (isAbsolute(path) || path === '..' || path.startsWith(`..${sep}`)) return
+  return portable(path)
+}
+
+function portable(path: string): string {
+  return sep === '/' ? path : path.split(sep).join('/')
 }
 
 function applicationProfiles(

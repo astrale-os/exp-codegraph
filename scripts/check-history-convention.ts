@@ -16,6 +16,8 @@ const diagnostics: string[] = []
 const legacyLiteralOwners = new Set([
   'dsl/__tests__/dependencies.test.ts',
   'application/discovery/discover.ts',
+  'dist/application/discovery/discover.js',
+  'dist/specification/module/layout.js',
   'code/analyze.ts',
   'scripts/check-history-convention.ts',
   'specification/module/layout.ts',

@@ -25,7 +25,10 @@ export async function runCommand(command, services, output) {
     }
     if (command.name === 'dev') {
         output.out('Initializing specification viewer...');
-        const server = await services.startDev(command);
+        const server = await services.startDev({
+            ...command,
+            telemetry: (event) => reportDevTelemetry(output, event),
+        });
         output.out(`SPEC_SERVER_URL=${server.url}`);
         return { exitCode: 0, server };
     }
@@ -101,6 +104,23 @@ export async function runCommand(command, services, output) {
         await reader?.dispose();
         await application.dispose();
     }
+}
+function reportDevTelemetry(output, event) {
+    if (event.phase === 'store.selection') {
+        output.out(`CODEGRAPH_STORE=${String(event.metrics?.backend ?? 'unknown')}` +
+            (event.metrics?.fallback === true ? ' fallback=true' : ''));
+        return;
+    }
+    if (event.phase !== 'application.refresh' && event.phase !== 'application.verification')
+        return;
+    const durationMs = event.durationNs === undefined ? 0 : event.durationNs / 1_000_000;
+    const metrics = event.metrics ?? {};
+    output.out(`CODEGRAPH_${event.phase === 'application.verification' ? 'VERIFY' : 'REFRESH'} duration_ms=${durationMs.toFixed(1)} changed=${String(metrics.changedPaths ?? 0)}` +
+        ` refreshed_specs=${String(metrics.refreshedSpecifications ?? 0)}` +
+        ` heap_mib=${mebibytes(metrics.heapUsedBytes)} rss_mib=${mebibytes(metrics.rssBytes)}`);
+}
+function mebibytes(value) {
+    return typeof value === 'number' ? (value / (1024 * 1024)).toFixed(1) : 'unknown';
 }
 function refreshOptions(command, changed) {
     if (command.name === 'check' || command.name === 'changed') {

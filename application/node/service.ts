@@ -5,6 +5,7 @@ import { basename, join, resolve } from 'node:path'
 import type { AnalysisStore, AnalysisTelemetrySink } from '../../analysis/index.ts'
 import { selectAnalysisStore } from '../../analysis/index.ts'
 import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
+import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.ts'
 import type { TypeSpecApplicationService } from '../index.ts'
 import type { CodegraphApplicationSessionOptions } from '../analysis/index.ts'
 import { createTypeSpecApplicationService } from '../service.ts'
@@ -42,6 +43,17 @@ export async function createNodeTypeSpecApplicationService(
       : {}),
   })
   const store = selection.store
+  dispatchAnalysisTelemetry(options.telemetry, {
+    component: 'analysis',
+    phase: 'store.selection',
+    metrics: {
+      backend: selection.backend,
+      persistence: selection.persistence,
+      requestedPersistence: options.persistence ?? 'advisory',
+      fallback: selection.fallback !== undefined,
+      ...(selection.fallback ? { fallbackCode: selection.fallback.code } : {}),
+    },
+  })
   try {
     const application = await createTypeSpecApplicationService({
       root,

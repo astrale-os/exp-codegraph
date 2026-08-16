@@ -10,10 +10,23 @@ import { loadModuleIcon } from '../specification/module/icon.js';
 /**
  * Project one generation-pinned V2 application reader into the current browser presentation.
  * This adapter owns no semantic decisions: all observations come from pinned facts or verified
- * source reads, and the mutable V1 catalog builder is never invoked.
+ * source reads, and the retired mutable catalog authority is never invoked.
  */
-export async function projectApplicationCatalog(root, reader) {
-    const specs = await Promise.all(reader.snapshot.specifications.map((specification) => projectSpecification(root, reader, specification.source)));
+export async function projectApplicationCatalog(root, reader, options = {}) {
+    const previous = new Map(options.previous?.specs.map((value) => [value.source, value]) ?? []);
+    const refresh = new Set(options.refresh ?? reader.snapshot.specifications.map((value) => value.source));
+    const specs = [];
+    // Each projection opens several pinned fact queries. Bounding concurrency keeps their decoded
+    // payload caches proportional to a small worker set instead of the repository module count.
+    for (let offset = 0; offset < reader.snapshot.specifications.length; offset += 6) {
+        const batch = reader.snapshot.specifications.slice(offset, offset + 6);
+        specs.push(...await Promise.all(batch.map((specification) => {
+            const retained = previous.get(specification.source);
+            return retained && !refresh.has(specification.source)
+                ? retained
+                : projectSpecification(root, reader, specification.source);
+        })));
+    }
     return {
         specs,
         diagnostics: [...reader.snapshot.diagnostics],

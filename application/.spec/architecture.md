@@ -21,6 +21,14 @@ and statistics report. The cache is deliberately one-entry and keyed by inventor
 filters: it removes duplicate repository-sized construction without becoming another persistence or
 semantic authority.
 
+An explicit development change set may also reuse independently content-addressed specification
+snapshots whose normative sources and package authority are unaffected. New or removed anchors,
+changed `.spec` inputs and containing package manifests recompile their owners. A declaration file
+outside `.spec` recompiles the corpus because declaration dependency closure is intentionally not
+duplicated above the compiler. A refresh without an attributable change set remains conservative
+and recompiles the corpus. Inventory coherence is validated after composition, so a stale hint
+cannot publish a mixed snapshot.
+
 Application authority means every qualification outcome is pinned and reported. It does not turn a
 repository with conformance findings into a false pass: pass, fail, indeterminate, and error
 snapshots all remain content-addressed product output, while application or analysis diagnostics

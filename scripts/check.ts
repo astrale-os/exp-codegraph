@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 const root = resolve(import.meta.dirname, '..')
 const catalog = resolve(root, 'cli.ts')
 const legacy = resolve(root, 'scripts/check-legacy-anchors.ts')
+const v1Removal = resolve(root, 'scripts/check-v1-removal.ts')
 const history = resolve(root, 'scripts/check-history-convention.ts')
 const v2Governance = resolve(root, 'scripts/check-v2-governance.ts')
 const catalogArguments = [
@@ -19,7 +20,8 @@ const catalogArguments = [
 
 const catalogExit = await run(catalog, catalogArguments)
 const legacyExit = catalogExit === 0 ? await run(legacy, []) : catalogExit
-const historyExit = legacyExit === 0 ? await run(history, []) : legacyExit
+const v1RemovalExit = legacyExit === 0 ? await run(v1Removal, []) : legacyExit
+const historyExit = v1RemovalExit === 0 ? await run(history, []) : v1RemovalExit
 process.exitCode = historyExit === 0 ? await run(v2Governance, []) : historyExit
 
 function run(script: string, args: readonly string[]): Promise<number> {

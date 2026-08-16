@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { selectAnalysisStore } from '../../analysis/index.js';
 import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.js';
+import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.js';
 import { createTypeSpecApplicationService } from '../service.js';
 /** Node-owned store/native composition around the portable headless application service. */
 export async function createNodeTypeSpecApplicationService(options) {
@@ -23,6 +24,17 @@ export async function createNodeTypeSpecApplicationService(options) {
             : {}),
     });
     const store = selection.store;
+    dispatchAnalysisTelemetry(options.telemetry, {
+        component: 'analysis',
+        phase: 'store.selection',
+        metrics: {
+            backend: selection.backend,
+            persistence: selection.persistence,
+            requestedPersistence: options.persistence ?? 'advisory',
+            fallback: selection.fallback !== undefined,
+            ...(selection.fallback ? { fallbackCode: selection.fallback.code } : {}),
+        },
+    });
     try {
         const application = await createTypeSpecApplicationService({
             root,

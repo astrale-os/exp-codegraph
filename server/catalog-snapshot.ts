@@ -34,6 +34,8 @@ export interface CatalogSnapshot {
   readonly indexModule: string
   readonly specs: ReadonlyMap<string, CatalogSpecPayload>
   readonly sources: ReadonlyMap<string, CatalogSourcePayload>
+  readonly inputs: ReadonlyMap<string, ViewerSpecification>
+  readonly topology: string
 }
 
 /** Build the immutable browser projection of one already-coherent server Catalog. */
@@ -41,11 +43,17 @@ export function createCatalogSnapshot(
   catalog: ViewerCatalog,
   adapterManifest: ViewerAdapterManifest,
   applicationSnapshot: `application:${string}` = `application:${'0'.repeat(64)}`,
+  previous?: CatalogSnapshot,
 ): CatalogSnapshot {
   const sources = new Map<string, CatalogSourcePayload>()
   const specs = new Map<string, CatalogSpecPayload>()
   const entries: CatalogSpecEntry[] = []
   const apiIndex = indexCatalogApis(catalog)
+  const topology = catalogTopology(catalog)
+  if (previous?.topology === topology) {
+    for (const [key, value] of previous.sources) sources.set(key, value)
+  }
+  const inputs = new Map(catalog.specs.map((specification) => [specification.source, specification]))
   const declarationIdentities = ownedDeclarationIdentities(apiIndex)
   const specSourceByModuleId = new Map(
     catalog.specs.flatMap((spec) =>
@@ -54,6 +62,13 @@ export function createCatalogSnapshot(
   )
 
   for (const spec of catalog.specs) {
+    const retained = reusablePayload(previous, topology, spec)
+    if (retained) {
+      const payload = { ...retained.payload, snapshot: applicationSnapshot }
+      specs.set(specPayloadKey(spec.source, retained.entry.revision), payload)
+      entries.push({ ...retained.entry, snapshot: applicationSnapshot })
+      continue
+    }
     const projection = catalogReferenceProjection(spec, apiIndex)
     const packed = packSpec(spec, sources, projection.documents)
     const semanticReferences = projection.semanticReferences
@@ -97,7 +112,36 @@ export function createCatalogSnapshot(
     indexModule: catalogIndexModule(index, adapterManifest),
     specs,
     sources,
+    inputs,
+    topology,
   }
+}
+
+function reusablePayload(
+  previous: CatalogSnapshot | undefined,
+  topology: string,
+  specification: ViewerSpecification,
+): { readonly entry: CatalogSpecEntry; readonly payload: CatalogSpecPayload } | undefined {
+  if (!previous || previous.topology !== topology || previous.inputs.get(specification.source) !== specification) {
+    return
+  }
+  const entry = previous.index.specs.find((candidate) => candidate.source === specification.source)
+  if (!entry) return
+  const payload = previous.specs.get(specPayloadKey(entry.source, entry.revision))
+  return payload ? { entry, payload } : undefined
+}
+
+function catalogTopology(catalog: ViewerCatalog): string {
+  return contentRevision(
+    catalog.specs.flatMap((specification) =>
+      specification.modules.map((module) => ({
+        module: module.id,
+        source: specification.source,
+        exports: module.api?.model?.surface.exports.map((item) => item.declaration) ?? [],
+        imports: module.contract?.imports.map((item) => item.source) ?? [],
+      })),
+    ),
+  )
 }
 
 function catalogContractDependencies(

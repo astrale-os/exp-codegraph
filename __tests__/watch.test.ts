@@ -5,7 +5,11 @@ import type { TypeSpecApplicationSnapshot } from '../application/index.ts'
 import type { SpecificationSnapshot } from '../specification/index.ts'
 
 import { createRebuildScheduler } from '../server/reload.ts'
-import { DEV_SERVER_WATCH_IGNORES, isWatchedSource } from '../server/watch.ts'
+import {
+  DEV_SERVER_WATCH_IGNORES,
+  affectedSpecificationSources,
+  isWatchedSource,
+} from '../server/watch.ts'
 
 describe('live universal resource watching', () => {
   it('watches every explicit local resource, transitive declaration, and artifact schema', () => {
@@ -89,7 +93,17 @@ describe('live universal resource watching', () => {
 
     expect(isWatchedSource(snapshot, root, join(root, 'module/src/index.ts'), 'change')).toBe(true)
     expect(isWatchedSource(snapshot, root, join(root, 'module/src/new.ts'), 'add')).toBe(true)
-    expect(isWatchedSource(snapshot, root, join(root, 'module/src/new.ts'), 'change')).toBe(true)
+    expect(isWatchedSource(snapshot, root, join(root, 'module/src/new.ts'), 'change')).toBe(false)
+    expect(
+      isWatchedSource(snapshot, root, join(root, 'module/src/new.ts'), 'change', {
+        compilerAnalysis: true,
+      }),
+    ).toBe(true)
+    expect(
+      isWatchedSource(snapshot, root, join(root, 'other/source.ts'), 'change', {
+        compilerAnalysis: true,
+      }),
+    ).toBe(false)
     expect(isWatchedSource(snapshot, root, join(root, 'module/src/build.log'), 'add')).toBe(false)
     expect(isWatchedSource(snapshot, root, join(root, 'module/dist/index.js'), 'add')).toBe(false)
     expect(isWatchedSource(snapshot, root, join(root, 'module/cache.tsbuildinfo'), 'add')).toBe(
@@ -115,6 +129,32 @@ describe('live universal resource watching', () => {
     expect(isWatchedSource(snapshot, root, dockerfile, 'change')).toBe(false)
     expect(isWatchedSource(snapshot, root, dockerfile, 'add')).toBe(true)
     expect(isWatchedSource(snapshot, root, dockerfile, 'unlink')).toBe(true)
+  })
+
+  it('attributes presentation work to the deepest matching module owner', () => {
+    const root = '/workspace'
+    const rootBase = resourceSpecification('.')
+    const rootSpecification = {
+      ...rootBase,
+      source: '.spec/api.d.ts',
+      module: {
+        ...rootBase.module,
+        id: '.spec/api.d.ts',
+        api: undefined,
+      },
+    }
+    const nested = moduleSpecification()
+    const snapshot = {
+      ...applicationSnapshot(rootSpecification),
+      specifications: [rootSpecification, nested],
+    }
+
+    expect(
+      affectedSpecificationSources(snapshot, root, [join(root, 'module/src/index.ts')]),
+    ).toEqual(['module/.spec/api.d.ts'])
+    expect(
+      affectedSpecificationSources(snapshot, root, [join(root, 'unowned/source.ts')]),
+    ).toEqual(['.spec/api.d.ts'])
   })
 
   it('waits for the latest edit in a burst before starting an expensive rebuild', async () => {

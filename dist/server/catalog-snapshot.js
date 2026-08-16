@@ -5,14 +5,27 @@ import { projectMarkdownHtml } from './catalog-markdown.js';
 import { catalogReferenceProjection } from './catalog-references.js';
 const MAX_SEARCH_TEXT_CHARACTERS = 64 * 1_024;
 /** Build the immutable browser projection of one already-coherent server Catalog. */
-export function createCatalogSnapshot(catalog, adapterManifest, applicationSnapshot = `application:${'0'.repeat(64)}`) {
+export function createCatalogSnapshot(catalog, adapterManifest, applicationSnapshot = `application:${'0'.repeat(64)}`, previous) {
     const sources = new Map();
     const specs = new Map();
     const entries = [];
     const apiIndex = indexCatalogApis(catalog);
+    const topology = catalogTopology(catalog);
+    if (previous?.topology === topology) {
+        for (const [key, value] of previous.sources)
+            sources.set(key, value);
+    }
+    const inputs = new Map(catalog.specs.map((specification) => [specification.source, specification]));
     const declarationIdentities = ownedDeclarationIdentities(apiIndex);
     const specSourceByModuleId = new Map(catalog.specs.flatMap((spec) => spec.modules.map((module) => [module.id, spec.source])));
     for (const spec of catalog.specs) {
+        const retained = reusablePayload(previous, topology, spec);
+        if (retained) {
+            const payload = { ...retained.payload, snapshot: applicationSnapshot };
+            specs.set(specPayloadKey(spec.source, retained.entry.revision), payload);
+            entries.push({ ...retained.entry, snapshot: applicationSnapshot });
+            continue;
+        }
         const projection = catalogReferenceProjection(spec, apiIndex);
         const packed = packSpec(spec, sources, projection.documents);
         const semanticReferences = projection.semanticReferences;
@@ -55,7 +68,27 @@ export function createCatalogSnapshot(catalog, adapterManifest, applicationSnaps
         indexModule: catalogIndexModule(index, adapterManifest),
         specs,
         sources,
+        inputs,
+        topology,
     };
+}
+function reusablePayload(previous, topology, specification) {
+    if (!previous || previous.topology !== topology || previous.inputs.get(specification.source) !== specification) {
+        return;
+    }
+    const entry = previous.index.specs.find((candidate) => candidate.source === specification.source);
+    if (!entry)
+        return;
+    const payload = previous.specs.get(specPayloadKey(entry.source, entry.revision));
+    return payload ? { entry, payload } : undefined;
+}
+function catalogTopology(catalog) {
+    return contentRevision(catalog.specs.flatMap((specification) => specification.modules.map((module) => ({
+        module: module.id,
+        source: specification.source,
+        exports: module.api?.model?.surface.exports.map((item) => item.declaration) ?? [],
+        imports: module.contract?.imports.map((item) => item.source) ?? [],
+    }))));
 }
 function catalogContractDependencies(spec, specSourceByModuleId) {
     const counts = new Map();

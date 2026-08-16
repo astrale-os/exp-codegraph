@@ -78,6 +78,29 @@ describe('browser catalog transport', () => {
       snapshot.index.specs.find(({ source }) => source === beta.source)?.contractDependencies,
     ).toBeUndefined()
   })
+
+  it('reuses unchanged packed payload structure across application snapshots', () => {
+    const alpha = specification('alpha/.spec/api.d.ts', 'Alpha', apiModel('string', 'alpha'))
+    const first = createCatalogSnapshot(
+      { specs: [alpha], diagnostics: [] },
+      {},
+      `application:${'1'.repeat(64)}`,
+    )
+    const second = createCatalogSnapshot(
+      { specs: [alpha], diagnostics: [] },
+      {},
+      `application:${'2'.repeat(64)}`,
+      first,
+    )
+    const firstEntry = first.index.specs[0]!
+    const secondEntry = second.index.specs[0]!
+    const firstPayload = first.specs.get(`${firstEntry.source}\0${firstEntry.revision}`)!
+    const secondPayload = second.specs.get(`${secondEntry.source}\0${secondEntry.revision}`)!
+
+    expect(secondPayload.spec).toBe(firstPayload.spec)
+    expect(secondPayload.revision).toBe(firstPayload.revision)
+    expect(secondPayload.snapshot).not.toBe(firstPayload.snapshot)
+  })
 })
 
 function expectedContract(

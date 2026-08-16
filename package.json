@@ -86,7 +86,7 @@
     "prebuild": "node scripts/clean-dist.mjs",
     "build": "tsgo -p tsconfig.build.json",
     "clean": "node scripts/clean-dist.mjs",
-    "check": "node --max-old-space-size=1280 cli.ts check .",
+    "check": "node scripts/check.ts",
     "dev": "node cli.ts dev .",
     "release:check": "pnpm run native:assert-release && pnpm run typecheck && pnpm run test",
     "native:build": "node scripts/native/build.mjs",
