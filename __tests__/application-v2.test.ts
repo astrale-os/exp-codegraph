@@ -71,6 +71,74 @@ describe('headless TypeSpec V2 application', () => {
     expect(events.filter((event) => event.durationNs !== undefined).length).toBe(6)
   })
 
+  it('reports the exact advisory checkpoint publication failure', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-telemetry', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    const events: AnalysisTelemetryEvent[] = []
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root, telemetry: (event) => events.push(event) },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint: {
+          load: async () => ({ ok: false, reason: 'missing' }),
+          publish: async () => {
+            throw new RangeError('Checkpoint artifacts exceed maxTotalBytes.')
+          },
+        },
+      },
+    )
+
+    try {
+      await service.refresh({ qualify: true })
+    } finally {
+      await service.dispose()
+    }
+
+    expect(
+      events.find(
+        (event) =>
+          event.phase === 'application.checkpoint' &&
+          event.metrics?.outcome === 'unavailable',
+      )?.metrics,
+    ).toMatchObject({
+      status: 'completed',
+      outcome: 'unavailable',
+      error: 'RangeError',
+      reason: 'Checkpoint artifacts exceed maxTotalBytes.',
+    })
+  })
+
+  it('keeps advisory checkpoint packing outside the refresh critical path', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-deferred', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    let publicationStarted = false
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint: {
+          load: async () => ({ ok: false, reason: 'missing' }),
+          publish: async () => {
+            publicationStarted = true
+          },
+        },
+      },
+    )
+
+    await service.refresh({ qualify: true })
+    expect(publicationStarted).toBe(false)
+    await service.dispose()
+    expect(publicationStarted).toBe(true)
+  })
+
   it('rejects ambiguous implementation roots and entrypoints without repository exceptions', () => {
     const common = {
       project: 'tsconfig.json',
@@ -205,7 +273,7 @@ export interface Alpha { readonly value: Shared }
       const implementation = (
         await service.refresh({ changed: [join(current.root, 'alpha/src/index.ts')] })
       ).snapshot
-      expect(implementation.specifications[0]).not.toBe(before.get('alpha/.spec/api.d.ts'))
+      expect(implementation.specifications[0]).toBe(before.get('alpha/.spec/api.d.ts'))
       expect(implementation.specifications[0]?.id).toBe(before.get('alpha/.spec/api.d.ts')?.id)
       expect(implementation.specifications[1]).toBe(before.get('beta/.spec/api.d.ts'))
 

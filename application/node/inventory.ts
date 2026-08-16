@@ -10,13 +10,21 @@ import type {
   RepositoryScanner,
 } from '../../repository/index.ts'
 import { inventoryRepository } from '../../repository/index.ts'
-import type { FileWorkspaceCheckpointStore } from '../../workspace/checkpoint/index.ts'
+import {
+  decodeWorkspaceCheckpointJson,
+  encodeWorkspaceCheckpointJson,
+  WORKSPACE_CHECKPOINT_JSON_ENCODING,
+  type FileWorkspaceCheckpointStore,
+} from '../../workspace/checkpoint/index.ts'
+import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.ts'
 
 const FORMAT = 'astrale.codegraph.repository-inventory-checkpoint'
-const VERSION = 1
+const VERSION = 2
 const SCOPE = 'repository-inventory'
-const INVENTORY = 'repository/inventory.json'
-const ENTRIES = 'repository/entries.json'
+const INVENTORY = 'repository/inventory.json.br'
+const ENTRIES = 'repository/entries.json.br'
+const MAXIMUM_DECODED_ARTIFACT_BYTES =
+  TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointArtifactBytes
 
 export interface CheckpointedRepositoryInventoryOptions {
   readonly root: string
@@ -65,18 +73,26 @@ export function createCheckpointedRepositoryInventory(
           loaded.manifest.producerFingerprint === options.producerFingerprint &&
           isRecord(loaded.manifest.payload) &&
           loaded.manifest.payload.repository === request.repository &&
-          loaded.manifest.payload.scope === scopeFingerprint
+          loaded.manifest.payload.scope === scopeFingerprint &&
+          loaded.manifest.payload.encoding === WORKSPACE_CHECKPOINT_JSON_ENCODING
         ) {
           const inventoryBytes = loaded.artifacts.get(INVENTORY)
           const entriesBytes = loaded.artifacts.get(ENTRIES)
           if (inventoryBytes && entriesBytes) {
-            const inventory = JSON.parse(
-              Buffer.from(inventoryBytes).toString('utf8'),
-            ) as RepositoryInventory
-            const entriesValue: unknown = JSON.parse(Buffer.from(entriesBytes).toString('utf8'))
+            const inventoryArtifact = decodeWorkspaceCheckpointJson(inventoryBytes, {
+              maximumDecodedBytes: MAXIMUM_DECODED_ARTIFACT_BYTES,
+            })
+            const entriesArtifact = decodeWorkspaceCheckpointJson(entriesBytes, {
+              maximumDecodedBytes: MAXIMUM_DECODED_ARTIFACT_BYTES,
+            })
+            const decodedBytes = inventoryArtifact.decodedBytes + entriesArtifact.decodedBytes
+            const inventory = inventoryArtifact.value as RepositoryInventory
+            const entriesValue = entriesArtifact.value
             if (
               inventory.repository === request.repository &&
               typeof inventory.revision === 'string' &&
+              loaded.manifest.payload.inventory === inventory.revision &&
+              loaded.manifest.payload.decodedBytes === decodedBytes &&
               Array.isArray(inventory.files) &&
               isCachedEntries(entriesValue)
             ) {
@@ -113,6 +129,12 @@ export function createCheckpointedRepositoryInventory(
       entries,
     }
     try {
+      const inventoryArtifact = encodeWorkspaceCheckpointJson(inventory, {
+        maximumDecodedBytes: MAXIMUM_DECODED_ARTIFACT_BYTES,
+      })
+      const entriesArtifact = encodeWorkspaceCheckpointJson(entries, {
+        maximumDecodedBytes: MAXIMUM_DECODED_ARTIFACT_BYTES,
+      })
       await options.store.publish(
         SCOPE,
         {
@@ -125,11 +147,13 @@ export function createCheckpointedRepositoryInventory(
               scope: scopeFingerprint,
               metadata: metadataFingerprint,
               inventory: inventory.revision,
+              encoding: WORKSPACE_CHECKPOINT_JSON_ENCODING,
+              decodedBytes: inventoryArtifact.decodedBytes + entriesArtifact.decodedBytes,
             },
           },
           artifacts: {
-            [INVENTORY]: Buffer.from(JSON.stringify(inventory), 'utf8'),
-            [ENTRIES]: Buffer.from(JSON.stringify(entries), 'utf8'),
+            [INVENTORY]: inventoryArtifact.value,
+            [ENTRIES]: entriesArtifact.value,
           },
         },
         signalOptions(request),

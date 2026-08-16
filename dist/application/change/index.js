@@ -84,17 +84,27 @@ export function createSpecificationImpactIndex(specifications) {
     for (const edge of pendingEdges) {
         addDependencyEdges(ownership, reverseDependencies, edge.owner, edge.target);
     }
+    // Declaration inputs outside every governed module still have exact consumers. Index those
+    // consumers directly so a shared ambient/type file refreshes only the Specs that compile it;
+    // owned inputs continue through the reverse dependency graph above.
+    const externalInputs = new Map();
+    for (const edge of pendingEdges) {
+        if (!ownership.has(edge.target))
+            addOwnership(externalInputs, edge.owner, edge.target);
+    }
     const owners = sortedUnique(ownerSet);
     const paths = sortedUnique([
         ...ownership.keys(),
         ...pendingEdges.map((edge) => edge.target),
     ]);
     const frozenOwnership = freezeSetMap(ownership);
+    const frozenExternalInputs = freezeSetMap(externalInputs);
     const frozenReverseDependencies = freezeSetMap(reverseDependencies);
     const impact = (path, options) => {
         const validatedPath = assertCanonicalRepositoryPath(path);
         const directOwners = sortedUnique([
             ...(frozenOwnership.get(validatedPath) ?? EMPTY_OWNERS),
+            ...(frozenExternalInputs.get(validatedPath) ?? EMPTY_OWNERS),
             ...(schemaPaths.has(validatedPath) || isPotentialSchemaPath(validatedPath)
                 ? schemaOwners
                 : EMPTY_OWNERS),

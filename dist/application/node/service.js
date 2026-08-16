@@ -57,7 +57,7 @@ export async function createNodeTypeSpecApplicationService(options) {
                 ? {
                     checkpoint: createApplicationCheckpoint({
                         store: workspaceCheckpoint,
-                        producerFingerprint: `@astrale-os/codegraph@${version}:application-checkpoint/1`,
+                        producerFingerprint: `@astrale-os/codegraph@${version}:application-checkpoint/2`,
                     }),
                 }
                 : {}),
@@ -68,7 +68,7 @@ export async function createNodeTypeSpecApplicationService(options) {
                 inventory: createCheckpointedRepositoryInventory({
                     root,
                     store: workspaceCheckpoint,
-                    producerFingerprint: `@astrale-os/codegraph@${version}:repository-inventory/1`,
+                    producerFingerprint: `@astrale-os/codegraph@${version}:repository-inventory/2`,
                 }),
             }
             : {});

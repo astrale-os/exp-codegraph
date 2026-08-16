@@ -1,9 +1,6 @@
 import { stat } from 'node:fs/promises'
 
-import type { ViewerCatalog } from '../viewer-host/specification.ts'
-
 export interface CatalogRebuildResult {
-  readonly catalog: ViewerCatalog
   readonly changed: boolean
   readonly generation: number
 }

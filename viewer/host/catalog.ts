@@ -147,7 +147,6 @@ function assertSpecPayload(
   if (
     value.source !== entry.source ||
     value.revision !== entry.revision ||
-    value.snapshot !== entry.snapshot ||
     !record(value.spec) ||
     (value.semanticReferences !== undefined && !record(value.semanticReferences))
   ) {

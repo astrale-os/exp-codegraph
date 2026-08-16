@@ -18,7 +18,11 @@ import type {
 import type { Diagnostic } from '../source/diagnostic.ts'
 import type { SpecificationSnapshot } from '../specification/index.ts'
 import type { ApplicationAnalysisWorkspace } from './analysis/index.ts'
-import type { ApplicationCheckpoint } from './checkpoint/index.ts'
+import type {
+  ApplicationCheckpoint,
+  ApplicationCheckpointContent,
+  ApplicationCheckpointExpectation,
+} from './checkpoint/index.ts'
 import { checkpointGenerations } from './checkpoint/index.ts'
 import type { ApplicationSchemaDependencyResource } from './observation/index.ts'
 import { withOperationSnapshot } from '../source/operation-snapshot.ts'
@@ -65,6 +69,8 @@ import { assertSpecificationInventory, createApplicationSnapshot } from './snaps
 import { selectApplicationSpecifications } from './selection/index.ts'
 import { applicationSchemaDependencies } from './observation/index.ts'
 import { TYPE_SPEC_APPLICATION_LIMITS } from './limits.ts'
+
+const ADVISORY_CHECKPOINT_DELAY_MS = 250
 import { createSpecificationImpactIndex } from './change/index.ts'
 
 export interface TypeSpecApplicationDependencies {
@@ -163,6 +169,11 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
   #current: TypeSpecApplicationSnapshotId | undefined
   #currentRequestKey: string | undefined
   #corpus: ApplicationCorpus | undefined
+  #pendingCheckpoint: {
+    readonly expectation: ApplicationCheckpointExpectation
+    readonly content: ApplicationCheckpointContent
+  } | undefined
+  #checkpointWriter: Promise<void> | undefined
   readonly #records = new Map<TypeSpecApplicationSnapshotId, ApplicationRecord>()
   readonly #root: string
   readonly #repository: RepositoryId
@@ -532,29 +543,14 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     const snapshot = await this.publish(candidate, sources, analysisSnapshot)
     this.#currentRequestKey = requestKey
     if (this.#dependencies.checkpoint && checkpointPublishEligible(options)) {
-      phase = performance.now()
-      this.phaseStarted('application.checkpoint')
-      try {
-        await this.#dependencies.checkpoint.publish(
-          {
-            repository: this.#repository,
-            inventory: inventory.revision,
-            request: requestKey,
-            ...(options.signal ? { signal: options.signal } : {}),
-          },
-          { snapshot, specifications, inventory, statistics },
-        )
-        checkpointMs += performance.now() - phase
-        this.phaseCompleted('application.checkpoint', performance.now() - phase, {
-          outcome: 'published',
-        })
-      } catch (error) {
-        checkpointMs += performance.now() - phase
-        this.phaseCompleted('application.checkpoint', performance.now() - phase, {
-          outcome: 'unavailable',
-          reason: error instanceof Error ? error.name : 'unknown',
-        })
-      }
+      this.scheduleCheckpoint(
+        {
+          repository: this.#repository,
+          inventory: inventory.revision,
+          request: requestKey,
+        },
+        { snapshot, specifications, inventory, statistics },
+      )
     }
     return {
       snapshot,
@@ -675,8 +671,43 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     this.#corpus = undefined
     const records = [...this.#records.values()]
     this.#records.clear()
+    await this.#checkpointWriter
     await Promise.all(records.map(disposeRecord))
     await this.#dependencies.analysis.dispose()
+  }
+
+  private scheduleCheckpoint(
+    expectation: ApplicationCheckpointExpectation,
+    content: ApplicationCheckpointContent,
+  ): void {
+    if (!this.#dependencies.checkpoint) return
+    this.#pendingCheckpoint = { expectation, content }
+    if (this.#checkpointWriter) return
+    this.#checkpointWriter = (async () => {
+      // Publishing is advisory. Start it in a later task so synchronous packing cannot extend the
+      // refresh/HMR critical path; dispose still drains the writer before releasing its stores.
+      await new Promise<void>((resolve) => setTimeout(resolve, ADVISORY_CHECKPOINT_DELAY_MS))
+      while (this.#pendingCheckpoint) {
+        const pending = this.#pendingCheckpoint
+        this.#pendingCheckpoint = undefined
+        const started = performance.now()
+        this.phaseStarted('application.checkpoint')
+        try {
+          await this.#dependencies.checkpoint!.publish(pending.expectation, pending.content)
+          this.phaseCompleted('application.checkpoint', performance.now() - started, {
+            outcome: 'published',
+          })
+        } catch (error) {
+          this.phaseCompleted('application.checkpoint', performance.now() - started, {
+            outcome: 'unavailable',
+            error: error instanceof Error ? error.name : 'unknown',
+            reason: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
+    })().finally(() => {
+      this.#checkpointWriter = undefined
+    })
   }
 
   private async publish(
@@ -836,6 +867,8 @@ async function refreshSpecificationCorpus(
   )
   const index = createSpecificationImpactIndex(previous)
   const impactedOwners = new Set<string>()
+  const compilationOwners = new Set<string>()
+  const specificationsBySource = new Map(previous.map((value) => [value.source, value]))
   const affected = new Set<string>()
   for (const directory of available.keys()) {
     if (!retained.has(directory)) affected.add(directory)
@@ -848,9 +881,20 @@ async function refreshSpecificationCorpus(
   }
   for (const [source, kind] of changes) {
     const impact = index.impact(source, { kind })
-    for (const owner of impact.refreshedOwners) impactedOwners.add(owner)
+    const fallback = requiresNormativeFallback(source, kind, impact.fallbackReasons)
+    const normative = fallback || impact.directOwners.some((owner) =>
+      specificationsBySource.get(owner) &&
+      normativeSpecificationInputs(specificationsBySource.get(owner)!).has(source),
+    )
+    const refreshedOwners = normative
+      ? impact.refreshedOwners
+      : deepestSpecificationOwners(impact.directOwners, specificationsBySource)
+    for (const owner of refreshedOwners) {
+      impactedOwners.add(owner)
+      if (normative) compilationOwners.add(owner)
+    }
   }
-  for (const owner of impactedOwners) {
+  for (const owner of compilationOwners) {
     const directory = portable(relative(root, dirname(resolve(root, owner))))
     if (available.has(directory)) affected.add(directory)
   }
@@ -882,6 +926,74 @@ async function refreshSpecificationCorpus(
     ]),
     compiled: compiled.length,
   }
+}
+
+function deepestSpecificationOwners(
+  owners: readonly string[],
+  specifications: ReadonlyMap<string, SpecificationSnapshot>,
+): readonly string[] {
+  const depth = Math.max(
+    ...owners.map((owner) => specifications.get(owner)?.root.split('/').length ?? -1),
+    -1,
+  )
+  return owners.filter(
+    (owner) => (specifications.get(owner)?.root.split('/').length ?? -1) === depth,
+  )
+}
+
+function normativeSpecificationInputs(
+  specification: SpecificationSnapshot,
+): ReadonlySet<string> {
+  const inputs = new Set<string>()
+  const add = (resource: { readonly source: string; readonly model?: {
+    readonly sources: readonly { readonly file: string }[]
+    readonly dependencies?: readonly { readonly file: string }[]
+  } } | undefined): void => {
+    if (!resource) return
+    inputs.add(resource.source)
+    for (const source of resource.model?.sources ?? []) inputs.add(source.file)
+    for (const dependency of resource.model?.dependencies ?? []) inputs.add(dependency.file)
+  }
+  add(specification.module.api)
+  add(specification.module.code)
+  add(specification.module.internal)
+  for (const resource of specification.module.ports) add(resource)
+  for (const resource of [
+    ...specification.schemas,
+    ...specification.examples,
+    ...specification.capabilities,
+    ...specification.flows,
+    ...specification.laws,
+    ...specification.states,
+    ...(specification.limits ? [specification.limits] : []),
+    ...(specification.layout ? [specification.layout] : []),
+    ...specification.benchmarks,
+    ...specification.packages,
+    ...specification.packagePatterns,
+    ...specification.module.packageAuthority.packages,
+    ...specification.module.packageAuthority.packagePatterns,
+  ]) add(resource)
+  inputs.add(specification.module.packageAuthority.source)
+  for (const reference of specification.sourceReferences) {
+    inputs.add(reference.source)
+    inputs.add(reference.target.source)
+  }
+  return inputs
+}
+
+function requiresNormativeFallback(
+  source: string,
+  kind: RepositoryInventoryChange['kind'],
+  reasons: readonly string[],
+): boolean {
+  if (
+    reasons.includes('unknown-declaration') ||
+    reasons.includes('package-configuration') ||
+    reasons.includes('typescript-configuration')
+  ) return true
+  if (kind === 'change') return false
+  if (!(source.startsWith('.spec/') || source.includes('/.spec/'))) return false
+  return !source.endsWith('/architecture.md') && !source.endsWith('/icon.svg')
 }
 
 interface RepositoryInventoryChange {

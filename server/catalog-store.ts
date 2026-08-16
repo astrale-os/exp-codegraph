@@ -47,13 +47,27 @@ export class CatalogSnapshotStore {
           .map((entry) => entry.source)
       : []
 
-    for (const [key, payload] of snapshot.specs) remember(this.#specs, key, payload)
-    for (const [key, payload] of snapshot.sources) remember(this.#sources, key, payload)
+    if (previous) {
+      for (const source of [...changedSpecs, ...removedSpecs]) {
+        const entry = previous.index.specs.find((candidate) => candidate.source === source)
+        if (!entry) continue
+        const key = specPayloadKey(entry.source, entry.revision)
+        const payload = previous.specs.get(key)
+        if (payload) remember(this.#specs, key, payload)
+      }
+      for (const key of previous.sources.keys()) {
+        if (snapshot.sources.has(key)) continue
+        const payload = previous.sources.get(key)
+        if (payload) remember(this.#sources, key, payload)
+      }
+    }
     this.#current = snapshot
     this.#prune()
 
     return {
-      changed: previous?.index.generation !== snapshot.index.generation,
+      changed:
+        previous?.index.generation !== snapshot.index.generation ||
+        previous?.index.snapshot !== snapshot.index.snapshot,
       generation: snapshot.index.generation,
       changedSpecs,
       removedSpecs,
@@ -61,18 +75,17 @@ export class CatalogSnapshotStore {
   }
 
   spec(source: string, revision: string): CatalogSpecPayload | undefined {
-    return recall(this.#specs, specPayloadKey(source, revision))
+    const key = specPayloadKey(source, revision)
+    return this.#current?.specs.get(key) ?? recall(this.#specs, key)
   }
 
   source(key: string): CatalogSourcePayload | undefined {
-    return recall(this.#sources, key)
+    return this.#current?.sources.get(key) ?? recall(this.#sources, key)
   }
 
   #prune(): void {
-    const protectedSpecs = new Set(this.#current?.specs.keys() ?? [])
-    const protectedSources = new Set(this.#current?.sources.keys() ?? [])
-    prune(this.#specs, this.#specCapacity, protectedSpecs)
-    prune(this.#sources, this.#sourceCapacity, protectedSources)
+    prune(this.#specs, this.#specCapacity)
+    prune(this.#sources, this.#sourceCapacity)
   }
 }
 
@@ -91,12 +104,11 @@ function recall<Key, Value>(entries: Map<Key, Value>, key: Key): Value | undefin
 function prune<Key, Value>(
   entries: Map<Key, Value>,
   capacity: number,
-  protectedKeys: Set<Key>,
 ): void {
   if (entries.size <= capacity) return
   for (const key of entries.keys()) {
     if (entries.size <= capacity) return
-    if (!protectedKeys.has(key)) entries.delete(key)
+    entries.delete(key)
   }
 }
 

@@ -89,7 +89,11 @@ export interface ViewerCatalog {
   }
 }
 
-export function viewerSpecificationDiagnostics(specification: ViewerSpecification): readonly Diagnostic[] {
+export function viewerSpecificationDiagnostics(
+  specification: Pick<ViewerSpecification, 'diagnostics'> & {
+    readonly modules: readonly Pick<ViewerSpecificationModule, 'diagnostics'>[]
+  },
+): readonly Diagnostic[] {
   return [
     ...specification.diagnostics,
     ...specification.modules.flatMap((module) => module.diagnostics),

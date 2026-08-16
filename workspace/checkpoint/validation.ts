@@ -162,7 +162,7 @@ export function validateStoredManifest(
 
   const descriptors: WorkspaceCheckpointArtifactDescriptor[] = []
   const seenKeys = new Set<string>()
-  const seenDigests = new Set<string>()
+  const digestBytes = new Map<string, number>()
   let totalBytes = 0
   let previousKey: string | undefined
   for (const item of value.artifacts) {
@@ -182,12 +182,16 @@ export function validateStoredManifest(
     }
     previousKey = item.key
     seenKeys.add(item.key)
-    if (!seenDigests.has(item.digest)) {
+    const priorBytes = digestBytes.get(item.digest)
+    if (priorBytes !== undefined && priorBytes !== item.bytes) {
+      throw new TypeError('Checkpoint artifact aliases disagree about the blob byte count.')
+    }
+    if (priorBytes === undefined) {
       totalBytes += item.bytes
       if (!Number.isSafeInteger(totalBytes) || totalBytes > limits.maxTotalBytes) {
         throw new RangeError('Checkpoint artifacts exceed maxTotalBytes.')
       }
-      seenDigests.add(item.digest)
+      digestBytes.set(item.digest, item.bytes)
     }
     descriptors.push({ key: item.key, digest: item.digest, bytes: item.bytes })
   }

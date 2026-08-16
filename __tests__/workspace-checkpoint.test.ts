@@ -6,8 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createFileWorkspaceCheckpointStore,
+  decodeWorkspaceCheckpointJson,
+  encodeWorkspaceCheckpointJson,
   type WorkspaceCheckpointManifestInput,
 } from '../workspace/checkpoint/index.ts'
+import { normalizeLimits, validateStoredManifest } from '../workspace/checkpoint/validation.ts'
 
 const roots: string[] = []
 
@@ -39,6 +42,43 @@ async function manifestFile(rootPath: string, scope: string): Promise<string> {
 }
 
 describe('workspace checkpoint store', () => {
+  it('rejects aliases that claim conflicting sizes for one content digest', () => {
+    const sharedDigest = digest(Buffer.from('shared'))
+    expect(() => validateStoredManifest({
+      ...manifest({}),
+      scope: 'aliases',
+      artifacts: [
+        { key: 'first', digest: sharedDigest, bytes: 6 },
+        { key: 'second', digest: sharedDigest, bytes: 7 },
+      ],
+    }, 'aliases', normalizeLimits({}))).toThrow('aliases disagree')
+  })
+
+  it('deterministically encodes JSON and bounds decoded expansion', () => {
+    const value = { records: Array.from({ length: 1_000 }, () => ({ kind: 'same', value: 'x'.repeat(64) })) }
+    const options = { maximumDecodedBytes: 256 * 1_024 }
+    const first = encodeWorkspaceCheckpointJson(value, options)
+    const second = encodeWorkspaceCheckpointJson(value, options)
+
+    expect(first.value).toEqual(second.value)
+    expect(
+      encodeWorkspaceCheckpointJson({ z: 1, a: 2 }, options).value,
+    ).toEqual(encodeWorkspaceCheckpointJson({ a: 2, z: 1 }, options).value)
+    expect(first.value.byteLength).toBeLessThan(first.decodedBytes / 10)
+    expect(decodeWorkspaceCheckpointJson(first.value, options)).toEqual({
+      value,
+      decodedBytes: first.decodedBytes,
+    })
+    expect(() => decodeWorkspaceCheckpointJson(first.value, { maximumDecodedBytes: 128 }))
+      .toThrow()
+    expect(() => encodeWorkspaceCheckpointJson(value, { maximumDecodedBytes: 128 }))
+      .toThrow('maximumDecodedBytes')
+    expect(() => encodeWorkspaceCheckpointJson({ invalid: undefined }, options))
+      .toThrow('undefined')
+    expect(() => encodeWorkspaceCheckpointJson({ invalid: Number.NaN }, options))
+      .toThrow('finite')
+  })
+
   it('round-trips a JSON manifest and content-addressed artifacts', async () => {
     const directory = await root()
     const store = createFileWorkspaceCheckpointStore({ directory })
@@ -123,6 +163,21 @@ describe('workspace checkpoint store', () => {
     await expect(
       oversized.publish('too-large', { manifest: manifest({}), artifacts: { source: Buffer.alloc(5) } }),
     ).rejects.toThrow('maxArtifactBytes')
+  })
+
+  it('repairs a same-size blob changed after it was admitted', async () => {
+    const directory = await root()
+    const store = createFileWorkspaceCheckpointStore({ directory })
+    const source = Buffer.from('valid')
+    await store.publish('repairable', { manifest: manifest({}), artifacts: { source } })
+    await expect(store.load('repairable')).resolves.toMatchObject({ ok: true })
+
+    const blob = join(directory, 'blobs', 'sha256', digest(source))
+    await writeFile(blob, Buffer.from('wrong'))
+    await store.publish('repairable', { manifest: manifest({}), artifacts: { source } })
+
+    await expect(store.load('repairable')).resolves.toMatchObject({ ok: true })
+    await expect(readFile(blob)).resolves.toEqual(source)
   })
 
   /** @evidence CHECKPOINT-ATOMIC-PUBLICATION */

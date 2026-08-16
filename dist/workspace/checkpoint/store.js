@@ -4,6 +4,7 @@ import { lstat, mkdir, open, readdir, readFile, rename, rm, } from 'node:fs/prom
 import { join, resolve } from 'node:path';
 import { SHA256, canonicalJson, isAbort, isRecord, normalizeLimits, preparePublication, sha256, throwIfAborted, validateScope, validateStoredManifest, } from './validation.js';
 const TEMPORARY_AGE_MS = 24 * 60 * 60 * 1_000;
+const LOAD_CONCURRENCY = 32;
 /** Create a generic advisory filesystem-backed checkpoint store. */
 export function createFileWorkspaceCheckpointStore(options) {
     const limits = normalizeLimits(options);
@@ -11,7 +12,11 @@ export function createFileWorkspaceCheckpointStore(options) {
     const manifestDirectory = join(directory, 'manifests');
     const blobDirectory = join(directory, 'blobs', 'sha256');
     const defaultSignal = options.signal;
-    const validatedBlobs = new Set();
+    // Digests admitted by load or installed by this store do not need their immutable blob file read
+    // and hashed again on the next delta publication. Caller bytes are still copied and hashed before
+    // this proof is consulted, so mutating a previously returned Uint8Array cannot alias stale data.
+    const trustedBlobs = new Map();
+    const maximumTrustedBlobs = Math.max(1, Math.min(Number.MAX_SAFE_INTEGER, limits.maxArtifacts * 2));
     let disposed = false;
     const assertReady = (signal) => {
         if (disposed)
@@ -63,7 +68,6 @@ export function createFileWorkspaceCheckpointStore(options) {
                 return miss('manifest-invalid');
             }
             const artifacts = new Map();
-            const loadedByDigest = new Map();
             let totalBytes = 0;
             const seenDigests = new Set();
             for (const descriptor of manifest.artifacts) {
@@ -77,39 +81,25 @@ export function createFileWorkspaceCheckpointStore(options) {
                     }
                     seenDigests.add(descriptor.digest);
                 }
-                const cached = loadedByDigest.get(descriptor.digest);
-                if (cached) {
-                    artifacts.set(descriptor.key, cached);
-                    continue;
-                }
-                const blob = join(blobDirectory, descriptor.digest);
-                let artifactBytes;
-                try {
-                    const metadata = await lstat(blob);
-                    throwIfAborted(signal);
-                    if (!metadata.isFile())
-                        return miss('artifact-unreadable');
-                    if (metadata.size > limits.maxArtifactBytes)
-                        return miss('artifact-too-large');
-                    if (metadata.size !== descriptor.bytes)
-                        return miss('artifact-corrupt');
-                    artifactBytes = await readFile(blob, { signal });
-                }
-                catch (error) {
-                    throwIfAborted(signal, error);
-                    if (isMissing(error))
-                        return miss('artifact-missing');
-                    return miss('artifact-unreadable');
-                }
-                throwIfAborted(signal);
-                if (artifactBytes.byteLength > limits.maxArtifactBytes)
-                    return miss('artifact-too-large');
-                if (artifactBytes.byteLength !== descriptor.bytes || sha256(artifactBytes) !== descriptor.digest) {
-                    validatedBlobs.delete(descriptor.digest);
-                    return miss('artifact-corrupt');
-                }
-                validatedBlobs.add(descriptor.digest);
-                loadedByDigest.set(descriptor.digest, artifactBytes);
+            }
+            const unique = new Map();
+            for (const descriptor of manifest.artifacts) {
+                if (!unique.has(descriptor.digest))
+                    unique.set(descriptor.digest, descriptor);
+            }
+            const loaded = await mapConcurrent([...unique.values()], LOAD_CONCURRENCY, (descriptor) => loadBlob(blobDirectory, descriptor, limits, signal));
+            const failed = loaded.find((result) => !result.ok);
+            if (failed)
+                return miss(failed.reason);
+            const successful = loaded.filter((result) => result.ok);
+            const loadedByDigest = new Map(successful.map((result) => [result.digest, result.bytes]));
+            for (const result of successful) {
+                rememberTrustedBlob(trustedBlobs, result.digest, result.metadata, maximumTrustedBlobs);
+            }
+            for (const descriptor of manifest.artifacts) {
+                const artifactBytes = loadedByDigest.get(descriptor.digest);
+                if (!artifactBytes)
+                    return miss('artifact-missing');
                 artifacts.set(descriptor.key, artifactBytes);
             }
             return { ok: true, manifest, artifacts };
@@ -128,16 +118,19 @@ export function createFileWorkspaceCheckpointStore(options) {
                 for (const artifact of prepared.artifacts) {
                     throwIfAborted(signal);
                     const target = join(blobDirectory, artifact.digest);
-                    if (await installedBlobExists(target, artifact.digest, artifact.data, signal, limits, validatedBlobs)) {
+                    const trusted = trustedBlobs.get(artifact.digest);
+                    if ((trusted && await installedBlobMatchesMetadata(target, trusted, signal)) ||
+                        await installedBlobExists(target, artifact.digest, artifact.data, signal, limits)) {
                         installedDigests.add(artifact.digest);
+                        await rememberInstalledBlob(trustedBlobs, target, artifact.digest, maximumTrustedBlobs, signal);
                         continue;
                     }
                     const temporary = temporaryPath(blobDirectory, `.${artifact.digest}`);
                     try {
                         await writeDurably(temporary, artifact.data, signal);
                         await installBlob(temporary, target, artifact.digest, artifact.data, signal, limits);
-                        validatedBlobs.add(artifact.digest);
                         installedDigests.add(artifact.digest);
+                        await rememberInstalledBlob(trustedBlobs, target, artifact.digest, maximumTrustedBlobs, signal);
                     }
                     finally {
                         await removeQuietly(temporary);
@@ -176,6 +169,7 @@ export function createFileWorkspaceCheckpointStore(options) {
         },
         async dispose() {
             disposed = true;
+            trustedBlobs.clear();
         },
     };
 }
@@ -187,6 +181,51 @@ function temporaryPath(directory, prefix) {
 }
 function miss(reason) {
     return { ok: false, reason };
+}
+async function loadBlob(directory, descriptor, limits, signal) {
+    const blob = join(directory, descriptor.digest);
+    let bytes;
+    let admittedMetadata;
+    try {
+        const metadata = await lstat(blob);
+        throwIfAborted(signal);
+        if (!metadata.isFile())
+            return { ok: false, reason: 'artifact-unreadable' };
+        if (metadata.size > limits.maxArtifactBytes)
+            return { ok: false, reason: 'artifact-too-large' };
+        if (metadata.size !== descriptor.bytes)
+            return { ok: false, reason: 'artifact-corrupt' };
+        admittedMetadata = blobMetadata(metadata);
+        bytes = await readFile(blob, { signal });
+    }
+    catch (error) {
+        throwIfAborted(signal, error);
+        return { ok: false, reason: isMissing(error) ? 'artifact-missing' : 'artifact-unreadable' };
+    }
+    throwIfAborted(signal);
+    if (bytes.byteLength > limits.maxArtifactBytes)
+        return { ok: false, reason: 'artifact-too-large' };
+    if (bytes.byteLength !== descriptor.bytes || sha256(bytes) !== descriptor.digest) {
+        return { ok: false, reason: 'artifact-corrupt' };
+    }
+    return {
+        ok: true,
+        digest: descriptor.digest,
+        bytes,
+        metadata: admittedMetadata,
+    };
+}
+async function mapConcurrent(values, concurrency, operation) {
+    const output = new Array(values.length);
+    let next = 0;
+    const worker = async () => {
+        while (next < values.length) {
+            const index = next++;
+            output[index] = await operation(values[index]);
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()));
+    return output;
 }
 async function writeDurably(file, bytes, signal) {
     throwIfAborted(signal);
@@ -207,20 +246,16 @@ async function writeDurably(file, bytes, signal) {
         await handle.close();
     }
 }
-async function installedBlobExists(target, digest, expected, signal, limits, validated) {
+async function installedBlobExists(target, digest, expected, signal, limits) {
     try {
         const metadata = await lstat(target);
         throwIfAborted(signal);
         if (!metadata.isFile() || metadata.size !== expected.byteLength || metadata.size > limits.maxArtifactBytes) {
-            validated.delete(digest);
             return false;
         }
-        if (validated.has(digest))
-            return true;
         const bytes = await readFile(target, { signal });
         if (bytes.byteLength !== expected.byteLength || sha256(bytes) !== digest)
             return false;
-        validated.add(digest);
         return true;
     }
     catch (error) {
@@ -229,6 +264,46 @@ async function installedBlobExists(target, digest, expected, signal, limits, val
             return false;
         return false;
     }
+}
+async function installedBlobMatchesMetadata(target, expected, signal) {
+    try {
+        const metadata = await lstat(target);
+        throwIfAborted(signal);
+        return metadata.isFile() && sameBlobMetadata(blobMetadata(metadata), expected);
+    }
+    catch (error) {
+        throwIfAborted(signal, error);
+        return false;
+    }
+}
+async function rememberInstalledBlob(trusted, target, digest, capacity, signal) {
+    const metadata = await lstat(target);
+    throwIfAborted(signal);
+    if (!metadata.isFile())
+        return;
+    rememberTrustedBlob(trusted, digest, blobMetadata(metadata), capacity);
+}
+function rememberTrustedBlob(trusted, digest, metadata, capacity) {
+    trusted.delete(digest);
+    trusted.set(digest, metadata);
+    while (trusted.size > capacity)
+        trusted.delete(trusted.keys().next().value);
+}
+function blobMetadata(metadata) {
+    return {
+        dev: metadata.dev,
+        ino: metadata.ino,
+        size: metadata.size,
+        mtimeMs: metadata.mtimeMs,
+        ctimeMs: metadata.ctimeMs,
+    };
+}
+function sameBlobMetadata(left, right) {
+    return (left.dev === right.dev &&
+        left.ino === right.ino &&
+        left.size === right.size &&
+        left.mtimeMs === right.mtimeMs &&
+        left.ctimeMs === right.ctimeMs);
 }
 async function installBlob(temporary, target, digest, expected, signal, limits) {
     throwIfAborted(signal);

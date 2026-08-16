@@ -12,7 +12,7 @@ import { viewerSpecificationDiagnostics } from './specification.ts'
 export const CATALOG_INDEX_FORMAT = 'astrale.spec.catalog-index' as const
 export const CATALOG_SPEC_FORMAT = 'astrale.spec.catalog-spec' as const
 export const CATALOG_SOURCE_FORMAT = 'astrale.spec.catalog-source' as const
-export const CATALOG_TRANSPORT_VERSION = 2 as const
+export const CATALOG_TRANSPORT_VERSION = 3 as const
 
 export const CATALOG_SPEC_ENDPOINT = '/__astrale/spec-catalog/spec'
 export const CATALOG_SOURCE_ENDPOINT = '/__astrale/spec-catalog/source'
@@ -39,7 +39,6 @@ export interface CatalogSpecEntry {
   /** Compact searchable projection for the module specification. */
   readonly searchText?: string
   readonly revision: string
-  readonly snapshot: `application:${string}`
   readonly metrics: CatalogSpecMetrics
   /** Catalog-admitted module icon used before the complete specification payload is loaded. */
   readonly icon?: SvgIconElement
@@ -129,7 +128,6 @@ export interface CatalogSpecPayload {
   readonly version: typeof CATALOG_TRANSPORT_VERSION
   readonly source: string
   readonly revision: string
-  readonly snapshot: `application:${string}`
   readonly spec: PackedSpec
   readonly semanticReferences?: CatalogSemanticReferences
 }
@@ -143,7 +141,11 @@ export interface CatalogSourcePayload {
 }
 
 /** Derive the exact navigation status shown for a complete Spec. */
-export function catalogSpecMetrics(spec: ViewerSpecificationProjection): CatalogSpecMetrics {
+export function catalogSpecMetrics(
+  spec: Pick<ViewerSpecificationProjection, 'diagnostics' | 'verification'> & {
+    readonly modules: readonly Pick<ViewerSpecificationModule, 'contract' | 'diagnostics'>[]
+  },
+): CatalogSpecMetrics {
   const validationErrors = viewerSpecificationDiagnostics(spec).length
   const verificationErrors =
     spec.verification?.rules

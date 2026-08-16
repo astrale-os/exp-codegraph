@@ -1,6 +1,13 @@
 /** Public leaf boundary for the generic workspace checkpoint store. */
 export { createFileWorkspaceCheckpointStore } from './store.ts'
 export {
+  decodeWorkspaceCheckpointJson,
+  encodeWorkspaceCheckpointJson,
+  WORKSPACE_CHECKPOINT_JSON_ENCODING,
+  type WorkspaceCheckpointJsonArtifact,
+  type WorkspaceCheckpointJsonOptions,
+} from './json.ts'
+export {
   DEFAULT_WORKSPACE_CHECKPOINT_LIMITS,
   type FileWorkspaceCheckpointStore,
   type FileWorkspaceCheckpointStoreOptions,

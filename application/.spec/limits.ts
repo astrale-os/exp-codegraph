@@ -8,6 +8,8 @@ export const TYPE_SPEC_APPLICATION_LIMITS = {
   maximumSingleOwnerRefreshMilliseconds: 5_000,
   maximumNativeStartupMilliseconds: 3_000,
   maximumSQLiteBytes: 536_870_912,
+  maximumDecodedCheckpointArtifactBytes: 67_108_864,
+  maximumDecodedCheckpointBytes: 268_435_456,
   maximumCheckHeapMiB: 1_280,
   maximumInteractiveHeapMiB: 3_584,
 } as const

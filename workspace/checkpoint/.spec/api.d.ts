@@ -49,6 +49,27 @@ export interface WorkspaceCheckpointPublishInput {
   readonly signal?: AbortSignal
 }
 
+export const WORKSPACE_CHECKPOINT_JSON_ENCODING: 'br-json/1'
+
+export interface WorkspaceCheckpointJsonOptions {
+  readonly maximumDecodedBytes: number
+}
+
+export interface WorkspaceCheckpointJsonArtifact<Value = unknown> {
+  readonly value: Value
+  readonly decodedBytes: number
+}
+
+export function encodeWorkspaceCheckpointJson(
+  value: unknown,
+  options: WorkspaceCheckpointJsonOptions,
+): WorkspaceCheckpointJsonArtifact<Uint8Array>
+
+export function decodeWorkspaceCheckpointJson(
+  bytes: Uint8Array,
+  options: WorkspaceCheckpointJsonOptions,
+): WorkspaceCheckpointJsonArtifact
+
 export interface FileWorkspaceCheckpointStoreOptions {
   readonly directory: string
   readonly maxManifestBytes?: number
