@@ -1,6 +1,9 @@
 import type { ApiModelV2, ApiSource, ApiToken } from '../api/model.ts'
-import type { DeclarationResource, MarkdownResource, PortResource } from '../specification/resource/index.ts'
-import type { ViewerCatalog, ViewerSpecification } from '../viewer-host/specification.ts'
+import type {
+  DeclarationResource,
+  MarkdownResource,
+  PortResource,
+} from '../specification/resource/index.ts'
 import type {
   CatalogIndex,
   CatalogSourcePayload,
@@ -15,6 +18,7 @@ import type {
 } from '../viewer-host/catalog.ts'
 import type { ViewerAdapterManifest } from '../viewer-host/manifest.ts'
 import type { ViewerQualification } from '../viewer-host/qualification.ts'
+import type { ViewerCatalog, ViewerSpecification } from '../viewer-host/specification.ts'
 
 import {
   indexCatalogApis,
@@ -100,7 +104,8 @@ export function catalogProjectionFromPayloads(
               },
             }
           : {}),
-        imports: module.contract?.imports.map((item) => ({ key: item.key, source: item.source })) ?? [],
+        imports:
+          module.contract?.imports.map((item) => ({ key: item.key, source: item.source })) ?? [],
       })),
     })
     sourceKeys.push({ source: entry.source, keys: packedSpecSourceKeys(payload.spec) })
@@ -115,35 +120,40 @@ export function createCatalogSnapshot(
   applicationSnapshot: `application:${string}` = `application:${'0'.repeat(64)}`,
   previous?: CatalogSnapshot,
 ): CatalogSnapshot {
+  const reusablePrevious = currentTransportSnapshot(previous) ? previous : undefined
   const sources = new Map<string, CatalogSourcePayload>()
   const specs = new Map<string, CatalogSpecPayload>()
   const entries: CatalogSpecEntry[] = []
   const projectedSpecifications = catalog.specs.map(projectionSpecification)
   const apiIndex = indexCatalogApis({ specs: projectedSpecifications })
   const topology = catalogProjectionTopology(projectedSpecifications)
-  if (previous?.topology === topology) {
-    for (const [key, value] of previous.sources) sources.set(key, value)
+  if (reusablePrevious?.topology === topology) {
+    for (const [key, value] of reusablePrevious.sources) sources.set(key, value)
   }
-  const inputs = new Map(catalog.specs.map((specification) => [specification.source, specification]))
+  const inputs = new Map(
+    catalog.specs.map((specification) => [specification.source, specification]),
+  )
   const declarationIdentities = ownedDeclarationIdentities(apiIndex)
   const specSourceByModuleId = sourceByModule(projectedSpecifications)
   const sourceKeys: CatalogProjectionContext['sourceKeys'][number][] = []
 
   for (const spec of catalog.specs) {
-    const retained = reusablePayload(previous, topology, spec)
+    const retained = reusablePayload(reusablePrevious, topology, spec)
     if (retained) {
       specs.set(specPayloadKey(spec.source, retained.entry.revision), retained.payload)
       entries.push(retained.entry)
       sourceKeys.push({
         source: spec.source,
-        keys: previous!.projection.sourceKeys.find((value) => value.source === spec.source)?.keys ?? [],
+        keys:
+          reusablePrevious!.projection.sourceKeys.find((value) => value.source === spec.source)
+            ?.keys ?? [],
       })
       continue
     }
     const projection = catalogReferenceProjection(spec, apiIndex)
     const packed = packSpec(spec, sources, projection.documents)
     const semanticReferences = projection.semanticReferences
-    const revision = contentRevision({ spec: packed, semanticReferences })
+    const revision = specContentRevision(packed, semanticReferences)
     const payload: CatalogSpecPayload = {
       format: CATALOG_SPEC_FORMAT,
       version: CATALOG_TRANSPORT_VERSION,
@@ -168,7 +178,7 @@ export function createCatalogSnapshot(
     })
   }
 
-  const generation = contentRevision({ diagnostics: catalog.diagnostics, specs: entries })
+  const generation = indexContentRevision(catalog.diagnostics, entries)
   const index: CatalogIndex = {
     format: CATALOG_INDEX_FORMAT,
     version: CATALOG_TRANSPORT_VERSION,
@@ -200,14 +210,20 @@ export function updateCatalogSnapshot(
   adapterManifest: ViewerAdapterManifest,
   applicationSnapshot: `application:${string}`,
 ): CatalogSnapshot | undefined {
+  if (!currentTransportSnapshot(previous)) return
   const expectedSources = previous.projection.specifications.map((value) => value.source)
   if (!sameStrings(expectedSources, sources)) return
   const changedBySource = new Map(changed.map((value) => [value.source, value]))
-  if (changedBySource.size !== changed.length || [...changedBySource.keys()].some((source) => !expectedSources.includes(source))) {
+  if (
+    changedBySource.size !== changed.length ||
+    [...changedBySource.keys()].some((source) => !expectedSources.includes(source))
+  ) {
     return
   }
   const projectedSpecifications = previous.projection.specifications.map((value) =>
-    changedBySource.has(value.source) ? projectionSpecification(changedBySource.get(value.source)!) : value,
+    changedBySource.has(value.source)
+      ? projectionSpecification(changedBySource.get(value.source)!)
+      : value,
   )
   const topology = catalogProjectionTopology(projectedSpecifications)
   if (topology !== previous.topology) return
@@ -218,16 +234,20 @@ export function updateCatalogSnapshot(
   const specChanges = new Map<string, CatalogSpecPayload>()
   const removedSpecs = new Set<string>()
   const sourceChanges = new Map<string, CatalogSourcePayload>()
-  const nextSourceKeys = new Map(previous.projection.sourceKeys.map((value) => [value.source, value.keys]))
+  const nextSourceKeys = new Map(
+    previous.projection.sourceKeys.map((value) => [value.source, value.keys]),
+  )
   const entryChanges = new Map<string, CatalogSpecEntry>()
 
   for (const specification of changed) {
-    const previousEntry = previous.index.specs.find((value) => value.source === specification.source)
+    const previousEntry = previous.index.specs.find(
+      (value) => value.source === specification.source,
+    )
     if (!previousEntry) return
     const projection = catalogReferenceProjection(specification, apiIndex)
     const packed = packSpec(specification, sourceChanges, projection.documents)
     const semanticReferences = projection.semanticReferences
-    const revision = contentRevision({ spec: packed, semanticReferences })
+    const revision = specContentRevision(packed, semanticReferences)
     const payload: CatalogSpecPayload = {
       format: CATALOG_SPEC_FORMAT,
       version: CATALOG_TRANSPORT_VERSION,
@@ -260,7 +280,7 @@ export function updateCatalogSnapshot(
   const specs = overlayMap(previous.specs, specChanges, removedSpecs)
   const payloadSources = overlayMap(previous.sources, sourceChanges, removedSources)
   const entries = previous.index.specs.map((entry) => entryChanges.get(entry.source) ?? entry)
-  const generation = contentRevision({ diagnostics, specs: entries })
+  const generation = indexContentRevision(diagnostics, entries)
   const index: CatalogIndex = {
     format: CATALOG_INDEX_FORMAT,
     version: CATALOG_TRANSPORT_VERSION,
@@ -277,7 +297,10 @@ export function updateCatalogSnapshot(
     inputs: overlayMap(previous.inputs, changedBySource, new Set()),
     projection: {
       specifications: projectedSpecifications,
-      sourceKeys: expectedSources.map((source) => ({ source, keys: nextSourceKeys.get(source) ?? [] })),
+      sourceKeys: expectedSources.map((source) => ({
+        source,
+        keys: nextSourceKeys.get(source) ?? [],
+      })),
     },
     topology,
   }
@@ -293,6 +316,9 @@ export function restoreCatalogSnapshotVerifications(
   }[],
   adapterManifest: ViewerAdapterManifest,
 ): CatalogSnapshot {
+  if (!currentTransportSnapshot(previous)) {
+    throw new Error('Catalog snapshot transport is not supported.')
+  }
   const bySource = new Map(records.map((record) => [record.source, record]))
   const changes = new Map<string, CatalogSpecPayload>()
   const removed = new Set<string>()
@@ -305,15 +331,16 @@ export function restoreCatalogSnapshotVerifications(
       !payload ||
       payload.spec.verificationRevision !== record.revision ||
       payload.spec.verification !== undefined
-    ) return entry
+    )
+      return entry
     const spec = { ...payload.spec, verification: record.verification }
-    const revision = contentRevision({ spec, semanticReferences: payload.semanticReferences })
+    const revision = specContentRevision(spec, payload.semanticReferences)
     changes.set(specPayloadKey(entry.source, revision), { ...payload, revision, spec })
     removed.add(priorKey)
     return { ...entry, revision, metrics: catalogSpecMetrics(spec) }
   })
   if (!changes.size) return previous
-  const generation = contentRevision({ diagnostics: previous.index.diagnostics, specs: entries })
+  const generation = indexContentRevision(previous.index.diagnostics, entries)
   const index = { ...previous.index, generation, specs: entries }
   return {
     ...previous,
@@ -328,7 +355,11 @@ function reusablePayload(
   topology: string,
   specification: ViewerSpecification,
 ): { readonly entry: CatalogSpecEntry; readonly payload: CatalogSpecPayload } | undefined {
-  if (!previous || previous.topology !== topology || previous.inputs.get(specification.source) !== specification) {
+  if (
+    !previous ||
+    previous.topology !== topology ||
+    previous.inputs.get(specification.source) !== specification
+  ) {
     return
   }
   const entry = previous.index.specs.find((candidate) => candidate.source === specification.source)
@@ -337,13 +368,23 @@ function reusablePayload(
   return payload ? { entry, payload } : undefined
 }
 
+function currentTransportSnapshot(
+  snapshot: CatalogSnapshot | undefined,
+): snapshot is CatalogSnapshot {
+  return !!snapshot &&
+    snapshot.index.format === CATALOG_INDEX_FORMAT &&
+    snapshot.index.version === CATALOG_TRANSPORT_VERSION
+}
+
 export function catalogProjectionTopology(
   specifications: readonly CatalogProjectionSpecification[],
 ): string {
   return contentRevision(specifications)
 }
 
-function projectionSpecification(specification: ViewerSpecification): CatalogProjectionSpecification {
+function projectionSpecification(
+  specification: ViewerSpecification,
+): CatalogProjectionSpecification {
   return {
     source: specification.source,
     modules: specification.modules.map((module) => ({
@@ -369,7 +410,8 @@ function projectionSpecification(specification: ViewerSpecification): CatalogPro
             },
           }
         : {}),
-      imports: module.contract?.imports.map((item) => ({ key: item.key, source: item.source })) ?? [],
+      imports:
+        module.contract?.imports.map((item) => ({ key: item.key, source: item.source })) ?? [],
     })),
   }
 }
@@ -562,12 +604,14 @@ function packModel(
 }
 
 function packedSpecSourceKeys(specification: PackedSpec): readonly string[] {
-  return [...new Set(
-    specification.modules.flatMap((module) => [
-      ...(module.api?.model?.sourceKeys ?? []),
-      ...module.ports.flatMap((port) => port.model?.sourceKeys ?? []),
-    ]),
-  )].sort()
+  return [
+    ...new Set(
+      specification.modules.flatMap((module) => [
+        ...(module.api?.model?.sourceKeys ?? []),
+        ...module.ports.flatMap((port) => port.model?.sourceKeys ?? []),
+      ]),
+    ),
+  ].sort()
 }
 
 function registerSource(
@@ -575,7 +619,7 @@ function registerSource(
   tokens: readonly ApiToken[],
   payloads: Map<string, CatalogSourcePayload>,
 ): string {
-  const key = contentRevision({ source, tokens })
+  const key = sourceContentRevision(source, tokens)
   const existing = payloads.get(key)
   if (existing) {
     if (
@@ -615,6 +659,39 @@ export function createCatalogIndexModule(
 
 function contentRevision(value: unknown): string {
   return sourceRevision(safeJson(value))
+}
+
+function sourceContentRevision(source: ApiSource, tokens: readonly ApiToken[]): string {
+  return contentRevision({
+    format: CATALOG_SOURCE_FORMAT,
+    version: CATALOG_TRANSPORT_VERSION,
+    source,
+    tokens,
+  })
+}
+
+function specContentRevision(
+  spec: PackedSpec,
+  semanticReferences: CatalogSpecPayload['semanticReferences'],
+): string {
+  return contentRevision({
+    format: CATALOG_SPEC_FORMAT,
+    version: CATALOG_TRANSPORT_VERSION,
+    spec,
+    semanticReferences,
+  })
+}
+
+function indexContentRevision(
+  diagnostics: CatalogIndex['diagnostics'],
+  specs: CatalogIndex['specs'],
+): string {
+  return contentRevision({
+    format: CATALOG_INDEX_FORMAT,
+    version: CATALOG_TRANSPORT_VERSION,
+    diagnostics,
+    specs,
+  })
 }
 
 function safeJson(value: unknown): string {

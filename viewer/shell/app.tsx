@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'preact/hooks'
 
-import type { ViewerQualification } from '../../viewer-host/qualification.ts'
 import type { CatalogIndex, CatalogSpecEntry } from '../../viewer-host/catalog.ts'
+import type { ViewerQualification } from '../../viewer-host/qualification.ts'
 import type { ViewerAdapters } from '../host/adapters.ts'
 import type { CatalogLoader } from '../host/catalog.ts'
 import type { ApiDefinitionOwner, ApiNavigationState } from '../specification/api.tsx'
@@ -9,12 +9,12 @@ import type { SpecTab } from './route.ts'
 
 import { catalogSpecMetrics } from '../../viewer-host/catalog.ts'
 import { useCatalogSelection } from '../host/catalog-state.ts'
-import { moduleNavigationTab, selectedSpecTab, specTabs } from '../specification/tabs.ts'
-import { SpecView } from '../specification/view.tsx'
 import {
   createModuleTopologyIndex,
   hasModuleTopology,
 } from '../specification/module-topology-model.ts'
+import { moduleNavigationTab, selectedSpecTab, specTabs } from '../specification/tabs.ts'
+import { SpecView } from '../specification/view.tsx'
 import { ArchitectureOverview } from './architecture.tsx'
 import { useViewerHistory } from './history.ts'
 import { Navigation } from './navigation.tsx'
@@ -77,9 +77,7 @@ export function App({ adapters, index, loader }: AppProps) {
     [selection.index.specs],
   )
   const pointer = selected?.source === route.source ? route.pointer : undefined
-  const topologyAvailable = selected
-    ? hasModuleTopology(topologyIndex, selected.source)
-    : false
+  const topologyAvailable = selected ? hasModuleTopology(topologyIndex, selected.source) : false
   const tab = selected
     ? selectedSpecTab(selected, route, rememberedTabs[selected.source], {
         code: topologyAvailable,
@@ -195,9 +193,12 @@ export function App({ adapters, index, loader }: AppProps) {
           void loader.load(entry).catch(() => undefined)
         }}
         onSpecSectionsRequest={(entry) =>
-          loader.load(entry).then((spec) =>
-            specTabs(spec, { code: hasModuleTopology(topologyIndex, entry.source) }),
-          )}
+          loader
+            .load(entry)
+            .then((spec) =>
+              specTabs(spec, { code: hasModuleTopology(topologyIndex, entry.source) }),
+            )
+        }
       />
       <main class="main" tabindex={-1} aria-busy={transitioning}>
         {selection.index.diagnostics.length > 0 && (
@@ -216,6 +217,16 @@ export function App({ adapters, index, loader }: AppProps) {
             </p>
           </section>
         )}
+        {route.view !== 'graph' && selected?.payloadDiagnostics?.length ? (
+          <section class="catalog-errors" role="status" aria-label="Catalog payload warnings">
+            {selected.payloadDiagnostics.map((diagnostic) => (
+              <p key={`${diagnostic.code}:${diagnostic.file}:${diagnostic.message}`}>
+                <strong>{diagnostic.code}</strong> {diagnostic.message} Raw declaration text remains
+                available.
+              </p>
+            ))}
+          </section>
+        ) : null}
         {route.view === 'graph' ? (
           <ArchitectureOverview specs={navigationSpecs} />
         ) : selected ? (
@@ -315,9 +326,7 @@ export function isCatalogTransitionTarget(
   routeSource: string | undefined,
   selectedSource: string,
 ): boolean {
-  return (
-    routeSource !== selectedSource && entries.some((entry) => entry.source === routeSource)
-  )
+  return routeSource !== selectedSource && entries.some((entry) => entry.source === routeSource)
 }
 
 function CatalogProgress({ active, title }: { active: boolean; title?: string }) {

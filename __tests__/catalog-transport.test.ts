@@ -9,8 +9,59 @@ import {
   updateCatalogSnapshot,
 } from '../server/catalog-snapshot.ts'
 import { CatalogSnapshotStore } from '../server/catalog-store.ts'
+import { sourceRevision } from '../source/file.ts'
+import {
+  CATALOG_INDEX_FORMAT,
+  CATALOG_SOURCE_FORMAT,
+  CATALOG_SPEC_FORMAT,
+  CATALOG_TRANSPORT_VERSION,
+} from '../viewer-host/catalog.ts'
 
 describe('browser catalog transport', () => {
+  it('qualifies every immutable identity with its transport format and version', () => {
+    const snapshot = createCatalogSnapshot(
+      {
+        specs: [specification('alpha/.spec/api.d.ts', 'Alpha', apiModel('string', 'alpha'))],
+        diagnostics: [],
+      },
+      {},
+    )
+    const entry = snapshot.index.specs[0]!
+    const spec = snapshot.specs.get(`${entry.source}\0${entry.revision}`)!
+    const [sourceKey, source] = [...snapshot.sources.entries()][0]!
+
+    expect(sourceKey).toBe(
+      sourceRevision(
+        JSON.stringify({
+          format: CATALOG_SOURCE_FORMAT,
+          version: CATALOG_TRANSPORT_VERSION,
+          source: source.source,
+          tokens: source.tokens,
+        }),
+      ),
+    )
+    expect(entry.revision).toBe(
+      sourceRevision(
+        JSON.stringify({
+          format: CATALOG_SPEC_FORMAT,
+          version: CATALOG_TRANSPORT_VERSION,
+          spec: spec.spec,
+          semanticReferences: spec.semanticReferences,
+        }),
+      ),
+    )
+    expect(snapshot.index.generation).toBe(
+      sourceRevision(
+        JSON.stringify({
+          format: CATALOG_INDEX_FORMAT,
+          version: CATALOG_TRANSPORT_VERSION,
+          diagnostics: snapshot.index.diagnostics,
+          specs: snapshot.index.specs,
+        }),
+      ),
+    )
+  })
+
   it('deduplicates shared declaration sources without merging Spec payloads', () => {
     const model = apiModel('string', 'source-one')
     const alpha = specification('alpha/.spec/api.d.ts', 'Alpha', model)
@@ -76,8 +127,9 @@ describe('browser catalog transport', () => {
 
     const snapshot = createCatalogSnapshot({ specs: [beta, alpha], diagnostics: [] }, {})
 
-    expect(snapshot.index.specs.find(({ source }) => source === alpha.source)?.contractDependencies)
-      .toEqual([{ source: beta.source, declarations: 2 }])
+    expect(
+      snapshot.index.specs.find(({ source }) => source === alpha.source)?.contractDependencies,
+    ).toEqual([{ source: beta.source, declarations: 2 }])
     expect(
       snapshot.index.specs.find(({ source }) => source === beta.source)?.contractDependencies,
     ).toBeUndefined()
@@ -105,6 +157,22 @@ describe('browser catalog transport', () => {
     expect(secondPayload).toBe(firstPayload)
     expect(secondPayload.revision).toBe(firstPayload.revision)
     expect(second.index.snapshot).not.toBe(first.index.snapshot)
+  })
+
+  it('never reuses an in-memory snapshot from another transport version', () => {
+    const alpha = specification('alpha/.spec/api.d.ts', 'Alpha', apiModel('string', 'alpha'))
+    const first = createCatalogSnapshot({ specs: [alpha], diagnostics: [] }, {})
+    const stale = {
+      ...first,
+      index: { ...first.index, version: CATALOG_TRANSPORT_VERSION - 1 },
+    } as unknown as typeof first
+    const next = createCatalogSnapshot({ specs: [alpha], diagnostics: [] }, {}, undefined, stale)
+
+    expect(next.index.version).toBe(CATALOG_TRANSPORT_VERSION)
+    expect([...next.sources.values()][0]).not.toBe([...first.sources.values()][0])
+    expect([...next.specs.values()][0]).not.toBe([...first.specs.values()][0])
+    expect(updateCatalogSnapshot(stale, [alpha], [alpha.source], [], {}, next.index.snapshot))
+      .toBeUndefined()
   })
 
   it('patches one restored Spec exactly without hydrating unchanged payloads', () => {
@@ -143,10 +211,13 @@ describe('browser catalog transport', () => {
     expect([...patched!.specs.keys()].sort()).toEqual([...cold.specs.keys()].sort())
     expect([...patched!.sources.keys()].sort()).toEqual([...cold.sources.keys()].sort())
     expect(unchangedPayloadReads).toBe(0)
-    for (const key of cold.specs.keys()) expect(patched?.specs.get(key)).toEqual(cold.specs.get(key))
-    for (const key of cold.sources.keys()) expect(patched?.sources.get(key)).toEqual(cold.sources.get(key))
-    expect(patched?.index.specs.find((entry) => entry.source === beta.source)?.revision)
-      .toBe(first.index.specs.find((entry) => entry.source === beta.source)?.revision)
+    for (const key of cold.specs.keys())
+      expect(patched?.specs.get(key)).toEqual(cold.specs.get(key))
+    for (const key of cold.sources.keys())
+      expect(patched?.sources.get(key)).toEqual(cold.sources.get(key))
+    expect(patched?.index.specs.find((entry) => entry.source === beta.source)?.revision).toBe(
+      first.index.specs.find((entry) => entry.source === beta.source)?.revision,
+    )
   })
 
   it('falls back when a changed Spec alters global projection topology', () => {
@@ -158,14 +229,16 @@ describe('browser catalog transport', () => {
       declarationIdentity(beta.source, 'Shared'),
     ])
 
-    expect(updateCatalogSnapshot(
-      first,
-      [changedAlpha],
-      [alpha.source, beta.source],
-      [],
-      {},
-      `application:${'2'.repeat(64)}`,
-    )).toBeUndefined()
+    expect(
+      updateCatalogSnapshot(
+        first,
+        [changedAlpha],
+        [alpha.source, beta.source],
+        [],
+        {},
+        `application:${'2'.repeat(64)}`,
+      ),
+    ).toBeUndefined()
   })
 
   it('restores an exact verification without hydrating unrelated Spec payloads', () => {
@@ -186,14 +259,22 @@ describe('browser catalog transport', () => {
       dependencies: [],
       durationMs: 1,
     }
-    const patched = restoreCatalogSnapshotVerifications(restored, [{
-      source: alpha.source,
-      revision: alpha.verificationRevision,
-      verification,
-    }], {})
+    const patched = restoreCatalogSnapshotVerifications(
+      restored,
+      [
+        {
+          source: alpha.source,
+          revision: alpha.verificationRevision,
+          verification,
+        },
+      ],
+      {},
+    )
     const entry = patched.index.specs.find((value) => value.source === alpha.source)!
 
-    expect(patched.specs.get(`${alpha.source}\0${entry.revision}`)?.spec.verification).toEqual(verification)
+    expect(patched.specs.get(`${alpha.source}\0${entry.revision}`)?.spec.verification).toEqual(
+      verification,
+    )
     expect(entry.metrics.status).toBe('pass')
     expect(betaReads).toBe(0)
   })

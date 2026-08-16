@@ -1,6 +1,10 @@
 import type { ApiModelV2, ApiSource, ApiToken } from '../api/model.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
-import type { DeclarationResource, PortResource, SvgIconElement } from '../specification/resource/index.ts'
+import type {
+  DeclarationResource,
+  PortResource,
+  SvgIconElement,
+} from '../specification/resource/index.ts'
 import type {
   ViewerSpecification as ViewerSpecificationProjection,
   ViewerSpecificationModule,
@@ -8,11 +12,10 @@ import type {
 
 import { viewerSpecificationDiagnostics } from './specification.ts'
 
-
 export const CATALOG_INDEX_FORMAT = 'astrale.spec.catalog-index' as const
 export const CATALOG_SPEC_FORMAT = 'astrale.spec.catalog-spec' as const
 export const CATALOG_SOURCE_FORMAT = 'astrale.spec.catalog-source' as const
-export const CATALOG_TRANSPORT_VERSION = 3 as const
+export const CATALOG_TRANSPORT_VERSION = 4 as const
 
 export const CATALOG_SPEC_ENDPOINT = '/__astrale/spec-catalog/spec'
 export const CATALOG_SOURCE_ENDPOINT = '/__astrale/spec-catalog/source'
@@ -113,14 +116,17 @@ export interface CatalogSemanticReferences {
 }
 
 /** Complete Spec structure with declaration source bodies replaced by content-addressed keys. */
-type PackSpecification<Specification extends ViewerSpecificationProjection> = Specification extends unknown
-  ? Omit<Specification, 'modules'> & { readonly modules: readonly PackedSpecModule[] }
-  : never
+type PackSpecification<Specification extends ViewerSpecificationProjection> =
+  Specification extends unknown
+    ? Omit<Specification, 'modules'> & { readonly modules: readonly PackedSpecModule[] }
+    : never
 
 export type PackedSpec = PackSpecification<ViewerSpecificationProjection>
 
 export type ViewerSpecification = ViewerSpecificationProjection & {
   readonly semanticReferences?: CatalogSemanticReferences
+  /** Viewer-only failures isolated while hydrating independently cached payload leaves. */
+  readonly payloadDiagnostics?: readonly Diagnostic[]
 }
 
 export interface CatalogSpecPayload {

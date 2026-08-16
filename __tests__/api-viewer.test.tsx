@@ -4,7 +4,11 @@ import type { ApiModel } from '../api/model.ts'
 import type { ViewerSpecification } from '../viewer-host/catalog.ts'
 
 import { createCatalogSnapshot, specPayloadKey } from '../server/catalog-snapshot.ts'
-import { CATALOG_SOURCE_ENDPOINT, CATALOG_SPEC_ENDPOINT } from '../viewer-host/catalog.ts'
+import {
+  CATALOG_SOURCE_ENDPOINT,
+  CATALOG_SPEC_ENDPOINT,
+  CATALOG_TRANSPORT_VERSION,
+} from '../viewer-host/catalog.ts'
 import { createHttpCatalogLoader } from '../viewer/host/catalog.ts'
 import {
   apiDefinitionTarget,
@@ -304,7 +308,9 @@ export interface Box { value: unknown }
         },
       ],
     }
-    const owners = new Map([[importedIdentity, { source: 'shared/.spec/api.d.ts', title: 'Shared' }]])
+    const owners = new Map([
+      [importedIdentity, { source: 'shared/.spec/api.d.ts', title: 'Shared' }],
+    ])
 
     expect(
       apiOwnedDefinitionTarget(imported, importedIdentity, 'consumer/.spec/api.d.ts', owners),
@@ -417,6 +423,40 @@ export interface Box { value: unknown }
     ])
     expect(snapshot.indexModule).not.toContain('export interface Payload')
     expect(request).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a module usable when one declaration-source payload is stale', async () => {
+    const expected = apiSpec()
+    const snapshot = createCatalogSnapshot({ specs: [expected], diagnostics: [] }, {})
+    const entry = snapshot.index.specs[0]!
+    const request = vi.fn(async (input: string | URL | Request) => {
+      const url = new URL(String(input), 'http://127.0.0.1')
+      if (url.pathname === CATALOG_SPEC_ENDPOINT) {
+        const payload = snapshot.specs.get(
+          specPayloadKey(url.searchParams.get('source')!, url.searchParams.get('revision')!),
+        )
+        return new Response(JSON.stringify(payload), { status: payload ? 200 : 404 })
+      }
+      const payload = snapshot.sources.get(url.searchParams.get('key')!)
+      return new Response(
+        JSON.stringify(
+          payload ? { ...payload, version: CATALOG_TRANSPORT_VERSION - 1 } : undefined,
+        ),
+        { status: payload ? 200 : 404 },
+      )
+    }) as typeof fetch
+
+    const loaded = await createHttpCatalogLoader({ fetch: request }).load(entry)
+
+    expect(loaded.source).toBe(expected.source)
+    expect(loaded.modules[0]?.api?.text).toBe('export interface Payload {}\n')
+    expect(loaded.modules[0]?.api?.model).toBeUndefined()
+    expect(loaded.payloadDiagnostics).toEqual([
+      expect.objectContaining({
+        code: 'CATALOG_SOURCE_UNAVAILABLE',
+        message: 'Catalog declaration source protocol is not supported.',
+      }),
+    ])
   })
 })
 

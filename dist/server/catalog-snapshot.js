@@ -46,14 +46,15 @@ export function catalogProjectionFromPayloads(index, payloads) {
 }
 /** Build the immutable browser projection of one already-coherent server Catalog. */
 export function createCatalogSnapshot(catalog, adapterManifest, applicationSnapshot = `application:${'0'.repeat(64)}`, previous) {
+    const reusablePrevious = currentTransportSnapshot(previous) ? previous : undefined;
     const sources = new Map();
     const specs = new Map();
     const entries = [];
     const projectedSpecifications = catalog.specs.map(projectionSpecification);
     const apiIndex = indexCatalogApis({ specs: projectedSpecifications });
     const topology = catalogProjectionTopology(projectedSpecifications);
-    if (previous?.topology === topology) {
-        for (const [key, value] of previous.sources)
+    if (reusablePrevious?.topology === topology) {
+        for (const [key, value] of reusablePrevious.sources)
             sources.set(key, value);
     }
     const inputs = new Map(catalog.specs.map((specification) => [specification.source, specification]));
@@ -61,20 +62,21 @@ export function createCatalogSnapshot(catalog, adapterManifest, applicationSnaps
     const specSourceByModuleId = sourceByModule(projectedSpecifications);
     const sourceKeys = [];
     for (const spec of catalog.specs) {
-        const retained = reusablePayload(previous, topology, spec);
+        const retained = reusablePayload(reusablePrevious, topology, spec);
         if (retained) {
             specs.set(specPayloadKey(spec.source, retained.entry.revision), retained.payload);
             entries.push(retained.entry);
             sourceKeys.push({
                 source: spec.source,
-                keys: previous.projection.sourceKeys.find((value) => value.source === spec.source)?.keys ?? [],
+                keys: reusablePrevious.projection.sourceKeys.find((value) => value.source === spec.source)
+                    ?.keys ?? [],
             });
             continue;
         }
         const projection = catalogReferenceProjection(spec, apiIndex);
         const packed = packSpec(spec, sources, projection.documents);
         const semanticReferences = projection.semanticReferences;
-        const revision = contentRevision({ spec: packed, semanticReferences });
+        const revision = specContentRevision(packed, semanticReferences);
         const payload = {
             format: CATALOG_SPEC_FORMAT,
             version: CATALOG_TRANSPORT_VERSION,
@@ -98,7 +100,7 @@ export function createCatalogSnapshot(catalog, adapterManifest, applicationSnaps
             ...catalogContractDependencies(spec, specSourceByModuleId),
         });
     }
-    const generation = contentRevision({ diagnostics: catalog.diagnostics, specs: entries });
+    const generation = indexContentRevision(catalog.diagnostics, entries);
     const index = {
         format: CATALOG_INDEX_FORMAT,
         version: CATALOG_TRANSPORT_VERSION,
@@ -122,14 +124,19 @@ export function createCatalogSnapshot(catalog, adapterManifest, applicationSnaps
  * Returns undefined when global API/dependency ownership changed and a full projection is required.
  */
 export function updateCatalogSnapshot(previous, changed, sources, diagnostics, adapterManifest, applicationSnapshot) {
+    if (!currentTransportSnapshot(previous))
+        return;
     const expectedSources = previous.projection.specifications.map((value) => value.source);
     if (!sameStrings(expectedSources, sources))
         return;
     const changedBySource = new Map(changed.map((value) => [value.source, value]));
-    if (changedBySource.size !== changed.length || [...changedBySource.keys()].some((source) => !expectedSources.includes(source))) {
+    if (changedBySource.size !== changed.length ||
+        [...changedBySource.keys()].some((source) => !expectedSources.includes(source))) {
         return;
     }
-    const projectedSpecifications = previous.projection.specifications.map((value) => changedBySource.has(value.source) ? projectionSpecification(changedBySource.get(value.source)) : value);
+    const projectedSpecifications = previous.projection.specifications.map((value) => changedBySource.has(value.source)
+        ? projectionSpecification(changedBySource.get(value.source))
+        : value);
     const topology = catalogProjectionTopology(projectedSpecifications);
     if (topology !== previous.topology)
         return;
@@ -148,7 +155,7 @@ export function updateCatalogSnapshot(previous, changed, sources, diagnostics, a
         const projection = catalogReferenceProjection(specification, apiIndex);
         const packed = packSpec(specification, sourceChanges, projection.documents);
         const semanticReferences = projection.semanticReferences;
-        const revision = contentRevision({ spec: packed, semanticReferences });
+        const revision = specContentRevision(packed, semanticReferences);
         const payload = {
             format: CATALOG_SPEC_FORMAT,
             version: CATALOG_TRANSPORT_VERSION,
@@ -178,7 +185,7 @@ export function updateCatalogSnapshot(previous, changed, sources, diagnostics, a
     const specs = overlayMap(previous.specs, specChanges, removedSpecs);
     const payloadSources = overlayMap(previous.sources, sourceChanges, removedSources);
     const entries = previous.index.specs.map((entry) => entryChanges.get(entry.source) ?? entry);
-    const generation = contentRevision({ diagnostics, specs: entries });
+    const generation = indexContentRevision(diagnostics, entries);
     const index = {
         format: CATALOG_INDEX_FORMAT,
         version: CATALOG_TRANSPORT_VERSION,
@@ -195,13 +202,19 @@ export function updateCatalogSnapshot(previous, changed, sources, diagnostics, a
         inputs: overlayMap(previous.inputs, changedBySource, new Set()),
         projection: {
             specifications: projectedSpecifications,
-            sourceKeys: expectedSources.map((source) => ({ source, keys: nextSourceKeys.get(source) ?? [] })),
+            sourceKeys: expectedSources.map((source) => ({
+                source,
+                keys: nextSourceKeys.get(source) ?? [],
+            })),
         },
         topology,
     };
 }
 /** Overlay independently persisted verification onto an exact restored transport snapshot. */
 export function restoreCatalogSnapshotVerifications(previous, records, adapterManifest) {
+    if (!currentTransportSnapshot(previous)) {
+        throw new Error('Catalog snapshot transport is not supported.');
+    }
     const bySource = new Map(records.map((record) => [record.source, record]));
     const changes = new Map();
     const removed = new Set();
@@ -216,14 +229,14 @@ export function restoreCatalogSnapshotVerifications(previous, records, adapterMa
             payload.spec.verification !== undefined)
             return entry;
         const spec = { ...payload.spec, verification: record.verification };
-        const revision = contentRevision({ spec, semanticReferences: payload.semanticReferences });
+        const revision = specContentRevision(spec, payload.semanticReferences);
         changes.set(specPayloadKey(entry.source, revision), { ...payload, revision, spec });
         removed.add(priorKey);
         return { ...entry, revision, metrics: catalogSpecMetrics(spec) };
     });
     if (!changes.size)
         return previous;
-    const generation = contentRevision({ diagnostics: previous.index.diagnostics, specs: entries });
+    const generation = indexContentRevision(previous.index.diagnostics, entries);
     const index = { ...previous.index, generation, specs: entries };
     return {
         ...previous,
@@ -233,7 +246,9 @@ export function restoreCatalogSnapshotVerifications(previous, records, adapterMa
     };
 }
 function reusablePayload(previous, topology, specification) {
-    if (!previous || previous.topology !== topology || previous.inputs.get(specification.source) !== specification) {
+    if (!previous ||
+        previous.topology !== topology ||
+        previous.inputs.get(specification.source) !== specification) {
         return;
     }
     const entry = previous.index.specs.find((candidate) => candidate.source === specification.source);
@@ -241,6 +256,11 @@ function reusablePayload(previous, topology, specification) {
         return;
     const payload = previous.specs.get(specPayloadKey(entry.source, entry.revision));
     return payload ? { entry, payload } : undefined;
+}
+function currentTransportSnapshot(snapshot) {
+    return !!snapshot &&
+        snapshot.index.format === CATALOG_INDEX_FORMAT &&
+        snapshot.index.version === CATALOG_TRANSPORT_VERSION;
 }
 export function catalogProjectionTopology(specifications) {
     return contentRevision(specifications);
@@ -410,13 +430,15 @@ function packModel(api, sourcePayloads) {
     return { ...model, sourceKeys };
 }
 function packedSpecSourceKeys(specification) {
-    return [...new Set(specification.modules.flatMap((module) => [
+    return [
+        ...new Set(specification.modules.flatMap((module) => [
             ...(module.api?.model?.sourceKeys ?? []),
             ...module.ports.flatMap((port) => port.model?.sourceKeys ?? []),
-        ]))].sort();
+        ])),
+    ].sort();
 }
 function registerSource(source, tokens, payloads) {
-    const key = contentRevision({ source, tokens });
+    const key = sourceContentRevision(source, tokens);
     const existing = payloads.get(key);
     if (existing) {
         if (safeJson({ source: existing.source, tokens: existing.tokens }) !==
@@ -450,6 +472,30 @@ export function createCatalogIndexModule(index, manifest) {
 }
 function contentRevision(value) {
     return sourceRevision(safeJson(value));
+}
+function sourceContentRevision(source, tokens) {
+    return contentRevision({
+        format: CATALOG_SOURCE_FORMAT,
+        version: CATALOG_TRANSPORT_VERSION,
+        source,
+        tokens,
+    });
+}
+function specContentRevision(spec, semanticReferences) {
+    return contentRevision({
+        format: CATALOG_SPEC_FORMAT,
+        version: CATALOG_TRANSPORT_VERSION,
+        spec,
+        semanticReferences,
+    });
+}
+function indexContentRevision(diagnostics, specs) {
+    return contentRevision({
+        format: CATALOG_INDEX_FORMAT,
+        version: CATALOG_TRANSPORT_VERSION,
+        diagnostics,
+        specs,
+    });
 }
 function safeJson(value) {
     return JSON.stringify(value).replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029');
