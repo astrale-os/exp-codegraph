@@ -62,6 +62,7 @@ function moduleStructureConformanceProfile(cache: ModuleEvaluationCache): Confor
       dependsOn: [SPECIFICATION_VALIDITY_PROFILE_ID],
       requiresCapabilities: [moduleCapability()],
       rules: structureRules,
+      evaluationScope: 'universe',
     },
     async evaluate(context) {
       const facts = await cache.collect(context)
@@ -83,6 +84,7 @@ function moduleSurfaceConformanceProfile(cache: ModuleEvaluationCache): Conforma
       dependsOn: [MODULE_STRUCTURE_PROFILE_ID],
       requiresCapabilities: [moduleCapability()],
       rules: surfaceRules,
+      evaluationScope: 'universe',
     },
     async evaluate(context) {
       const prepared = await cache.prepare(context)
@@ -120,6 +122,7 @@ function moduleDependenciesConformanceProfile(cache: ModuleEvaluationCache): Con
       dependsOn: [MODULE_STRUCTURE_PROFILE_ID],
       requiresCapabilities: [moduleCapability()],
       rules: dependencyRules,
+      evaluationScope: 'universe',
     },
     async evaluate(context) {
       const prepared = await cache.prepare(context)

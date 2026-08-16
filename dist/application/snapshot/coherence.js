@@ -17,6 +17,11 @@ export function assertSpecificationInventory(specifications, inventory) {
             if (revision !== file.revision)
                 mismatches.push(`${resource.source}:revision-mismatch`);
         }
+        for (const reference of specification.sourceReferences) {
+            if (!files.has(reference.target.source)) {
+                mismatches.push(`${reference.target.source}:reference-target-not-in-inventory`);
+            }
+        }
     }
     if (mismatches.length) {
         throw new Error(`Specification sources changed during refresh: ${[...new Set(mismatches)].sort().join(', ')}`);
@@ -45,6 +50,10 @@ function specificationResources(specification) {
     const expanded = resources.flatMap((resource) => [
         resource,
         ...(resource.model?.sources.map((source) => ({
+            source: source.file,
+            revision: source.revision,
+        })) ?? []),
+        ...(resource.model?.dependencies?.map((source) => ({
             source: source.file,
             revision: source.revision,
         })) ?? []),

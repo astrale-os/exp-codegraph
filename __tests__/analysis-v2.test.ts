@@ -1118,6 +1118,8 @@ lines.on('line', (line) => {
         expect(memoryFirst.id).toBe(deriveAnalysisSnapshotSetId(generations, firstInventory))
         expect(memoryFirst.inventory).toBe(firstInventory)
         expect(sqliteFirst.inventory).toBe(firstInventory)
+        expect([...memoryFirst.generations]).toEqual([...generations])
+        expect([...sqliteFirst.generations]).toEqual([...generations])
         expect(memorySecond.id).not.toBe(memoryFirst.id)
       } finally {
         await memorySecond.dispose()

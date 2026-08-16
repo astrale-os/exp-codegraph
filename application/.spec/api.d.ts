@@ -9,6 +9,7 @@ import type {
 } from '../../repository/source/.spec/api.js'
 import type { RepositoryStatisticsReport } from '../../repository/statistics/.spec/api.js'
 import type { SpecificationSnapshot } from '../../specification/.spec/api.js'
+import type { ApplicationCheckpoint } from '../checkpoint/.spec/api.js'
 
 interface Diagnostic {
   readonly code: string
@@ -48,6 +49,10 @@ export interface TypeSpecApplicationSnapshot {
     readonly id: `snapshot-set:${string}`
     readonly inventory: `source-manifest:${string}`
     readonly universes: readonly `project-universe:${string}`[]
+    readonly generations: readonly {
+      readonly universe: `project-universe:${string}`
+      readonly generation: `generation:${string}`
+    }[]
   }
   readonly diagnostics: readonly Diagnostic[]
   readonly analysisDiagnostics: readonly string[]
@@ -82,6 +87,7 @@ export interface TypeSpecApplicationChanges {
     readonly added: readonly string[]
     readonly changed: readonly string[]
     readonly removed: readonly string[]
+    readonly refreshed: readonly string[]
   }
   readonly sources: readonly SourceId[]
   readonly invalidatedPasses: readonly PassId[]
@@ -89,6 +95,7 @@ export interface TypeSpecApplicationChanges {
 
 export interface TypeSpecApplicationTiming {
   readonly totalMs: number
+  readonly checkpointMs: number
   readonly discoverMs: number
   readonly compileMs: number
   readonly inventoryMs: number
@@ -126,6 +133,7 @@ export interface TypeSpecApplicationOptions {
     readonly transactionChunkFrameBytes?: number
     readonly maximumTransactionBytes?: number
   }
+  readonly checkpoint?: ApplicationCheckpoint
 }
 
 export function createTypeSpecApplicationService(

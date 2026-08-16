@@ -324,6 +324,7 @@ class PinnedQuery implements AnalysisQuery {
 class PinnedSnapshotSet implements AnalysisSnapshotSet {
   readonly id: SnapshotSetId
   readonly inventory: SourceManifestId
+  readonly generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>
   readonly universes: readonly ProjectUniverseId[]
   readonly #values: ReadonlyMap<ProjectUniverseId, MaterializedGeneration>
   readonly #openQuery: (
@@ -347,10 +348,10 @@ class PinnedSnapshotSet implements AnalysisSnapshotSet {
     this.#release = release
     this.inventory = inventory
     this.universes = [...values.keys()].sort()
-    this.id = deriveAnalysisSnapshotSetId(
-      new Map(this.universes.map((universe) => [universe, values.get(universe)!.generation.id])),
-      inventory,
+    this.generations = new Map(
+      this.universes.map((universe) => [universe, values.get(universe)!.generation.id]),
     )
+    this.id = deriveAnalysisSnapshotSetId(this.generations, inventory)
   }
 
   query(universe: ProjectUniverseId): Promise<AnalysisQuery> {

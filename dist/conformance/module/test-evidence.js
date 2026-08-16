@@ -16,6 +16,7 @@ export function createModuleTestEvidenceConformanceProfile() {
                 },
             ],
             rules: [TEST_EVIDENCE_RULE],
+            evaluationScope: 'specification',
         },
         async evaluate(context) {
             const fact = await oneTestEvidenceFact(context);

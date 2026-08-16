@@ -36,6 +36,7 @@
     "typescript",
     "viewer",
     "viewer-host",
+    "workspace",
     "!analysis/typescript/native/**",
     "!analysis/typescript/ttsc/**"
   ],
@@ -76,6 +77,10 @@
     "./specification": {
       "types": "./specification/index.ts",
       "import": "./dist/specification/index.js"
+    },
+    "./workspace": {
+      "types": "./workspace/index.ts",
+      "import": "./dist/workspace/index.js"
     },
     "./package.json": "./package.json"
   },

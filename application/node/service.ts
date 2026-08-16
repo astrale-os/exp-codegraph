@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import type { AnalysisStore, AnalysisTelemetrySink } from '../../analysis/index.ts'
 import { selectAnalysisStore } from '../../analysis/index.ts'
@@ -8,7 +8,13 @@ import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
 import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.ts'
 import type { TypeSpecApplicationService } from '../index.ts'
 import type { CodegraphApplicationSessionOptions } from '../analysis/index.ts'
-import { createTypeSpecApplicationService } from '../service.ts'
+import { createTypeSpecApplicationServiceWithDependencies } from '../service.ts'
+import { createApplicationCheckpoint } from '../checkpoint/index.ts'
+import {
+  createFileWorkspaceCheckpointStore,
+  type FileWorkspaceCheckpointStore,
+} from '../../workspace/checkpoint/index.ts'
+import { createCheckpointedRepositoryInventory } from './inventory.ts'
 
 export interface NodeTypeSpecApplicationOptions {
   readonly root: string
@@ -43,6 +49,20 @@ export async function createNodeTypeSpecApplicationService(
       : {}),
   })
   const store = selection.store
+  const repository = options.repository ?? (await repositoryKey(root))
+  const workspaceCheckpoint =
+    selection.backend === 'durable'
+      ? createFileWorkspaceCheckpointStore({
+          directory: join(
+            options.cacheDirectory,
+            'workspaces',
+            createHash('sha256').update(root).digest('hex'),
+            'application',
+          ),
+          maxArtifacts: 4_096,
+          maximumScopes: 512,
+        })
+      : undefined
   dispatchAnalysisTelemetry(options.telemetry, {
     component: 'analysis',
     phase: 'store.selection',
@@ -55,17 +75,37 @@ export async function createNodeTypeSpecApplicationService(
     },
   })
   try {
-    const application = await createTypeSpecApplicationService({
-      root,
-      repository: options.repository ?? (await repositoryKey(root)),
-      maximumRetainedSnapshots: options.maximumRetainedSnapshots,
-      analysis: { store, maximumRetainedGenerations },
-      ...(options.telemetry ? { telemetry: options.telemetry } : {}),
-      ...(options.native ? { native: options.native } : {}),
-    })
-    return ownStore(application, store)
+    const version = await codegraphVersion()
+    const application = await createTypeSpecApplicationServiceWithDependencies(
+      {
+        root,
+        repository,
+        maximumRetainedSnapshots: options.maximumRetainedSnapshots,
+        analysis: { store, maximumRetainedGenerations },
+        ...(workspaceCheckpoint
+          ? {
+              checkpoint: createApplicationCheckpoint({
+                store: workspaceCheckpoint,
+                producerFingerprint: `@astrale-os/codegraph@${version}:application-checkpoint/1`,
+              }),
+            }
+          : {}),
+        ...(options.telemetry ? { telemetry: options.telemetry } : {}),
+        ...(options.native ? { native: options.native } : {}),
+      },
+      workspaceCheckpoint
+        ? {
+            inventory: createCheckpointedRepositoryInventory({
+              root,
+              store: workspaceCheckpoint,
+              producerFingerprint: `@astrale-os/codegraph@${version}:repository-inventory/1`,
+            }),
+          }
+        : {},
+    )
+    return ownStore(application, store, workspaceCheckpoint)
   } catch (error) {
-    await store.dispose()
+    await Promise.allSettled([store.dispose(), workspaceCheckpoint?.dispose()])
     throw error
   }
 }
@@ -73,6 +113,7 @@ export async function createNodeTypeSpecApplicationService(
 function ownStore(
   application: TypeSpecApplicationService,
   store: AnalysisStore,
+  checkpoint: FileWorkspaceCheckpointStore | undefined,
 ): TypeSpecApplicationService {
   let disposed = false
   return {
@@ -82,13 +123,32 @@ function ownStore(
     async dispose() {
       if (disposed) return
       disposed = true
-      const results = await Promise.allSettled([application.dispose(), store.dispose()])
+      const results = await Promise.allSettled([
+        application.dispose(),
+        store.dispose(),
+        checkpoint?.dispose(),
+      ])
       const rejected = results.find(
         (result): result is PromiseRejectedResult => result.status === 'rejected',
       )
       if (rejected) throw rejected.reason
     },
   }
+}
+
+async function codegraphVersion(): Promise<string> {
+  const candidate = resolve(import.meta.dirname, '..', '..')
+  const packageRoot = basename(candidate) === 'dist' ? dirname(candidate) : candidate
+  const value: unknown = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    typeof (value as { readonly version?: unknown }).version !== 'string'
+  ) {
+    throw new Error('Installed @astrale-os/codegraph package has no version.')
+  }
+  return (value as { readonly version: string }).version
 }
 
 async function repositoryKey(root: string): Promise<string> {

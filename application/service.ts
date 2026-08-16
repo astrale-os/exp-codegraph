@@ -9,10 +9,17 @@ import type {
   SourceId,
 } from '../analysis/index.ts'
 import type { ConformanceProfile, QualificationSnapshot } from '../conformance/index.ts'
-import type { RepositorySourceService, RepositoryStatisticsReport } from '../repository/index.ts'
+import type {
+  RepositorySourceService,
+  RepositoryInventory,
+  RepositoryStatisticsRefreshWork,
+  RepositoryStatisticsReport,
+} from '../repository/index.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
 import type { SpecificationSnapshot } from '../specification/index.ts'
 import type { ApplicationAnalysisWorkspace } from './analysis/index.ts'
+import type { ApplicationCheckpoint } from './checkpoint/index.ts'
+import { checkpointGenerations } from './checkpoint/index.ts'
 import type { ApplicationSchemaDependencyResource } from './observation/index.ts'
 import { withOperationSnapshot } from '../source/operation-snapshot.ts'
 import type {
@@ -34,14 +41,16 @@ import {
   MODULE_LAYOUT_PROFILE_ID,
   createModuleLayoutConformanceProfile,
   createTypeSpecConformanceProfiles,
+  planConformance,
   qualifySpecifications,
+  rebindQualificationSnapshot,
 } from '../conformance/index.ts'
 import {
-  analyzeRepositoryStatistics,
   createRepositoryPathOwnershipGrouping,
   createRepositorySourceService,
   defaultRepositoryStatisticsGroupings,
   inventoryRepository,
+  refreshRepositoryStatistics,
 } from '../repository/index.ts'
 import { compileSpecificationSnapshots } from '../specification/index.ts'
 import { deriveAnalysisId } from '../analysis/index.ts'
@@ -56,6 +65,7 @@ import { assertSpecificationInventory, createApplicationSnapshot } from './snaps
 import { selectApplicationSpecifications } from './selection/index.ts'
 import { applicationSchemaDependencies } from './observation/index.ts'
 import { TYPE_SPEC_APPLICATION_LIMITS } from './limits.ts'
+import { createSpecificationImpactIndex } from './change/index.ts'
 
 export interface TypeSpecApplicationDependencies {
   readonly resolveRoot: (input: string) => Promise<string>
@@ -63,9 +73,10 @@ export interface TypeSpecApplicationDependencies {
   readonly compile: typeof compileSpecificationSnapshots
   readonly inventory: typeof inventoryRepository
   readonly sources: typeof createRepositorySourceService
-  readonly statistics: typeof analyzeRepositoryStatistics
+  readonly statistics: typeof refreshRepositoryStatistics
   readonly analysis: ApplicationAnalysisWorkspace
   readonly profiles: readonly ConformanceProfile[]
+  readonly checkpoint?: ApplicationCheckpoint
 }
 
 export interface TypeSpecApplicationOptions {
@@ -76,6 +87,8 @@ export interface TypeSpecApplicationOptions {
   readonly telemetry?: AnalysisTelemetrySink
   readonly analysis?: Omit<ApplicationAnalysisWorkspaceOptions, 'root' | 'repository' | 'sessions'>
   readonly native?: CodegraphApplicationSessionOptions
+  /** Optional advisory process-independent application checkpoint. */
+  readonly checkpoint?: ApplicationCheckpoint
 }
 
 /** Assemble specification, exact analysis, and qualification without coupling them to a UI. */
@@ -113,9 +126,12 @@ export async function createTypeSpecApplicationServiceWithDependencies(
       compile: injected.compile ?? compileSpecificationSnapshots,
       inventory: injected.inventory ?? inventoryRepository,
       sources: injected.sources ?? createRepositorySourceService,
-      statistics: injected.statistics ?? analyzeRepositoryStatistics,
+      statistics: injected.statistics ?? refreshRepositoryStatistics,
       analysis,
       profiles: injected.profiles ?? createTypeSpecConformanceProfiles(),
+      ...(injected.checkpoint ?? options.checkpoint
+        ? { checkpoint: injected.checkpoint ?? options.checkpoint }
+        : {}),
     },
     options.maximumRetainedSnapshots ?? TYPE_SPEC_APPLICATION_LIMITS.maximumRetainedSnapshots,
     options.telemetry,
@@ -193,6 +209,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     this.phaseCompleted('application.inventory', inventoryMs)
     const previous = this.current()
     const requestKey = applicationRefreshKey(options)
+    let checkpointMs = 0
     if (
       previous &&
       previous.inventory === inventory.revision &&
@@ -206,6 +223,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         changes: applicationChanges(previous, previous, [], []),
         timing: {
           totalMs: performance.now() - started,
+          checkpointMs,
           discoverMs: 0,
           compileMs: 0,
           inventoryMs,
@@ -217,12 +235,84 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     }
     const corpusKey = applicationCorpusKey(inventory.revision, options.exclude ?? [])
     const discoveryKey = applicationDiscoveryKey(options.exclude ?? [])
+    if (!previous && this.#dependencies.checkpoint && checkpointLoadEligible(options)) {
+      phase = performance.now()
+      this.phaseStarted('application.checkpoint')
+      const loaded = await this.#dependencies.checkpoint.load({
+        repository: this.#repository,
+        inventory: inventory.revision,
+        request: requestKey,
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+      checkpointMs = performance.now() - phase
+      if (loaded.ok) {
+        let restoredAnalysis: AnalysisSnapshotSet | undefined
+        try {
+          assertSpecificationInventory(loaded.content.specifications, inventory)
+          if (loaded.content.snapshot.analysis) {
+            restoredAnalysis = await this.#dependencies.analysis.open(
+              checkpointGenerations(loaded.content.snapshot),
+              inventory.revision,
+            )
+            if (restoredAnalysis.id !== loaded.content.snapshot.analysis.id) {
+              throw new Error('Checkpoint analysis snapshot identity does not match its generations.')
+            }
+          }
+          const restoredSources = this.#dependencies.sources(this.#root, inventory)
+          this.#corpus = {
+            key: corpusKey,
+            discoveryKey,
+            specifications: loaded.content.specifications,
+            inventory: loaded.content.inventory,
+            sources: restoredSources,
+            statistics: loaded.content.statistics,
+          }
+          const snapshot = await this.publish(
+            loaded.content.snapshot,
+            restoredSources,
+            restoredAnalysis,
+          )
+          this.#currentRequestKey = requestKey
+          this.phaseCompleted('application.checkpoint', checkpointMs, {
+            outcome: 'hit',
+            specifications: loaded.content.specifications.length,
+          })
+          return {
+            snapshot,
+            changes: applicationChanges(undefined, snapshot, [], []),
+            timing: {
+              totalMs: performance.now() - started,
+              checkpointMs,
+              discoverMs: 0,
+              compileMs: 0,
+              inventoryMs,
+              statisticsMs: 0,
+              analysisMs: 0,
+              qualificationMs: 0,
+            },
+          }
+        } catch {
+          await restoredAnalysis?.dispose()
+        }
+      }
+      this.phaseCompleted('application.checkpoint', checkpointMs, {
+        outcome: 'miss',
+        reason: loaded.ok ? 'generation-unavailable' : loaded.reason,
+      })
+    }
     let specifications: readonly SpecificationSnapshot[]
     let sources: RepositorySourceService
     let statistics: RepositoryStatisticsReport
     let discoverMs = 0
     let compileMs = 0
     let statisticsMs = 0
+    let compiledSpecifications = 0
+    let refreshedSpecificationSources: readonly string[] = []
+    let statisticsWork: RepositoryStatisticsRefreshWork = {
+      reusedFiles: [],
+      analyzedFiles: [],
+      removedFiles: [],
+    }
     const cachedCorpus = this.#corpus
     if (cachedCorpus?.key === corpusKey) {
       specifications = cachedCorpus.specifications
@@ -238,34 +328,48 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       this.phaseCompleted('application.discovery', discoverMs, { specifications: directories.length })
       phase = performance.now()
       this.phaseStarted('application.compile')
-      specifications =
-        cachedCorpus?.discoveryKey === discoveryKey && (options.changed?.length ?? 0) > 0
-          ? await refreshSpecificationCorpus(
-              this.#root,
-              directories,
-              cachedCorpus.specifications,
-              options.changed ?? [],
-              this.#dependencies.compile,
-            )
-          : [
-              ...(await this.#dependencies.compile(
-                this.#root,
-                directories,
-                {
-                  maximumConcurrency:
-                    TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
-                },
-              )),
-            ]
+      const inventoryChanges = cachedCorpus
+        ? repositoryInventoryChanges(cachedCorpus.inventory, inventory)
+        : []
+      if (cachedCorpus?.discoveryKey === discoveryKey && inventoryChanges.length > 0) {
+        const refreshedCorpus = await refreshSpecificationCorpus(
+          this.#root,
+          directories,
+          cachedCorpus.specifications,
+          inventoryChanges,
+          options.changed ?? [],
+          this.#dependencies.compile,
+        )
+        specifications = refreshedCorpus.specifications
+        refreshedSpecificationSources = refreshedCorpus.refreshedOwners
+        compiledSpecifications = refreshedCorpus.compiled
+      } else {
+        specifications = [
+          ...(await this.#dependencies.compile(
+            this.#root,
+            directories,
+            {
+              maximumConcurrency:
+                TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+            },
+          )),
+        ]
+        refreshedSpecificationSources = specifications.map((value) => value.source)
+        compiledSpecifications = specifications.length
+      }
       compileMs = performance.now() - phase
-      this.phaseCompleted('application.compile', compileMs, { specifications: specifications.length })
+      this.phaseCompleted('application.compile', compileMs, {
+        specifications: compiledSpecifications,
+        retainedSpecifications: specifications.length - compiledSpecifications,
+      })
       assertSpecificationInventory(specifications, inventory)
       phase = performance.now()
       this.phaseStarted('application.statistics')
       sources = this.#dependencies.sources(this.#root, inventory)
-      statistics = await this.#dependencies.statistics({
+      const refreshedStatistics = await this.#dependencies.statistics({
         inventory,
         sources,
+        ...(cachedCorpus ? { previous: cachedCorpus.statistics } : {}),
         groupings: [
           ...defaultRepositoryStatisticsGroupings(),
           createRepositoryPathOwnershipGrouping(
@@ -279,9 +383,15 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         ],
         ...(options.signal ? { signal: options.signal } : {}),
       })
+      statistics = refreshedStatistics.report
+      statisticsWork = refreshedStatistics.work
       statisticsMs = performance.now() - phase
-      this.phaseCompleted('application.statistics', statisticsMs)
-      this.#corpus = { key: corpusKey, discoveryKey, specifications, sources, statistics }
+      this.phaseCompleted('application.statistics', statisticsMs, {
+        analyzedFiles: statisticsWork.analyzedFiles.length,
+        reusedFiles: statisticsWork.reusedFiles.length,
+        removedFiles: statisticsWork.removedFiles.length,
+      })
+      this.#corpus = { key: corpusKey, discoveryKey, specifications, inventory, sources, statistics }
     }
     const selected = selectApplicationSpecifications(this.#root, specifications, {
       ...(options.select ? { select: options.select } : {}),
@@ -313,6 +423,10 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       this.phaseStarted('application.analysis')
       const refreshed = await this.#dependencies.analysis.refresh({
         specifications: analysisSpecifications,
+        observationSpecifications: specifications,
+        refreshSpecifications: schemaDependencies.length
+          ? analysisSpecifications.map((value) => value.source)
+          : refreshedSpecificationSources,
         inventory,
         ...(schemaDependencies.length ? { schemaDependencies } : {}),
         ...(options.compilerAnalysis !== undefined
@@ -334,8 +448,24 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         phase = performance.now()
         this.phaseStarted('application.qualification')
         const profiles = applicationProfiles(this.#dependencies.profiles, options)
-        qualifications = await qualifySpecifications({
-          specifications: selected.qualification,
+        const plan = planConformance(profiles, options.requestedProfiles)
+        const localReuse =
+          previous !== undefined &&
+          this.#currentRequestKey === requestKey &&
+          plan.ordered.every((profile) => profile.manifest.evaluationScope === 'specification')
+        const refreshedOwners = new Set(refreshedSpecificationSources)
+        const previousBySource = new Map(
+          (localReuse ? previous.qualifications : []).map((value) => [
+            value.specification.source,
+            value,
+          ]),
+        )
+        const evaluatedSpecifications = selected.qualification.filter((specification) => {
+          const prior = previousBySource.get(specification.source)
+          return !prior || prior.specification.id !== specification.id || refreshedOwners.has(specification.source)
+        })
+        const evaluated = await qualifySpecifications({
+          specifications: evaluatedSpecifications,
           analysis: refreshed.snapshot,
           profiles,
           ...(options.requestedProfiles
@@ -343,15 +473,29 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
             : {}),
           ...(options.signal ? { signal: options.signal } : {}),
         })
+        const evaluatedBySource = new Map(
+          evaluated.map((value) => [value.specification.source, value]),
+        )
+        qualifications = selected.qualification.map((specification) => {
+          const fresh = evaluatedBySource.get(specification.source)
+          if (fresh) return fresh
+          const prior = previousBySource.get(specification.source)
+          if (!prior) throw new Error(`Qualification result is missing for ${specification.source}.`)
+          return rebindQualificationSnapshot(prior, specification, refreshed.snapshot)
+        })
         analysis = {
           id: refreshed.snapshot.id,
           inventory: refreshed.snapshot.inventory,
           universes: refreshed.snapshot.universes,
+          generations: [...refreshed.snapshot.generations]
+            .map(([universe, generation]) => ({ universe, generation }))
+            .sort((left, right) => left.universe.localeCompare(right.universe)),
         }
         analysisDiagnostics = refreshed.diagnostics
         qualificationMs = performance.now() - phase
         this.phaseCompleted('application.qualification', qualificationMs, {
-          specifications: qualifications.length,
+          specifications: evaluatedSpecifications.length,
+          reusedSpecifications: qualifications.length - evaluatedSpecifications.length,
         })
       } catch (error) {
         await refreshed.snapshot.dispose()
@@ -387,11 +531,43 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     })
     const snapshot = await this.publish(candidate, sources, analysisSnapshot)
     this.#currentRequestKey = requestKey
+    if (this.#dependencies.checkpoint && checkpointPublishEligible(options)) {
+      phase = performance.now()
+      this.phaseStarted('application.checkpoint')
+      try {
+        await this.#dependencies.checkpoint.publish(
+          {
+            repository: this.#repository,
+            inventory: inventory.revision,
+            request: requestKey,
+            ...(options.signal ? { signal: options.signal } : {}),
+          },
+          { snapshot, specifications, inventory, statistics },
+        )
+        checkpointMs += performance.now() - phase
+        this.phaseCompleted('application.checkpoint', performance.now() - phase, {
+          outcome: 'published',
+        })
+      } catch (error) {
+        checkpointMs += performance.now() - phase
+        this.phaseCompleted('application.checkpoint', performance.now() - phase, {
+          outcome: 'unavailable',
+          reason: error instanceof Error ? error.name : 'unknown',
+        })
+      }
+    }
     return {
       snapshot,
-      changes: applicationChanges(previous, snapshot, changedSources, invalidatedPasses),
+      changes: applicationChanges(
+        previous,
+        snapshot,
+        changedSources,
+        invalidatedPasses,
+        refreshedSpecificationSources,
+      ),
       timing: {
         totalMs: performance.now() - started,
+        checkpointMs,
         discoverMs,
         compileMs,
         inventoryMs,
@@ -556,6 +732,7 @@ interface ApplicationCorpus {
   readonly key: string
   readonly discoveryKey: string
   readonly specifications: readonly SpecificationSnapshot[]
+  readonly inventory: RepositoryInventory
   readonly sources: RepositorySourceService
   readonly statistics: RepositoryStatisticsReport
 }
@@ -571,6 +748,7 @@ function applicationChanges(
   current: TypeSpecApplicationSnapshot,
   sources: readonly SourceId[],
   invalidatedPasses: readonly PassId[],
+  refreshedSpecifications: readonly string[] = [],
 ): TypeSpecApplicationChanges {
   const before = new Map(previous?.specifications.map((value) => [value.source, value]) ?? [])
   const after = new Map(current.specifications.map((value) => [value.source, value]))
@@ -586,6 +764,7 @@ function applicationChanges(
         .map(([source]) => source)
         .sort(),
       removed: [...before.keys()].filter((source) => !after.has(source)).sort(),
+      refreshed: sortedUnique(refreshedSpecifications),
     },
     sources: sortedUnique(sources),
     invalidatedPasses: sortedUnique(invalidatedPasses),
@@ -614,6 +793,18 @@ function applicationRefreshKey(options: TypeSpecApplicationRefreshOptions): stri
   })
 }
 
+function checkpointLoadEligible(options: TypeSpecApplicationRefreshOptions): boolean {
+  return (
+    checkpointPublishEligible(options) &&
+    (options.changed?.length ?? 0) === 0 &&
+    options.invalidate !== true
+  )
+}
+
+function checkpointPublishEligible(options: TypeSpecApplicationRefreshOptions): boolean {
+  return options.invalidate !== true && (options.schemaRoots?.length ?? 0) === 0
+}
+
 function applicationCorpusKey(inventory: string, exclude: readonly string[]): string {
   return JSON.stringify({ inventory, exclude: sortedUnique(exclude) })
 }
@@ -626,9 +817,14 @@ async function refreshSpecificationCorpus(
   root: string,
   directories: readonly string[],
   previous: readonly SpecificationSnapshot[],
-  changed: readonly string[],
+  inventoryChanges: readonly RepositoryInventoryChange[],
+  changedHints: readonly string[],
   compile: typeof compileSpecificationSnapshots,
-): Promise<readonly SpecificationSnapshot[]> {
+): Promise<{
+  readonly specifications: readonly SpecificationSnapshot[]
+  readonly refreshedOwners: readonly string[]
+  readonly compiled: number
+}> {
   const available = new Map(
     directories.map((directory) => [portable(relative(root, resolve(directory))), resolve(directory)]),
   )
@@ -638,32 +834,25 @@ async function refreshSpecificationCorpus(
       specification,
     ]),
   )
+  const index = createSpecificationImpactIndex(previous)
+  const impactedOwners = new Set<string>()
   const affected = new Set<string>()
   for (const directory of available.keys()) {
     if (!retained.has(directory)) affected.add(directory)
   }
-  for (const input of changed) {
+  const changes = new Map(inventoryChanges.map((change) => [change.path, change.kind] as const))
+  for (const input of changedHints) {
     const source = await workspacePath(root, input)
     if (!source) continue
-    if (
-      source === '.spec/api.d.ts' ||
-      source.endsWith('/.spec/api.d.ts') ||
-      (source.endsWith('.d.ts') && !source.startsWith('.spec/') && !source.includes('/.spec/'))
-    ) {
-      // Public declarations can affect any importing specification. Until the normative compiler
-      // exposes an exact reverse-dependency closure, retaining a dependent snapshot is unsound.
-      for (const directory of available.keys()) affected.add(directory)
-      continue
-    }
-    const owner = specificationDirectory(source)
-    if (owner && available.has(owner)) affected.add(owner)
-    for (const [directory, specification] of retained) {
-      if (!available.has(directory)) continue
-      if (
-        normativeSpecificationSources(specification).has(source) ||
-        packageManifestAffects(source, specification.root)
-      ) affected.add(directory)
-    }
+    if (!changes.has(source)) changes.set(source, 'change')
+  }
+  for (const [source, kind] of changes) {
+    const impact = index.impact(source, { kind })
+    for (const owner of impact.refreshedOwners) impactedOwners.add(owner)
+  }
+  for (const owner of impactedOwners) {
+    const directory = portable(relative(root, dirname(resolve(root, owner))))
+    if (available.has(directory)) affected.add(directory)
   }
   const compiled = affected.size
     ? await compile(
@@ -681,54 +870,37 @@ async function refreshSpecificationCorpus(
       specification,
     ]),
   )
-  return [...available.keys()]
+  const specifications = [...available.keys()]
     .map((directory) => replacements.get(directory) ?? retained.get(directory))
     .filter((value): value is SpecificationSnapshot => value !== undefined)
     .sort((left, right) => left.source.localeCompare(right.source))
-}
-
-function normativeSpecificationSources(specification: SpecificationSnapshot): ReadonlySet<string> {
-  const resources = [
-    ...(specification.module.api ? [specification.module.api] : []),
-    ...(specification.module.code ? [specification.module.code] : []),
-    ...(specification.module.internal ? [specification.module.internal] : []),
-    ...specification.module.ports,
-    ...specification.schemas,
-    ...specification.examples,
-    ...specification.capabilities,
-    ...specification.flows,
-    ...specification.laws,
-    ...specification.states,
-    ...(specification.limits ? [specification.limits] : []),
-    ...(specification.layout ? [specification.layout] : []),
-    ...specification.benchmarks,
-    ...specification.packages,
-    ...specification.packagePatterns,
-  ]
-  return new Set([
-    specification.module.packageAuthority.source,
-    ...resources.flatMap((resource) => [
-      resource.source,
-      ...('model' in resource && resource.model
-        ? [
-            ...resource.model.sources.map((candidate) => candidate.file),
-            ...(resource.model.dependencies ?? []).map((candidate) => candidate.file),
-          ]
-        : []),
+  return {
+    specifications,
+    refreshedOwners: sortedUnique([
+      ...impactedOwners,
+      ...compiled.map((value) => value.source),
     ]),
-  ])
+    compiled: compiled.length,
+  }
 }
 
-function packageManifestAffects(source: string, moduleRoot: string): boolean {
-  if (!source.endsWith('/package.json') && source !== 'package.json') return false
-  const packageRoot = source === 'package.json' ? '.' : source.slice(0, -'/package.json'.length)
-  return packageRoot === '.' || moduleRoot === packageRoot || moduleRoot.startsWith(`${packageRoot}/`)
+interface RepositoryInventoryChange {
+  readonly path: string
+  readonly kind: 'change' | 'add' | 'unlink'
 }
 
-function specificationDirectory(source: string): string | undefined {
-  const marker = source.indexOf('/.spec/')
-  if (marker >= 0) return `${source.slice(0, marker)}/.spec`
-  return source.startsWith('.spec/') ? '.spec' : undefined
+function repositoryInventoryChanges(
+  previous: RepositoryInventory,
+  current: RepositoryInventory,
+): readonly RepositoryInventoryChange[] {
+  const before = new Map(previous.files.map((file) => [file.path, file.revision] as const))
+  const after = new Map(current.files.map((file) => [file.path, file.revision] as const))
+  return sortedUnique([...before.keys(), ...after.keys()]).flatMap((path) => {
+    const left = before.get(path)
+    const right = after.get(path)
+    if (left === right) return []
+    return [{ path, kind: left === undefined ? 'add' : right === undefined ? 'unlink' : 'change' }]
+  })
 }
 
 async function workspacePath(root: string, input: string): Promise<string | undefined> {

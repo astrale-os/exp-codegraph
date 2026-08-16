@@ -192,7 +192,8 @@ function reportDevTelemetry(output: CliOutput, event: DevTelemetryEvent): void {
   const metrics = event.metrics ?? {}
   output.out(
     `CODEGRAPH_${event.phase === 'application.verification' ? 'VERIFY' : 'REFRESH'} duration_ms=${durationMs.toFixed(1)} changed=${String(metrics.changedPaths ?? 0)}` +
-      ` refreshed_specs=${String(metrics.refreshedSpecifications ?? 0)}` +
+      ` affected_specs=${String(metrics.affectedSpecifications ?? 0)}` +
+      ` projected_specs=${String(metrics.projectedSpecifications ?? 0)}` +
       ` heap_mib=${mebibytes(metrics.heapUsedBytes)} rss_mib=${mebibytes(metrics.rssBytes)}`,
   )
 }

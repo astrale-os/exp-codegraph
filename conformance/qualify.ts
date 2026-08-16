@@ -12,6 +12,8 @@ import type {
   QualifySpecificationOptions,
   QualifySpecificationsOptions,
 } from './model.ts'
+import type { AnalysisSnapshotSet } from '../analysis/index.ts'
+import type { SpecificationSnapshot } from '../specification/index.ts'
 
 import { planConformance } from './plan.ts'
 
@@ -68,6 +70,38 @@ export async function qualifySpecifications(
   } finally {
     await Promise.all([...queries.values()].map((query) => query.dispose()))
   }
+}
+
+/**
+ * Bind already-proven specification-local profile results to a newer exact analysis snapshot.
+ * The caller owns the proof that every profile input is unchanged; universe-scoped profiles must
+ * never use this helper after a generation change.
+ */
+export function rebindQualificationSnapshot(
+  qualification: QualificationSnapshot,
+  specification: SpecificationSnapshot,
+  analysis: AnalysisSnapshotSet,
+): QualificationSnapshot {
+  if (
+    qualification.specification.id !== specification.id ||
+    qualification.specification.source !== specification.source
+  ) {
+    throw new Error('A qualification can only be rebound to the same specification identity.')
+  }
+  const compiled = {
+    format: qualification.format,
+    version: qualification.version,
+    specification: {
+      id: specification.id,
+      revision: specification.revision,
+      source: specification.source,
+    },
+    analysis: { id: analysis.id, universes: [...analysis.universes] },
+    scope: qualification.scope,
+    status: qualification.status,
+    profiles: qualification.profiles,
+  }
+  return immutable({ ...compiled, id: qualificationIdentity(compiled) })
 }
 
 async function qualifyPreparedSpecification(

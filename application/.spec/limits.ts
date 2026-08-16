@@ -4,6 +4,8 @@ export const TYPE_SPEC_APPLICATION_LIMITS = {
   maximumFocusedCheckMilliseconds: 12_000,
   maximumColdFullCheckMilliseconds: 300_000,
   maximumWarmFullCheckMilliseconds: 20_000,
+  maximumUnchangedRestartMilliseconds: 10_000,
+  maximumSingleOwnerRefreshMilliseconds: 5_000,
   maximumNativeStartupMilliseconds: 3_000,
   maximumSQLiteBytes: 536_870_912,
   maximumCheckHeapMiB: 1_280,

@@ -6,6 +6,11 @@ import type {
   NativeModuleBoundary,
 } from '../../../analysis/protocol/.spec/api.js'
 import type { RepositoryId } from '../../../analysis/identity/.spec/api.js'
+import type {
+  AnalysisGenerationId,
+  ProjectUniverseId,
+  SourceManifestId,
+} from '../../../analysis/identity/.spec/api.js'
 import type { TypeScriptRefreshResult } from '../../../analysis/typescript/.spec/api.js'
 import type { SpecificationSnapshot } from '../../../specification/.spec/api.js'
 import type { RepositoryInventory } from '../../../repository/.spec/api.js'
@@ -22,6 +27,8 @@ interface Diagnostic {
 
 export interface ApplicationAnalysisRefreshOptions {
   readonly specifications: readonly SpecificationSnapshot[]
+  readonly observationSpecifications?: readonly SpecificationSnapshot[]
+  readonly refreshSpecifications?: readonly string[]
   readonly inventory: RepositoryInventory
   readonly compilerAnalysis?: boolean
   readonly changed?: readonly string[]
@@ -40,6 +47,10 @@ export interface ApplicationAnalysisRefresh {
 
 export interface ApplicationAnalysisWorkspace {
   refresh(options: ApplicationAnalysisRefreshOptions): Promise<ApplicationAnalysisRefresh>
+  open(
+    generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>,
+    inventory: SourceManifestId,
+  ): Promise<AnalysisSnapshotSet>
   dispose(): Promise<void>
 }
 

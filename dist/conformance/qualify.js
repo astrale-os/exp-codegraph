@@ -38,6 +38,31 @@ export async function qualifySpecifications(options) {
         await Promise.all([...queries.values()].map((query) => query.dispose()));
     }
 }
+/**
+ * Bind already-proven specification-local profile results to a newer exact analysis snapshot.
+ * The caller owns the proof that every profile input is unchanged; universe-scoped profiles must
+ * never use this helper after a generation change.
+ */
+export function rebindQualificationSnapshot(qualification, specification, analysis) {
+    if (qualification.specification.id !== specification.id ||
+        qualification.specification.source !== specification.source) {
+        throw new Error('A qualification can only be rebound to the same specification identity.');
+    }
+    const compiled = {
+        format: qualification.format,
+        version: qualification.version,
+        specification: {
+            id: specification.id,
+            revision: specification.revision,
+            source: specification.source,
+        },
+        analysis: { id: analysis.id, universes: [...analysis.universes] },
+        scope: qualification.scope,
+        status: qualification.status,
+        profiles: qualification.profiles,
+    };
+    return immutable({ ...compiled, id: qualificationIdentity(compiled) });
+}
 async function qualifyPreparedSpecification(specification, options, plan, queries, capabilityByUniverse) {
     const results = new Map();
     for (const profile of plan.ordered) {

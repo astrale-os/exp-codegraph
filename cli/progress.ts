@@ -25,6 +25,7 @@ const DEV_SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '�
 const DEV_PHASES = [
   ['store.selection', 'Opening durable analysis cache'],
   ['application.inventory', 'Inventorying repository'],
+  ['application.checkpoint', 'Opening reusable workspace checkpoint'],
   ['application.discovery', 'Discovering specifications'],
   ['application.compile', 'Compiling specification contracts'],
   ['application.statistics', 'Indexing repository statistics'],

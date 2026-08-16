@@ -1,8 +1,10 @@
 import type {
   AnalysisGenerationId,
+  AnalysisSnapshotSet,
   AnalysisStore,
   NativeModuleBoundary,
   ProjectUniverseId,
+  SourceManifestId,
 } from '../../analysis/index.ts'
 import type { TypeScriptAnalysisService } from '../../analysis/typescript/index.ts'
 
@@ -32,6 +34,8 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
   readonly #ownsStore: boolean
   readonly #services = new Map<string, TypeScriptAnalysisService>()
   #boundaryDigest = ''
+  #adoptedGenerations = new Map<ProjectUniverseId, AnalysisGenerationId>()
+  #adoptedInventory: SourceManifestId | undefined
   #disposed = false
   readonly #options: ApplicationAnalysisWorkspaceOptions
 
@@ -92,13 +96,23 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
       )
     }
     const generations = new Map<ProjectUniverseId, AnalysisGenerationId>(
-      results.map((result) => [result.generation.universe, result.generation.id]),
+      options.compilerAnalysis === false && this.#adoptedInventory === options.inventory.revision
+        ? this.#adoptedGenerations
+        : [],
     )
+    for (const [universe, generation] of results.map(
+      (result) => [result.generation.universe, result.generation.id] as const,
+    )) {
+      generations.set(universe, generation)
+    }
     const observation = await materializeApplicationObservations({
       root: this.#options.root,
       store: this.#store,
       inventory: options.inventory,
-      specifications: options.specifications,
+      specifications: options.observationSpecifications ?? options.specifications,
+      ...(options.refreshSpecifications
+        ? { refresh: options.refreshSpecifications }
+        : {}),
       ...(options.schemaDependencies
         ? { schemaDependencies: options.schemaDependencies }
         : {}),
@@ -106,6 +120,8 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
     })
     generations.set(observation.universe, observation.generation.id)
     const snapshot = await this.#store.snapshotSet(generations, options.inventory.revision)
+    this.#adoptedGenerations = new Map(generations)
+    this.#adoptedInventory = options.inventory.revision
     return {
       snapshot,
       universes: snapshot.universes,
@@ -122,9 +138,22 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
     }
   }
 
+  async open(
+    generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>,
+    inventory: SourceManifestId,
+  ): Promise<AnalysisSnapshotSet> {
+    this.assertOpen()
+    const snapshot = await this.#store.snapshotSet(generations, inventory)
+    this.#adoptedGenerations = new Map(generations)
+    this.#adoptedInventory = inventory
+    return snapshot
+  }
+
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    this.#adoptedGenerations.clear()
+    this.#adoptedInventory = undefined
     await this.disposeServices()
     if (this.#ownsStore) await this.#store.dispose()
   }

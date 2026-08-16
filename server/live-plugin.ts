@@ -1,5 +1,6 @@
 import type { Plugin, ViteDevServer } from 'vite'
 
+import { createHash } from 'node:crypto'
 import { realpath } from 'node:fs/promises'
 import { isAbsolute, relative, sep } from 'node:path'
 
@@ -36,10 +37,17 @@ import {
   createSourceChangeFilter,
   type CatalogRebuildResult,
 } from './reload.ts'
-import { affectedSpecificationSources, isWatchedSource } from './watch.ts'
+import { isWatchedSource } from './watch.ts'
+import { createSpecificationImpactIndex } from '../application/change/index.ts'
+import {
+  createServerCatalogCheckpoint,
+  type ServerCatalogCheckpoint,
+  type ServerVerificationCheckpoint,
+} from './catalog-checkpoint.ts'
 
 export const CATALOG_INDEX_ID = 'virtual:spec-catalog-index'
 const RESOLVED_CATALOG_INDEX_ID = `\0${CATALOG_INDEX_ID}`
+const MAX_RESIDENT_VERIFIER_APPLICATIONS = 1
 
 export interface LiveSpecsServices {
   createApplication(root: string, cache: boolean): Promise<TypeSpecApplicationService>
@@ -78,6 +86,10 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
       createServerApplicationService(applicationRoot, cache, options.native, options.telemetry),
   }
   const applicationPromise = services.createApplication(root, options.cache !== false)
+  const catalogCheckpointPromise: Promise<ServerCatalogCheckpoint | undefined> =
+    options.services || options.cache === false
+      ? Promise.resolve(undefined)
+      : createServerCatalogCheckpoint(root).catch(() => undefined)
   let application: TypeSpecApplicationService | undefined
   let reader: TypeSpecApplicationReader | undefined
   let catalog: ViewerCatalog | undefined
@@ -85,10 +97,12 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
   let catalogGeneration = 0
   let deliveredGeneration = 0
   let operations = Promise.resolve()
+  let initialization: Promise<void> | undefined
   let disposed = false
   let viteServer: ViteDevServer | undefined
   const pendingChanges = new Set<string>()
   const verifiedSpecifications = new Set<string>()
+  const verifierApplications = new Map<string, TypeSpecApplicationService>()
   const sourceChanges = createSourceChangeFilter()
   const snapshots = new CatalogSnapshotStore()
 
@@ -96,12 +110,7 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
     const started = performance.now()
     const changed = [...pendingChanges].sort()
     pendingChanges.clear()
-    const changedOwners = applicationSnapshot
-      ? affectedSpecificationSources(applicationSnapshot, root, changed)
-      : []
-    const forceCompiler =
-      requestedCompiler ??
-      (verify || changedOwners.some((source) => verifiedSpecifications.has(source)))
+    const forceCompiler = requestedCompiler ?? verify
     application ??= await applicationPromise
     const refreshed = await application.refresh({
         qualify: true,
@@ -118,15 +127,18 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
             }),
         ...(changed.length ? { changed } : {}),
       })
+    const verifiedChanges = refreshed.changes.specifications.refreshed.filter((source) =>
+      verifiedSpecifications.has(source),
+    )
     const nextReader = await application.open(refreshed.snapshot.id)
     try {
-      const refresh = forceCompiler
+      const refresh = !catalog || forceCompiler
         ? refreshed.snapshot.specifications.map((value) => value.source)
         : [
             ...new Set([
               ...refreshed.changes.specifications.added,
               ...refreshed.changes.specifications.changed,
-              ...affectedSpecificationSources(refreshed.snapshot, root, changed),
+              ...refreshed.changes.specifications.refreshed,
             ]),
           ].sort()
       const projectionStarted = performance.now()
@@ -135,10 +147,47 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
         phase: 'application.projection',
         metrics: { status: 'started' },
       })
-      const next = await services.projectCatalog(root, nextReader, {
-        ...(catalog ? { previous: catalog } : {}),
-        refresh,
-      })
+      const catalogCheckpoint = await catalogCheckpointPromise
+      const restoredCatalog =
+        !catalog && changed.length === 0
+          ? await catalogCheckpoint?.load(refreshed.snapshot.id)
+          : undefined
+      let next =
+        restoredCatalog ??
+        (await services.projectCatalog(root, nextReader, {
+          ...(catalog ? { previous: catalog } : {}),
+          refresh,
+        }))
+      const verificationRecords = await catalogCheckpoint?.loadVerifications() ?? []
+      const verificationInputs = verificationInputRevisions(refreshed.snapshot)
+      next = restoreVerificationRecords(next, verificationRecords, verificationInputs)
+      for (const record of verificationRecords) {
+        const current = next.specs.find((candidate) => candidate.source === record.source)
+        if (current?.verificationRevision === record.revision) {
+          verifiedSpecifications.add(record.source)
+        }
+      }
+      for (const source of verifiedChanges) {
+        const verification = await refreshVerifiedSpecification(source, changed)
+        const verified = verification?.specification
+        const current = next.specs.find((candidate) => candidate.source === source)
+        if (
+          verification?.inventory !== refreshed.snapshot.inventory ||
+          !current ||
+          !verified?.verification ||
+          current.verificationRevision !== verified.verificationRevision
+        ) {
+          continue
+        }
+        next = {
+          ...next,
+          specs: next.specs.map((candidate) =>
+            candidate.source === source
+              ? { ...candidate, verification: verified.verification }
+              : candidate,
+          ),
+        }
+      }
       const publication = snapshots.publish(
         createCatalogSnapshot(
           next,
@@ -152,11 +201,20 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
       catalog = next
       applicationSnapshot = refreshed.snapshot
       if (publication.changed) catalogGeneration++
+      if (!restoredCatalog) await catalogCheckpoint?.publish(refreshed.snapshot.id, next)
+      await catalogCheckpoint?.publishVerifications(
+        verificationRecordsFromCatalog(next, verificationInputs),
+      )
       dispatchAnalysisTelemetry(options.telemetry, {
         component: 'analysis',
         phase: 'application.projection',
         durationNs: Math.round((performance.now() - projectionStarted) * 1_000_000),
-        metrics: { status: 'completed', specifications: next.specs.length },
+        metrics: {
+          status: 'completed',
+          specifications: restoredCatalog ? 0 : refresh.length,
+          retainedSpecifications: restoredCatalog ? next.specs.length : next.specs.length - refresh.length,
+          checkpoint: restoredCatalog !== undefined,
+        },
       })
       await previous?.dispose()
       dispatchAnalysisTelemetry(options.telemetry, {
@@ -166,7 +224,8 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
         metrics: {
           compilerAnalysis: forceCompiler,
           changedPaths: changed.length,
-          refreshedSpecifications: refresh.length,
+          affectedSpecifications: refreshed.changes.specifications.refreshed.length,
+          projectedSpecifications: refresh.length,
           specifications: refreshed.snapshot.specifications.length,
           heapUsedBytes: process.memoryUsage().heapUsed,
           rssBytes: process.memoryUsage().rss,
@@ -193,7 +252,57 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
     return true
   }
   const ensureCurrent = async (): Promise<void> => {
-    if (!catalog || !reader) await rebuild()
+    if (catalog && reader) return
+    initialization ??= inOrder(async () => {
+      if (!catalog || !reader) await rebuild()
+    }).finally(() => {
+      initialization = undefined
+    })
+    await initialization
+  }
+  const refreshVerifiedSpecification = async (
+    source: string,
+    changed: readonly string[] = [],
+  ): Promise<
+    | {
+        readonly specification: ViewerCatalog['specs'][number] | undefined
+        readonly inventory: string
+      }
+    | undefined
+  > => {
+    let verifier = verifierApplications.get(source)
+    if (!verifier) {
+      while (verifierApplications.size >= MAX_RESIDENT_VERIFIER_APPLICATIONS) {
+        const oldest = verifierApplications.entries().next().value as
+          | [string, TypeSpecApplicationService]
+          | undefined
+        if (!oldest) break
+        verifierApplications.delete(oldest[0])
+        await oldest[1].dispose()
+      }
+      verifier = await services.createApplication(root, options.cache !== false)
+      verifierApplications.set(source, verifier)
+    } else {
+      verifierApplications.delete(source)
+      verifierApplications.set(source, verifier)
+    }
+    const refreshed = await verifier.refresh({
+      qualify: true,
+      compilerAnalysis: true,
+      focused: true,
+      select: [source],
+      ...(changed.length ? { changed } : {}),
+    })
+    const verificationReader = await verifier.open(refreshed.snapshot.id)
+    try {
+      const focused = await services.projectCatalog(root, verificationReader)
+      return {
+        specification: focused.specs.find((candidate) => candidate.source === source),
+        inventory: refreshed.snapshot.inventory,
+      }
+    } finally {
+      await verificationReader.dispose()
+    }
   }
   const verifyInOrder = (request: VerificationRunRequest): Promise<VerificationRunResponse> =>
     inOrder(async () => {
@@ -215,30 +324,31 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
       if (!specification.verification) {
         const inventory = applicationSnapshot!.inventory
         const started = performance.now()
-        const refreshed = await application!.refresh({
-          qualify: true,
-          compilerAnalysis: true,
-          focused: true,
-          select: [request.source],
-        })
-        const verificationReader = await application!.open(refreshed.snapshot.id)
+        // Focused compiler qualification owns a separate application lifecycle. It must not move
+        // the full viewer application's current snapshot or invalidate its local delta cache.
         try {
-          const focused = await services.projectCatalog(root, verificationReader)
-          specification = focused.specs.find((candidate) => candidate.source === request.source)
+          const verification = await refreshVerifiedSpecification(request.source)
+          if (verification?.inventory !== inventory) {
+            return rejected(request, 'SOURCE_CHANGED', 'Specification inventory changed.')
+          }
+          specification = verification.specification
           dispatchAnalysisTelemetry(options.telemetry, {
             component: 'analysis',
             phase: 'application.verification',
             durationNs: Math.round((performance.now() - started) * 1_000_000),
             metrics: {
-              specifications: refreshed.snapshot.specifications.length,
+              specifications: 1,
               heapUsedBytes: process.memoryUsage().heapUsed,
               rssBytes: process.memoryUsage().rss,
             },
           })
-        } finally {
-          await verificationReader.dispose()
+        } catch (error) {
+          const verifier = verifierApplications.get(request.source)
+          verifierApplications.delete(request.source)
+          await verifier?.dispose()
+          throw error
         }
-        if (refreshed.snapshot.inventory !== inventory || specification?.verificationRevision !== request.revision) {
+        if (applicationSnapshot!.inventory !== inventory || specification?.verificationRevision !== request.revision) {
           return {
             ...rejected(request, 'SOURCE_CHANGED', 'Specification source changed.'),
             ...(specification ? { revision: specification.verificationRevision } : {}),
@@ -267,6 +377,13 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
           ),
         )
         if (publication.changed) catalogGeneration++
+        await (await catalogCheckpointPromise)?.publish(applicationSnapshot!.id, catalog)
+        await (await catalogCheckpointPromise)?.publishVerifications(
+          verificationRecordsFromCatalog(
+            catalog,
+            verificationInputRevisions(applicationSnapshot!),
+          ),
+        )
         const module = viteServer?.moduleGraph.getModuleById(RESOLVED_CATALOG_INDEX_ID)
         if (module) viteServer!.moduleGraph.invalidateModule(module)
       }
@@ -286,7 +403,12 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
       await reader?.dispose()
       reader = undefined
       const resolved = application ?? await applicationPromise
-      await resolved.dispose()
+      await Promise.all([
+        resolved.dispose(),
+        ...[...verifierApplications.values()].map((verifier) => verifier.dispose()),
+        (await catalogCheckpointPromise)?.dispose(),
+      ])
+      verifierApplications.clear()
       application = undefined
     })
   }
@@ -425,6 +547,67 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
 function within(root: string, target: string): boolean {
   const path = relative(root, target)
   return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
+}
+
+function restoreVerificationRecords(
+  catalog: ViewerCatalog,
+  records: readonly ServerVerificationCheckpoint[],
+  inputs: ReadonlyMap<string, string>,
+): ViewerCatalog {
+  const bySource = new Map(records.map((record) => [record.source, record]))
+  let changed = false
+  const specs = catalog.specs.map((specification) => {
+    if (specification.verification) return specification
+    const record = bySource.get(specification.source)
+    if (
+      !record ||
+      record.revision !== specification.verificationRevision ||
+      record.inputs !== inputs.get(specification.source)
+    ) return specification
+    changed = true
+    return { ...specification, verification: record.verification }
+  })
+  return changed ? { ...catalog, specs } : catalog
+}
+
+function verificationRecordsFromCatalog(
+  catalog: ViewerCatalog,
+  inputs: ReadonlyMap<string, string>,
+): readonly ServerVerificationCheckpoint[] {
+  return catalog.specs
+    .filter(
+      (specification): specification is typeof specification & { verification: NonNullable<typeof specification.verification> } =>
+        specification.verification !== undefined,
+    )
+    .map((specification) => ({
+      source: specification.source,
+      revision: specification.verificationRevision,
+      inputs: inputs.get(specification.source) ?? 'missing',
+      verification: specification.verification,
+    }))
+    .sort((left, right) => left.source.localeCompare(right.source))
+}
+
+function verificationInputRevisions(
+  snapshot: TypeSpecApplicationSnapshot,
+): ReadonlyMap<string, string> {
+  const impact = createSpecificationImpactIndex(snapshot.specifications)
+  const bySource = new Map(
+    snapshot.specifications.map((specification) => [specification.source, [] as string[][]]),
+  )
+  for (const file of snapshot.statistics.files) {
+    for (const owner of impact.impact(file.path).refreshedOwners) {
+      bySource.get(owner)?.push([file.path, file.revision])
+    }
+  }
+  return new Map(
+    snapshot.specifications.map((specification) => [
+      specification.source,
+      createHash('sha256')
+        .update(JSON.stringify([specification.id, bySource.get(specification.source) ?? []]))
+        .digest('hex'),
+    ]),
+  )
 }
 
 function rejected(

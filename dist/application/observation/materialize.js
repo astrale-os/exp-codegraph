@@ -21,7 +21,14 @@ export async function materializeApplicationObservations(options) {
     const provisional = deriveAnalysisId('generation', 'astrale.typespec.observation.provisional', {
         inventory: options.inventory.revision,
     });
+    const current = await options.store.current(universe);
+    const currentManifest = current
+        ? await withManifest(options.store, universe, current.id)
+        : [];
+    const currentByKey = new Map(currentManifest.map((entry) => [entry.key, entry]));
+    const requested = options.refresh ? new Set(options.refresh) : undefined;
     const shards = [];
+    const retained = [];
     const schemaDependencies = options.schemaDependencies ?? [];
     const schemaDiagnostics = validateModuleSchemaCatalog(options.root, [
         ...options.specifications.flatMap((specification) => specification.schemas),
@@ -29,16 +36,6 @@ export async function materializeApplicationObservations(options) {
     ]);
     const ownedSchemaSources = new Set(options.specifications.flatMap((specification) => specification.schemas.map((resource) => resource.source)));
     const globalDiagnostics = schemaDiagnostics.filter((diagnostic) => !ownedSchemaSources.has(diagnostic.file));
-    for (const specification of options.specifications) {
-        options.signal?.throwIfAborted();
-        const [layout, tests] = await Promise.all([
-            observeSpecificationLayout(options.root, specification),
-            observeSpecificationTests(options.root, specification),
-        ]);
-        shards.push(observationShard(provisional, APPLICATION_LAYOUT_FACT_NAMESPACE, specification, 'layout-observation', layout), observationShard(provisional, APPLICATION_TEST_FACT_NAMESPACE, specification, 'test-evidence', tests), observationShard(provisional, APPLICATION_SCHEMA_FACT_NAMESPACE, specification, 'schema-catalog', observeSpecificationSchemas(specification, schemaDiagnostics)), observationShard(provisional, APPLICATION_CONTEXT_FACT_NAMESPACE, specification, 'module-context', observeSpecificationContext(specification, options.inventory)));
-    }
-    shards.sort((left, right) => left.key.localeCompare(right.key));
-    const manifest = shards.map(shardReference);
     const sourceManifest = deriveAnalysisId('source-manifest', 'astrale.typespec.application-observation', {
         inventory: options.inventory.revision,
         schemaDependencies: schemaDependencies.map((resource) => [
@@ -46,6 +43,31 @@ export async function materializeApplicationObservations(options) {
             resource.revision,
         ]),
     });
+    const expectedKeys = options.specifications.flatMap(observationKeys).sort();
+    if ((requested === undefined || requested.size === 0) &&
+        current?.sourceManifest === sourceManifest &&
+        currentManifest.length === expectedKeys.length &&
+        expectedKeys.every((key, index) => currentManifest[index]?.key === key)) {
+        return { universe, generation: current, diagnostics: globalDiagnostics };
+    }
+    for (const specification of options.specifications) {
+        options.signal?.throwIfAborted();
+        const keys = observationKeys(specification);
+        const canRetain = requested !== undefined &&
+            !requested.has(specification.source) &&
+            keys.every((key) => currentByKey.has(key));
+        if (canRetain) {
+            retained.push(...keys.map((key) => currentByKey.get(key)));
+            continue;
+        }
+        const [layout, tests] = await Promise.all([
+            observeSpecificationLayout(options.root, specification),
+            observeSpecificationTests(options.root, specification),
+        ]);
+        shards.push(observationShard(provisional, APPLICATION_LAYOUT_FACT_NAMESPACE, specification, 'layout-observation', layout), observationShard(provisional, APPLICATION_TEST_FACT_NAMESPACE, specification, 'test-evidence', tests), observationShard(provisional, APPLICATION_SCHEMA_FACT_NAMESPACE, specification, 'schema-catalog', observeSpecificationSchemas(specification, schemaDiagnostics)), observationShard(provisional, APPLICATION_CONTEXT_FACT_NAMESPACE, specification, 'module-context', observeSpecificationContext(specification, options.inventory)));
+    }
+    shards.sort((left, right) => left.key.localeCompare(right.key));
+    const manifest = [...retained, ...shards.map(shardReference)].sort((left, right) => left.key.localeCompare(right.key));
     const semanticGeneration = {
         universe,
         producer: OBSERVATION_PRODUCER,
@@ -58,14 +80,9 @@ export async function materializeApplicationObservations(options) {
         ].sort(),
     };
     const id = generationIdentity(semanticGeneration, manifest);
-    const current = await options.store.current(universe);
     if (current?.id === id) {
         return { universe, generation: current, diagnostics: globalDiagnostics };
     }
-    const currentManifest = current
-        ? await withManifest(options.store, universe, current.id)
-        : [];
-    const currentByKey = new Map(currentManifest.map((entry) => [entry.key, entry]));
     const nextKeys = new Set(manifest.map((entry) => entry.key));
     const rebound = shards.map((shard) => bindGeneration(shard, id));
     const generation = {
@@ -85,6 +102,19 @@ export async function materializeApplicationObservations(options) {
             .sort(),
     }, { signal: options.signal });
     return { universe, generation, diagnostics: globalDiagnostics };
+}
+function observationKeys(specification) {
+    return [
+        APPLICATION_LAYOUT_FACT_NAMESPACE,
+        APPLICATION_TEST_FACT_NAMESPACE,
+        APPLICATION_SCHEMA_FACT_NAMESPACE,
+        APPLICATION_CONTEXT_FACT_NAMESPACE,
+    ]
+        .map((namespace) => deriveAnalysisId('fact-shard-key', namespace, {
+        specification: specification.module.id,
+        schemaVersion: 1,
+    }))
+        .sort();
 }
 function observeSpecificationContext(specification, inventory) {
     const specDirectory = specification.source.slice(0, -'/api.d.ts'.length);

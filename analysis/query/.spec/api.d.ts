@@ -66,6 +66,7 @@ export interface AnalysisQuery {
 export interface AnalysisSnapshotSet {
   readonly id: SnapshotSetId
   readonly inventory: SourceManifestId
+  readonly generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>
   readonly universes: readonly ProjectUniverseId[]
   dispose(): Promise<void>
   query(universe: ProjectUniverseId): Promise<AnalysisQuery>

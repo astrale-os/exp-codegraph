@@ -1,5 +1,5 @@
 export { planConformance } from './plan.js';
-export { qualifySpecification, qualifySpecifications } from './qualify.js';
+export { qualifySpecification, qualifySpecifications, rebindQualificationSnapshot, } from './qualify.js';
 export { MODULE_DEPENDENCIES_PROFILE_ID, MODULE_STRUCTURE_PROFILE_ID, MODULE_SURFACE_PROFILE_ID, createModuleConformanceProfiles, createModuleDependenciesConformanceProfile, createModuleStructureConformanceProfile, createModuleSurfaceConformanceProfile, createTypeSpecConformanceProfiles, } from './module/profile.js';
 export { MODULE_LAYOUT_PROFILE_ID, createModuleLayoutConformanceProfile, } from './module/layout.js';
 export { MODULE_SCHEMA_PROFILE_ID, createModuleSchemaConformanceProfile, } from './module/schema.js';

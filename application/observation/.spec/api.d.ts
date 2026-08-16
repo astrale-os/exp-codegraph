@@ -112,6 +112,7 @@ export function materializeApplicationObservations(options: {
   readonly store: AnalysisStore
   readonly inventory: RepositoryInventory
   readonly specifications: readonly SpecificationSnapshot[]
+  readonly refresh?: readonly string[]
   readonly schemaDependencies?: readonly ApplicationSchemaDependencyResource[]
   readonly signal?: AbortSignal
 }): Promise<ApplicationObservationRefresh>

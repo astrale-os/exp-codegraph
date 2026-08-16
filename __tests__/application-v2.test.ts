@@ -205,7 +205,8 @@ export interface Alpha { readonly value: Shared }
       const implementation = (
         await service.refresh({ changed: [join(current.root, 'alpha/src/index.ts')] })
       ).snapshot
-      expect(implementation.specifications[0]).toBe(before.get('alpha/.spec/api.d.ts'))
+      expect(implementation.specifications[0]).not.toBe(before.get('alpha/.spec/api.d.ts'))
+      expect(implementation.specifications[0]?.id).toBe(before.get('alpha/.spec/api.d.ts')?.id)
       expect(implementation.specifications[1]).toBe(before.get('beta/.spec/api.d.ts'))
 
       await current.write(
@@ -218,7 +219,7 @@ export interface Alpha { readonly value: Shared; readonly changed: true }
         await service.refresh({ changed: [join(current.root, 'alpha/.spec/api.d.ts')] })
       ).snapshot
       expect(normative.specifications[0]).not.toBe(before.get('alpha/.spec/api.d.ts'))
-      expect(normative.specifications[1]).not.toBe(before.get('beta/.spec/api.d.ts'))
+      expect(normative.specifications[1]).toBe(before.get('beta/.spec/api.d.ts'))
 
       const afterNormative = new Map(
         normative.specifications.map((value) => [value.source, value]),
@@ -231,7 +232,7 @@ export interface Alpha { readonly value: Shared; readonly changed: true }
         await service.refresh({ changed: [join(current.root, 'shared/types.d.ts')] })
       ).snapshot
       expect(shared.specifications[0]).not.toBe(afterNormative.get('alpha/.spec/api.d.ts'))
-      expect(shared.specifications[1]).not.toBe(afterNormative.get('beta/.spec/api.d.ts'))
+      expect(shared.specifications[1]).toBe(afterNormative.get('beta/.spec/api.d.ts'))
     } finally {
       await service.dispose()
     }
@@ -365,6 +366,10 @@ function emptyAnalysisWorkspace(): ApplicationAnalysisWorkspace {
   const store = createMemoryAnalysisStore()
   let disposed = false
   return {
+    async open(generations, inventory) {
+      if (disposed) throw new Error('analysis disposed')
+      return store.snapshotSet(generations, inventory)
+    },
     async refresh(options: ApplicationAnalysisRefreshOptions) {
       if (disposed) throw new Error('analysis disposed')
       const snapshot = await store.snapshotSet(

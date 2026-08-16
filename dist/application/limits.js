@@ -11,6 +11,8 @@ export const TYPE_SPEC_APPLICATION_LIMITS = Object.freeze({
     // causal cold regression is governed by the isolated candidate/baseline experiment instead.
     maximumColdFullCheckMilliseconds: 300_000,
     maximumWarmFullCheckMilliseconds: 20_000,
+    maximumUnchangedRestartMilliseconds: 10_000,
+    maximumSingleOwnerRefreshMilliseconds: 5_000,
     maximumNativeStartupMilliseconds: 3_000,
     maximumSQLiteBytes: 512 * 1024 * 1024,
     maximumCheckHeapMiB: 1_280,

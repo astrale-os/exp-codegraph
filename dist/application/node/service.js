@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { selectAnalysisStore } from '../../analysis/index.js';
 import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.js';
 import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.js';
-import { createTypeSpecApplicationService } from '../service.js';
+import { createTypeSpecApplicationServiceWithDependencies } from '../service.js';
+import { createApplicationCheckpoint } from '../checkpoint/index.js';
+import { createFileWorkspaceCheckpointStore, } from '../../workspace/checkpoint/index.js';
+import { createCheckpointedRepositoryInventory } from './inventory.js';
 /** Node-owned store/native composition around the portable headless application service. */
 export async function createNodeTypeSpecApplicationService(options) {
     const root = resolve(options.root);
@@ -24,6 +27,14 @@ export async function createNodeTypeSpecApplicationService(options) {
             : {}),
     });
     const store = selection.store;
+    const repository = options.repository ?? (await repositoryKey(root));
+    const workspaceCheckpoint = selection.backend === 'durable'
+        ? createFileWorkspaceCheckpointStore({
+            directory: join(options.cacheDirectory, 'workspaces', createHash('sha256').update(root).digest('hex'), 'application'),
+            maxArtifacts: 4_096,
+            maximumScopes: 512,
+        })
+        : undefined;
     dispatchAnalysisTelemetry(options.telemetry, {
         component: 'analysis',
         phase: 'store.selection',
@@ -36,22 +47,39 @@ export async function createNodeTypeSpecApplicationService(options) {
         },
     });
     try {
-        const application = await createTypeSpecApplicationService({
+        const version = await codegraphVersion();
+        const application = await createTypeSpecApplicationServiceWithDependencies({
             root,
-            repository: options.repository ?? (await repositoryKey(root)),
+            repository,
             maximumRetainedSnapshots: options.maximumRetainedSnapshots,
             analysis: { store, maximumRetainedGenerations },
+            ...(workspaceCheckpoint
+                ? {
+                    checkpoint: createApplicationCheckpoint({
+                        store: workspaceCheckpoint,
+                        producerFingerprint: `@astrale-os/codegraph@${version}:application-checkpoint/1`,
+                    }),
+                }
+                : {}),
             ...(options.telemetry ? { telemetry: options.telemetry } : {}),
             ...(options.native ? { native: options.native } : {}),
-        });
-        return ownStore(application, store);
+        }, workspaceCheckpoint
+            ? {
+                inventory: createCheckpointedRepositoryInventory({
+                    root,
+                    store: workspaceCheckpoint,
+                    producerFingerprint: `@astrale-os/codegraph@${version}:repository-inventory/1`,
+                }),
+            }
+            : {});
+        return ownStore(application, store, workspaceCheckpoint);
     }
     catch (error) {
-        await store.dispose();
+        await Promise.allSettled([store.dispose(), workspaceCheckpoint?.dispose()]);
         throw error;
     }
 }
-function ownStore(application, store) {
+function ownStore(application, store, checkpoint) {
     let disposed = false;
     return {
         refresh: (options) => application.refresh(options),
@@ -61,12 +89,28 @@ function ownStore(application, store) {
             if (disposed)
                 return;
             disposed = true;
-            const results = await Promise.allSettled([application.dispose(), store.dispose()]);
+            const results = await Promise.allSettled([
+                application.dispose(),
+                store.dispose(),
+                checkpoint?.dispose(),
+            ]);
             const rejected = results.find((result) => result.status === 'rejected');
             if (rejected)
                 throw rejected.reason;
         },
     };
+}
+async function codegraphVersion() {
+    const candidate = resolve(import.meta.dirname, '..', '..');
+    const packageRoot = basename(candidate) === 'dist' ? dirname(candidate) : candidate;
+    const value = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
+    if (!value ||
+        typeof value !== 'object' ||
+        Array.isArray(value) ||
+        typeof value.version !== 'string') {
+        throw new Error('Installed @astrale-os/codegraph package has no version.');
+    }
+    return value.version;
 }
 async function repositoryKey(root) {
     try {

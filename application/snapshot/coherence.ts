@@ -23,6 +23,11 @@ export function assertSpecificationInventory(
       }) as SourceRevisionId
       if (revision !== file.revision) mismatches.push(`${resource.source}:revision-mismatch`)
     }
+    for (const reference of specification.sourceReferences) {
+      if (!files.has(reference.target.source)) {
+        mismatches.push(`${reference.target.source}:reference-target-not-in-inventory`)
+      }
+    }
   }
   if (mismatches.length) {
     throw new Error(
@@ -36,6 +41,7 @@ interface RevisionedSource {
   readonly revision: string
   readonly model?: {
     readonly sources: readonly { readonly file: string; readonly revision: string }[]
+    readonly dependencies?: readonly { readonly file: string; readonly revision: string }[]
   }
 }
 
@@ -62,6 +68,10 @@ function specificationResources(specification: SpecificationSnapshot): readonly 
   const expanded = resources.flatMap((resource) => [
     resource,
     ...(resource.model?.sources.map((source) => ({
+      source: source.file,
+      revision: source.revision,
+    })) ?? []),
+    ...(resource.model?.dependencies?.map((source) => ({
       source: source.file,
       revision: source.revision,
     })) ?? []),

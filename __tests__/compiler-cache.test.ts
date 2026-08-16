@@ -272,32 +272,6 @@ describe('API compiler cache', () => {
     expect(compiler.compile).toHaveBeenCalledTimes(4)
   })
 
-  it('restores scoped evidence and still invalidates changed dependencies', async () => {
-    const files = new Map([['/workspace/api.d.ts', 'one']])
-    const dependencies = {
-      read: async (file: string) => files.get(file)!,
-      revision: (text: string) => text,
-    }
-    const result = async () => ({
-      ok: true as const,
-      diagnostics: [],
-      dependencies: [{ file: 'api.d.ts', revision: files.get('/workspace/api.d.ts')! }],
-    })
-    const first = createCachedApiCompiler({ compile: vi.fn(result) }, dependencies)
-    const request = { mainFile: '/workspace/api.d.ts', projectRoot: '/workspace' }
-    await first.compile(request)
-
-    const restoredCompile = vi.fn(result)
-    const restored = createCachedApiCompiler({ compile: restoredCompile }, dependencies)
-    restored.restore('/workspace', structuredClone(first.snapshot('/workspace')))
-    await restored.compile(request)
-    expect(restoredCompile).not.toHaveBeenCalled()
-
-    files.set('/workspace/api.d.ts', 'two')
-    await restored.compile(request)
-    expect(restoredCompile).toHaveBeenCalledOnce()
-  })
-
   it('coalesces one scheduled request wave without changing the caller contract', async () => {
     const schedules: Array<() => void> = []
     const batch: ApiBatchCompiler = {

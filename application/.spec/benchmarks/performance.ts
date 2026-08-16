@@ -20,3 +20,32 @@ export const TYPESPEC_FOCUSED_EDIT = defineBenchmark({
   workload: 'Edit one Kernel TypeScript source, refresh its focused owner closure, and qualify it.',
   metrics: ['duration', 'invalidated-passes', 'reloaded-universes', 'rewritten-shards'],
 })
+
+export const CODEGRAPH_UNCHANGED_RESTART = defineBenchmark({
+  id: 'CODEGRAPH-UNCHANGED-RESTART',
+  statement: 'Bounds an unchanged new-process reopen through one validated workspace checkpoint.',
+  workload:
+    'Start a new process for the unchanged Kernel checkout and reopen its exact workspace, application, and catalog identities.',
+  metrics: [
+    'duration',
+    'compiled-specifications',
+    'native-extractions',
+    'rewritten-shards',
+    'written-bytes',
+  ],
+})
+
+export const CODEGRAPH_SINGLE_OWNER_EDIT = defineBenchmark({
+  id: 'CODEGRAPH-SINGLE-OWNER-EDIT',
+  statement: 'Bounds one local specification edit through its exact application closure.',
+  workload:
+    'Edit one private Kernel specification resource and refresh its owner, derived observations, qualification, and viewer record.',
+  metrics: [
+    'duration',
+    'compiled-specifications',
+    'observed-specifications',
+    'qualified-specifications',
+    'projected-specifications',
+    'rewritten-shards',
+  ],
+})

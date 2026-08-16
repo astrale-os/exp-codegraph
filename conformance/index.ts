@@ -1,6 +1,10 @@
 export { planConformance } from './plan.ts'
 export type { ConformancePlan } from './plan.ts'
-export { qualifySpecification, qualifySpecifications } from './qualify.ts'
+export {
+  qualifySpecification,
+  qualifySpecifications,
+  rebindQualificationSnapshot,
+} from './qualify.ts'
 export {
   MODULE_DEPENDENCIES_PROFILE_ID,
   MODULE_STRUCTURE_PROFILE_ID,
