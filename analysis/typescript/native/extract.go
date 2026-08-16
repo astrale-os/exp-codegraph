@@ -588,11 +588,18 @@ func (x *extractor) span(file *shimast.SourceFile, node *shimast.Node) sourceSpa
 
 func (x *extractor) ownedPath(path string) (string, bool) {
 	relative, err := filepath.Rel(x.root, path)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "external:" + filepath.Base(path), false
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		relative = filepath.ToSlash(relative)
+		if !strings.Contains(relative, "/node_modules/") &&
+			!strings.HasPrefix(relative, "node_modules/") &&
+			!strings.HasSuffix(relative, ".d.ts") &&
+			!strings.HasSuffix(relative, ".d.mts") &&
+			!strings.HasSuffix(relative, ".d.cts") {
+			return relative, true
+		}
 	}
-	relative = filepath.ToSlash(relative)
-	return relative, !strings.Contains(relative, "/node_modules/") && !strings.HasSuffix(relative, ".d.ts")
+	coordinate, _ := x.publicSourceCoordinate(path)
+	return coordinate, false
 }
 
 func occurrenceKind(node *shimast.Node) (string, *shimast.Node) {
