@@ -6,6 +6,8 @@ import type { TypeSpecApplicationSnapshot } from '../model.ts'
 export interface ApplicationCheckpointExpectation {
   readonly repository: RepositoryId
   readonly inventory: SourceManifestId
+  /** Corpus-affecting discovery scope, independent of selection and qualification policy. */
+  readonly corpus: string
   readonly request: string
   readonly signal?: AbortSignal
 }
@@ -19,7 +21,12 @@ export interface ApplicationCheckpointContent {
 }
 
 export type ApplicationCheckpointLoadResult =
-  | { readonly ok: true; readonly content: ApplicationCheckpointContent }
+  | {
+      readonly ok: true
+      /** Exact requests can publish immediately; corpus hits must refresh derived products. */
+      readonly exact: boolean
+      readonly content: ApplicationCheckpointContent
+    }
   | {
       readonly ok: false
       readonly reason: 'missing' | 'incompatible' | 'corrupt' | 'unavailable'

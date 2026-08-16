@@ -8,6 +8,7 @@ import type { TypeSpecApplicationSnapshot } from '../../.spec/api.js'
 export interface ApplicationCheckpointExpectation {
   readonly repository: `repository:${string}`
   readonly inventory: `source-manifest:${string}`
+  readonly corpus: string
   readonly request: string
   readonly signal?: AbortSignal
 }
@@ -20,7 +21,7 @@ export interface ApplicationCheckpointContent {
 }
 
 export type ApplicationCheckpointLoadResult =
-  | { readonly ok: true; readonly content: ApplicationCheckpointContent }
+  | { readonly ok: true; readonly exact: boolean; readonly content: ApplicationCheckpointContent }
   | { readonly ok: false; readonly reason: 'missing' | 'incompatible' | 'corrupt' | 'unavailable' }
 
 export interface ApplicationCheckpoint {

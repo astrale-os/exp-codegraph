@@ -213,7 +213,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     const inventory = await this.#dependencies.inventory({
       repository: this.#repository,
       root: this.#root,
-      scope: { exclude: APPLICATION_REPOSITORY_EXCLUDES },
+      scope: { exclude: applicationRepositoryExcludes(options.exclude ?? []) },
       ...(options.signal ? { signal: options.signal } : {}),
     })
     const inventoryMs = performance.now() - phase
@@ -252,64 +252,91 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       const loaded = await this.#dependencies.checkpoint.load({
         repository: this.#repository,
         inventory: inventory.revision,
+        corpus: discoveryKey,
         request: requestKey,
         ...(options.signal ? { signal: options.signal } : {}),
       })
       checkpointMs = performance.now() - phase
+      let restoredCorpus = false
       if (loaded.ok) {
         let restoredAnalysis: AnalysisSnapshotSet | undefined
         try {
-          assertSpecificationInventory(loaded.content.specifications, inventory)
-          if (loaded.content.snapshot.analysis) {
-            restoredAnalysis = await this.#dependencies.analysis.open(
-              checkpointGenerations(loaded.content.snapshot),
-              inventory.revision,
-            )
-            if (restoredAnalysis.id !== loaded.content.snapshot.analysis.id) {
-              throw new Error('Checkpoint analysis snapshot identity does not match its generations.')
-            }
-          }
-          const restoredSources = this.#dependencies.sources(this.#root, inventory)
-          this.#corpus = {
-            key: corpusKey,
+          assertSpecificationInventory(
+            loaded.content.specifications,
+            loaded.content.inventory,
+          )
+          const restoredSources = this.#dependencies.sources(
+            this.#root,
+            loaded.content.inventory,
+          )
+          const corpus: ApplicationCorpus = {
+            key: applicationCorpusKey(
+              loaded.content.inventory.revision,
+              options.exclude ?? [],
+            ),
             discoveryKey,
             specifications: loaded.content.specifications,
             inventory: loaded.content.inventory,
             sources: restoredSources,
             statistics: loaded.content.statistics,
           }
-          const snapshot = await this.publish(
-            loaded.content.snapshot,
-            restoredSources,
-            restoredAnalysis,
-          )
-          this.#currentRequestKey = requestKey
-          this.phaseCompleted('application.checkpoint', checkpointMs, {
-            outcome: 'hit',
-            specifications: loaded.content.specifications.length,
-          })
-          return {
-            snapshot,
-            changes: applicationChanges(undefined, snapshot, [], []),
-            timing: {
-              totalMs: performance.now() - started,
-              checkpointMs,
-              discoverMs: 0,
-              compileMs: 0,
-              inventoryMs,
-              statisticsMs: 0,
-              analysisMs: 0,
-              qualificationMs: 0,
-            },
+          if (!loaded.exact) {
+            this.#corpus = corpus
+            restoredCorpus = true
+            this.phaseCompleted('application.checkpoint', checkpointMs, {
+              outcome: 'corpus-hit',
+              specifications: loaded.content.specifications.length,
+              inventoryChanged: loaded.content.inventory.revision !== inventory.revision,
+            })
+          } else {
+            assertSpecificationInventory(loaded.content.specifications, inventory)
+            if (loaded.content.snapshot.analysis) {
+              restoredAnalysis = await this.#dependencies.analysis.open(
+                checkpointGenerations(loaded.content.snapshot),
+                inventory.revision,
+              )
+              if (restoredAnalysis.id !== loaded.content.snapshot.analysis.id) {
+                throw new Error('Checkpoint analysis snapshot identity does not match its generations.')
+              }
+            }
+            const snapshot = await this.publish(
+              loaded.content.snapshot,
+              restoredSources,
+              restoredAnalysis,
+            )
+            this.#corpus = corpus
+            restoredCorpus = true
+            this.#currentRequestKey = requestKey
+            this.phaseCompleted('application.checkpoint', checkpointMs, {
+              outcome: 'hit',
+              specifications: loaded.content.specifications.length,
+            })
+            return {
+              snapshot,
+              changes: applicationChanges(undefined, snapshot, [], []),
+              timing: {
+                totalMs: performance.now() - started,
+                checkpointMs,
+                discoverMs: 0,
+                compileMs: 0,
+                inventoryMs,
+                statisticsMs: 0,
+                analysisMs: 0,
+                qualificationMs: 0,
+              },
+            }
           }
         } catch {
+          this.#corpus = undefined
           await restoredAnalysis?.dispose()
         }
       }
-      this.phaseCompleted('application.checkpoint', checkpointMs, {
-        outcome: 'miss',
-        reason: loaded.ok ? 'generation-unavailable' : loaded.reason,
-      })
+      if (!restoredCorpus) {
+        this.phaseCompleted('application.checkpoint', checkpointMs, {
+          outcome: 'miss',
+          reason: loaded.ok ? 'restore-rejected' : loaded.reason,
+        })
+      }
     }
     let specifications: readonly SpecificationSnapshot[]
     let sources: RepositorySourceService
@@ -333,7 +360,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       phase = performance.now()
       this.phaseStarted('application.discovery')
       const directories = await this.#dependencies.discover(this.#root, {
-        ...(options.exclude ? { exclude: options.exclude } : {}),
+        exclude: applicationRepositoryExcludes(options.exclude ?? []),
       })
       discoverMs = performance.now() - phase
       this.phaseCompleted('application.discovery', discoverMs, { specifications: directories.length })
@@ -547,6 +574,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         {
           repository: this.#repository,
           inventory: inventory.revision,
+          corpus: discoveryKey,
           request: requestKey,
         },
         { snapshot, specifications, inventory, statistics },
@@ -842,6 +870,10 @@ function applicationCorpusKey(inventory: string, exclude: readonly string[]): st
 
 function applicationDiscoveryKey(exclude: readonly string[]): string {
   return JSON.stringify({ exclude: sortedUnique(exclude) })
+}
+
+function applicationRepositoryExcludes(exclude: readonly string[]): readonly string[] {
+  return sortedUnique([...APPLICATION_REPOSITORY_EXCLUDES, ...exclude])
 }
 
 async function refreshSpecificationCorpus(

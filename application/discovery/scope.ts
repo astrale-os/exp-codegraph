@@ -9,4 +9,10 @@ export const APPLICATION_REPOSITORY_EXCLUDES = Object.freeze([
   '**/coverage/**',
   '.cache/**',
   '**/.cache/**',
+  '.pnpm-store/**',
+  '**/.pnpm-store/**',
+  'evidence/artifacts/**',
+  '**/evidence/artifacts/**',
+  'benchmark/artifacts/**',
+  '**/benchmark/artifacts/**',
 ])

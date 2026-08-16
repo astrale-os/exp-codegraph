@@ -1,8 +1,12 @@
 # Application checkpoint
 
-This adapter binds an application request, exact repository inventory, producer version, immutable
-analysis generation identities, specification corpus, statistics, and qualification snapshot to the
-generic workspace checkpoint store. It contains no server or viewer state.
+This adapter binds a repository-scoped compiled corpus plus its latest application request, exact
+inventory, producer version, immutable analysis generation identities, statistics, and qualification
+snapshot to the generic workspace checkpoint store. It contains no server or viewer state.
+
+An exact inventory and request hit may publish immediately. A compatible corpus hit from another
+selection, qualification profile, or older inventory is only a delta base: the application refreshes
+affected normative inputs and recomputes request-owned derived products before publication.
 
 The checkpoint is advisory: any mismatch, malformed artifact, missing generation, or snapshot
 identity disagreement falls back to the ordinary cold application path.

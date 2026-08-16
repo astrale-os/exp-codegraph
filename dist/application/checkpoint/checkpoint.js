@@ -4,7 +4,7 @@ import { createApplicationSnapshot } from '../snapshot/index.js';
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.js';
 import { packSpecificationSnapshot, unpackSpecificationSnapshot, } from './representation.js';
 const FORMAT = 'astrale.codegraph.application-checkpoint';
-const VERSION = 2;
+const VERSION = 3;
 const MAXIMUM_DECODED_ARTIFACT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointArtifactBytes;
 const MAXIMUM_DECODED_CHECKPOINT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointBytes;
 const SCOPE_PREFIX = 'application-';
@@ -43,8 +43,7 @@ export function createApplicationCheckpoint(options) {
                     loaded.manifest.version !== VERSION ||
                     loaded.manifest.producerFingerprint !== options.producerFingerprint ||
                     payload.repository !== expectation.repository ||
-                    payload.inventory !== expectation.inventory ||
-                    payload.request !== expectation.request) {
+                    payload.corpus !== expectation.corpus) {
                     return miss('incompatible');
                 }
                 if (payload.encoding !== WORKSPACE_CHECKPOINT_JSON_ENCODING ||
@@ -109,9 +108,9 @@ export function createApplicationCheckpoint(options) {
                 if (decoded.bytes !== payload.decodedBytes)
                     return miss('corrupt');
                 if (statistics.repository !== expectation.repository ||
-                    statistics.inventory !== expectation.inventory ||
+                    statistics.inventory !== inventory.revision ||
                     inventory.repository !== expectation.repository ||
-                    inventory.revision !== expectation.inventory ||
+                    inventory.revision !== payload.inventory ||
                     !Array.isArray(inventory.files) ||
                     !Array.isArray(statistics.files))
                     return miss('incompatible');
@@ -147,7 +146,7 @@ export function createApplicationCheckpoint(options) {
                 }
                 const candidate = createApplicationSnapshot({
                     repository: expectation.repository,
-                    inventory: expectation.inventory,
+                    inventory: inventory.revision,
                     selection: core.selection,
                     specifications: included,
                     statistics,
@@ -171,6 +170,8 @@ export function createApplicationCheckpoint(options) {
                 }
                 return {
                     ok: true,
+                    exact: payload.inventory === expectation.inventory &&
+                        payload.request === expectation.request,
                     content,
                 };
             }
@@ -307,6 +308,7 @@ export function createApplicationCheckpoint(options) {
                     payload: {
                         repository: expectation.repository,
                         inventory: expectation.inventory,
+                        corpus: expectation.corpus,
                         request: expectation.request,
                         snapshot: snapshot.id,
                         encoding: WORKSPACE_CHECKPOINT_JSON_ENCODING,
@@ -331,7 +333,7 @@ export function createApplicationCheckpoint(options) {
     return checkpoint;
 }
 function checkpointScope(expectation) {
-    return `${SCOPE_PREFIX}${createHash('sha256').update(expectation.request).digest('hex').slice(0, 32)}`;
+    return `${SCOPE_PREFIX}${createHash('sha256').update(expectation.corpus).digest('hex').slice(0, 32)}`;
 }
 function signalOptions(expectation) {
     return expectation.signal ? { signal: expectation.signal } : {};

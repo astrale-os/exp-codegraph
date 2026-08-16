@@ -113,6 +113,91 @@ describe('application workspace checkpoint', () => {
       await store.dispose()
     }
   })
+
+  it('reuses one compiled corpus across application request variants', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-corpus', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    const store = createFileWorkspaceCheckpointStore({
+      directory: join(current.root, '.cache', 'checkpoint'),
+    })
+    const checkpoint = createApplicationCheckpoint({ store, producerFingerprint: 'fixture-v1' })
+    const first = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [], checkpoint },
+    )
+    await first.refresh({ qualify: true })
+    await first.dispose()
+
+    const compile = vi.fn(async () => {
+      throw new Error('a request variant must reuse the compiled corpus')
+    })
+    const second = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint,
+        discover: vi.fn(async () => {
+          throw new Error('a request variant must reuse discovery')
+        }),
+        compile,
+        statistics: vi.fn(async () => {
+          throw new Error('a request variant must reuse statistics')
+        }),
+      },
+    )
+    try {
+      const restored = await second.refresh({ qualify: true, focused: true, select: ['module'] })
+      expect(restored.timing).toMatchObject({
+        discoverMs: 0,
+        compileMs: 0,
+        statisticsMs: 0,
+      })
+      expect(compile).not.toHaveBeenCalled()
+    } finally {
+      await second.dispose()
+      await store.dispose()
+    }
+  })
+
+  it('uses an older inventory checkpoint as a delta corpus instead of recompiling all owners', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-delta', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+      'notes.md': 'before\n',
+    })
+    fixtures.push(current)
+    const store = createFileWorkspaceCheckpointStore({
+      directory: join(current.root, '.cache', 'checkpoint'),
+    })
+    const checkpoint = createApplicationCheckpoint({ store, producerFingerprint: 'fixture-v1' })
+    const first = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [], checkpoint },
+    )
+    await first.refresh()
+    await first.dispose()
+    await writeFile(join(current.root, 'notes.md'), 'after\n')
+
+    const compile = vi.fn(async () => {
+      throw new Error('an unrelated edit must not recompile specification owners')
+    })
+    const second = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [], checkpoint, compile },
+    )
+    try {
+      const refreshed = await second.refresh()
+      expect(refreshed.snapshot.specifications).toHaveLength(1)
+      expect(compile).not.toHaveBeenCalled()
+    } finally {
+      await second.dispose()
+      await store.dispose()
+    }
+  })
 })
 
 function emptyAnalysisWorkspace(): ApplicationAnalysisWorkspace {
