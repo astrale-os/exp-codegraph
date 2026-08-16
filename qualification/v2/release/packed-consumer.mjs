@@ -39,7 +39,7 @@ try {
       'add',
       '--dir',
       consumer,
-      '--offline',
+      '--prefer-offline',
       '--ignore-scripts',
       '--save-exact',
       resolve(releaseDirectory, rootArchive),

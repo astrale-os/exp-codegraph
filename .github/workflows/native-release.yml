@@ -132,5 +132,5 @@ jobs:
         with:
           name: codegraph-release
           path: release
-      - name: Prove offline packed installation and native execution
+      - name: Prove packed installation and native execution
         run: node qualification/v2/release/packed-consumer.mjs --release-directory release
