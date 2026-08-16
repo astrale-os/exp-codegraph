@@ -1,5 +1,11 @@
 export type { ImplementationBinding } from './binding.ts'
 export { initializeModuleSpecification, MINIMUM_MODULE_SPEC } from './module/init.ts'
+export { compileDescriptor } from './module/descriptor.ts'
+export type {
+  DescriptorCompilation,
+  DescriptorDefinitions,
+  DescriptorKind,
+} from './module/descriptor.ts'
 export {
   compileSpecificationSnapshot,
   compileSpecificationSnapshots,

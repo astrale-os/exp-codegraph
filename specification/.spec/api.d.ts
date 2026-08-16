@@ -63,6 +63,27 @@ interface BenchmarkDefinition extends CapabilityDefinition {
   readonly assumptions?: readonly string[]
 }
 
+export type DescriptorKind = 'capability' | 'law' | 'state' | 'benchmark'
+
+export interface DescriptorDefinitions {
+  readonly capability: readonly CapabilityDefinition[]
+  readonly law: readonly AuthoredLawSpecification[]
+  readonly state: readonly AuthoredStateSpecification[]
+  readonly benchmark: readonly BenchmarkDefinition[]
+}
+
+export interface DescriptorCompilation<Kind extends DescriptorKind> {
+  readonly definitions: DescriptorDefinitions[Kind]
+  readonly diagnostics: readonly Diagnostic[]
+}
+
+/** Parse one authored descriptor resource without importing or executing it. */
+export function compileDescriptor<Kind extends DescriptorKind>(
+  kind: Kind,
+  source: string,
+  text: string,
+): DescriptorCompilation<Kind>
+
 interface SchemaResource extends TextResource {
   readonly schema: unknown
 }
