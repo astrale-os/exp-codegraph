@@ -45,6 +45,7 @@ import {
 } from '../repository/index.ts'
 import { compileSpecificationSnapshots } from '../specification/index.ts'
 import { deriveAnalysisId } from '../analysis/index.ts'
+import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.ts'
 import {
   createApplicationAnalysisWorkspace,
   createCodegraphApplicationSessionFactory,
@@ -103,16 +104,22 @@ export async function createTypeSpecApplicationServiceWithDependencies(
       ...(options.telemetry ? { telemetry: options.telemetry } : {}),
       ...options.analysis,
     })
-  return new HeadlessTypeSpecApplicationService(root, repository, {
-    resolveRoot: injected.resolveRoot ?? resolveApplicationRoot,
-    discover: injected.discover ?? discoverSpecificationDirectories,
-    compile: injected.compile ?? compileSpecificationSnapshots,
-    inventory: injected.inventory ?? inventoryRepository,
-    sources: injected.sources ?? createRepositorySourceService,
-    statistics: injected.statistics ?? analyzeRepositoryStatistics,
-    analysis,
-    profiles: injected.profiles ?? createTypeSpecConformanceProfiles(),
-  }, options.maximumRetainedSnapshots ?? TYPE_SPEC_APPLICATION_LIMITS.maximumRetainedSnapshots)
+  return new HeadlessTypeSpecApplicationService(
+    root,
+    repository,
+    {
+      resolveRoot: injected.resolveRoot ?? resolveApplicationRoot,
+      discover: injected.discover ?? discoverSpecificationDirectories,
+      compile: injected.compile ?? compileSpecificationSnapshots,
+      inventory: injected.inventory ?? inventoryRepository,
+      sources: injected.sources ?? createRepositorySourceService,
+      statistics: injected.statistics ?? analyzeRepositoryStatistics,
+      analysis,
+      profiles: injected.profiles ?? createTypeSpecConformanceProfiles(),
+    },
+    options.maximumRetainedSnapshots ?? TYPE_SPEC_APPLICATION_LIMITS.maximumRetainedSnapshots,
+    options.telemetry,
+  )
 }
 
 async function repositoryIdentity(root: string, explicit: string | undefined): Promise<RepositoryId> {
@@ -145,17 +152,20 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
   readonly #repository: RepositoryId
   readonly #dependencies: TypeSpecApplicationDependencies
   readonly #maximumRetainedSnapshots: number
+  readonly #telemetry: AnalysisTelemetrySink | undefined
 
   constructor(
     root: string,
     repository: RepositoryId,
     dependencies: TypeSpecApplicationDependencies,
     maximumRetainedSnapshots: number,
+    telemetry: AnalysisTelemetrySink | undefined,
   ) {
     this.#root = root
     this.#repository = repository
     this.#dependencies = dependencies
     this.#maximumRetainedSnapshots = maximumRetainedSnapshots
+    this.#telemetry = telemetry
     if (!Number.isSafeInteger(maximumRetainedSnapshots) || maximumRetainedSnapshots < 1) {
       throw new Error('maximumRetainedSnapshots must be a positive safe integer.')
     }
@@ -172,6 +182,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     const started = performance.now()
     let phase = started
     options.signal?.throwIfAborted()
+    this.phaseStarted('application.inventory')
     const inventory = await this.#dependencies.inventory({
       repository: this.#repository,
       root: this.#root,
@@ -179,6 +190,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       ...(options.signal ? { signal: options.signal } : {}),
     })
     const inventoryMs = performance.now() - phase
+    this.phaseCompleted('application.inventory', inventoryMs)
     const previous = this.current()
     const requestKey = applicationRefreshKey(options)
     if (
@@ -218,11 +230,14 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       statistics = cachedCorpus.statistics
     } else {
       phase = performance.now()
+      this.phaseStarted('application.discovery')
       const directories = await this.#dependencies.discover(this.#root, {
         ...(options.exclude ? { exclude: options.exclude } : {}),
       })
       discoverMs = performance.now() - phase
+      this.phaseCompleted('application.discovery', discoverMs, { specifications: directories.length })
       phase = performance.now()
+      this.phaseStarted('application.compile')
       specifications =
         cachedCorpus?.discoveryKey === discoveryKey && (options.changed?.length ?? 0) > 0
           ? await refreshSpecificationCorpus(
@@ -243,8 +258,10 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
               )),
             ]
       compileMs = performance.now() - phase
+      this.phaseCompleted('application.compile', compileMs, { specifications: specifications.length })
       assertSpecificationInventory(specifications, inventory)
       phase = performance.now()
+      this.phaseStarted('application.statistics')
       sources = this.#dependencies.sources(this.#root, inventory)
       statistics = await this.#dependencies.statistics({
         inventory,
@@ -263,6 +280,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         ...(options.signal ? { signal: options.signal } : {}),
       })
       statisticsMs = performance.now() - phase
+      this.phaseCompleted('application.statistics', statisticsMs)
       this.#corpus = { key: corpusKey, discoveryKey, specifications, sources, statistics }
     }
     const selected = selectApplicationSpecifications(this.#root, specifications, {
@@ -292,6 +310,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     let qualificationMs = 0
     if (options.qualify) {
       phase = performance.now()
+      this.phaseStarted('application.analysis')
       const refreshed = await this.#dependencies.analysis.refresh({
         specifications: analysisSpecifications,
         inventory,
@@ -304,6 +323,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         ...(options.signal ? { signal: options.signal } : {}),
       })
       analysisMs = performance.now() - phase
+      this.phaseCompleted('application.analysis', analysisMs)
       analysisSnapshot = refreshed.snapshot
       observationDiagnostics = refreshed.observation?.diagnostics ?? []
       changedSources = sortedUnique(refreshed.results.flatMap((result) => result.changedSources))
@@ -312,6 +332,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       )
       try {
         phase = performance.now()
+        this.phaseStarted('application.qualification')
         const profiles = applicationProfiles(this.#dependencies.profiles, options)
         qualifications = await qualifySpecifications({
           specifications: selected.qualification,
@@ -329,6 +350,9 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         }
         analysisDiagnostics = refreshed.diagnostics
         qualificationMs = performance.now() - phase
+        this.phaseCompleted('application.qualification', qualificationMs, {
+          specifications: qualifications.length,
+        })
       } catch (error) {
         await refreshed.snapshot.dispose()
         throw error
@@ -376,6 +400,27 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         qualificationMs,
       },
     }
+  }
+
+  private phaseStarted(phase: string): void {
+    dispatchAnalysisTelemetry(this.#telemetry, {
+      component: 'analysis',
+      phase,
+      metrics: { status: 'started' },
+    })
+  }
+
+  private phaseCompleted(
+    phase: string,
+    durationMs: number,
+    metrics: Readonly<Record<string, string | number | boolean>> = {},
+  ): void {
+    dispatchAnalysisTelemetry(this.#telemetry, {
+      component: 'analysis',
+      phase,
+      durationNs: Math.round(durationMs * 1_000_000),
+      metrics: { status: 'completed', ...metrics },
+    })
   }
 
   private async loadSchemaDependencies(

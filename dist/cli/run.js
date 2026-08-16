@@ -1,5 +1,6 @@
 import { MODULE_LAYOUT_PROFILE_ID, MODULE_SCHEMA_PROFILE_ID, MODULE_TEST_EVIDENCE_PROFILE_ID, SPECIFICATION_VALIDITY_PROFILE_ID, } from '../conformance/index.js';
 import { USAGE } from './parse.js';
+import { createDevStartupProgress } from './progress.js';
 import { printQualificationProfile, printQualificationRule, printQualificationSummary, qualificationDiagnostics, } from './qualification-report.js';
 import { printDiagnostic } from './report.js';
 const CHECK_PROFILES = [
@@ -24,13 +25,23 @@ export async function runCommand(command, services, output) {
         return { exitCode: 0 };
     }
     if (command.name === 'dev') {
-        output.out('Initializing specification viewer...');
-        const server = await services.startDev({
-            ...command,
-            telemetry: (event) => reportDevTelemetry(output, event),
-        });
-        output.out(`SPEC_SERVER_URL=${server.url}`);
-        return { exitCode: 0, server };
+        const progress = createDevStartupProgress(output);
+        try {
+            const server = await services.startDev({
+                ...command,
+                telemetry: (event) => {
+                    if (!progress.onTelemetry(event))
+                        reportDevTelemetry(output, event);
+                },
+            });
+            progress.succeed();
+            output.out(`SPEC_SERVER_URL=${server.url}`);
+            return { exitCode: 0, server };
+        }
+        catch (error) {
+            progress.fail();
+            throw error;
+        }
     }
     const changed = command.name === 'changed' || (command.name === 'test' && command.changed)
         ? await services.changedSpecificationScope(command.root, command.base)

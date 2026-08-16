@@ -20,6 +20,7 @@ import type { CliCommand } from './parse.ts'
 import type { CliOutput } from './report.ts'
 
 import { USAGE } from './parse.ts'
+import { createDevStartupProgress } from './progress.ts'
 import {
   printQualificationProfile,
   printQualificationRule,
@@ -81,13 +82,21 @@ export async function runCommand(
     return { exitCode: 0 }
   }
   if (command.name === 'dev') {
-    output.out('Initializing specification viewer...')
-    const server = await services.startDev({
-      ...command,
-      telemetry: (event) => reportDevTelemetry(output, event),
-    })
-    output.out(`SPEC_SERVER_URL=${server.url}`)
-    return { exitCode: 0, server }
+    const progress = createDevStartupProgress(output)
+    try {
+      const server = await services.startDev({
+        ...command,
+        telemetry: (event) => {
+          if (!progress.onTelemetry(event)) reportDevTelemetry(output, event)
+        },
+      })
+      progress.succeed()
+      output.out(`SPEC_SERVER_URL=${server.url}`)
+      return { exitCode: 0, server }
+    } catch (error) {
+      progress.fail()
+      throw error
+    }
   }
 
   const changed =

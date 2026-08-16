@@ -129,6 +129,12 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
               ...affectedSpecificationSources(refreshed.snapshot, root, changed),
             ]),
           ].sort()
+      const projectionStarted = performance.now()
+      dispatchAnalysisTelemetry(options.telemetry, {
+        component: 'analysis',
+        phase: 'application.projection',
+        metrics: { status: 'started' },
+      })
       const next = await services.projectCatalog(root, nextReader, {
         ...(catalog ? { previous: catalog } : {}),
         refresh,
@@ -146,6 +152,12 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
       catalog = next
       applicationSnapshot = refreshed.snapshot
       if (publication.changed) catalogGeneration++
+      dispatchAnalysisTelemetry(options.telemetry, {
+        component: 'analysis',
+        phase: 'application.projection',
+        durationNs: Math.round((performance.now() - projectionStarted) * 1_000_000),
+        metrics: { status: 'completed', specifications: next.specs.length },
+      })
       await previous?.dispose()
       dispatchAnalysisTelemetry(options.telemetry, {
         component: 'analysis',

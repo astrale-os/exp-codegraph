@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { clearLine, cursorTo } from 'node:readline'
+
 import { changedSpecificationScope } from './cli/changes.ts'
 import { createCliApplicationService } from './cli/application.ts'
 import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.ts'
@@ -14,6 +16,12 @@ const startDev: import('./cli/run.ts').CliServices['startDev'] = async (options)
 }
 
 try {
+  const interactive = process.stdout.isTTY === true && process.env.TERM !== 'dumb'
+  const clearProgress = (): void => {
+    if (!interactive) return
+    clearLine(process.stdout, 0)
+    cursorTo(process.stdout, 0)
+  }
   const result = await runCommand(
     parseCommand(process.argv.slice(2)),
     {
@@ -26,8 +34,23 @@ try {
       executeEvidenceTests,
     },
     {
-      out: (message) => process.stdout.write(`${message}\n`),
-      error: (message) => process.stderr.write(`${message}\n`),
+      out: (message) => {
+        clearProgress()
+        process.stdout.write(`${message}\n`)
+      },
+      error: (message) => {
+        clearProgress()
+        process.stderr.write(`${message}\n`)
+      },
+      ...(interactive
+        ? {
+            update: (message: string) => {
+              clearProgress()
+              process.stdout.write(message)
+            },
+            clear: clearProgress,
+          }
+        : {}),
     },
   )
   process.exitCode = result.exitCode

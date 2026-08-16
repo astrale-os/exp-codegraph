@@ -6,6 +6,7 @@ import { MODULE_LAYOUT_PROFILE_ID, createModuleLayoutConformanceProfile, createT
 import { analyzeRepositoryStatistics, createRepositoryPathOwnershipGrouping, createRepositorySourceService, defaultRepositoryStatisticsGroupings, inventoryRepository, } from '../repository/index.js';
 import { compileSpecificationSnapshots } from '../specification/index.js';
 import { deriveAnalysisId } from '../analysis/index.js';
+import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.js';
 import { createApplicationAnalysisWorkspace, createCodegraphApplicationSessionFactory, } from './analysis/index.js';
 import { assertSpecificationInventory, createApplicationSnapshot } from './snapshot/index.js';
 import { selectApplicationSpecifications } from './selection/index.js';
@@ -39,7 +40,7 @@ export async function createTypeSpecApplicationServiceWithDependencies(options, 
         statistics: injected.statistics ?? analyzeRepositoryStatistics,
         analysis,
         profiles: injected.profiles ?? createTypeSpecConformanceProfiles(),
-    }, options.maximumRetainedSnapshots ?? TYPE_SPEC_APPLICATION_LIMITS.maximumRetainedSnapshots);
+    }, options.maximumRetainedSnapshots ?? TYPE_SPEC_APPLICATION_LIMITS.maximumRetainedSnapshots, options.telemetry);
 }
 async function repositoryIdentity(root, explicit) {
     let key = explicit;
@@ -68,11 +69,13 @@ class HeadlessTypeSpecApplicationService {
     #repository;
     #dependencies;
     #maximumRetainedSnapshots;
-    constructor(root, repository, dependencies, maximumRetainedSnapshots) {
+    #telemetry;
+    constructor(root, repository, dependencies, maximumRetainedSnapshots, telemetry) {
         this.#root = root;
         this.#repository = repository;
         this.#dependencies = dependencies;
         this.#maximumRetainedSnapshots = maximumRetainedSnapshots;
+        this.#telemetry = telemetry;
         if (!Number.isSafeInteger(maximumRetainedSnapshots) || maximumRetainedSnapshots < 1) {
             throw new Error('maximumRetainedSnapshots must be a positive safe integer.');
         }
@@ -85,6 +88,7 @@ class HeadlessTypeSpecApplicationService {
         const started = performance.now();
         let phase = started;
         options.signal?.throwIfAborted();
+        this.phaseStarted('application.inventory');
         const inventory = await this.#dependencies.inventory({
             repository: this.#repository,
             root: this.#root,
@@ -92,6 +96,7 @@ class HeadlessTypeSpecApplicationService {
             ...(options.signal ? { signal: options.signal } : {}),
         });
         const inventoryMs = performance.now() - phase;
+        this.phaseCompleted('application.inventory', inventoryMs);
         const previous = this.current();
         const requestKey = applicationRefreshKey(options);
         if (previous &&
@@ -130,11 +135,14 @@ class HeadlessTypeSpecApplicationService {
         }
         else {
             phase = performance.now();
+            this.phaseStarted('application.discovery');
             const directories = await this.#dependencies.discover(this.#root, {
                 ...(options.exclude ? { exclude: options.exclude } : {}),
             });
             discoverMs = performance.now() - phase;
+            this.phaseCompleted('application.discovery', discoverMs, { specifications: directories.length });
             phase = performance.now();
+            this.phaseStarted('application.compile');
             specifications =
                 cachedCorpus?.discoveryKey === discoveryKey && (options.changed?.length ?? 0) > 0
                     ? await refreshSpecificationCorpus(this.#root, directories, cachedCorpus.specifications, options.changed ?? [], this.#dependencies.compile)
@@ -144,8 +152,10 @@ class HeadlessTypeSpecApplicationService {
                         })),
                     ];
             compileMs = performance.now() - phase;
+            this.phaseCompleted('application.compile', compileMs, { specifications: specifications.length });
             assertSpecificationInventory(specifications, inventory);
             phase = performance.now();
+            this.phaseStarted('application.statistics');
             sources = this.#dependencies.sources(this.#root, inventory);
             statistics = await this.#dependencies.statistics({
                 inventory,
@@ -161,6 +171,7 @@ class HeadlessTypeSpecApplicationService {
                 ...(options.signal ? { signal: options.signal } : {}),
             });
             statisticsMs = performance.now() - phase;
+            this.phaseCompleted('application.statistics', statisticsMs);
             this.#corpus = { key: corpusKey, discoveryKey, specifications, sources, statistics };
         }
         const selected = selectApplicationSpecifications(this.#root, specifications, {
@@ -189,6 +200,7 @@ class HeadlessTypeSpecApplicationService {
         let qualificationMs = 0;
         if (options.qualify) {
             phase = performance.now();
+            this.phaseStarted('application.analysis');
             const refreshed = await this.#dependencies.analysis.refresh({
                 specifications: analysisSpecifications,
                 inventory,
@@ -201,12 +213,14 @@ class HeadlessTypeSpecApplicationService {
                 ...(options.signal ? { signal: options.signal } : {}),
             });
             analysisMs = performance.now() - phase;
+            this.phaseCompleted('application.analysis', analysisMs);
             analysisSnapshot = refreshed.snapshot;
             observationDiagnostics = refreshed.observation?.diagnostics ?? [];
             changedSources = sortedUnique(refreshed.results.flatMap((result) => result.changedSources));
             invalidatedPasses = sortedUnique(refreshed.results.flatMap((result) => result.invalidatedPasses));
             try {
                 phase = performance.now();
+                this.phaseStarted('application.qualification');
                 const profiles = applicationProfiles(this.#dependencies.profiles, options);
                 qualifications = await qualifySpecifications({
                     specifications: selected.qualification,
@@ -224,6 +238,9 @@ class HeadlessTypeSpecApplicationService {
                 };
                 analysisDiagnostics = refreshed.diagnostics;
                 qualificationMs = performance.now() - phase;
+                this.phaseCompleted('application.qualification', qualificationMs, {
+                    specifications: qualifications.length,
+                });
             }
             catch (error) {
                 await refreshed.snapshot.dispose();
@@ -271,6 +288,21 @@ class HeadlessTypeSpecApplicationService {
                 qualificationMs,
             },
         };
+    }
+    phaseStarted(phase) {
+        dispatchAnalysisTelemetry(this.#telemetry, {
+            component: 'analysis',
+            phase,
+            metrics: { status: 'started' },
+        });
+    }
+    phaseCompleted(phase, durationMs, metrics = {}) {
+        dispatchAnalysisTelemetry(this.#telemetry, {
+            component: 'analysis',
+            phase,
+            durationNs: Math.round(durationMs * 1_000_000),
+            metrics: { status: 'completed', ...metrics },
+        });
     }
     async loadSchemaDependencies(inputs) {
         const roots = [];

@@ -5,6 +5,7 @@ import type {
   ApplicationAnalysisRefreshOptions,
   ApplicationAnalysisWorkspace,
 } from '../application/analysis/index.ts'
+import type { AnalysisTelemetryEvent } from '../analysis/index.ts'
 
 import { createMemoryAnalysisStore, deriveAnalysisId } from '../analysis/index.ts'
 import { createTypeSpecApplicationServiceWithDependencies } from '../application/service.ts'
@@ -32,6 +33,44 @@ afterEach(async () => {
 })
 
 describe('headless TypeSpec V2 application', () => {
+  it('reports diagnostic-only lifecycle phases around the actual headless work', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/application-progress', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    const events: AnalysisTelemetryEvent[] = []
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root, telemetry: (event) => events.push(event) },
+      { analysis: emptyAnalysisWorkspace(), profiles: [] },
+    )
+
+    try {
+      await service.refresh({ qualify: true })
+    } finally {
+      await service.dispose()
+    }
+
+    const lifecycle = events
+      .filter((event) => event.phase.startsWith('application.'))
+      .map((event) => [event.phase, event.metrics?.status])
+    expect(lifecycle).toEqual([
+      ['application.inventory', 'started'],
+      ['application.inventory', 'completed'],
+      ['application.discovery', 'started'],
+      ['application.discovery', 'completed'],
+      ['application.compile', 'started'],
+      ['application.compile', 'completed'],
+      ['application.statistics', 'started'],
+      ['application.statistics', 'completed'],
+      ['application.analysis', 'started'],
+      ['application.analysis', 'completed'],
+      ['application.qualification', 'started'],
+      ['application.qualification', 'completed'],
+    ])
+    expect(events.filter((event) => event.durationNs !== undefined).length).toBe(6)
+  })
+
   it('rejects ambiguous implementation roots and entrypoints without repository exceptions', () => {
     const common = {
       project: 'tsconfig.json',
