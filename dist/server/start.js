@@ -28,6 +28,7 @@ export function createDevelopmentServer(dependencies) {
             verify: options.verify ?? false,
             cache: options.cache ?? true,
             ...(options.native ? { native: options.native } : {}),
+            ...(options.telemetry ? { telemetry: options.telemetry } : {}),
         });
         let server;
         try {

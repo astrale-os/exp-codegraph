@@ -11,6 +11,7 @@ import {
 } from 'vite'
 
 import type { CodegraphApplicationSessionOptions } from '../application/analysis/index.ts'
+import type { AnalysisTelemetrySink } from '../analysis/index.ts'
 import { createLiveSpecsPlugin, type LiveSpecsOptions } from './live-plugin.ts'
 import { DEV_SERVER_WATCH_IGNORES } from './watch.ts'
 
@@ -22,6 +23,8 @@ export interface DevOptions {
   cache?: boolean
   /** Explicit native analyzer for source-checkout development and controlled qualification. */
   native?: CodegraphApplicationSessionOptions
+  /** Diagnostic-only operational telemetry; it cannot influence semantic output. */
+  telemetry?: AnalysisTelemetrySink
 }
 
 export interface RunningDevServer {
@@ -61,6 +64,7 @@ export function createDevelopmentServer(
       verify: options.verify ?? false,
       cache: options.cache ?? true,
       ...(options.native ? { native: options.native } : {}),
+      ...(options.telemetry ? { telemetry: options.telemetry } : {}),
     })
 
     let server: ViteDevServer | undefined

@@ -12,6 +12,7 @@ import {
   type QualificationSnapshot,
 } from '../conformance/index.ts'
 import type { RunningDevServer } from '../server/start.ts'
+import type { DevOptions } from '../server/start.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
 import type { ChangedSpecificationScope } from './changes.ts'
 import type { EvidenceTestPlan, EvidenceTestResult } from './evidence.ts'
@@ -40,7 +41,9 @@ export interface CliServices {
   version(): Promise<string>
   initializeModule(root: string): Promise<string>
   createApplication(root: string, cache: boolean): Promise<TypeSpecApplicationService>
-  startDev(options: Extract<CliCommand, { name: 'dev' }>): Promise<RunningDevServer>
+  startDev(
+    options: Extract<CliCommand, { name: 'dev' }> & Pick<DevOptions, 'telemetry'>,
+  ): Promise<RunningDevServer>
   changedSpecificationScope(root: string, base?: string): Promise<ChangedSpecificationScope>
   planEvidenceTests(
     root: string,
@@ -79,7 +82,10 @@ export async function runCommand(
   }
   if (command.name === 'dev') {
     output.out('Initializing specification viewer...')
-    const server = await services.startDev(command)
+    const server = await services.startDev({
+      ...command,
+      telemetry: (event) => reportDevTelemetry(output, event),
+    })
     output.out(`SPEC_SERVER_URL=${server.url}`)
     return { exitCode: 0, server }
   }
@@ -160,6 +166,30 @@ export async function runCommand(
     await reader?.dispose()
     await application.dispose()
   }
+}
+
+type DevTelemetryEvent = Parameters<NonNullable<DevOptions['telemetry']>>[0]
+
+function reportDevTelemetry(output: CliOutput, event: DevTelemetryEvent): void {
+  if (event.phase === 'store.selection') {
+    output.out(
+      `CODEGRAPH_STORE=${String(event.metrics?.backend ?? 'unknown')}` +
+        (event.metrics?.fallback === true ? ' fallback=true' : ''),
+    )
+    return
+  }
+  if (event.phase !== 'application.refresh' && event.phase !== 'application.verification') return
+  const durationMs = event.durationNs === undefined ? 0 : event.durationNs / 1_000_000
+  const metrics = event.metrics ?? {}
+  output.out(
+    `CODEGRAPH_${event.phase === 'application.verification' ? 'VERIFY' : 'REFRESH'} duration_ms=${durationMs.toFixed(1)} changed=${String(metrics.changedPaths ?? 0)}` +
+      ` refreshed_specs=${String(metrics.refreshedSpecifications ?? 0)}` +
+      ` heap_mib=${mebibytes(metrics.heapUsedBytes)} rss_mib=${mebibytes(metrics.rssBytes)}`,
+  )
+}
+
+function mebibytes(value: unknown): string {
+  return typeof value === 'number' ? (value / (1024 * 1024)).toFixed(1) : 'unknown'
 }
 
 function refreshOptions(
