@@ -22,6 +22,7 @@ export async function createTypeSpecApplicationService(options) {
 /** Internal injection seam used by qualification; ordinary consumers receive the governed defaults. */
 export async function createTypeSpecApplicationServiceWithDependencies(options, injected = {}) {
     const root = await (injected.resolveRoot ?? resolveApplicationRoot)(options.root);
+    assertApplicationRoot(root);
     const repository = await repositoryIdentity(root, options.repository);
     const analysis = injected.analysis ??
         createApplicationAnalysisWorkspace({
@@ -100,7 +101,7 @@ class HeadlessTypeSpecApplicationService {
         const inventory = await this.#dependencies.inventory({
             repository: this.#repository,
             root: this.#root,
-            scope: { exclude: applicationRepositoryExcludes(options.exclude ?? []) },
+            scope: { exclude: applicationRepositoryExcludes(this.#root, options.exclude ?? []) },
             ...(options.signal ? { signal: options.signal } : {}),
         });
         const inventoryMs = performance.now() - phase;
@@ -232,7 +233,7 @@ class HeadlessTypeSpecApplicationService {
             phase = performance.now();
             this.phaseStarted('application.discovery');
             const directories = await this.#dependencies.discover(this.#root, {
-                exclude: applicationRepositoryExcludes(options.exclude ?? []),
+                exclude: applicationRepositoryExcludes(this.#root, options.exclude ?? []),
             });
             discoverMs = performance.now() - phase;
             this.phaseCompleted('application.discovery', discoverMs, { specifications: directories.length });
@@ -660,8 +661,24 @@ function applicationCorpusKey(inventory, exclude) {
 function applicationDiscoveryKey(exclude) {
     return JSON.stringify({ exclude: sortedUnique(exclude) });
 }
-function applicationRepositoryExcludes(exclude) {
-    return sortedUnique([...APPLICATION_REPOSITORY_EXCLUDES, ...exclude]);
+function applicationRepositoryExcludes(root, exclude) {
+    const rootName = basename(root);
+    const scopedArtifacts = rootName === 'evidence' || rootName === 'benchmark'
+        ? ['artifacts']
+        : [];
+    return sortedUnique([...APPLICATION_REPOSITORY_EXCLUDES, ...scopedArtifacts, ...exclude]);
+}
+function assertApplicationRoot(root) {
+    const segments = resolve(root).split(sep).filter(Boolean);
+    if (segments.includes('node_modules') || segments.includes('.pnpm-store')) {
+        throw new Error('Codegraph application roots cannot be dependency stores.');
+    }
+    for (let index = 0; index < segments.length - 1; index += 1) {
+        if ((segments[index] === 'evidence' || segments[index] === 'benchmark') &&
+            segments[index + 1] === 'artifacts') {
+            throw new Error('Codegraph application roots cannot be generated evidence artifacts.');
+        }
+    }
 }
 async function refreshSpecificationCorpus(root, directories, previous, inventoryChanges, changedHints, compile) {
     const available = new Map(directories.map((directory) => [portable(relative(root, resolve(directory))), resolve(directory)]));

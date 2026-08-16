@@ -21,6 +21,10 @@ and statistics report. A small checkpoint manifest may reference independently c
 derived artifacts and exact analysis generations; it never embeds one repository-sized application
 snapshot or duplicates fact payloads.
 
+Application inventory is permanently bounded away from dependency stores, caches, distributions,
+and generated evidence or benchmark artifacts. Consumer exclusions are additive and cannot disable
+that floor; choosing a generated artifact or dependency store as the application root is rejected.
+
 An explicit development change set reuses independently content-addressed specification snapshots
 whose complete normative inputs are unaffected. New or removed anchors, changed `.spec` inputs,
 declaration dependencies, source references, package authority, and project configuration select

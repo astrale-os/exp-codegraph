@@ -41,6 +41,26 @@ afterEach(async () => {
 })
 
 describe('headless TypeSpec V2 application', () => {
+  it('rejects generated artifact roots before repository inventory work begins', async () => {
+    const current = await fixture({
+      'evidence/artifacts/run/package.json': JSON.stringify({
+        name: '@fixture/generated-artifact',
+        type: 'module',
+      }),
+      'evidence/artifacts/run/module/.spec/api.d.ts': 'export interface Generated {}\n',
+    })
+    fixtures.push(current)
+    const inventory = vi.fn(inventoryRepository)
+
+    await expect(
+      createTypeSpecApplicationServiceWithDependencies(
+        { root: join(current.root, 'evidence/artifacts/run') },
+        { analysis: emptyAnalysisWorkspace(), profiles: [], inventory },
+      ),
+    ).rejects.toThrow('generated evidence artifacts')
+    expect(inventory).not.toHaveBeenCalled()
+  })
+
   it('applies application and consumer exclusions to the exact repository inventory', async () => {
     const current = await fixture({
       'package.json': JSON.stringify({ name: '@fixture/application-scope', type: 'module' }),
