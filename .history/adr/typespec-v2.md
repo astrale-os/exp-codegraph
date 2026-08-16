@@ -1194,6 +1194,11 @@ policy and namespaced derived facts.
 
 ## Changelog
 
+- 2026-08-16 — Closed self-host qualification by complete semantic-universe coverage, full
+  Codegraph persistence/incremental proof, and the richest representative Kernel persistence class
+  rather than repeating every independent Kernel universe through every already-qualified backend.
+  See V2-REV-026.
+
 - 2026-08-15 — Clarified that `.spec` is a thin semantic and architectural spine rather than a
   recursive physical inventory. Stable public/headless boundaries remain specified; volatile native,
   codec, profiling, and qualification leaf files are governed by compilation, focused architecture

@@ -1,8 +1,10 @@
 # Gate 6 extension and removal qualification
 
-Status: in progress
+Status: complete
 
 Date opened: 2026-08-15
+
+Date completed: 2026-08-16
 
 Gate 6 owns the public SDK-like semantic extension proof, Codegraph and Kernel self-host audits,
 native release/package proof on supported Unix targets, performance/invalidation closure, and final
@@ -58,23 +60,47 @@ of the inventory revision and sorted universe-generation mapping, shared by both
 disposes each memory universe after summarization. The largest FalkorDB SQLite project subsequently
 passed without the prior OOM.
 
-At maintainer direction, the remaining nine repetitive Kernel SQLite projects and the final cold
-mirror were stopped rather than spending substantially longer repeating already-covered generic
-store behavior. This is an explicit unqualified remainder for V2-QLF-009, not rewritten evidence.
-Gate 6 remains in progress until native release installation and any desired final Kernel holdout
-closure are performed.
+V2-REV-026 closes the evidence boundary by semantic and persistence class rather than by a Cartesian
+product of projects and stores. The remaining nine repetitive Kernel SQLite projects and final cold
+mirror were stopped at maintainer direction: every Kernel universe had already passed maximal memory
+analysis and warm reuse, the richest real project had passed SQLite and reopen, Codegraph had passed
+the complete memory/SQLite/reopen and relocated incremental/cold proof, and the generic store plus
+affected-shard suites covered every distinct persistence and invalidation class. No unexplained
+compiler diagnostic or suspicious-fact class is omitted by that disposition.
+
+## Native release and packed-consumer proof
+
+The supported native matrix completed on public Codegraph main at commit
+`cc59d96e5997852fd081f5a4e934b829a70da41d` in GitHub Actions run
+[`31901296422`](https://github.com/astrale-os/exp-codegraph/actions/runs/31901296422):
+
+- native build and semantic/extension qualification passed on Linux x64, Linux arm64, Darwin x64,
+  and Darwin arm64 native runners;
+- assembly admitted one exact root manifest and four exact-version opaque artifact packages;
+- every target installed the root and matching artifact tarballs offline with lifecycle scripts
+  disabled, resolved the packaged binary, and executed the adversarial TypeScript analysis;
+- the installed consumer contained no `ttsc`, `@ttsc`, Go source, Go module, source plugin, or
+  compiler executable, while all four bounded value states and body/occurrence/module facts were
+  observed through public package subpaths.
+
+The root `native-release.json` pins package, protocol, compiler toolchain, target, package,
+executable, byte length, and SHA-256 for every supported artifact. Windows remains deliberately
+outside the supported matrix.
 
 ## Focused closure checks
 
 - `pnpm run check`: 35 specifications, zero diagnostics.
 - `pnpm run typecheck`: all package, test, application, extension, experiment, and self-host projects
   pass.
-- Broad Vitest run: 47 files and 360 tests passed; the sole failing legacy mock assertion was
-  converted into an explicit physical-limit-forwarding regression, after which
-  `analysis-v2.test.ts` passed 49/49.
+- Final candidate Vitest run: 49 files and 362 tests passed in the single-worker CI configuration;
+  the physical-limit-forwarding and native distribution regressions are included.
 - `scripts/check-v1-removal.ts`: zero diagnostics.
 - `scripts/check-legacy-anchors.ts`: zero diagnostics.
-- Native darwin-arm64 source build completed without local-system Go through the bundled ttsc
-  toolchain. Ordinary packed-install qualification across all supported Unix artifacts remains the
-  release blocker: `native:assert-release` correctly rejects the current manifest because it does
-  not yet contain exactly darwin-arm64, darwin-x64, linux-arm64, and linux-x64.
+- `native:assert-release` admitted exactly Darwin/Linux x64/arm64 artifacts, and GitHub Actions run
+  `31901296422` built, packed, installed offline, and executed all four target combinations.
+- `scripts/check-v1-removal.ts` and `scripts/check-legacy-anchors.ts` remain zero-diagnostic final
+  authority scans.
+
+All Gate 6 requirements are qualified. The V2 program is complete when the final candidate commit
+passes the ordinary Codegraph CI check, typecheck, package suite, and governance verifier without
+changing these semantic witnesses.

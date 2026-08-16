@@ -14,7 +14,10 @@ export interface IsolatedCompileApiOptions extends CompileApiOptions {
 }
 
 export interface IsolatedApiBatchOptions {
-  /** Hard wall-clock deadline for one worker batch after it owns a worker slot. */
+  /**
+   * Explicit hard wall-clock deadline for one worker batch after it owns a worker slot.
+   * When omitted, the default per-entrypoint budget scales with the bounded batch size.
+   */
   readonly timeoutMs?: number
   readonly maxOldSpaceMegabytes?: number
   /** Maximum entrypoints compiled by one memory-bounded worker. */
@@ -25,7 +28,7 @@ export interface IsolatedApiBatchOptions {
   readonly maxBatchResultBytes?: number
 }
 
-const DEFAULT_TIMEOUT_MS = 20_000
+const DEFAULT_TIMEOUT_PER_ENTRYPOINT_MS = 20_000
 const DEFAULT_MAX_OLD_SPACE_MEGABYTES = 256
 /** Shared load and worker capacity; large enough to amortize one TypeScript project construction. */
 export const API_COMPILER_BATCH_CAPACITY = SPECIFICATION_COMPILER_BATCH_CAPACITY
@@ -92,7 +95,14 @@ function compileInWorker(
   options: readonly CompileApiOptions[],
   isolation: IsolatedApiBatchOptions,
 ): Promise<readonly ApiCompilation[]> {
-  const timeoutMs = positiveInteger(isolation.timeoutMs, DEFAULT_TIMEOUT_MS)
+  // Batching amortizes project construction but still performs one semantic projection per
+  // entrypoint. A fixed single-entrypoint deadline made otherwise valid bounded batches fail on
+  // slower CI runners. Explicit caller deadlines remain exact; only the default scales with the
+  // already-bounded batch cardinality.
+  const timeoutMs = positiveInteger(
+    isolation.timeoutMs,
+    DEFAULT_TIMEOUT_PER_ENTRYPOINT_MS * options.length,
+  )
   const maxOldSpaceMegabytes = positiveInteger(
     isolation.maxOldSpaceMegabytes,
     DEFAULT_MAX_OLD_SPACE_MEGABYTES,

@@ -3,7 +3,7 @@ import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SPECIFICATION_COMPILER_BATCH_CAPACITY } from '../source/resource-limits.js';
 import { createTaskLimiter } from './limit.js';
-const DEFAULT_TIMEOUT_MS = 20_000;
+const DEFAULT_TIMEOUT_PER_ENTRYPOINT_MS = 20_000;
 const DEFAULT_MAX_OLD_SPACE_MEGABYTES = 256;
 /** Shared load and worker capacity; large enough to amortize one TypeScript project construction. */
 export const API_COMPILER_BATCH_CAPACITY = SPECIFICATION_COMPILER_BATCH_CAPACITY;
@@ -51,7 +51,11 @@ function batchOutputExceeded(results) {
         entry.message.startsWith('API compiler batch exceeded its ')));
 }
 function compileInWorker(options, isolation) {
-    const timeoutMs = positiveInteger(isolation.timeoutMs, DEFAULT_TIMEOUT_MS);
+    // Batching amortizes project construction but still performs one semantic projection per
+    // entrypoint. A fixed single-entrypoint deadline made otherwise valid bounded batches fail on
+    // slower CI runners. Explicit caller deadlines remain exact; only the default scales with the
+    // already-bounded batch cardinality.
+    const timeoutMs = positiveInteger(isolation.timeoutMs, DEFAULT_TIMEOUT_PER_ENTRYPOINT_MS * options.length);
     const maxOldSpaceMegabytes = positiveInteger(isolation.maxOldSpaceMegabytes, DEFAULT_MAX_OLD_SPACE_MEGABYTES);
     const maxResultBytes = positiveInteger(isolation.maxResultBytes, DEFAULT_MAX_WORKER_RESULT_BYTES);
     const maxBatchResultBytes = positiveInteger(isolation.maxBatchResultBytes, DEFAULT_MAX_BATCH_RESULT_BYTES);
