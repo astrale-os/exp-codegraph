@@ -31,6 +31,11 @@ interface LocalVerification {
   value: ViewerQualification
 }
 
+interface CatalogErrorItem {
+  readonly code: string
+  readonly message: string
+}
+
 const CATALOG_PROGRESS_DELAY_MS = 180
 const CATALOG_PROGRESS_FINISH_MS = 260
 type CatalogProgressPhase = 'complete' | 'hidden' | 'loading'
@@ -89,6 +94,12 @@ export function App({ adapters, index, loader }: AppProps) {
     route.view !== 'graph' &&
     (selection.pending ||
       (!selection.error && !!requestedEntry && selected?.source !== requestedEntry.source))
+  const catalogErrors: CatalogErrorItem[] = [
+    ...selection.index.diagnostics,
+    ...(route.view !== 'graph' && selection.error
+      ? [{ code: 'CATALOG_PAYLOAD_FAILED', message: selection.error }]
+      : []),
+  ]
 
   useEffect(() => {
     if (route.view === 'graph') {
@@ -201,22 +212,12 @@ export function App({ adapters, index, loader }: AppProps) {
         }
       />
       <main class="main" tabindex={-1} aria-busy={transitioning}>
-        {selection.index.diagnostics.length > 0 && (
-          <section class="catalog-errors" aria-label="Catalog errors">
-            {selection.index.diagnostics.map((diagnostic) => (
-              <p key={`${diagnostic.code}:${diagnostic.message}`}>
-                <strong>{diagnostic.code}</strong> {diagnostic.message}
-              </p>
-            ))}
-          </section>
+        {selection.error && (
+          <span class="sr-only" role="alert">
+            Catalog loading failed. Error details are available from the catalog error indicator.
+          </span>
         )}
-        {route.view !== 'graph' && selection.error && (
-          <section class="catalog-errors" role="alert" aria-label="Catalog loading error">
-            <p>
-              <strong>CATALOG_PAYLOAD_FAILED</strong> {selection.error}
-            </p>
-          </section>
-        )}
+        <CatalogErrorIndicator errors={catalogErrors} />
         {route.view !== 'graph' && selected?.payloadDiagnostics?.length ? (
           <section class="catalog-errors" role="status" aria-label="Catalog payload warnings">
             {selected.payloadDiagnostics.map((diagnostic) => (
@@ -318,6 +319,28 @@ export function App({ adapters, index, loader }: AppProps) {
         )}
       </main>
     </div>
+  )
+}
+
+function CatalogErrorIndicator({ errors }: { errors: readonly CatalogErrorItem[] }) {
+  if (errors.length === 0) return null
+  const label = `${errors.length} catalog error${errors.length === 1 ? '' : 's'}`
+
+  return (
+    <details class="catalog-error-indicator">
+      <summary title={`${label}. Select to show details.`}>
+        <span class="catalog-error-dot" aria-hidden="true" />
+        <span aria-hidden="true">{errors.length > 99 ? '99+' : errors.length}</span>
+        <span class="sr-only">{label}. Show details.</span>
+      </summary>
+      <section class="catalog-error-popover" aria-label="Catalog error details">
+        {errors.map((error, index) => (
+          <p key={`${error.code}:${error.message}:${index}`}>
+            <strong>{error.code}</strong> {error.message}
+          </p>
+        ))}
+      </section>
+    </details>
   )
 }
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { AnalysisTelemetryEvent } from '../analysis/index.ts'
+
 import { createCliProgress, createDevStartupProgress } from '../cli/progress.ts'
 import { estimatedCatalogProgress } from '../viewer/shell/app.tsx'
 
@@ -64,7 +65,7 @@ describe('development startup progress', () => {
 
     expect(updates.some((message) => message.includes('Inventorying repository'))).toBe(true)
     expect(updates.some((message) => message.includes('Discovering specifications'))).toBe(true)
-    expect(updates.some((message) => message.includes('2/8 · 2s'))).toBe(true)
+    expect(updates.some((message) => message.includes('2/9 · 2s'))).toBe(true)
     expect(updates.every((message) => !message.includes('%'))).toBe(true)
     expect(messages).toEqual(['✓ Specification viewer ready in 2s · durable cache'])
   })
@@ -78,9 +79,7 @@ describe('development startup progress', () => {
 
     progress.onTelemetry(telemetry('store.selection', 'completed', { backend: 'durable' }))
     progress.onTelemetry(telemetry('application.inventory', 'started'))
-    progress.onTelemetry(
-      telemetry('application.projection', 'completed', { specifications: 42 }),
-    )
+    progress.onTelemetry(telemetry('application.projection', 'completed', { specifications: 42 }))
     progress.succeed()
 
     expect(messages).toEqual([

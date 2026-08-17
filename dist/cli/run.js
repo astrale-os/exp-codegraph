@@ -62,6 +62,32 @@ export async function runCommand(command, services, output) {
         const snapshot = refreshed.snapshot;
         const diagnostics = applicationDiagnostics(snapshot);
         if (command.name === 'check' || command.name === 'changed') {
+            if (command.name === 'check') {
+                return reportCheckResult(output, command, snapshot, {
+                    ...(snapshot.selection.kind === 'full' && refreshed.checkProjection
+                        ? {
+                            catalog: {
+                                sharedDiagnostics: refreshed.checkProjection.sharedDiagnostics,
+                                specifications: snapshot.specifications.map((specification) => ({
+                                    id: specification.id,
+                                    source: specification.source,
+                                    root: specification.root,
+                                    sourceReferences: specification.sourceReferences.map((reference) => ({
+                                        target: { source: reference.target.source },
+                                    })),
+                                    diagnostics: specification.diagnostics,
+                                })),
+                                qualifications: snapshot.qualifications.map((qualification) => ({
+                                    id: qualification.id,
+                                    source: qualification.specification.source,
+                                    status: qualification.status,
+                                    diagnostics: qualificationDiagnostics(qualification),
+                                })),
+                            },
+                        }
+                        : {}),
+                });
+            }
             for (const diagnostic of diagnostics)
                 printDiagnostic(output, diagnostic);
             reportCheck(output, command, changed, snapshot, diagnostics.length);
@@ -115,6 +141,35 @@ export async function runCommand(command, services, output) {
         await reader?.dispose();
         await application.dispose();
     }
+}
+export function reportCheckResult(output, command, snapshot, options = {}) {
+    const diagnostics = applicationDiagnostics(snapshot);
+    for (const diagnostic of diagnostics)
+        printDiagnostic(output, diagnostic);
+    reportCheck(output, command, undefined, snapshot, diagnostics.length);
+    return {
+        exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0,
+        check: {
+            repository: snapshot.repository,
+            inventory: snapshot.inventory,
+            snapshot: snapshot.id,
+            ...(options.catalog ? { catalog: options.catalog } : {}),
+        },
+    };
+}
+export function reportProjectedCheckResult(output, command, snapshot, diagnostics, qualificationFailed) {
+    const exactDiagnostics = deduplicateDiagnostics(diagnostics);
+    for (const diagnostic of exactDiagnostics)
+        printDiagnostic(output, diagnostic);
+    reportCheck(output, command, undefined, snapshot, exactDiagnostics.length);
+    return {
+        exitCode: exactDiagnostics.length || qualificationFailed ? 1 : 0,
+        check: {
+            repository: snapshot.repository,
+            inventory: snapshot.inventory,
+            snapshot: snapshot.id,
+        },
+    };
 }
 function reportDevTelemetry(output, event) {
     if (event.phase === 'store.selection') {
@@ -184,7 +239,9 @@ function applicationFailed(snapshot, diagnostics) {
 function reportCheck(output, command, changed, snapshot, diagnostics) {
     const selected = selectedSpecificationSources(snapshot);
     const support = snapshot.selection.kind === 'focused' ? snapshot.selection.support.length : 0;
-    const checked = snapshot.selection.kind === 'focused' ? selected.length + support : snapshot.specifications.length;
+    const checked = snapshot.selection.kind === 'focused'
+        ? selected.length + support
+        : snapshot.specifications.length;
     const suffix = `${diagnostics} diagnostic${diagnostics === 1 ? '' : 's'}.`;
     if (command.name === 'changed' && changed?.kind === 'full') {
         output.out(`Checked full catalog: ${checked} specification${checked === 1 ? '' : 's'}, ${suffix}`);

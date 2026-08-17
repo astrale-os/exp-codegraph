@@ -1,18 +1,18 @@
 import { readFile, realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { checkpointGenerations } from './checkpoint/index.js';
-import { withOperationSnapshot } from '../source/operation-snapshot.js';
-import { APPLICATION_REPOSITORY_EXCLUDES, discoverSpecificationDirectories, resolveApplicationRoot, } from './discovery/index.js';
-import { MODULE_LAYOUT_PROFILE_ID, createModuleLayoutConformanceProfile, createTypeSpecConformanceProfiles, planConformance, qualifySpecifications, rebindQualificationSnapshot, } from '../conformance/index.js';
-import { createRepositoryPathOwnershipGrouping, createRepositorySourceService, defaultRepositoryStatisticsGroupings, inventoryRepository, refreshRepositoryStatistics, } from '../repository/index.js';
-import { compileSpecificationSnapshots } from '../specification/index.js';
 import { deriveAnalysisId } from '../analysis/index.js';
 import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.js';
+import { MODULE_LAYOUT_PROFILE_ID, createModuleLayoutConformanceProfile, createTypeSpecConformanceProfiles, planConformance, qualifySpecifications, rebindQualificationSnapshot, } from '../conformance/index.js';
+import { createRepositoryPathOwnershipGrouping, createRepositorySourceService, defaultRepositoryStatisticsGroupings, inventoryRepository, refreshRepositoryStatistics, } from '../repository/index.js';
+import { withOperationSnapshot } from '../source/operation-snapshot.js';
+import { compileSpecificationSnapshots } from '../specification/index.js';
 import { createApplicationAnalysisWorkspace, createCodegraphApplicationSessionFactory, } from './analysis/index.js';
-import { assertSpecificationInventory, createApplicationSnapshot } from './snapshot/index.js';
-import { selectApplicationSpecifications } from './selection/index.js';
-import { applicationSchemaDependencies } from './observation/index.js';
+import { checkpointGenerations } from './checkpoint/index.js';
+import { applicationRepositoryExcludes, discoverSpecificationDirectories, resolveApplicationRoot, } from './discovery/index.js';
 import { TYPE_SPEC_APPLICATION_LIMITS } from './limits.js';
+import { applicationSchemaDependencies } from './observation/index.js';
+import { selectApplicationSpecifications } from './selection/index.js';
+import { assertSpecificationInventory, createApplicationSnapshot } from './snapshot/index.js';
 const ADVISORY_CHECKPOINT_DELAY_MS = 250;
 import { createSpecificationImpactIndex } from './change/index.js';
 /** Assemble specification, exact analysis, and qualification without coupling them to a UI. */
@@ -23,7 +23,7 @@ export async function createTypeSpecApplicationService(options) {
 export async function createTypeSpecApplicationServiceWithDependencies(options, injected = {}) {
     const root = await (injected.resolveRoot ?? resolveApplicationRoot)(options.root);
     assertApplicationRoot(root);
-    const repository = await repositoryIdentity(root, options.repository);
+    const repository = await resolveApplicationRepositoryIdentity(root, options.repository);
     const analysis = injected.analysis ??
         createApplicationAnalysisWorkspace({
             root,
@@ -44,12 +44,12 @@ export async function createTypeSpecApplicationServiceWithDependencies(options, 
         statistics: injected.statistics ?? refreshRepositoryStatistics,
         analysis,
         profiles: injected.profiles ?? createTypeSpecConformanceProfiles(),
-        ...(injected.checkpoint ?? options.checkpoint
+        ...((injected.checkpoint ?? options.checkpoint)
             ? { checkpoint: injected.checkpoint ?? options.checkpoint }
             : {}),
     }, options.maximumRetainedSnapshots ?? TYPE_SPEC_APPLICATION_LIMITS.maximumRetainedSnapshots, options.telemetry);
 }
-async function repositoryIdentity(root, explicit) {
+export async function resolveApplicationRepositoryIdentity(root, explicit) {
     let key = explicit;
     if (!key) {
         try {
@@ -236,7 +236,9 @@ class HeadlessTypeSpecApplicationService {
                 exclude: applicationRepositoryExcludes(this.#root, options.exclude ?? []),
             });
             discoverMs = performance.now() - phase;
-            this.phaseCompleted('application.discovery', discoverMs, { specifications: directories.length });
+            this.phaseCompleted('application.discovery', discoverMs, {
+                specifications: directories.length,
+            });
             phase = performance.now();
             this.phaseStarted('application.compile');
             const inventoryChanges = cachedCorpus
@@ -288,7 +290,14 @@ class HeadlessTypeSpecApplicationService {
                 reusedFiles: statisticsWork.reusedFiles.length,
                 removedFiles: statisticsWork.removedFiles.length,
             });
-            this.#corpus = { key: corpusKey, discoveryKey, specifications, inventory, sources, statistics };
+            this.#corpus = {
+                key: corpusKey,
+                discoveryKey,
+                specifications,
+                inventory,
+                sources,
+                statistics,
+            };
         }
         const selected = selectApplicationSpecifications(this.#root, specifications, {
             ...(options.select ? { select: options.select } : {}),
@@ -353,15 +362,15 @@ class HeadlessTypeSpecApplicationService {
                 ]));
                 const evaluatedSpecifications = selected.qualification.filter((specification) => {
                     const prior = previousBySource.get(specification.source);
-                    return !prior || prior.specification.id !== specification.id || refreshedOwners.has(specification.source);
+                    return (!prior ||
+                        prior.specification.id !== specification.id ||
+                        refreshedOwners.has(specification.source));
                 });
                 const evaluated = await qualifySpecifications({
                     specifications: evaluatedSpecifications,
                     analysis: refreshed.snapshot,
                     profiles,
-                    ...(options.requestedProfiles
-                        ? { requestedProfiles: options.requestedProfiles }
-                        : {}),
+                    ...(options.requestedProfiles ? { requestedProfiles: options.requestedProfiles } : {}),
                     ...(options.signal ? { signal: options.signal } : {}),
                 });
                 const evaluatedBySource = new Map(evaluated.map((value) => [value.specification.source, value]));
@@ -394,6 +403,21 @@ class HeadlessTypeSpecApplicationService {
                 throw error;
             }
         }
+        const sharedDiagnostics = [
+            ...(specifications.length
+                ? []
+                : [
+                    {
+                        code: 'SPEC_NOT_FOUND',
+                        message: 'No .spec/api.d.ts anchors found.',
+                        file: '.',
+                        line: 1,
+                        column: 1,
+                    },
+                ]),
+            ...selected.diagnostics,
+            ...observationDiagnostics,
+        ];
         const candidate = createApplicationSnapshot({
             repository: this.#repository,
             inventory: inventory.revision,
@@ -403,19 +427,7 @@ class HeadlessTypeSpecApplicationService {
             qualifications,
             ...(analysis ? { analysis } : {}),
             diagnostics: [
-                ...(specifications.length
-                    ? []
-                    : [
-                        {
-                            code: 'SPEC_NOT_FOUND',
-                            message: 'No .spec/api.d.ts anchors found.',
-                            file: '.',
-                            line: 1,
-                            column: 1,
-                        },
-                    ]),
-                ...selected.diagnostics,
-                ...observationDiagnostics,
+                ...sharedDiagnostics,
                 ...selected.qualification.flatMap((specification) => specification.diagnostics),
             ],
             analysisDiagnostics,
@@ -443,6 +455,7 @@ class HeadlessTypeSpecApplicationService {
                 analysisMs,
                 qualificationMs,
             },
+            checkProjection: { sharedDiagnostics },
         };
     }
     phaseStarted(phase) {
@@ -661,13 +674,6 @@ function applicationCorpusKey(inventory, exclude) {
 function applicationDiscoveryKey(exclude) {
     return JSON.stringify({ exclude: sortedUnique(exclude) });
 }
-function applicationRepositoryExcludes(root, exclude) {
-    const rootName = basename(root);
-    const scopedArtifacts = rootName === 'evidence' || rootName === 'benchmark'
-        ? ['artifacts']
-        : [];
-    return sortedUnique([...APPLICATION_REPOSITORY_EXCLUDES, ...scopedArtifacts, ...exclude]);
-}
 function assertApplicationRoot(root) {
     const segments = resolve(root).split(sep).filter(Boolean);
     if (segments.includes('node_modules') || segments.includes('.pnpm-store')) {
@@ -681,7 +687,10 @@ function assertApplicationRoot(root) {
     }
 }
 async function refreshSpecificationCorpus(root, directories, previous, inventoryChanges, changedHints, compile) {
-    const available = new Map(directories.map((directory) => [portable(relative(root, resolve(directory))), resolve(directory)]));
+    const available = new Map(directories.map((directory) => [
+        portable(relative(root, resolve(directory))),
+        resolve(directory),
+    ]));
     const retained = new Map(previous.map((specification) => [
         portable(relative(root, dirname(resolve(root, specification.source)))),
         specification,
@@ -706,8 +715,9 @@ async function refreshSpecificationCorpus(root, directories, previous, inventory
     for (const [source, kind] of changes) {
         const impact = index.impact(source, { kind });
         const fallback = requiresNormativeFallback(source, kind, impact.fallbackReasons);
-        const normative = fallback || impact.directOwners.some((owner) => specificationsBySource.get(owner) &&
-            normativeSpecificationInputs(specificationsBySource.get(owner)).has(source));
+        const normative = fallback ||
+            impact.directOwners.some((owner) => specificationsBySource.get(owner) &&
+                normativeSpecificationInputs(specificationsBySource.get(owner)).has(source));
         const refreshedOwners = normative
             ? impact.refreshedOwners
             : deepestSpecificationOwners(impact.directOwners, specificationsBySource);
@@ -737,10 +747,7 @@ async function refreshSpecificationCorpus(root, directories, previous, inventory
         .sort((left, right) => left.source.localeCompare(right.source));
     return {
         specifications,
-        refreshedOwners: sortedUnique([
-            ...impactedOwners,
-            ...compiled.map((value) => value.source),
-        ]),
+        refreshedOwners: sortedUnique([...impactedOwners, ...compiled.map((value) => value.source)]),
         compiled: compiled.length,
     };
 }

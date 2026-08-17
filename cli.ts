@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { clearLine, cursorTo } from 'node:readline'
 
-import { changedSpecificationScope } from './cli/changes.ts'
 import { createCliApplicationService } from './cli/application.ts'
+import { changedSpecificationScope } from './cli/changes.ts'
+import { runCliCommand } from './cli/checkpoint.ts'
 import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.ts'
 import { parseCommand, USAGE } from './cli/parse.ts'
 import { terminalText } from './cli/report.ts'
-import { runCommand } from './cli/run.ts'
 import { readCodegraphVersion } from './cli/version.ts'
 import { initializeModuleSpecification } from './specification/module/init.ts'
 
@@ -22,7 +22,7 @@ try {
     clearLine(process.stdout, 0)
     cursorTo(process.stdout, 0)
   }
-  const result = await runCommand(
+  const result = await runCliCommand(
     parseCommand(process.argv.slice(2)),
     {
       version: readCodegraphVersion,

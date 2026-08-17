@@ -4,13 +4,6 @@ import type {
   TypeSpecApplicationService,
   TypeSpecApplicationSnapshot,
 } from '../application/index.ts'
-import {
-  MODULE_LAYOUT_PROFILE_ID,
-  MODULE_SCHEMA_PROFILE_ID,
-  MODULE_TEST_EVIDENCE_PROFILE_ID,
-  SPECIFICATION_VALIDITY_PROFILE_ID,
-  type QualificationSnapshot,
-} from '../conformance/index.ts'
 import type { RunningDevServer } from '../server/start.ts'
 import type { DevOptions } from '../server/start.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
@@ -19,6 +12,13 @@ import type { EvidenceTestPlan, EvidenceTestResult } from './evidence.ts'
 import type { CliCommand } from './parse.ts'
 import type { CliOutput } from './report.ts'
 
+import {
+  MODULE_LAYOUT_PROFILE_ID,
+  MODULE_SCHEMA_PROFILE_ID,
+  MODULE_TEST_EVIDENCE_PROFILE_ID,
+  SPECIFICATION_VALIDITY_PROFILE_ID,
+  type QualificationSnapshot,
+} from '../conformance/index.ts'
 import { USAGE } from './parse.ts'
 import { createDevStartupProgress } from './progress.ts'
 import {
@@ -61,6 +61,33 @@ export interface CliServices {
 export interface CliResult {
   readonly exitCode: number
   readonly server?: RunningDevServer
+  readonly check?: {
+    readonly repository: string
+    readonly inventory: string
+    readonly snapshot: string
+    readonly catalog?: CliCheckCatalog
+  }
+}
+
+export interface CliCheckCatalogSpecification {
+  readonly id: string
+  readonly source: string
+  readonly root: string
+  readonly sourceReferences: readonly {
+    readonly target: { readonly source: string }
+  }[]
+  readonly diagnostics: readonly Diagnostic[]
+}
+
+export interface CliCheckCatalog {
+  readonly sharedDiagnostics: readonly Diagnostic[]
+  readonly specifications: readonly CliCheckCatalogSpecification[]
+  readonly qualifications: readonly {
+    readonly id: string
+    readonly source: string
+    readonly status: QualificationSnapshot['status']
+    readonly diagnostics: readonly Diagnostic[]
+  }[]
 }
 
 export async function runCommand(
@@ -119,6 +146,32 @@ export async function runCommand(
     const diagnostics = applicationDiagnostics(snapshot)
 
     if (command.name === 'check' || command.name === 'changed') {
+      if (command.name === 'check') {
+        return reportCheckResult(output, command, snapshot, {
+          ...(snapshot.selection.kind === 'full' && refreshed.checkProjection
+            ? {
+                catalog: {
+                  sharedDiagnostics: refreshed.checkProjection.sharedDiagnostics,
+                  specifications: snapshot.specifications.map((specification) => ({
+                    id: specification.id,
+                    source: specification.source,
+                    root: specification.root,
+                    sourceReferences: specification.sourceReferences.map((reference) => ({
+                      target: { source: reference.target.source },
+                    })),
+                    diagnostics: specification.diagnostics,
+                  })),
+                  qualifications: snapshot.qualifications.map((qualification) => ({
+                    id: qualification.id,
+                    source: qualification.specification.source,
+                    status: qualification.status,
+                    diagnostics: qualificationDiagnostics(qualification),
+                  })),
+                },
+              }
+            : {}),
+        })
+      }
       for (const diagnostic of diagnostics) printDiagnostic(output, diagnostic)
       reportCheck(output, command, changed, snapshot, diagnostics.length)
       return { exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0 }
@@ -160,7 +213,9 @@ export async function runCommand(
       `Verified ${measured} specification${expected === 1 ? '' : 's'}: ${counts.pass} passed, ${counts.fail} failed, ${counts.idle} idle, ${counts.error} errors.`,
     )
     if (!command.details && counts.fail + counts.idle + counts.error > 0) {
-      output.out('Run the same verify command with --details for complete expected/actual evidence.')
+      output.out(
+        'Run the same verify command with --details for complete expected/actual evidence.',
+      )
     }
     const allPass = counts.pass === expected
     if (command.requirePass && !allPass) {
@@ -174,6 +229,58 @@ export async function runCommand(
   } finally {
     await reader?.dispose()
     await application.dispose()
+  }
+}
+
+export function reportCheckResult(
+  output: CliOutput,
+  command: Extract<CliCommand, { readonly name: 'check' }>,
+  snapshot: Pick<
+    TypeSpecApplicationSnapshot,
+    | 'id'
+    | 'repository'
+    | 'inventory'
+    | 'selection'
+    | 'specifications'
+    | 'qualifications'
+    | 'diagnostics'
+  >,
+  options: { readonly catalog?: CliCheckCatalog } = {},
+): CliResult {
+  const diagnostics = applicationDiagnostics(snapshot)
+  for (const diagnostic of diagnostics) printDiagnostic(output, diagnostic)
+  reportCheck(output, command, undefined, snapshot, diagnostics.length)
+  return {
+    exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0,
+    check: {
+      repository: snapshot.repository,
+      inventory: snapshot.inventory,
+      snapshot: snapshot.id,
+      ...(options.catalog ? { catalog: options.catalog } : {}),
+    },
+  }
+}
+
+export function reportProjectedCheckResult(
+  output: CliOutput,
+  command: Extract<CliCommand, { readonly name: 'check' }>,
+  snapshot: Pick<
+    TypeSpecApplicationSnapshot,
+    'id' | 'repository' | 'inventory' | 'selection' | 'specifications'
+  >,
+  diagnostics: readonly Diagnostic[],
+  qualificationFailed: boolean,
+): CliResult {
+  const exactDiagnostics = deduplicateDiagnostics(diagnostics)
+  for (const diagnostic of exactDiagnostics) printDiagnostic(output, diagnostic)
+  reportCheck(output, command, undefined, snapshot, exactDiagnostics.length)
+  return {
+    exitCode: exactDiagnostics.length || qualificationFailed ? 1 : 0,
+    check: {
+      repository: snapshot.repository,
+      inventory: snapshot.inventory,
+      snapshot: snapshot.id,
+    },
   }
 }
 
@@ -226,7 +333,8 @@ function refreshOptions(
     }
   }
   if (command.name === 'test') {
-    const select = command.changed && changed?.kind === 'selected' ? changed.targets : command.select
+    const select =
+      command.changed && changed?.kind === 'selected' ? changed.targets : command.select
     return {
       qualify: true,
       compilerAnalysis: false,
@@ -245,7 +353,9 @@ function refreshOptions(
   }
 }
 
-function applicationDiagnostics(snapshot: TypeSpecApplicationSnapshot): readonly Diagnostic[] {
+function applicationDiagnostics(
+  snapshot: Pick<TypeSpecApplicationSnapshot, 'diagnostics' | 'qualifications'>,
+): readonly Diagnostic[] {
   return deduplicateDiagnostics([
     ...snapshot.diagnostics,
     ...snapshot.qualifications.flatMap(qualificationDiagnostics),
@@ -253,7 +363,7 @@ function applicationDiagnostics(snapshot: TypeSpecApplicationSnapshot): readonly
 }
 
 function applicationFailed(
-  snapshot: TypeSpecApplicationSnapshot,
+  snapshot: Pick<TypeSpecApplicationSnapshot, 'qualifications'>,
   diagnostics: readonly Diagnostic[],
 ): boolean {
   return diagnostics.length > 0 || snapshot.qualifications.some((value) => value.status !== 'pass')
@@ -263,15 +373,20 @@ function reportCheck(
   output: CliOutput,
   command: Extract<CliCommand, { name: 'check' | 'changed' }>,
   changed: ChangedSpecificationScope | undefined,
-  snapshot: TypeSpecApplicationSnapshot,
+  snapshot: Pick<TypeSpecApplicationSnapshot, 'selection' | 'specifications'>,
   diagnostics: number,
 ): void {
   const selected = selectedSpecificationSources(snapshot)
   const support = snapshot.selection.kind === 'focused' ? snapshot.selection.support.length : 0
-  const checked = snapshot.selection.kind === 'focused' ? selected.length + support : snapshot.specifications.length
+  const checked =
+    snapshot.selection.kind === 'focused'
+      ? selected.length + support
+      : snapshot.specifications.length
   const suffix = `${diagnostics} diagnostic${diagnostics === 1 ? '' : 's'}.`
   if (command.name === 'changed' && changed?.kind === 'full') {
-    output.out(`Checked full catalog: ${checked} specification${checked === 1 ? '' : 's'}, ${suffix}`)
+    output.out(
+      `Checked full catalog: ${checked} specification${checked === 1 ? '' : 's'}, ${suffix}`,
+    )
   } else if (command.name === 'changed') {
     output.out(
       `Checked affected closure: ${checked} specification${checked === 1 ? '' : 's'} (${selected.length} changed + ${support} support), ${suffix}`,
@@ -293,7 +408,9 @@ async function executeEvidenceCommand(
 ): Promise<CliResult> {
   const fileCount = plan.groups.reduce((total, group) => total + group.files.length, 0)
   if (!plan.active) {
-    output.out(`No active attached evidence tests found (${plan.skipped} skipped, ${plan.todo} todo).`)
+    output.out(
+      `No active attached evidence tests found (${plan.skipped} skipped, ${plan.todo} todo).`,
+    )
     output.out(
       command.changed
         ? 'Changed-only evidence is advisory; pnpm test remains authoritative.'
@@ -325,12 +442,16 @@ async function executeEvidenceCommand(
   return { exitCode: result.failed ? 1 : 0 }
 }
 
-function selectedQualifications(snapshot: TypeSpecApplicationSnapshot): readonly QualificationSnapshot[] {
+function selectedQualifications(
+  snapshot: TypeSpecApplicationSnapshot,
+): readonly QualificationSnapshot[] {
   const selected = new Set(selectedSpecificationSources(snapshot))
   return snapshot.qualifications.filter((value) => selected.has(value.specification.source))
 }
 
-function selectedSpecificationSources(snapshot: TypeSpecApplicationSnapshot): readonly string[] {
+function selectedSpecificationSources(
+  snapshot: Pick<TypeSpecApplicationSnapshot, 'selection' | 'specifications'>,
+): readonly string[] {
   return snapshot.selection.kind === 'full'
     ? snapshot.specifications.map((value) => value.source)
     : snapshot.selection.selected
@@ -359,9 +480,10 @@ function reportChangedScope(
   changed: Exclude<ChangedSpecificationScope, { kind: 'none' }>,
   quiet: boolean,
 ): void {
-  const scope = changed.kind === 'selected'
-    ? `${changed.targets.length} changed module${changed.targets.length === 1 ? '' : 's'}`
-    : 'full catalog'
+  const scope =
+    changed.kind === 'selected'
+      ? `${changed.targets.length} changed module${changed.targets.length === 1 ? '' : 's'}`
+      : 'full catalog'
   output.out(
     `Changed scope against ${changed.base}: ${changed.files.length} file${changed.files.length === 1 ? '' : 's'}, ${scope}.`,
   )

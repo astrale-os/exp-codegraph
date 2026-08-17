@@ -105,6 +105,10 @@ export interface TypeSpecApplicationRefresh {
   readonly snapshot: TypeSpecApplicationSnapshot
   readonly changes: TypeSpecApplicationChanges
   readonly timing: TypeSpecApplicationTiming
+  /** Fresh diagnostic partition used by CLI projections; absent on opaque checkpoint reuse. */
+  readonly checkProjection?: {
+    readonly sharedDiagnostics: readonly Diagnostic[]
+  }
 }
 
 /** Lease over one exact application snapshot and its pinned analysis generations. */

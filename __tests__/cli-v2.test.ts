@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access } from 'node:fs/promises'
+import { access, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
@@ -16,7 +16,7 @@ afterEach(async () => {
   await Promise.all(fixtures.splice(0).map((current) => current.remove()))
 })
 
-describe('headless V2 CLI', () => {
+describe('headless V2 CLI', { timeout: 30_000 }, () => {
   it('parses check, changed, test, verify, init, and development workflows', () => {
     expect(parseCommand(['--version'], {})).toEqual({ name: 'version' })
     expect(parseCommand(['check', '.', '--select', 'module'], {})).toMatchObject({
@@ -74,13 +74,7 @@ describe('headless V2 CLI', () => {
       'selected/.spec/api.d.ts': 'export interface Selected { readonly id: string }\n',
       'unrelated/.spec/api.d.ts': 'export interface Unrelated { readonly missing: Missing }\n',
     })
-    const result = await run([
-      'check',
-      current.root,
-      '--select',
-      'selected',
-      '--quiet',
-    ])
+    const result = await run(['check', current.root, '--select', 'selected', '--quiet'])
 
     expect(result).toMatchObject({ code: 0, stderr: '' })
     expect(result.stdout).toContain('Checked selected 1 specification: 0 diagnostics.')
@@ -111,6 +105,138 @@ describe('headless V2 CLI', () => {
     expect(result.stderr).toContain('evil\\x1b[2J\\x0aforged\\u{202e}/.spec/api.d.ts')
     expect(result.stderr).not.toContain('\u001b[2J')
   })
+
+  // @evidence CLI-CHECKPOINT-EXACT-ADMISSION
+  it('replays an exact result and invalidates it on source change', async () => {
+    const current = await repository({
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    const cache = await fixture({})
+    fixtures.push(cache)
+    const environment = { ASTRALE_TYPESPEC_CACHE_DIR: cache.root, CI: 'false' }
+
+    const cold = await run(['check', current.root, '--quiet'], environment)
+    const started = performance.now()
+    const warm = await run(['check', current.root, '--quiet'], environment)
+    const warmMilliseconds = performance.now() - started
+
+    expect(warm).toEqual(cold)
+    expect(warmMilliseconds).toBeLessThan(5_000)
+    const cacheFiles = await readdir(cache.root, { recursive: true })
+    expect(cacheFiles).toEqual(expect.arrayContaining([expect.stringContaining('cli-check-')]))
+    await current.write('module/.spec/api.d.ts', 'export interface Value { readonly id: Missin }\n')
+    const changed = await run(['check', current.root, '--quiet'], environment)
+    expect(changed.code).toBe(1)
+    expect(changed.stderr).toContain('[API_TYPESCRIPT_TS2304]')
+    expect(changed).not.toEqual(warm)
+  })
+
+  // @evidence CLI-CHECKPOINT-INVENTORY-CHURN
+  it('invalidates exact results across create, rename, and delete inventory changes', async () => {
+    const current = await repository({
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    const cache = await fixture({})
+    fixtures.push(cache)
+    const environment = { ASTRALE_TYPESPEC_CACHE_DIR: cache.root, CI: 'false' }
+    const original = await run(['check', current.root, '--quiet'], environment)
+
+    await current.write(
+      'added/.spec/api.d.ts',
+      'export interface Added { readonly missing: Missing }\n',
+    )
+    const created = await run(['check', current.root, '--quiet'], environment)
+    expect(created.code).toBe(1)
+    expect(created.stderr).toContain('added/.spec/api.d.ts')
+
+    await rename(join(current.root, 'added'), join(current.root, 'moved'))
+    const renamed = await run(['check', current.root, '--quiet'], environment)
+    expect(renamed.code).toBe(1)
+    expect(renamed.stderr).toContain('moved/.spec/api.d.ts')
+    expect(renamed.stderr).not.toContain('added/.spec/api.d.ts')
+
+    await rm(join(current.root, 'moved'), { recursive: true })
+    expect(await run(['check', current.root, '--quiet'], environment)).toEqual(original)
+  })
+
+  // @evidence CLI-CHECKPOINT-ADVISORY-RECOVERY
+  it('falls back to the canonical check when the result artifact is corrupt', async () => {
+    const current = await repository({
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    const cache = await fixture({})
+    fixtures.push(cache)
+    const environment = { ASTRALE_TYPESPEC_CACHE_DIR: cache.root, CI: 'false' }
+    const expected = await run(['check', current.root, '--quiet'], environment)
+    const cacheFiles = await readdir(cache.root, { recursive: true })
+    const manifestPath = cacheFiles.find((path) =>
+      /\/manifests\/cli-check-[a-f0-9]{64}\.json$/u.test(path),
+    )!
+    const manifest = JSON.parse(await readFile(join(cache.root, manifestPath), 'utf8')) as {
+      readonly artifacts: readonly { readonly digest: string }[]
+    }
+    const blob = join(
+      dirname(join(cache.root, manifestPath)),
+      '..',
+      'blobs',
+      'sha256',
+      manifest.artifacts[0]!.digest,
+    )
+    await writeFile(blob, 'corrupt', 'utf8')
+
+    expect(await run(['check', current.root, '--quiet'], environment)).toEqual(expected)
+  })
+
+  // @evidence CLI-CHECKPOINT-SELECTED-PROJECTION
+  it('projects a selected check from a whole prime with no-cache output parity', async () => {
+    const current = await repository({
+      'selected/.spec/api.d.ts': 'export interface Selected { readonly id: string }\n',
+      'unrelated/.spec/api.d.ts': 'export interface Unrelated { readonly missing: Missing }\n',
+    })
+    const cache = await fixture({})
+    fixtures.push(cache)
+    const environment = { ASTRALE_TYPESPEC_CACHE_DIR: cache.root, CI: 'false' }
+
+    expect((await run(['check', current.root, '--quiet'], environment)).code).toBe(1)
+    const started = performance.now()
+    const projected = await run(
+      ['check', current.root, '--select', 'selected', '--quiet'],
+      environment,
+    )
+    const elapsedMilliseconds = performance.now() - started
+    const oracle = await run(
+      ['check', current.root, '--select', 'selected', '--quiet', '--no-cache'],
+      environment,
+    )
+
+    expect(projected).toEqual(oracle)
+    expect(projected).toMatchObject({ code: 0, stderr: '' })
+    expect(elapsedMilliseconds).toBeLessThan(5_000)
+    expect(await readdir(cache.root, { recursive: true })).toEqual(
+      expect.arrayContaining([expect.stringContaining('cli-check-catalog-')]),
+    )
+  })
+
+  // @evidence CLI-CHECKPOINT-CONCURRENT-PUBLISH
+  it('publishes identical first-time selected results safely from concurrent processes', async () => {
+    const current = await repository({
+      'selected/.spec/api.d.ts': 'export interface Selected { readonly id: string }\n',
+      'unrelated/.spec/api.d.ts': 'export interface Unrelated { readonly missing: Missing }\n',
+    })
+    const cache = await fixture({})
+    fixtures.push(cache)
+    const environment = { ASTRALE_TYPESPEC_CACHE_DIR: cache.root, CI: 'false' }
+    await run(['check', current.root, '--quiet'], environment)
+    const selected = ['check', current.root, '--select', 'selected', '--quiet'] as const
+
+    const started = performance.now()
+    const concurrent = await Promise.all([run(selected, environment), run(selected, environment)])
+    const elapsedMilliseconds = performance.now() - started
+    const oracle = await run([...selected, '--no-cache'], environment)
+
+    expect(concurrent).toEqual([oracle, oracle])
+    expect(elapsedMilliseconds).toBeLessThan(5_000)
+  })
 })
 
 async function repository(files: Record<string, string>): Promise<Fixture> {
@@ -122,7 +248,10 @@ async function repository(files: Record<string, string>): Promise<Fixture> {
   return current
 }
 
-async function run(arguments_: readonly string[]): Promise<{
+async function run(
+  arguments_: readonly string[],
+  environment: Readonly<Record<string, string>> = {},
+): Promise<{
   readonly code: number
   readonly stdout: string
   readonly stderr: string
@@ -130,12 +259,16 @@ async function run(arguments_: readonly string[]): Promise<{
   try {
     const result = await exec(process.execPath, [cli, ...arguments_], {
       cwd: dirname(cli),
-      env: { ...process.env, CI: 'true', NO_COLOR: '1' },
+      env: { ...process.env, CI: 'true', NO_COLOR: '1', ...environment },
       timeout: 30_000,
     })
     return { code: 0, stdout: result.stdout, stderr: result.stderr }
   } catch (error) {
-    const result = error as { readonly code?: number; readonly stdout?: string; readonly stderr?: string }
+    const result = error as {
+      readonly code?: number
+      readonly stdout?: string
+      readonly stderr?: string
+    }
     return {
       code: typeof result.code === 'number' ? result.code : 2,
       stdout: result.stdout ?? '',

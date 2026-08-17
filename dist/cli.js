@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 import { clearLine, cursorTo } from 'node:readline';
-import { changedSpecificationScope } from './cli/changes.js';
 import { createCliApplicationService } from './cli/application.js';
+import { changedSpecificationScope } from './cli/changes.js';
+import { runCliCommand } from './cli/checkpoint.js';
 import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.js';
 import { parseCommand, USAGE } from './cli/parse.js';
 import { terminalText } from './cli/report.js';
-import { runCommand } from './cli/run.js';
 import { readCodegraphVersion } from './cli/version.js';
 import { initializeModuleSpecification } from './specification/module/init.js';
 const startDev = async (options) => {
@@ -20,7 +20,7 @@ try {
         clearLine(process.stdout, 0);
         cursorTo(process.stdout, 0);
     };
-    const result = await runCommand(parseCommand(process.argv.slice(2)), {
+    const result = await runCliCommand(parseCommand(process.argv.slice(2)), {
         version: readCodegraphVersion,
         initializeModule: initializeModuleSpecification,
         createApplication: createCliApplicationService,

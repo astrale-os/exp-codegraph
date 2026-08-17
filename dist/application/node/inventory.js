@@ -1,16 +1,29 @@
-import { createHash } from 'node:crypto';
 import { isUtf8 } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { opendir, readFile, stat } from 'node:fs/promises';
 import { join, matchesGlob, resolve } from 'node:path';
+import { deriveAnalysisId } from '../../analysis/index.js';
 import { inventoryRepository } from '../../repository/index.js';
 import { decodeWorkspaceCheckpointJson, encodeWorkspaceCheckpointJson, WORKSPACE_CHECKPOINT_JSON_ENCODING, } from '../../workspace/checkpoint/index.js';
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.js';
 const FORMAT = 'astrale.codegraph.repository-inventory-checkpoint';
-const VERSION = 2;
+const VERSION = 3;
 const SCOPE = 'repository-inventory';
 const INVENTORY = 'repository/inventory.json.br';
 const ENTRIES = 'repository/entries.json.br';
 const MAXIMUM_DECODED_ARTIFACT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointArtifactBytes;
+/** Bind Node application inventory identity to relevant directories as well as regular files. */
+export function createNodeRepositoryInventory(options) {
+    const root = resolve(options.root);
+    const fallback = options.inventory ?? inventoryRepository;
+    return async (request) => {
+        const inventory = await fallback(request);
+        if (resolve(request.root) !== root || request.scanner || request.classifiers)
+            return inventory;
+        const topology = await repositoryDirectoryTopologyFingerprint(root, request.scope?.exclude ?? [], request.signal);
+        return bindDirectoryTopology(inventory, topology);
+    };
+}
 /**
  * Reuse an exact content inventory when the filesystem proves that no ordinary write, create,
  * delete, or rename occurred. Metadata is only a preflight: any uncertainty takes the canonical
@@ -26,17 +39,22 @@ export function createCheckpointedRepositoryInventory(options) {
         }
         const scopeFingerprint = digestJson(request.scope ?? {});
         let metadata;
+        let topology;
         try {
-            metadata = await scanMetadata(root, '', request.scope?.exclude ?? [], request.signal);
+            ;
+            [metadata, topology] = await Promise.all([
+                scanMetadata(root, '', request.scope?.exclude ?? [], request.signal),
+                repositoryDirectoryTopologyFingerprint(root, request.scope?.exclude ?? [], request.signal),
+            ]);
         }
         catch {
             return fallback(request);
         }
-        const metadataFingerprint = digestJson(metadata);
+        const metadataFingerprint = digestJson({ files: metadata, topology });
         let previous = retained?.repository === request.repository && retained.scope === scopeFingerprint
             ? retained
             : undefined;
-        if (previous && digestJson(previous.entries.map((entry) => entry.metadata)) === metadataFingerprint) {
+        if (previous?.metadata === metadataFingerprint) {
             return previous.inventory;
         }
         if (!previous) {
@@ -71,6 +89,7 @@ export function createCheckpointedRepositoryInventory(options) {
                             previous = {
                                 repository: request.repository,
                                 scope: scopeFingerprint,
+                                metadata: String(loaded.manifest.payload.metadata),
                                 inventory,
                                 entries: entriesValue,
                             };
@@ -89,17 +108,18 @@ export function createCheckpointedRepositoryInventory(options) {
         let inventory;
         try {
             entries = await hydrateEntries(root, metadata, previous?.entries ?? [], request.signal);
-            inventory = await fallback({
+            inventory = bindDirectoryTopology(await fallback({
                 ...request,
                 scanner: scanner(entries),
-            });
+            }), topology);
         }
         catch {
-            return fallback(request);
+            return bindDirectoryTopology(await fallback(request), topology);
         }
         retained = {
             repository: request.repository,
             scope: scopeFingerprint,
+            metadata: metadataFingerprint,
             inventory,
             entries,
         };
@@ -134,6 +154,39 @@ export function createCheckpointedRepositoryInventory(options) {
             // A read-only or damaged cache never changes the successful canonical result.
         }
         return inventory;
+    };
+}
+/** Digest every admitted directory path, including empty optional specification directories. */
+export async function repositoryDirectoryTopologyFingerprint(root, exclude, signal) {
+    const directories = [];
+    await scanDirectories(resolve(root), '', exclude, directories, signal);
+    return digestJson(directories);
+}
+async function scanDirectories(root, relative, exclude, directories, signal) {
+    signal?.throwIfAborted();
+    const directory = await opendir(relative ? join(root, relative) : root);
+    const entries = [];
+    for await (const entry of directory)
+        entries.push(entry);
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+        signal?.throwIfAborted();
+        if (!entry.isDirectory())
+            continue;
+        const path = relative ? `${relative}/${entry.name}` : entry.name;
+        if (path === '.git' || path.startsWith('.git/') || directoryExcluded(path, exclude))
+            continue;
+        directories.push(path);
+        await scanDirectories(root, path, exclude, directories, signal);
+    }
+}
+function bindDirectoryTopology(inventory, topology) {
+    return {
+        ...inventory,
+        revision: deriveAnalysisId('source-manifest', 'astrale.node-repository-inventory', {
+            files: inventory.revision,
+            directories: topology,
+        }),
     };
 }
 async function hydrateEntries(root, metadata, previous, signal) {

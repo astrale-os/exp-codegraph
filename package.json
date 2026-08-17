@@ -100,7 +100,8 @@
     "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/application/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json && tsgo --noEmit -p qualification/v2/experiments/tsconfig.json && tsgo --noEmit -p qualification/v2/self-host/tsconfig.json",
     "test": "pnpm run build && vitest run --testTimeout 60000 --maxWorkers 1",
     "test:file": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
-    "test:watch": "vitest --testTimeout 15000 --maxWorkers 2"
+    "test:watch": "vitest --testTimeout 15000 --maxWorkers 2",
+    "qualify:cli-restart": "node qualification/v2/application/cli-restart.ts"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",

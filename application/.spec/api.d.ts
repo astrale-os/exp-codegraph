@@ -108,6 +108,9 @@ export interface TypeSpecApplicationRefresh {
   readonly snapshot: TypeSpecApplicationSnapshot
   readonly changes: TypeSpecApplicationChanges
   readonly timing: TypeSpecApplicationTiming
+  readonly checkProjection?: {
+    readonly sharedDiagnostics: readonly Diagnostic[]
+  }
 }
 
 export interface TypeSpecApplicationReader {

@@ -23,9 +23,6 @@ import type {
   ApplicationCheckpointContent,
   ApplicationCheckpointExpectation,
 } from './checkpoint/index.ts'
-import { checkpointGenerations } from './checkpoint/index.ts'
-import type { ApplicationSchemaDependencyResource } from './observation/index.ts'
-import { withOperationSnapshot } from '../source/operation-snapshot.ts'
 import type {
   TypeSpecApplicationChanges,
   TypeSpecApplicationReader,
@@ -35,12 +32,10 @@ import type {
   TypeSpecApplicationSnapshot,
   TypeSpecApplicationSnapshotId,
 } from './model.ts'
+import type { ApplicationSchemaDependencyResource } from './observation/index.ts'
 
-import {
-  APPLICATION_REPOSITORY_EXCLUDES,
-  discoverSpecificationDirectories,
-  resolveApplicationRoot,
-} from './discovery/index.ts'
+import { deriveAnalysisId } from '../analysis/index.ts'
+import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.ts'
 import {
   MODULE_LAYOUT_PROFILE_ID,
   createModuleLayoutConformanceProfile,
@@ -56,19 +51,24 @@ import {
   inventoryRepository,
   refreshRepositoryStatistics,
 } from '../repository/index.ts'
+import { withOperationSnapshot } from '../source/operation-snapshot.ts'
 import { compileSpecificationSnapshots } from '../specification/index.ts'
-import { deriveAnalysisId } from '../analysis/index.ts'
-import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.ts'
 import {
   createApplicationAnalysisWorkspace,
   createCodegraphApplicationSessionFactory,
   type ApplicationAnalysisWorkspaceOptions,
   type CodegraphApplicationSessionOptions,
 } from './analysis/index.ts'
-import { assertSpecificationInventory, createApplicationSnapshot } from './snapshot/index.ts'
-import { selectApplicationSpecifications } from './selection/index.ts'
-import { applicationSchemaDependencies } from './observation/index.ts'
+import { checkpointGenerations } from './checkpoint/index.ts'
+import {
+  applicationRepositoryExcludes,
+  discoverSpecificationDirectories,
+  resolveApplicationRoot,
+} from './discovery/index.ts'
 import { TYPE_SPEC_APPLICATION_LIMITS } from './limits.ts'
+import { applicationSchemaDependencies } from './observation/index.ts'
+import { selectApplicationSpecifications } from './selection/index.ts'
+import { assertSpecificationInventory, createApplicationSnapshot } from './snapshot/index.ts'
 
 const ADVISORY_CHECKPOINT_DELAY_MS = 250
 import { createSpecificationImpactIndex } from './change/index.ts'
@@ -111,7 +111,7 @@ export async function createTypeSpecApplicationServiceWithDependencies(
 ): Promise<TypeSpecApplicationService> {
   const root = await (injected.resolveRoot ?? resolveApplicationRoot)(options.root)
   assertApplicationRoot(root)
-  const repository = await repositoryIdentity(root, options.repository)
+  const repository = await resolveApplicationRepositoryIdentity(root, options.repository)
   const analysis =
     injected.analysis ??
     createApplicationAnalysisWorkspace({
@@ -136,7 +136,7 @@ export async function createTypeSpecApplicationServiceWithDependencies(
       statistics: injected.statistics ?? refreshRepositoryStatistics,
       analysis,
       profiles: injected.profiles ?? createTypeSpecConformanceProfiles(),
-      ...(injected.checkpoint ?? options.checkpoint
+      ...((injected.checkpoint ?? options.checkpoint)
         ? { checkpoint: injected.checkpoint ?? options.checkpoint }
         : {}),
     },
@@ -145,14 +145,18 @@ export async function createTypeSpecApplicationServiceWithDependencies(
   )
 }
 
-async function repositoryIdentity(root: string, explicit: string | undefined): Promise<RepositoryId> {
+export async function resolveApplicationRepositoryIdentity(
+  root: string,
+  explicit?: string,
+): Promise<RepositoryId> {
   let key = explicit
   if (!key) {
     try {
       const manifest = JSON.parse(await readFile(resolve(root, 'package.json'), 'utf8')) as {
         readonly name?: unknown
       }
-      if (typeof manifest.name === 'string' && manifest.name.trim()) key = `package:${manifest.name}`
+      if (typeof manifest.name === 'string' && manifest.name.trim())
+        key = `package:${manifest.name}`
     } catch {
       // The explicit diagnostic below is more useful than leaking an absolute checkout path.
     }
@@ -170,10 +174,12 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
   #current: TypeSpecApplicationSnapshotId | undefined
   #currentRequestKey: string | undefined
   #corpus: ApplicationCorpus | undefined
-  #pendingCheckpoint: {
-    readonly expectation: ApplicationCheckpointExpectation
-    readonly content: ApplicationCheckpointContent
-  } | undefined
+  #pendingCheckpoint:
+    | {
+        readonly expectation: ApplicationCheckpointExpectation
+        readonly content: ApplicationCheckpointContent
+      }
+    | undefined
   #checkpointWriter: Promise<void> | undefined
   readonly #records = new Map<TypeSpecApplicationSnapshotId, ApplicationRecord>()
   readonly #root: string
@@ -199,7 +205,9 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     }
   }
 
-  async refresh(options: TypeSpecApplicationRefreshOptions = {}): Promise<TypeSpecApplicationRefresh> {
+  async refresh(
+    options: TypeSpecApplicationRefreshOptions = {},
+  ): Promise<TypeSpecApplicationRefresh> {
     return withOperationSnapshot(() => this.refreshSnapshot(options))
   }
 
@@ -262,19 +270,10 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       if (loaded.ok) {
         let restoredAnalysis: AnalysisSnapshotSet | undefined
         try {
-          assertSpecificationInventory(
-            loaded.content.specifications,
-            loaded.content.inventory,
-          )
-          const restoredSources = this.#dependencies.sources(
-            this.#root,
-            loaded.content.inventory,
-          )
+          assertSpecificationInventory(loaded.content.specifications, loaded.content.inventory)
+          const restoredSources = this.#dependencies.sources(this.#root, loaded.content.inventory)
           const corpus: ApplicationCorpus = {
-            key: applicationCorpusKey(
-              loaded.content.inventory.revision,
-              options.exclude ?? [],
-            ),
+            key: applicationCorpusKey(loaded.content.inventory.revision, options.exclude ?? []),
             discoveryKey,
             specifications: loaded.content.specifications,
             inventory: loaded.content.inventory,
@@ -297,7 +296,9 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
                 inventory.revision,
               )
               if (restoredAnalysis.id !== loaded.content.snapshot.analysis.id) {
-                throw new Error('Checkpoint analysis snapshot identity does not match its generations.')
+                throw new Error(
+                  'Checkpoint analysis snapshot identity does not match its generations.',
+                )
               }
             }
             const snapshot = await this.publish(
@@ -364,7 +365,9 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         exclude: applicationRepositoryExcludes(this.#root, options.exclude ?? []),
       })
       discoverMs = performance.now() - phase
-      this.phaseCompleted('application.discovery', discoverMs, { specifications: directories.length })
+      this.phaseCompleted('application.discovery', discoverMs, {
+        specifications: directories.length,
+      })
       phase = performance.now()
       this.phaseStarted('application.compile')
       const inventoryChanges = cachedCorpus
@@ -384,14 +387,10 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         compiledSpecifications = refreshedCorpus.compiled
       } else {
         specifications = [
-          ...(await this.#dependencies.compile(
-            this.#root,
-            directories,
-            {
-              maximumConcurrency:
-                TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
-            },
-          )),
+          ...(await this.#dependencies.compile(this.#root, directories, {
+            maximumConcurrency:
+              TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+          })),
         ]
         refreshedSpecificationSources = specifications.map((value) => value.source)
         compiledSpecifications = specifications.length
@@ -430,7 +429,14 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         reusedFiles: statisticsWork.reusedFiles.length,
         removedFiles: statisticsWork.removedFiles.length,
       })
-      this.#corpus = { key: corpusKey, discoveryKey, specifications, inventory, sources, statistics }
+      this.#corpus = {
+        key: corpusKey,
+        discoveryKey,
+        specifications,
+        inventory,
+        sources,
+        statistics,
+      }
     }
     const selected = selectApplicationSpecifications(this.#root, specifications, {
       ...(options.select ? { select: options.select } : {}),
@@ -501,15 +507,17 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         )
         const evaluatedSpecifications = selected.qualification.filter((specification) => {
           const prior = previousBySource.get(specification.source)
-          return !prior || prior.specification.id !== specification.id || refreshedOwners.has(specification.source)
+          return (
+            !prior ||
+            prior.specification.id !== specification.id ||
+            refreshedOwners.has(specification.source)
+          )
         })
         const evaluated = await qualifySpecifications({
           specifications: evaluatedSpecifications,
           analysis: refreshed.snapshot,
           profiles,
-          ...(options.requestedProfiles
-            ? { requestedProfiles: options.requestedProfiles }
-            : {}),
+          ...(options.requestedProfiles ? { requestedProfiles: options.requestedProfiles } : {}),
           ...(options.signal ? { signal: options.signal } : {}),
         })
         const evaluatedBySource = new Map(
@@ -519,7 +527,8 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
           const fresh = evaluatedBySource.get(specification.source)
           if (fresh) return fresh
           const prior = previousBySource.get(specification.source)
-          if (!prior) throw new Error(`Qualification result is missing for ${specification.source}.`)
+          if (!prior)
+            throw new Error(`Qualification result is missing for ${specification.source}.`)
           return rebindQualificationSnapshot(prior, specification, refreshed.snapshot)
         })
         analysis = {
@@ -542,6 +551,21 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       }
     }
 
+    const sharedDiagnostics: readonly Diagnostic[] = [
+      ...(specifications.length
+        ? []
+        : [
+            {
+              code: 'SPEC_NOT_FOUND',
+              message: 'No .spec/api.d.ts anchors found.',
+              file: '.',
+              line: 1,
+              column: 1,
+            },
+          ]),
+      ...selected.diagnostics,
+      ...observationDiagnostics,
+    ]
     const candidate = createApplicationSnapshot({
       repository: this.#repository,
       inventory: inventory.revision,
@@ -551,19 +575,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
       qualifications,
       ...(analysis ? { analysis } : {}),
       diagnostics: [
-        ...(specifications.length
-          ? []
-          : [
-              {
-                code: 'SPEC_NOT_FOUND',
-                message: 'No .spec/api.d.ts anchors found.',
-                file: '.',
-                line: 1,
-                column: 1,
-              },
-            ]),
-        ...selected.diagnostics,
-        ...observationDiagnostics,
+        ...sharedDiagnostics,
         ...selected.qualification.flatMap((specification) => specification.diagnostics),
       ],
       analysisDiagnostics,
@@ -600,6 +612,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
         analysisMs,
         qualificationMs,
       },
+      checkProjection: { sharedDiagnostics },
     }
   }
 
@@ -635,14 +648,9 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     const resources: ApplicationSchemaDependencyResource[] = []
     for (const [ordinal, root] of roots.entries()) {
       const directories = await this.#dependencies.discover(root)
-      const specifications = await this.#dependencies.compile(
-        root,
-        directories,
-        {
-          maximumConcurrency:
-            TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
-        },
-      )
+      const specifications = await this.#dependencies.compile(root, directories, {
+        maximumConcurrency: TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+      })
       resources.push(
         ...applicationSchemaDependencies(
           ordinal,
@@ -873,14 +881,6 @@ function applicationDiscoveryKey(exclude: readonly string[]): string {
   return JSON.stringify({ exclude: sortedUnique(exclude) })
 }
 
-function applicationRepositoryExcludes(root: string, exclude: readonly string[]): readonly string[] {
-  const rootName = basename(root)
-  const scopedArtifacts = rootName === 'evidence' || rootName === 'benchmark'
-    ? ['artifacts']
-    : []
-  return sortedUnique([...APPLICATION_REPOSITORY_EXCLUDES, ...scopedArtifacts, ...exclude])
-}
-
 function assertApplicationRoot(root: string): void {
   const segments = resolve(root).split(sep).filter(Boolean)
   if (segments.includes('node_modules') || segments.includes('.pnpm-store')) {
@@ -909,7 +909,10 @@ async function refreshSpecificationCorpus(
   readonly compiled: number
 }> {
   const available = new Map(
-    directories.map((directory) => [portable(relative(root, resolve(directory))), resolve(directory)]),
+    directories.map((directory) => [
+      portable(relative(root, resolve(directory))),
+      resolve(directory),
+    ]),
   )
   const retained = new Map(
     previous.map((specification) => [
@@ -934,10 +937,13 @@ async function refreshSpecificationCorpus(
   for (const [source, kind] of changes) {
     const impact = index.impact(source, { kind })
     const fallback = requiresNormativeFallback(source, kind, impact.fallbackReasons)
-    const normative = fallback || impact.directOwners.some((owner) =>
-      specificationsBySource.get(owner) &&
-      normativeSpecificationInputs(specificationsBySource.get(owner)!).has(source),
-    )
+    const normative =
+      fallback ||
+      impact.directOwners.some(
+        (owner) =>
+          specificationsBySource.get(owner) &&
+          normativeSpecificationInputs(specificationsBySource.get(owner)!).has(source),
+      )
     const refreshedOwners = normative
       ? impact.refreshedOwners
       : deepestSpecificationOwners(impact.directOwners, specificationsBySource)
@@ -972,10 +978,7 @@ async function refreshSpecificationCorpus(
     .sort((left, right) => left.source.localeCompare(right.source))
   return {
     specifications,
-    refreshedOwners: sortedUnique([
-      ...impactedOwners,
-      ...compiled.map((value) => value.source),
-    ]),
+    refreshedOwners: sortedUnique([...impactedOwners, ...compiled.map((value) => value.source)]),
     compiled: compiled.length,
   }
 }
@@ -993,14 +996,19 @@ function deepestSpecificationOwners(
   )
 }
 
-function normativeSpecificationInputs(
-  specification: SpecificationSnapshot,
-): ReadonlySet<string> {
+function normativeSpecificationInputs(specification: SpecificationSnapshot): ReadonlySet<string> {
   const inputs = new Set<string>()
-  const add = (resource: { readonly source: string; readonly model?: {
-    readonly sources: readonly { readonly file: string }[]
-    readonly dependencies?: readonly { readonly file: string }[]
-  } } | undefined): void => {
+  const add = (
+    resource:
+      | {
+          readonly source: string
+          readonly model?: {
+            readonly sources: readonly { readonly file: string }[]
+            readonly dependencies?: readonly { readonly file: string }[]
+          }
+        }
+      | undefined,
+  ): void => {
     if (!resource) return
     inputs.add(resource.source)
     for (const source of resource.model?.sources ?? []) inputs.add(source.file)
@@ -1024,7 +1032,8 @@ function normativeSpecificationInputs(
     ...specification.packagePatterns,
     ...specification.module.packageAuthority.packages,
     ...specification.module.packageAuthority.packagePatterns,
-  ]) add(resource)
+  ])
+    add(resource)
   inputs.add(specification.module.packageAuthority.source)
   for (const reference of specification.sourceReferences) {
     inputs.add(reference.source)
@@ -1042,7 +1051,8 @@ function requiresNormativeFallback(
     reasons.includes('unknown-declaration') ||
     reasons.includes('package-configuration') ||
     reasons.includes('typescript-configuration')
-  ) return true
+  )
+    return true
   if (kind === 'change') return false
   if (!(source.startsWith('.spec/') || source.includes('/.spec/'))) return false
   return !source.endsWith('/architecture.md') && !source.endsWith('/icon.svg')

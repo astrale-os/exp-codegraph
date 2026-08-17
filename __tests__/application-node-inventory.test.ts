@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { mkdir, rmdir, writeFile } from 'node:fs/promises'
 import { describe, expect, it, vi } from 'vitest'
 
 import { deriveAnalysisId, type RepositoryId } from '../analysis/index.ts'
@@ -43,6 +43,35 @@ describe('Node repository inventory checkpoint', () => {
     expect(third.revision).not.toBe(first.revision)
     expect(fallback).toHaveBeenCalledTimes(2)
 
+    await store.dispose()
+    await current.remove()
+  })
+
+  // @evidence APPLICATION-INVENTORY-DIRECTORY-TOPOLOGY
+  it('changes manifest identity when an admitted empty directory appears or disappears', async () => {
+    const current = await fixture({ 'src/value.ts': 'one\n' })
+    const store = createFileWorkspaceCheckpointStore({ directory: `${current.root}/cache` })
+    const inventory = createCheckpointedRepositoryInventory({
+      root: current.root,
+      store,
+      producerFingerprint: 'test/inventory/3',
+    })
+    const request = {
+      root: current.root,
+      repository: deriveAnalysisId('repository', 'test', {
+        root: 'directory-fixture',
+      }) as RepositoryId,
+      scope: { exclude: ['cache/**'] },
+    }
+    const before = await inventory(request)
+
+    await mkdir(`${current.root}/src/optional`)
+    const added = await inventory(request)
+    expect(added.files).toEqual(before.files)
+    expect(added.revision).not.toBe(before.revision)
+
+    await rmdir(`${current.root}/src/optional`)
+    expect((await inventory(request)).revision).toBe(before.revision)
     await store.dispose()
     await current.remove()
   })
