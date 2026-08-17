@@ -102,15 +102,28 @@ describe('module architecture', () => {
       api: new Set(['analysis', 'source', 'typescript']),
       application: new Set([
         'analysis',
+        'api',
+        'cache',
         'conformance',
         'repository',
         'schema',
         'source',
         'specification',
+        'workspace',
       ]),
       authoring: new Set(),
       cache: new Set(),
-      cli: new Set(['application', 'cache', 'conformance', 'server', 'source', 'viewer-host']),
+      cli: new Set([
+        'analysis',
+        'application',
+        'cache',
+        'conformance',
+        'server',
+        'source',
+        'specification',
+        'viewer-host',
+        'workspace',
+      ]),
       compiler: new Set(['api', 'cache', 'source', 'typescript']),
       conformance: new Set(['analysis', 'source', 'specification']),
       'json-schema': new Set(['api']),
@@ -118,6 +131,7 @@ describe('module architecture', () => {
       qualification: new Set([
         'analysis',
         'application',
+        'cli',
         'conformance',
         'repository',
         'source',
@@ -138,6 +152,7 @@ describe('module architecture', () => {
         'source',
         'specification',
         'viewer-host',
+        'workspace',
       ]),
       source: new Set(['reference']),
       specification: new Set([
@@ -162,6 +177,7 @@ describe('module architecture', () => {
         'viewer-host',
       ]),
       'viewer-host': new Set(['api', 'application', 'source', 'specification']),
+      workspace: new Set(),
     }
     const files = await sourceFiles(root)
     const contexts = [...new Set(files.map(contextOf).filter((value): value is string => Boolean(value)))].sort()

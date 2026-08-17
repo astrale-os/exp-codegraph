@@ -3,7 +3,8 @@ import { defineBenchmark } from '@astrale-os/codegraph/authoring'
 export const TYPESPEC_COLD_FULL = defineBenchmark({
   id: 'TYPESPEC-COLD-FULL',
   statement: 'Records a cold full Kernel qualification through the headless application service.',
-  workload: 'Refresh and qualify the complete Kernel specification corpus with an empty durable cache.',
+  workload:
+    'Refresh and qualify the complete Kernel specification corpus with an empty durable cache.',
   metrics: ['duration', 'peak-memory', 'sqlite-bytes', 'native-startup'],
 })
 
@@ -19,4 +20,19 @@ export const TYPESPEC_FOCUSED_EDIT = defineBenchmark({
   statement: 'Bounds advisory feedback for one local source edit and its exact contract closure.',
   workload: 'Edit one Kernel TypeScript source, refresh its focused owner closure, and qualify it.',
   metrics: ['duration', 'invalidated-passes', 'reloaded-universes', 'rewritten-shards'],
+})
+
+export const CODEGRAPH_SINGLE_OWNER_EDIT = defineBenchmark({
+  id: 'CODEGRAPH-SINGLE-OWNER-EDIT',
+  statement: 'Bounds one local specification edit through its exact application closure.',
+  workload:
+    'Edit one private Kernel specification resource and refresh its owner, derived observations, qualification, and viewer record.',
+  metrics: [
+    'duration',
+    'compiled-specifications',
+    'observed-specifications',
+    'qualified-specifications',
+    'projected-specifications',
+    'rewritten-shards',
+  ],
 })

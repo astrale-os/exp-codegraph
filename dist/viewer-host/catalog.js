@@ -2,7 +2,7 @@ import { viewerSpecificationDiagnostics } from './specification.js';
 export const CATALOG_INDEX_FORMAT = 'astrale.spec.catalog-index';
 export const CATALOG_SPEC_FORMAT = 'astrale.spec.catalog-spec';
 export const CATALOG_SOURCE_FORMAT = 'astrale.spec.catalog-source';
-export const CATALOG_TRANSPORT_VERSION = 2;
+export const CATALOG_TRANSPORT_VERSION = 4;
 export const CATALOG_SPEC_ENDPOINT = '/__astrale/spec-catalog/spec';
 export const CATALOG_SOURCE_ENDPOINT = '/__astrale/spec-catalog/source';
 export const HISTORY_RESOURCE_ENDPOINT = '/__astrale/spec-history';

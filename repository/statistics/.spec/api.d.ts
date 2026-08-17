@@ -96,6 +96,21 @@ export interface RepositoryStatisticsOptions {
   readonly signal?: AbortSignal
 }
 
+export interface RepositoryStatisticsRefreshOptions extends RepositoryStatisticsOptions {
+  readonly previous?: RepositoryStatisticsReport
+}
+
+export interface RepositoryStatisticsRefreshWork {
+  readonly reusedFiles: readonly string[]
+  readonly analyzedFiles: readonly string[]
+  readonly removedFiles: readonly string[]
+}
+
+export interface RepositoryStatisticsRefreshResult {
+  readonly report: RepositoryStatisticsReport
+  readonly work: RepositoryStatisticsRefreshWork
+}
+
 export function createTypeScriptSourceLineAnalyzer(): RepositorySourceLineAnalyzer
 export function createTextSourceLineAnalyzer(): RepositorySourceLineAnalyzer
 export function defaultRepositorySourceLineAnalyzers(): readonly RepositorySourceLineAnalyzer[]
@@ -123,3 +138,6 @@ export function createRepositoryPathOwnershipGrouping(
 export function analyzeRepositoryStatistics(
   options: RepositoryStatisticsOptions,
 ): Promise<RepositoryStatisticsReport>
+export function refreshRepositoryStatistics(
+  options: RepositoryStatisticsRefreshOptions,
+): Promise<RepositoryStatisticsRefreshResult>

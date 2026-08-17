@@ -1,10 +1,12 @@
 #!/usr/bin/env node
-import { changedSpecificationScope } from './cli/changes.ts'
+import { clearLine, cursorTo } from 'node:readline'
+
 import { createCliApplicationService } from './cli/application.ts'
+import { changedSpecificationScope } from './cli/changes.ts'
+import { runCliCommand } from './cli/checkpoint.ts'
 import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.ts'
 import { parseCommand, USAGE } from './cli/parse.ts'
 import { terminalText } from './cli/report.ts'
-import { runCommand } from './cli/run.ts'
 import { readCodegraphVersion } from './cli/version.ts'
 import { initializeModuleSpecification } from './specification/module/init.ts'
 
@@ -14,7 +16,13 @@ const startDev: import('./cli/run.ts').CliServices['startDev'] = async (options)
 }
 
 try {
-  const result = await runCommand(
+  const interactive = process.stdout.isTTY === true && process.env.TERM !== 'dumb'
+  const clearProgress = (): void => {
+    if (!interactive) return
+    clearLine(process.stdout, 0)
+    cursorTo(process.stdout, 0)
+  }
+  const result = await runCliCommand(
     parseCommand(process.argv.slice(2)),
     {
       version: readCodegraphVersion,
@@ -26,8 +34,23 @@ try {
       executeEvidenceTests,
     },
     {
-      out: (message) => process.stdout.write(`${message}\n`),
-      error: (message) => process.stderr.write(`${message}\n`),
+      out: (message) => {
+        clearProgress()
+        process.stdout.write(`${message}\n`)
+      },
+      error: (message) => {
+        clearProgress()
+        process.stderr.write(`${message}\n`)
+      },
+      ...(interactive
+        ? {
+            update: (message: string) => {
+              clearProgress()
+              process.stdout.write(message)
+            },
+            clear: clearProgress,
+          }
+        : {}),
     },
   )
   process.exitCode = result.exitCode

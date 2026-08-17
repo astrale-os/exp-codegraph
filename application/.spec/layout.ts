@@ -5,6 +5,8 @@ export default defineLayout({
   entries: [
     'limits.ts',
     'analysis/',
+    'change/',
+    'checkpoint/',
     'discovery/',
     'interaction/',
     'node/',

@@ -9,6 +9,10 @@ import type {
 export interface CliOutput {
   out(message: string): void
   error(message: string): void
+  /** Replace the current stdout line when attached to an interactive terminal. */
+  update?(message: string): void
+  /** Clear an interactive progress line before ordinary output. */
+  clear?(): void
 }
 
 export function printDiagnostic(output: CliOutput, diagnostic: Diagnostic): void {

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createCliProgress } from '../cli/progress.ts'
+import type { AnalysisTelemetryEvent } from '../analysis/index.ts'
+
+import { createCliProgress, createDevStartupProgress } from '../cli/progress.ts'
 import { estimatedCatalogProgress } from '../viewer/shell/app.tsx'
 
 afterEach(() => vi.useRealTimers())
@@ -38,6 +40,58 @@ describe('CLI catalog progress', () => {
   })
 })
 
+describe('development startup progress', () => {
+  it('renders real phases, elapsed time, and milestones on one interactive line', () => {
+    vi.useFakeTimers()
+    const updates: string[] = []
+    const messages: string[] = []
+    const progress = createDevStartupProgress({
+      out: (message) => messages.push(message),
+      error: () => undefined,
+      update: (message) => updates.push(message),
+      clear: () => undefined,
+    })
+
+    vi.advanceTimersByTime(1_000)
+    expect(updates).toEqual([
+      '\u001b[36m◆\u001b[0m \u001b[1mOpening durable analysis cache…\u001b[0m',
+    ])
+    progress.onTelemetry(telemetry('store.selection', 'completed', { backend: 'durable' }))
+    progress.onTelemetry(telemetry('application.inventory', 'started'))
+    vi.advanceTimersByTime(1_000)
+    progress.onTelemetry(telemetry('application.inventory', 'completed'))
+    progress.onTelemetry(telemetry('application.discovery', 'started'))
+    progress.succeed()
+
+    expect(updates.some((message) => message.includes('Inventorying repository'))).toBe(true)
+    expect(updates.some((message) => message.includes('Discovering specifications'))).toBe(true)
+    expect(updates.some((message) => message.includes('2/9 · 2s'))).toBe(true)
+    expect(updates.every((message) => !message.includes('%'))).toBe(true)
+    expect(messages).toEqual(['✓ Specification viewer ready in 2s · durable cache'])
+  })
+
+  it('uses sparse stable lines outside an interactive terminal', () => {
+    const messages: string[] = []
+    const progress = createDevStartupProgress({
+      out: (message) => messages.push(message),
+      error: () => undefined,
+    })
+
+    progress.onTelemetry(telemetry('store.selection', 'completed', { backend: 'durable' }))
+    progress.onTelemetry(telemetry('application.inventory', 'started'))
+    progress.onTelemetry(telemetry('application.projection', 'completed', { specifications: 42 }))
+    progress.succeed()
+
+    expect(messages).toEqual([
+      'Initializing specification viewer...',
+      'CODEGRAPH_STORE=durable',
+      'Inventorying repository...',
+      '✓ Specification viewer ready in 0s · durable cache · 42 specifications',
+    ])
+    expect(messages.join('\n')).not.toContain('\u001b[')
+  })
+})
+
 describe('catalog loading progress', () => {
   it('advances quickly through the expected window and keeps crawling below completion', () => {
     expect(estimatedCatalogProgress(0)).toBeCloseTo(0.03)
@@ -62,3 +116,17 @@ describe('catalog loading progress', () => {
     expect(thirtyFirstSecond).toBeGreaterThan(0)
   })
 })
+
+function telemetry(
+  phase: string,
+  status: 'started' | 'completed',
+  metrics: Readonly<Record<string, string | number | boolean>> = {},
+): AnalysisTelemetryEvent {
+  return {
+    format: 'astrale.codegraph.analysis-telemetry',
+    version: 1,
+    component: 'analysis',
+    phase,
+    metrics: { status, ...metrics },
+  }
+}

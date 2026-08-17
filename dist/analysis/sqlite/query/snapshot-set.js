@@ -2,6 +2,7 @@ import { deriveAnalysisSnapshotSetId } from '../../query/index.js';
 export class SQLiteSnapshotSet {
     id;
     inventory;
+    generations;
     universes;
     #generations;
     #openQuery;
@@ -13,7 +14,8 @@ export class SQLiteSnapshotSet {
         this.#release = release;
         this.inventory = inventory;
         this.universes = [...generations.keys()].sort();
-        this.id = deriveAnalysisSnapshotSetId(new Map(this.universes.map((universe) => [universe, generations.get(universe).id])), inventory);
+        this.generations = new Map(this.universes.map((universe) => [universe, generations.get(universe).id]));
+        this.id = deriveAnalysisSnapshotSetId(this.generations, inventory);
     }
     query(universe) {
         if (this.#disposed)

@@ -3,12 +3,24 @@ import { readFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 
 import type { AnalysisStore, AnalysisTelemetrySink } from '../../analysis/index.ts'
-import { selectAnalysisStore } from '../../analysis/index.ts'
-import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
-import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.ts'
-import type { TypeSpecApplicationService } from '../index.ts'
 import type { CodegraphApplicationSessionOptions } from '../analysis/index.ts'
-import { createTypeSpecApplicationService } from '../service.ts'
+import type { TypeSpecApplicationService } from '../index.ts'
+
+import { selectAnalysisStore } from '../../analysis/index.ts'
+import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.ts'
+import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
+import {
+  createFileWorkspaceCheckpointStore,
+  type FileWorkspaceCheckpointStore,
+} from '../../workspace/checkpoint/index.ts'
+import { createApplicationCheckpoint } from '../checkpoint/index.ts'
+import { resolveApplicationRoot } from '../discovery/index.ts'
+import { createTypeSpecApplicationServiceWithDependencies } from '../service.ts'
+import { codegraphProducerFingerprint } from './fingerprint.ts'
+import {
+  createCheckpointedRepositoryInventory,
+  createNodeRepositoryInventory,
+} from './inventory.ts'
 
 export interface NodeTypeSpecApplicationOptions {
   readonly root: string
@@ -25,7 +37,7 @@ export interface NodeTypeSpecApplicationOptions {
 export async function createNodeTypeSpecApplicationService(
   options: NodeTypeSpecApplicationOptions,
 ): Promise<TypeSpecApplicationService> {
-  const root = resolve(options.root)
+  const root = await resolveApplicationRoot(options.root)
   const maximumRetainedGenerations = options.maximumRetainedGenerations ?? 2
   const selection = await selectAnalysisStore({
     persistence: 'advisory',
@@ -43,6 +55,15 @@ export async function createNodeTypeSpecApplicationService(
       : {}),
   })
   const store = selection.store
+  const repository = options.repository ?? (await nodeApplicationRepositoryKey(root))
+  const workspaceCheckpoint =
+    selection.backend === 'durable'
+      ? createFileWorkspaceCheckpointStore({
+          directory: nodeApplicationWorkspaceCheckpointDirectory(options.cacheDirectory, root),
+          maxArtifacts: 4_096,
+          maximumScopes: 512,
+        })
+      : undefined
   dispatchAnalysisTelemetry(options.telemetry, {
     component: 'analysis',
     phase: 'store.selection',
@@ -55,17 +76,37 @@ export async function createNodeTypeSpecApplicationService(
     },
   })
   try {
-    const application = await createTypeSpecApplicationService({
-      root,
-      repository: options.repository ?? (await repositoryKey(root)),
-      maximumRetainedSnapshots: options.maximumRetainedSnapshots,
-      analysis: { store, maximumRetainedGenerations },
-      ...(options.telemetry ? { telemetry: options.telemetry } : {}),
-      ...(options.native ? { native: options.native } : {}),
-    })
-    return ownStore(application, store)
+    const producer = workspaceCheckpoint ? await codegraphProducerFingerprint() : undefined
+    const application = await createTypeSpecApplicationServiceWithDependencies(
+      {
+        root,
+        repository,
+        maximumRetainedSnapshots: options.maximumRetainedSnapshots,
+        analysis: { store, maximumRetainedGenerations },
+        ...(workspaceCheckpoint
+          ? {
+              checkpoint: createApplicationCheckpoint({
+                store: workspaceCheckpoint,
+                producerFingerprint: `${producer!}:application-checkpoint/3`,
+              }),
+            }
+          : {}),
+        ...(options.telemetry ? { telemetry: options.telemetry } : {}),
+        ...(options.native ? { native: options.native } : {}),
+      },
+      {
+        inventory: workspaceCheckpoint
+          ? createCheckpointedRepositoryInventory({
+              root,
+              store: workspaceCheckpoint,
+              producerFingerprint: `${producer!}:repository-inventory/3`,
+            })
+          : createNodeRepositoryInventory({ root }),
+      },
+    )
+    return ownStore(application, store, workspaceCheckpoint)
   } catch (error) {
-    await store.dispose()
+    await Promise.allSettled([store.dispose(), workspaceCheckpoint?.dispose()])
     throw error
   }
 }
@@ -73,6 +114,7 @@ export async function createNodeTypeSpecApplicationService(
 function ownStore(
   application: TypeSpecApplicationService,
   store: AnalysisStore,
+  checkpoint: FileWorkspaceCheckpointStore | undefined,
 ): TypeSpecApplicationService {
   let disposed = false
   return {
@@ -82,7 +124,11 @@ function ownStore(
     async dispose() {
       if (disposed) return
       disposed = true
-      const results = await Promise.allSettled([application.dispose(), store.dispose()])
+      const results = await Promise.allSettled([
+        application.dispose(),
+        store.dispose(),
+        checkpoint?.dispose(),
+      ])
       const rejected = results.find(
         (result): result is PromiseRejectedResult => result.status === 'rejected',
       )
@@ -91,7 +137,19 @@ function ownStore(
   }
 }
 
-async function repositoryKey(root: string): Promise<string> {
+export function nodeApplicationWorkspaceCheckpointDirectory(
+  cacheDirectory: string,
+  root: string,
+): string {
+  return join(
+    cacheDirectory,
+    'workspaces',
+    createHash('sha256').update(resolve(root)).digest('hex'),
+    'application',
+  )
+}
+
+export async function nodeApplicationRepositoryKey(root: string): Promise<string> {
   try {
     const value: unknown = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
     if (

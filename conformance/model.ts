@@ -56,6 +56,8 @@ export interface ConformanceProfileManifest {
   readonly dependsOn: readonly string[]
   readonly requiresCapabilities: readonly ConformanceCapabilityRequirement[]
   readonly rules: readonly string[]
+  /** Omission is conservative universe-wide evaluation. */
+  readonly evaluationScope?: 'specification' | 'universe'
 }
 
 export interface ConformanceProfileContext {

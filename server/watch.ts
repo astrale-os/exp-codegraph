@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, posix, relative, resolve, sep } from 'node:path'
 
 import type { TypeSpecApplicationSnapshot } from '../application/index.ts'
 import type { SpecificationSnapshot } from '../specification/index.ts'
@@ -89,6 +89,7 @@ export function isWatchedSource(
   const source = workspaceSource(root, file)
   if (!source || ignoredWorkspaceOutput(source)) return false
   if (source === '.spec/api.d.ts' || source.endsWith('/.spec/api.d.ts')) return true
+  if (event !== 'change' && potentialSpecificationSource(source)) return true
   if (!snapshot) return false
   if (snapshot.specifications.some((specification) => projectConfigurationAffects(specification, source))) {
     return true
@@ -147,6 +148,7 @@ function specificationSources(specification: SpecificationSnapshot): ReadonlySet
   ]
   return new Set([
     specification.module.packageAuthority.source,
+    ...testEvidenceSources(specification),
     ...resources.flatMap((resource) => [
       resource.source,
       ...('model' in resource && resource.model
@@ -157,6 +159,21 @@ function specificationSources(specification: SpecificationSnapshot): ReadonlySet
         : []),
     ]),
   ])
+}
+
+function testEvidenceSources(specification: SpecificationSnapshot): readonly string[] {
+  const sources = new Set<string>()
+  for (const resource of [...specification.laws, ...specification.states]) {
+    for (const definition of resource.definitions) {
+      for (const reference of definition.tests ?? []) {
+        if (isAbsolute(reference.file) || reference.file.includes('\\')) continue
+        const source = posix.normalize(posix.join(specification.root, reference.file))
+        if (source === '..' || source.startsWith('../')) continue
+        sources.add(source)
+      }
+    }
+  }
+  return [...sources]
 }
 
 function projectConfigurationAffects(

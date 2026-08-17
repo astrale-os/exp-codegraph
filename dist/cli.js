@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { changedSpecificationScope } from './cli/changes.js';
+import { clearLine, cursorTo } from 'node:readline';
 import { createCliApplicationService } from './cli/application.js';
+import { changedSpecificationScope } from './cli/changes.js';
+import { runCliCommand } from './cli/checkpoint.js';
 import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.js';
 import { parseCommand, USAGE } from './cli/parse.js';
 import { terminalText } from './cli/report.js';
-import { runCommand } from './cli/run.js';
 import { readCodegraphVersion } from './cli/version.js';
 import { initializeModuleSpecification } from './specification/module/init.js';
 const startDev = async (options) => {
@@ -12,7 +13,14 @@ const startDev = async (options) => {
     return server.startDev(options);
 };
 try {
-    const result = await runCommand(parseCommand(process.argv.slice(2)), {
+    const interactive = process.stdout.isTTY === true && process.env.TERM !== 'dumb';
+    const clearProgress = () => {
+        if (!interactive)
+            return;
+        clearLine(process.stdout, 0);
+        cursorTo(process.stdout, 0);
+    };
+    const result = await runCliCommand(parseCommand(process.argv.slice(2)), {
         version: readCodegraphVersion,
         initializeModule: initializeModuleSpecification,
         createApplication: createCliApplicationService,
@@ -21,8 +29,23 @@ try {
         planEvidenceTests,
         executeEvidenceTests,
     }, {
-        out: (message) => process.stdout.write(`${message}\n`),
-        error: (message) => process.stderr.write(`${message}\n`),
+        out: (message) => {
+            clearProgress();
+            process.stdout.write(`${message}\n`);
+        },
+        error: (message) => {
+            clearProgress();
+            process.stderr.write(`${message}\n`);
+        },
+        ...(interactive
+            ? {
+                update: (message) => {
+                    clearProgress();
+                    process.stdout.write(message);
+                },
+                clear: clearProgress,
+            }
+            : {}),
     });
     process.exitCode = result.exitCode;
     if (result.server) {

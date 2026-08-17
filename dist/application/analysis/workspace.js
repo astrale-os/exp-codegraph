@@ -11,6 +11,8 @@ class ResidentApplicationAnalysisWorkspace {
     #ownsStore;
     #services = new Map();
     #boundaryDigest = '';
+    #adoptedGenerations = new Map();
+    #adoptedInventory;
     #disposed = false;
     #options;
     constructor(options) {
@@ -60,12 +62,20 @@ class ResidentApplicationAnalysisWorkspace {
                 ...(options.signal ? { signal: options.signal } : {}),
             }));
         }
-        const generations = new Map(results.map((result) => [result.generation.universe, result.generation.id]));
+        const generations = new Map(options.compilerAnalysis === false && this.#adoptedInventory === options.inventory.revision
+            ? this.#adoptedGenerations
+            : []);
+        for (const [universe, generation] of results.map((result) => [result.generation.universe, result.generation.id])) {
+            generations.set(universe, generation);
+        }
         const observation = await materializeApplicationObservations({
             root: this.#options.root,
             store: this.#store,
             inventory: options.inventory,
-            specifications: options.specifications,
+            specifications: options.observationSpecifications ?? options.specifications,
+            ...(options.refreshSpecifications
+                ? { refresh: options.refreshSpecifications }
+                : {}),
             ...(options.schemaDependencies
                 ? { schemaDependencies: options.schemaDependencies }
                 : {}),
@@ -73,6 +83,8 @@ class ResidentApplicationAnalysisWorkspace {
         });
         generations.set(observation.universe, observation.generation.id);
         const snapshot = await this.#store.snapshotSet(generations, options.inventory.revision);
+        this.#adoptedGenerations = new Map(generations);
+        this.#adoptedInventory = options.inventory.revision;
         return {
             snapshot,
             universes: snapshot.universes,
@@ -85,10 +97,19 @@ class ResidentApplicationAnalysisWorkspace {
             ],
         };
     }
+    async open(generations, inventory) {
+        this.assertOpen();
+        const snapshot = await this.#store.snapshotSet(generations, inventory);
+        this.#adoptedGenerations = new Map(generations);
+        this.#adoptedInventory = inventory;
+        return snapshot;
+    }
     async dispose() {
         if (this.#disposed)
             return;
         this.#disposed = true;
+        this.#adoptedGenerations.clear();
+        this.#adoptedInventory = undefined;
         await this.disposeServices();
         if (this.#ownsStore)
             await this.#store.dispose();

@@ -12,6 +12,7 @@ import { deriveAnalysisSnapshotSetId } from '../../query/index.ts'
 export class SQLiteSnapshotSet implements AnalysisSnapshotSet {
   readonly id: SnapshotSetId
   readonly inventory: SourceManifestId
+  readonly generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>
   readonly universes: readonly ProjectUniverseId[]
   readonly #generations: ReadonlyMap<ProjectUniverseId, AnalysisGeneration>
   readonly #openQuery: (
@@ -35,10 +36,10 @@ export class SQLiteSnapshotSet implements AnalysisSnapshotSet {
     this.#release = release
     this.inventory = inventory
     this.universes = [...generations.keys()].sort()
-    this.id = deriveAnalysisSnapshotSetId(
-      new Map(this.universes.map((universe) => [universe, generations.get(universe)!.id])),
-      inventory,
+    this.generations = new Map(
+      this.universes.map((universe) => [universe, generations.get(universe)!.id]),
     )
+    this.id = deriveAnalysisSnapshotSetId(this.generations, inventory)
   }
 
   query(universe: ProjectUniverseId): Promise<AnalysisQuery> {

@@ -6,13 +6,6 @@ import type { Diagnostic } from '../../source/diagnostic.ts'
 import type { ModuleSourceReference } from '../resource/index.ts'
 import type { ModuleFile, ModuleFileInventory } from './inventory.ts'
 
-import {
-  cacheEntries,
-  record,
-  restoreCacheEntries,
-  stringRecord,
-  type RestorableCache,
-} from '../../cache/memory.ts'
 import { createTaskLimiter } from '../../compiler/limit.ts'
 import { operationSnapshot, operationSnapshotNamespace } from '../../source/operation-snapshot.ts'
 import { workspacePackageCoordinate } from '../../typescript/package-coordinate.ts'
@@ -73,32 +66,6 @@ const operationAnalyses = operationSnapshotNamespace<Promise<CachedModuleTypeScr
   'module-typescript-analyses',
 )
 
-export const moduleTypeScriptAnalysisCache: RestorableCache = {
-  snapshot: (scope) =>
-    cacheEntries(
-      new Map(
-        [...analysisCache].filter(([key]) => analysisCacheRoot(key) === canonicalFile(scope)),
-      ),
-    ),
-  restore(scope, snapshot) {
-    const root = canonicalFile(scope)
-    for (const key of analysisCache.keys())
-      if (analysisCacheRoot(key) === root) analysisCache.delete(key)
-    for (const [key, cached] of restoreCacheEntries(snapshot, MAX_ANALYSES, isCachedAnalysis)) {
-      analysisCache.set(key, cached)
-    }
-  },
-}
-
-function analysisCacheRoot(key: string): string | undefined {
-  try {
-    const value: unknown = JSON.parse(key)
-    return record(value) && typeof value.root === 'string' ? value.root : undefined
-  } catch {
-    return
-  }
-}
-
 interface AnalysisRequest {
   readonly inventory: ModuleFileInventory
   readonly sources: readonly OwnedSource[]
@@ -110,28 +77,6 @@ interface SharedProgramContext {
   readonly resolutionEdges: ReadonlyMap<string, ReadonlySet<string>>
   readonly program: ts.Program
   readonly defaults: ReadonlySet<string>
-}
-
-function isCachedAnalysis(value: unknown): value is CachedModuleTypeScriptAnalysis {
-  if (!record(value) || !record(value.analysis) || !record(value.evidence)) return false
-  return (
-    Array.isArray(value.analysis.diagnostics) &&
-    Array.isArray(value.analysis.references) &&
-    Array.isArray(value.evidence.dependencies) &&
-    value.evidence.dependencies.every(stringRecord) &&
-    Array.isArray(value.evidence.resolutions) &&
-    value.evidence.resolutions.every(
-      (resolution) =>
-        record(resolution) &&
-        (resolution.kind === 'module' ||
-          resolution.kind === 'path' ||
-          resolution.kind === 'type') &&
-        typeof resolution.containingFile === 'string' &&
-        typeof resolution.specifier === 'string' &&
-        (resolution.resolvedFile === undefined || typeof resolution.resolvedFile === 'string'),
-    ) &&
-    value.cacheable !== false
-  )
 }
 
 /** Prime one coherent catalog wave with shared TypeScript Programs where semantics permit it. */

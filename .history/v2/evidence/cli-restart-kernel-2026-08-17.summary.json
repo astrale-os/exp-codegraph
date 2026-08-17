@@ -1,0 +1,98 @@
+{
+  "format": "astrale.codegraph.cli-restart-qualification-summary",
+  "version": 1,
+  "status": "qualified",
+  "candidate": {
+    "worktree": ".cache/codegraph-dev-progress",
+    "baseCommit": "781de52",
+    "committed": false,
+    "installedTarballSha256": "fccaca01db78a56a793e7f6675cd7675886d0a6e95ee56c14704636bf77806e1",
+    "installedPackageProducerFingerprint": "@astrale-os/codegraph:codegraph-runtime-tree/1:sha256:239770dda7a97c570c344bf8cc925361ed8a25c9c47374f985fb39ef4cad6961",
+    "distCliSha256": "1ed5ee4c68b3429abf5072ec4c2d5095fcfbd61719f264146e0247aede8910cf",
+    "distCheckpointSha256": "b037682074e4f466d5befd02cbc248092401ccf2b6ab8273b7e30e8bda131804",
+    "distInventorySha256": "b2611702544dbfa9c0c844a3b707f7f0e8513751f7d8f1bdc34bde0fb324e287"
+  },
+  "subject": {
+    "kernelRoot": "/Users/bryandjafer/Documents/astrale/workspace/kernel-v2",
+    "kernelHead": "11caf9f9bd5646b281fd56ee5092f7556d8b8d1d",
+    "kernelClean": false,
+    "kernelStatusSha256": "2bc99fda48b5f8c039507add495e2f99f0203921facf43008dc9b5de2c230926",
+    "node": "v24.18.1",
+    "platform": "darwin",
+    "architecture": "arm64"
+  },
+  "method": {
+    "installedBinary": "node_modules/.bin/cg",
+    "processBoundary": "distinct-operating-system-processes",
+    "cacheInitiallyEmpty": true,
+    "sharedCache": true,
+    "interleaved": true,
+    "warmSamplesPerScenario": 5,
+    "firstSelectedRequestMeasured": true,
+    "exclusiveLimitMilliseconds": 5000,
+    "harnessSha256": "7a8bc95f9e75773750385f538785b86e001e9ad3e52f12e61f9b30dbc0461632"
+  },
+  "results": {
+    "coldWholeMilliseconds": 184336,
+    "whole": { "firstMilliseconds": 184336, "minimumMilliseconds": 1205, "maximumMilliseconds": 1545, "p95Milliseconds": 1545 },
+    "leaf": { "firstMilliseconds": 1326, "minimumMilliseconds": 1170, "maximumMilliseconds": 2093, "p95Milliseconds": 2093 },
+    "subtree": { "firstMilliseconds": 1239, "minimumMilliseconds": 1206, "maximumMilliseconds": 1707, "p95Milliseconds": 1707 },
+    "multi": { "firstMilliseconds": 1251, "minimumMilliseconds": 1192, "maximumMilliseconds": 1825, "p95Milliseconds": 1825 },
+    "processes": 24,
+    "uniqueProcesses": 24,
+    "violations": []
+  },
+  "compactCatalog": {
+    "specifications": 326,
+    "qualifications": 326,
+    "decodedBytes": 995343,
+    "compressedBytes": 59543,
+    "status": "available"
+  },
+  "canonicalSelectedOracle": {
+    "status": "qualified",
+    "applicationPersistence": "memory",
+    "persistentResultAdmission": false,
+    "retainedApplicationCorpus": true,
+    "byteExactCliOutputComparison": true,
+    "wholeMilliseconds": 162059,
+    "leafMilliseconds": 2877,
+    "subtreeMilliseconds": 2302,
+    "multiMilliseconds": 2273,
+    "matchedScenarios": 4,
+    "mismatchedScenarios": 0,
+    "harnessSha256": "c724cf1479925b8478996632603ed334c1af66e568cd5076e6626acc9d43949f",
+    "rawPath": "/private/tmp/cg-installed-qualified.7UuiwY/evidence/cli-selected-oracle.json",
+    "rawFileSha256": "6ed37e0996c5e6db63016436cdb8f50e2cff2637b4abbc4ce6f44b2b61d7bef1",
+    "claimedAndRecomputedEvidenceSha256": "ae9b815f98e1fb949d69a51ef9419dddfafd08feb923485588fc72bee3fa98b3"
+  },
+  "delivery": {
+    "ordinaryAddIncludesRequiredDist": true,
+    "requiredNewDistFiles": [
+      "dist/cli/checkpoint.js",
+      "dist/cli/checkpoint.js.map",
+      "dist/cli/limits.js",
+      "dist/cli/limits.js.map",
+      "dist/application/node/fingerprint.js",
+      "dist/application/node/fingerprint.js.map"
+    ]
+  },
+  "evidence": {
+    "rawPath": "/private/tmp/cg-installed-qualified.7UuiwY/evidence/cli-restart.json",
+    "rawFileSha256": "ba218c6924f20a591b205f1069e57974fab4656f5176291a74cdc4d0a31483a8",
+    "claimedAndRecomputedEvidenceSha256": "64747771c5c034fdb24d8d6f22804a31e3de765b1b1883635220276297575375",
+    "selfHashVerified": true
+  },
+  "gates": {
+    "focusedTests": "46 passed, 0 failed",
+    "focusedTestFiles": 10,
+    "focusedTestReport": "/private/tmp/cg-installed-qualified.7UuiwY/evidence/focused-tests.json",
+    "focusedTestReportSha256": "9b5e984f14f58c5e68cddf3e0d25a01923947555af49516d47f79c3379db1ac5",
+    "specifications": "40 checked, 0 diagnostics",
+    "legacyAnchors": "0 diagnostics",
+    "v1Removal": "0 diagnostics",
+    "historyConvention": "0 diagnostics",
+    "v2Governance": "95 requirements, 7 gates, 26 drift decisions, 0 diagnostics",
+    "diffCheck": "clean"
+  }
+}

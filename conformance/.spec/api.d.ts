@@ -55,6 +55,7 @@ export interface ConformanceProfileManifest {
   readonly dependsOn: readonly string[]
   readonly requiresCapabilities: readonly ConformanceCapabilityRequirement[]
   readonly rules: readonly string[]
+  readonly evaluationScope?: 'specification' | 'universe'
 }
 
 export interface ConformanceProfileContext {
@@ -133,6 +134,11 @@ export function qualifySpecification(options: QualifySpecificationOptions): Prom
 export function qualifySpecifications(
   options: QualifySpecificationsOptions,
 ): Promise<readonly QualificationSnapshot[]>
+export function rebindQualificationSnapshot(
+  qualification: QualificationSnapshot,
+  specification: SpecificationSnapshot,
+  analysis: AnalysisSnapshotSet,
+): QualificationSnapshot
 
 export const SPECIFICATION_VALIDITY_PROFILE_ID: 'contract.specification.validity'
 export const MODULE_STRUCTURE_PROFILE_ID: 'contract.module.structure'

@@ -16,6 +16,7 @@ export function createModuleSchemaConformanceProfile() {
                 },
             ],
             rules: [SCHEMA_RULE],
+            evaluationScope: 'specification',
         },
         async evaluate(context) {
             return [schemaRule(await oneSchemaFact(context))];

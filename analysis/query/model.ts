@@ -61,6 +61,8 @@ export interface AnalysisSnapshotSet {
   readonly id: SnapshotSetId
   /** Exact repository inventory revision shared by every pinned universe. */
   readonly inventory: SourceManifestId
+  /** Exact immutable generation selected for every universe in this snapshot set. */
+  readonly generations: ReadonlyMap<ProjectUniverseId, AnalysisGenerationId>
   readonly universes: readonly ProjectUniverseId[]
   dispose(): Promise<void>
   query(universe: ProjectUniverseId): Promise<AnalysisQuery>

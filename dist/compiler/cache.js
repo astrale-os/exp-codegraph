@@ -1,5 +1,4 @@
 import { dirname, isAbsolute, resolve } from 'node:path';
-import { cacheEntries, record, restoreCacheEntries, stringRecord, } from '../cache/memory.js';
 import { operationSnapshot, operationSnapshotNamespace, withOperationSnapshot, } from '../source/operation-snapshot.js';
 import { DEFAULT_DECLARATION_SURFACE_SEMANTICS } from '../typescript/surface/semantics.js';
 /** Add dependency-validated, bounded memoization without changing compiler semantics. */
@@ -25,25 +24,6 @@ export function createCachedApiCompiler(compiler, dependencies, options = {}) {
         return revision;
     };
     return {
-        snapshot(scope) {
-            const prefix = `${resolve(scope)}\0`;
-            return cacheEntries(new Map([...cache].filter(([key]) => key.startsWith(prefix))));
-        },
-        restore(scope, snapshot) {
-            const prefix = `${resolve(scope)}\0`;
-            for (const key of cache.keys())
-                if (key.startsWith(prefix))
-                    cache.delete(key);
-            sourcePool.clear();
-            tokenPool.clear();
-            for (const [key, cached] of restoreCacheEntries(snapshot, capacity, isCachedCompilation)) {
-                const separator = key.indexOf('\0');
-                if (separator <= 0)
-                    continue;
-                const compilation = internCompilation(cached.compilation, key.slice(0, separator), sourcePool, tokenPool);
-                cache.set(key, { compilation });
-            }
-        },
         withRevisionSnapshot(operation) {
             return withOperationSnapshot(operation);
         },
@@ -83,16 +63,6 @@ export function createCachedApiCompiler(compiler, dependencies, options = {}) {
             return result;
         },
     };
-}
-function isCachedCompilation(value) {
-    if (!record(value) || !record(value.compilation))
-        return false;
-    const compilation = value.compilation;
-    return (typeof compilation.ok === 'boolean' &&
-        Array.isArray(compilation.diagnostics) &&
-        Array.isArray(compilation.dependencies) &&
-        compilation.dependencies.every(stringRecord) &&
-        isCacheable(compilation));
 }
 function internCompilation(compilation, projectRoot, sourcePool, tokenPool) {
     const api = compilation.api;

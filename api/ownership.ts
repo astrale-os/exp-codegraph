@@ -1,11 +1,22 @@
-import type { ObservedDeclaration } from '../analysis/typescript/surface/model.ts'
-import type { ApiModelV2 } from './model.ts'
+import type {
+  ObservedDeclaration,
+  ObservedExport,
+} from '../analysis/typescript/surface/model.ts'
+
+export type ApiOwnershipDeclaration = Pick<ObservedDeclaration, 'identity' | 'location'>
+export interface ApiOwnershipModel {
+  readonly entrypoint: string
+  readonly surface: {
+    readonly declarations: readonly ApiOwnershipDeclaration[]
+    readonly exports: readonly Pick<ObservedExport, 'declaration' | 'path'>[]
+  }
+}
 
 export interface ApiCatalogModule {
   readonly id: string
   readonly name: string
   readonly declarationPointer: string
-  readonly api?: { readonly model?: ApiModelV2 }
+  readonly api?: { readonly model?: ApiOwnershipModel }
 }
 
 export interface ApiCatalogSpecification {
@@ -20,19 +31,19 @@ export interface ApiCatalog {
 export interface ApiDeclarationOwner {
   readonly spec: ApiCatalogSpecification
   readonly module: ApiCatalogModule
-  readonly declaration: ObservedDeclaration
+  readonly declaration: ApiOwnershipDeclaration
 }
 
 export interface ApiCatalogIndex {
   readonly owner: ReadonlyMap<string, ApiDeclarationOwner>
-  readonly declaration: ReadonlyMap<string, ObservedDeclaration>
+  readonly declaration: ReadonlyMap<string, ApiOwnershipDeclaration>
   readonly exportsByModule: ReadonlyMap<string, ReadonlySet<string>>
 }
 
 /** Resolve every observed API declaration to the most specific owning module in a catalog. */
 export function indexCatalogApis(catalog: ApiCatalog): ApiCatalogIndex {
   const owner = new Map<string, ApiDeclarationOwner>()
-  const declaration = new Map<string, ObservedDeclaration>()
+  const declaration = new Map<string, ApiOwnershipDeclaration>()
   const exportsByModule = new Map<string, ReadonlySet<string>>()
   const apiModules = catalog.specs.flatMap((spec) =>
     spec.modules.flatMap((module) => (module.api?.model ? [{ spec, module }] : [])),
@@ -60,7 +71,7 @@ export function indexCatalogApis(catalog: ApiCatalog): ApiCatalogIndex {
 function compareApiOwners(
   left: { readonly module: ApiCatalogModule },
   right: { readonly module: ApiCatalogModule },
-  declaration: ObservedDeclaration,
+  declaration: ApiOwnershipDeclaration,
 ): number {
   const file = declaration.location.file!
   const exactEntrypoint =

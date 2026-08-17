@@ -63,18 +63,16 @@ export async function projectApplicationCatalog(
 ): Promise<ViewerCatalog> {
   const previous = new Map(options.previous?.specs.map((value) => [value.source, value]) ?? [])
   const refresh = new Set(options.refresh ?? reader.snapshot.specifications.map((value) => value.source))
-  const specs: ViewerSpecification[] = []
-  // Each projection opens several pinned fact queries. Bounding concurrency keeps their decoded
-  // payload caches proportional to a small worker set instead of the repository module count.
-  for (let offset = 0; offset < reader.snapshot.specifications.length; offset += 6) {
-    const batch = reader.snapshot.specifications.slice(offset, offset + 6)
-    specs.push(...await Promise.all(batch.map((specification) => {
-      const retained = previous.get(specification.source)
-      return retained && !refresh.has(specification.source)
-        ? retained
-        : projectSpecification(root, reader, specification.source)
-    })))
-  }
+  const projected = new Map(
+    (await projectApplicationSpecifications(root, reader, [...refresh])).map((value) => [value.source, value]),
+  )
+  const specs = reader.snapshot.specifications.map((specification) => {
+    const retained = previous.get(specification.source)
+    const replacement = projected.get(specification.source)
+    if (replacement) return replacement
+    if (retained) return retained
+    throw new Error(`Application specification was not projected: ${specification.source}`)
+  })
   return {
     specs,
     diagnostics: [...reader.snapshot.diagnostics],
@@ -95,6 +93,31 @@ export async function projectApplicationCatalog(
         }
       : {}),
   }
+}
+
+/** Project only the requested presentation records from one generation-pinned application reader. */
+export async function projectApplicationSpecifications(
+  root: string,
+  reader: TypeSpecApplicationReader,
+  sources: readonly string[],
+): Promise<readonly ViewerSpecification[]> {
+  const requested = new Set(sources)
+  const selected = reader.snapshot.specifications.filter((value) => requested.has(value.source))
+  if (selected.length !== requested.size) {
+    const known = new Set(selected.map((value) => value.source))
+    const missing = [...requested].filter((source) => !known.has(source)).sort()
+    throw new Error(`Application specification disappeared: ${missing.join(', ')}`)
+  }
+  const specs: ViewerSpecification[] = []
+  // Each projection opens several pinned fact queries. Bounding concurrency keeps their decoded
+  // payload caches proportional to a small worker set instead of the repository module count.
+  for (let offset = 0; offset < selected.length; offset += 6) {
+    const batch = selected.slice(offset, offset + 6)
+    specs.push(...await Promise.all(
+      batch.map((specification) => projectSpecification(root, reader, specification.source)),
+    ))
+  }
+  return specs
 }
 
 export interface ApplicationCatalogProjectionOptions {

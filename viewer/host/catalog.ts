@@ -1,6 +1,6 @@
 import type { ApiModelV2 } from '../../api/model.ts'
+import type { Diagnostic } from '../../source/diagnostic.ts'
 import type { DeclarationResource, PortResource } from '../../specification/resource/index.ts'
-import type { ViewerSpecificationModule } from '../../viewer-host/specification.ts'
 import type {
   CatalogSourcePayload,
   CatalogSpecEntry,
@@ -11,6 +11,7 @@ import type {
   PackedSpecModule,
   ViewerSpecification,
 } from '../../viewer-host/catalog.ts'
+import type { ViewerSpecificationModule } from '../../viewer-host/specification.ts'
 
 import {
   CATALOG_SOURCE_ENDPOINT,
@@ -70,44 +71,66 @@ async function hydrateSpec(
   source: (key: string) => Promise<CatalogSourcePayload>,
 ): Promise<ViewerSpecification> {
   const { modules, ...spec } = payload.spec
+  const payloadDiagnostics: Diagnostic[] = []
+  const hydratedModules = await Promise.all(
+    modules.map((module) => hydrateModule(module, source, payloadDiagnostics)),
+  )
+  const diagnostics = [
+    ...new Map(
+      payloadDiagnostics.map((diagnostic) => [
+        `${diagnostic.code}\0${diagnostic.file}\0${diagnostic.message}`,
+        diagnostic,
+      ]),
+    ).values(),
+  ]
   return {
     ...spec,
-    modules: await Promise.all(modules.map((module) => hydrateModule(module, source))),
+    modules: hydratedModules,
     ...(payload.semanticReferences ? { semanticReferences: payload.semanticReferences } : {}),
+    ...(diagnostics.length ? { payloadDiagnostics: diagnostics } : {}),
   }
 }
 
 async function hydrateModule(
   module: PackedSpecModule,
   source: (key: string) => Promise<CatalogSourcePayload>,
+  diagnostics: Diagnostic[],
 ): Promise<ViewerSpecificationModule> {
   const { api, ports, ...rest } = module
   return {
     ...rest,
-    ...(api ? { api: await hydrateDeclaration(api, source) } : {}),
-    ports: await Promise.all(ports.map((port) => hydratePort(port, source))),
+    ...(api ? { api: await hydrateDeclaration(api, source, diagnostics) } : {}),
+    ports: await Promise.all(ports.map((port) => hydratePort(port, source, diagnostics))),
   }
 }
 
 async function hydrateDeclaration(
   resource: PackedDeclarationResource,
   source: (key: string) => Promise<CatalogSourcePayload>,
+  diagnostics: Diagnostic[],
 ): Promise<DeclarationResource> {
   const { model, ...declaration } = resource
-  return {
-    ...declaration,
-    ...(model ? { model: await hydrateModel(model, source) } : {}),
+  if (!model) return declaration
+  try {
+    return { ...declaration, model: await hydrateModel(model, source) }
+  } catch (error) {
+    diagnostics.push(payloadDiagnostic(error, declaration.source))
+    return declaration
   }
 }
 
 async function hydratePort(
   resource: PackedPortResource,
   source: (key: string) => Promise<CatalogSourcePayload>,
+  diagnostics: Diagnostic[],
 ): Promise<PortResource> {
   const { model, ...port } = resource
-  return {
-    ...port,
-    ...(model ? { model: await hydrateModel(model, source) } : {}),
+  if (!model) return port
+  try {
+    return { ...port, model: await hydrateModel(model, source) }
+  } catch (error) {
+    diagnostics.push(payloadDiagnostic(error, port.source))
+    return port
   }
 }
 
@@ -147,7 +170,6 @@ function assertSpecPayload(
   if (
     value.source !== entry.source ||
     value.revision !== entry.revision ||
-    value.snapshot !== entry.snapshot ||
     !record(value.spec) ||
     (value.semanticReferences !== undefined && !record(value.semanticReferences))
   ) {
@@ -200,4 +222,14 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function positiveInteger(value: number | undefined, fallback: number): number {
   return Number.isSafeInteger(value) && value! > 0 ? value! : fallback
+}
+
+function payloadDiagnostic(error: unknown, file: string): Diagnostic {
+  return {
+    code: 'CATALOG_SOURCE_UNAVAILABLE',
+    message: error instanceof Error ? error.message : String(error),
+    file,
+    line: 1,
+    column: 1,
+  }
 }

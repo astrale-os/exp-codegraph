@@ -20,6 +20,7 @@ export function createModuleLayoutConformanceProfile(options = {}) {
                 },
             ],
             rules: layoutRules,
+            evaluationScope: 'specification',
         },
         async evaluate(context) {
             const fact = await oneLayoutFact(context);

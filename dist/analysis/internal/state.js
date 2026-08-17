@@ -251,6 +251,7 @@ class PinnedQuery {
 class PinnedSnapshotSet {
     id;
     inventory;
+    generations;
     universes;
     #values;
     #openQuery;
@@ -262,7 +263,8 @@ class PinnedSnapshotSet {
         this.#release = release;
         this.inventory = inventory;
         this.universes = [...values.keys()].sort();
-        this.id = deriveAnalysisSnapshotSetId(new Map(this.universes.map((universe) => [universe, values.get(universe).generation.id])), inventory);
+        this.generations = new Map(this.universes.map((universe) => [universe, values.get(universe).generation.id]));
+        this.id = deriveAnalysisSnapshotSetId(this.generations, inventory);
     }
     query(universe) {
         if (this.#disposed)

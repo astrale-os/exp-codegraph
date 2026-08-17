@@ -1,4 +1,4 @@
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, posix, relative, resolve, sep } from 'node:path';
 /** Resolve changed paths to the deepest specification owners used by incremental presentation. */
 export function affectedSpecificationSources(snapshot, root, files) {
     const affected = new Set();
@@ -61,6 +61,8 @@ export function isWatchedSource(snapshot, root, file, event = 'change', scope = 
         return false;
     if (source === '.spec/api.d.ts' || source.endsWith('/.spec/api.d.ts'))
         return true;
+    if (event !== 'change' && potentialSpecificationSource(source))
+        return true;
     if (!snapshot)
         return false;
     if (snapshot.specifications.some((specification) => projectConfigurationAffects(specification, source))) {
@@ -113,6 +115,7 @@ function specificationSources(specification) {
     ];
     return new Set([
         specification.module.packageAuthority.source,
+        ...testEvidenceSources(specification),
         ...resources.flatMap((resource) => [
             resource.source,
             ...('model' in resource && resource.model
@@ -123,6 +126,22 @@ function specificationSources(specification) {
                 : []),
         ]),
     ]);
+}
+function testEvidenceSources(specification) {
+    const sources = new Set();
+    for (const resource of [...specification.laws, ...specification.states]) {
+        for (const definition of resource.definitions) {
+            for (const reference of definition.tests ?? []) {
+                if (isAbsolute(reference.file) || reference.file.includes('\\'))
+                    continue;
+                const source = posix.normalize(posix.join(specification.root, reference.file));
+                if (source === '..' || source.startsWith('../'))
+                    continue;
+                sources.add(source);
+            }
+        }
+    }
+    return [...sources];
 }
 function projectConfigurationAffects(specification, source) {
     const name = source.split('/').at(-1) ?? '';

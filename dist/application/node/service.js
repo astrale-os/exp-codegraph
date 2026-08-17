@@ -2,12 +2,17 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { selectAnalysisStore } from '../../analysis/index.js';
-import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.js';
 import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.js';
-import { createTypeSpecApplicationService } from '../service.js';
+import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.js';
+import { createFileWorkspaceCheckpointStore, } from '../../workspace/checkpoint/index.js';
+import { createApplicationCheckpoint } from '../checkpoint/index.js';
+import { resolveApplicationRoot } from '../discovery/index.js';
+import { createTypeSpecApplicationServiceWithDependencies } from '../service.js';
+import { codegraphProducerFingerprint } from './fingerprint.js';
+import { createCheckpointedRepositoryInventory, createNodeRepositoryInventory, } from './inventory.js';
 /** Node-owned store/native composition around the portable headless application service. */
 export async function createNodeTypeSpecApplicationService(options) {
-    const root = resolve(options.root);
+    const root = await resolveApplicationRoot(options.root);
     const maximumRetainedGenerations = options.maximumRetainedGenerations ?? 2;
     const selection = await selectAnalysisStore({
         persistence: 'advisory',
@@ -24,6 +29,14 @@ export async function createNodeTypeSpecApplicationService(options) {
             : {}),
     });
     const store = selection.store;
+    const repository = options.repository ?? (await nodeApplicationRepositoryKey(root));
+    const workspaceCheckpoint = selection.backend === 'durable'
+        ? createFileWorkspaceCheckpointStore({
+            directory: nodeApplicationWorkspaceCheckpointDirectory(options.cacheDirectory, root),
+            maxArtifacts: 4_096,
+            maximumScopes: 512,
+        })
+        : undefined;
     dispatchAnalysisTelemetry(options.telemetry, {
         component: 'analysis',
         phase: 'store.selection',
@@ -36,22 +49,39 @@ export async function createNodeTypeSpecApplicationService(options) {
         },
     });
     try {
-        const application = await createTypeSpecApplicationService({
+        const producer = workspaceCheckpoint ? await codegraphProducerFingerprint() : undefined;
+        const application = await createTypeSpecApplicationServiceWithDependencies({
             root,
-            repository: options.repository ?? (await repositoryKey(root)),
+            repository,
             maximumRetainedSnapshots: options.maximumRetainedSnapshots,
             analysis: { store, maximumRetainedGenerations },
+            ...(workspaceCheckpoint
+                ? {
+                    checkpoint: createApplicationCheckpoint({
+                        store: workspaceCheckpoint,
+                        producerFingerprint: `${producer}:application-checkpoint/3`,
+                    }),
+                }
+                : {}),
             ...(options.telemetry ? { telemetry: options.telemetry } : {}),
             ...(options.native ? { native: options.native } : {}),
+        }, {
+            inventory: workspaceCheckpoint
+                ? createCheckpointedRepositoryInventory({
+                    root,
+                    store: workspaceCheckpoint,
+                    producerFingerprint: `${producer}:repository-inventory/3`,
+                })
+                : createNodeRepositoryInventory({ root }),
         });
-        return ownStore(application, store);
+        return ownStore(application, store, workspaceCheckpoint);
     }
     catch (error) {
-        await store.dispose();
+        await Promise.allSettled([store.dispose(), workspaceCheckpoint?.dispose()]);
         throw error;
     }
 }
-function ownStore(application, store) {
+function ownStore(application, store, checkpoint) {
     let disposed = false;
     return {
         refresh: (options) => application.refresh(options),
@@ -61,14 +91,21 @@ function ownStore(application, store) {
             if (disposed)
                 return;
             disposed = true;
-            const results = await Promise.allSettled([application.dispose(), store.dispose()]);
+            const results = await Promise.allSettled([
+                application.dispose(),
+                store.dispose(),
+                checkpoint?.dispose(),
+            ]);
             const rejected = results.find((result) => result.status === 'rejected');
             if (rejected)
                 throw rejected.reason;
         },
     };
 }
-async function repositoryKey(root) {
+export function nodeApplicationWorkspaceCheckpointDirectory(cacheDirectory, root) {
+    return join(cacheDirectory, 'workspaces', createHash('sha256').update(resolve(root)).digest('hex'), 'application');
+}
+export async function nodeApplicationRepositoryKey(root) {
     try {
         const value = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
         if (value &&

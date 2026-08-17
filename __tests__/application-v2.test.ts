@@ -1,13 +1,19 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
 
 import type {
   ApplicationAnalysisRefreshOptions,
   ApplicationAnalysisWorkspace,
 } from '../application/analysis/index.ts'
+import type { AnalysisTelemetryEvent } from '../analysis/index.ts'
+import type {
+  ApplicationCheckpointContent,
+  ApplicationCheckpointExpectation,
+} from '../application/checkpoint/index.ts'
 
 import { createMemoryAnalysisStore, deriveAnalysisId } from '../analysis/index.ts'
 import { createTypeSpecApplicationServiceWithDependencies } from '../application/service.ts'
+import { discoverSpecificationDirectories } from '../application/discovery/index.ts'
 import { validateApplicationModuleBoundaries } from '../application/analysis/index.ts'
 import {
   APPLICATION_LAYOUT_FACT_NAMESPACE,
@@ -22,7 +28,10 @@ import {
   qualifySpecification,
 } from '../conformance/index.ts'
 import { inventoryRepository } from '../repository/index.ts'
-import { compileSpecificationSnapshot } from '../specification/index.ts'
+import {
+  compileSpecificationSnapshot,
+  compileSpecificationSnapshots,
+} from '../specification/index.ts'
 import { fixture, type Fixture } from './fixture.ts'
 
 const fixtures: Fixture[] = []
@@ -32,6 +41,230 @@ afterEach(async () => {
 })
 
 describe('headless TypeSpec V2 application', () => {
+  it('rejects generated artifact roots before repository inventory work begins', async () => {
+    const current = await fixture({
+      'evidence/artifacts/run/package.json': JSON.stringify({
+        name: '@fixture/generated-artifact',
+        type: 'module',
+      }),
+      'evidence/artifacts/run/module/.spec/api.d.ts': 'export interface Generated {}\n',
+    })
+    fixtures.push(current)
+    const inventory = vi.fn(inventoryRepository)
+
+    await expect(
+      createTypeSpecApplicationServiceWithDependencies(
+        { root: join(current.root, 'evidence/artifacts/run') },
+        { analysis: emptyAnalysisWorkspace(), profiles: [], inventory },
+      ),
+    ).rejects.toThrow('generated evidence artifacts')
+    expect(inventory).not.toHaveBeenCalled()
+  })
+
+  it('applies application and consumer exclusions to the exact repository inventory', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/application-scope', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+      'private/ignored.txt': 'ignored\n',
+    })
+    fixtures.push(current)
+    const inventory = vi.fn(inventoryRepository)
+    const discover = vi.fn(discoverSpecificationDirectories)
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [], inventory, discover },
+    )
+
+    try {
+      await service.refresh({ exclude: ['private'] })
+      const scope = inventory.mock.calls[0]?.[0].scope
+      expect(scope?.exclude).toEqual(expect.arrayContaining([
+        '.pnpm-store/**',
+        '**/evidence/artifacts/**',
+        '**/benchmark/artifacts/**',
+        'private',
+      ]))
+      expect(discover.mock.calls[0]?.[1]?.exclude).toEqual(scope?.exclude)
+    } finally {
+      await service.dispose()
+    }
+  })
+
+  it('reports diagnostic-only lifecycle phases around the actual headless work', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/application-progress', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    const events: AnalysisTelemetryEvent[] = []
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root, telemetry: (event) => events.push(event) },
+      { analysis: emptyAnalysisWorkspace(), profiles: [] },
+    )
+
+    try {
+      await service.refresh({ qualify: true })
+    } finally {
+      await service.dispose()
+    }
+
+    const lifecycle = events
+      .filter((event) => event.phase.startsWith('application.'))
+      .map((event) => [event.phase, event.metrics?.status])
+    expect(lifecycle).toEqual([
+      ['application.inventory', 'started'],
+      ['application.inventory', 'completed'],
+      ['application.discovery', 'started'],
+      ['application.discovery', 'completed'],
+      ['application.compile', 'started'],
+      ['application.compile', 'completed'],
+      ['application.statistics', 'started'],
+      ['application.statistics', 'completed'],
+      ['application.analysis', 'started'],
+      ['application.analysis', 'completed'],
+      ['application.qualification', 'started'],
+      ['application.qualification', 'completed'],
+    ])
+    expect(events.filter((event) => event.durationNs !== undefined).length).toBe(6)
+  })
+
+  it('reports the exact advisory checkpoint publication failure', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-telemetry', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    const events: AnalysisTelemetryEvent[] = []
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root, telemetry: (event) => events.push(event) },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint: {
+          load: async () => ({ ok: false, reason: 'missing' }),
+          publish: async () => {
+            throw new RangeError('Checkpoint artifacts exceed maxTotalBytes.')
+          },
+        },
+      },
+    )
+
+    try {
+      await service.refresh({ qualify: true })
+    } finally {
+      await service.dispose()
+    }
+
+    expect(
+      events.find(
+        (event) =>
+          event.phase === 'application.checkpoint' &&
+          event.metrics?.outcome === 'unavailable',
+      )?.metrics,
+    ).toMatchObject({
+      status: 'completed',
+      outcome: 'unavailable',
+      error: 'RangeError',
+      reason: 'Checkpoint artifacts exceed maxTotalBytes.',
+    })
+  })
+
+  it('keeps advisory checkpoint packing outside the refresh critical path', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-deferred', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    let publicationStarted = false
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint: {
+          load: async () => ({ ok: false, reason: 'missing' }),
+          publish: async () => {
+            publicationStarted = true
+          },
+        },
+      },
+    )
+
+    await service.refresh({ qualify: true })
+    expect(publicationStarted).toBe(false)
+    await service.dispose()
+    expect(publicationStarted).toBe(true)
+  })
+
+  it.each([true, false])(
+    'falls back cleanly when an exact=%s checkpoint corpus is incoherent',
+    async (exact) => {
+      const current = await fixture({
+        'package.json': JSON.stringify({ name: '@fixture/checkpoint-fallback', type: 'module' }),
+        'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+      })
+      fixtures.push(current)
+      let published:
+        | {
+            readonly expectation: ApplicationCheckpointExpectation
+            readonly content: ApplicationCheckpointContent
+          }
+        | undefined
+      const first = await createTypeSpecApplicationServiceWithDependencies(
+        { root: current.root },
+        {
+          analysis: emptyAnalysisWorkspace(),
+          profiles: [],
+          checkpoint: {
+            load: async () => ({ ok: false, reason: 'missing' }),
+            publish: async (expectation, content) => {
+              published = { expectation, content }
+            },
+          },
+        },
+      )
+      await first.refresh()
+      await first.dispose()
+      if (!published) throw new Error('Fixture checkpoint was not published.')
+
+      const compile = vi.fn(compileSpecificationSnapshots)
+      const second = await createTypeSpecApplicationServiceWithDependencies(
+        { root: current.root },
+        {
+          analysis: emptyAnalysisWorkspace(),
+          profiles: [],
+          compile,
+          checkpoint: {
+            load: async () => ({
+              ok: true,
+              exact,
+              content: {
+                ...published.content,
+                specifications: published.content.specifications.map((specification) => ({
+                  ...specification,
+                  module: {
+                    ...specification.module,
+                    api: specification.module.api
+                      ? { ...specification.module.api, source: 'missing/.spec/api.d.ts' }
+                      : specification.module.api,
+                  },
+                })),
+              },
+            }),
+            publish: async () => {},
+          },
+        },
+      )
+      try {
+        const refreshed = await second.refresh({ focused: !exact })
+        expect(refreshed.snapshot.specifications).toHaveLength(1)
+        expect(compile).toHaveBeenCalledTimes(1)
+      } finally {
+        await second.dispose()
+      }
+    },
+  )
+
   it('rejects ambiguous implementation roots and entrypoints without repository exceptions', () => {
     const common = {
       project: 'tsconfig.json',
@@ -167,6 +400,7 @@ export interface Alpha { readonly value: Shared }
         await service.refresh({ changed: [join(current.root, 'alpha/src/index.ts')] })
       ).snapshot
       expect(implementation.specifications[0]).toBe(before.get('alpha/.spec/api.d.ts'))
+      expect(implementation.specifications[0]?.id).toBe(before.get('alpha/.spec/api.d.ts')?.id)
       expect(implementation.specifications[1]).toBe(before.get('beta/.spec/api.d.ts'))
 
       await current.write(
@@ -179,7 +413,7 @@ export interface Alpha { readonly value: Shared; readonly changed: true }
         await service.refresh({ changed: [join(current.root, 'alpha/.spec/api.d.ts')] })
       ).snapshot
       expect(normative.specifications[0]).not.toBe(before.get('alpha/.spec/api.d.ts'))
-      expect(normative.specifications[1]).not.toBe(before.get('beta/.spec/api.d.ts'))
+      expect(normative.specifications[1]).toBe(before.get('beta/.spec/api.d.ts'))
 
       const afterNormative = new Map(
         normative.specifications.map((value) => [value.source, value]),
@@ -192,7 +426,7 @@ export interface Alpha { readonly value: Shared; readonly changed: true }
         await service.refresh({ changed: [join(current.root, 'shared/types.d.ts')] })
       ).snapshot
       expect(shared.specifications[0]).not.toBe(afterNormative.get('alpha/.spec/api.d.ts'))
-      expect(shared.specifications[1]).not.toBe(afterNormative.get('beta/.spec/api.d.ts'))
+      expect(shared.specifications[1]).toBe(afterNormative.get('beta/.spec/api.d.ts'))
     } finally {
       await service.dispose()
     }
@@ -326,6 +560,10 @@ function emptyAnalysisWorkspace(): ApplicationAnalysisWorkspace {
   const store = createMemoryAnalysisStore()
   let disposed = false
   return {
+    async open(generations, inventory) {
+      if (disposed) throw new Error('analysis disposed')
+      return store.snapshotSet(generations, inventory)
+    },
     async refresh(options: ApplicationAnalysisRefreshOptions) {
       if (disposed) throw new Error('analysis disposed')
       const snapshot = await store.snapshotSet(

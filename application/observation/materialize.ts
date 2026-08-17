@@ -59,6 +59,8 @@ export interface MaterializeApplicationObservationsOptions {
   readonly store: AnalysisStore
   readonly inventory: RepositoryInventory
   readonly specifications: readonly SpecificationSnapshot[]
+  /** Specification sources whose owner-scoped observation shards must be recomputed. */
+  readonly refresh?: readonly string[]
   readonly schemaDependencies?: readonly ApplicationSchemaDependencyResource[]
   readonly signal?: AbortSignal
 }
@@ -75,7 +77,14 @@ export async function materializeApplicationObservations(
   const provisional = deriveAnalysisId('generation', 'astrale.typespec.observation.provisional', {
     inventory: options.inventory.revision,
   })
+  const current = await options.store.current(universe)
+  const currentManifest = current
+    ? await withManifest(options.store, universe, current.id)
+    : []
+  const currentByKey = new Map(currentManifest.map((entry) => [entry.key, entry] as const))
+  const requested = options.refresh ? new Set(options.refresh) : undefined
   const shards: FactShard[] = []
+  const retained: FactShardReference[] = []
   const schemaDependencies = options.schemaDependencies ?? []
   const schemaDiagnostics = validateModuleSchemaCatalog(
     options.root,
@@ -92,8 +101,37 @@ export async function materializeApplicationObservations(
   const globalDiagnostics = schemaDiagnostics.filter(
     (diagnostic) => !ownedSchemaSources.has(diagnostic.file),
   )
+  const sourceManifest = deriveAnalysisId(
+    'source-manifest',
+    'astrale.typespec.application-observation',
+    {
+      inventory: options.inventory.revision,
+      schemaDependencies: schemaDependencies.map((resource) => [
+        resource.source,
+        resource.revision,
+      ]),
+    },
+  ) as SourceManifestId
+  const expectedKeys = options.specifications.flatMap(observationKeys).sort()
+  if (
+    (requested === undefined || requested.size === 0) &&
+    current?.sourceManifest === sourceManifest &&
+    currentManifest.length === expectedKeys.length &&
+    expectedKeys.every((key, index) => currentManifest[index]?.key === key)
+  ) {
+    return { universe, generation: current, diagnostics: globalDiagnostics }
+  }
   for (const specification of options.specifications) {
     options.signal?.throwIfAborted()
+    const keys = observationKeys(specification)
+    const canRetain =
+      requested !== undefined &&
+      !requested.has(specification.source) &&
+      keys.every((key) => currentByKey.has(key))
+    if (canRetain) {
+      retained.push(...keys.map((key) => currentByKey.get(key)!))
+      continue
+    }
     const [layout, tests] = await Promise.all([
       observeSpecificationLayout(options.root, specification),
       observeSpecificationTests(options.root, specification),
@@ -130,18 +168,9 @@ export async function materializeApplicationObservations(
     )
   }
   shards.sort((left, right) => left.key.localeCompare(right.key))
-  const manifest = shards.map(shardReference)
-  const sourceManifest = deriveAnalysisId(
-    'source-manifest',
-    'astrale.typespec.application-observation',
-    {
-      inventory: options.inventory.revision,
-      schemaDependencies: schemaDependencies.map((resource) => [
-        resource.source,
-        resource.revision,
-      ]),
-    },
-  ) as SourceManifestId
+  const manifest = [...retained, ...shards.map(shardReference)].sort((left, right) =>
+    left.key.localeCompare(right.key),
+  )
   const semanticGeneration = {
     universe,
     producer: OBSERVATION_PRODUCER,
@@ -154,14 +183,9 @@ export async function materializeApplicationObservations(
     ].sort(),
   }
   const id = generationIdentity(semanticGeneration, manifest)
-  const current = await options.store.current(universe)
   if (current?.id === id) {
     return { universe, generation: current, diagnostics: globalDiagnostics }
   }
-  const currentManifest = current
-    ? await withManifest(options.store, universe, current.id)
-    : []
-  const currentByKey = new Map(currentManifest.map((entry) => [entry.key, entry] as const))
   const nextKeys = new Set(manifest.map((entry) => entry.key))
   const rebound = shards.map((shard) => bindGeneration(shard, id))
   const generation: AnalysisGeneration = {
@@ -186,6 +210,22 @@ export async function materializeApplicationObservations(
     { signal: options.signal },
   )
   return { universe, generation, diagnostics: globalDiagnostics }
+}
+
+function observationKeys(specification: SpecificationSnapshot): readonly FactShard['key'][] {
+  return [
+    APPLICATION_LAYOUT_FACT_NAMESPACE,
+    APPLICATION_TEST_FACT_NAMESPACE,
+    APPLICATION_SCHEMA_FACT_NAMESPACE,
+    APPLICATION_CONTEXT_FACT_NAMESPACE,
+  ]
+    .map((namespace) =>
+      deriveAnalysisId('fact-shard-key', namespace, {
+        specification: specification.module.id,
+        schemaVersion: 1,
+      }),
+    )
+    .sort()
 }
 
 function observeSpecificationContext(

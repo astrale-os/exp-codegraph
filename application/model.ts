@@ -1,4 +1,5 @@
 import type {
+  AnalysisGenerationId,
   AnalysisQuery,
   PassId,
   ProjectUniverseId,
@@ -49,6 +50,10 @@ export interface TypeSpecApplicationSnapshot {
     readonly id: SnapshotSetId
     readonly inventory: SourceManifestId
     readonly universes: readonly ProjectUniverseId[]
+    readonly generations: readonly {
+      readonly universe: ProjectUniverseId
+      readonly generation: AnalysisGenerationId
+    }[]
   }
   readonly diagnostics: readonly Diagnostic[]
   readonly analysisDiagnostics: readonly string[]
@@ -78,6 +83,8 @@ export interface TypeSpecApplicationChanges {
     readonly added: readonly string[]
     readonly changed: readonly string[]
     readonly removed: readonly string[]
+    /** Owners whose compilation or derived observations were refreshed in this operation. */
+    readonly refreshed: readonly string[]
   }
   readonly sources: readonly SourceId[]
   readonly invalidatedPasses: readonly PassId[]
@@ -85,6 +92,7 @@ export interface TypeSpecApplicationChanges {
 
 export interface TypeSpecApplicationTiming {
   readonly totalMs: number
+  readonly checkpointMs: number
   readonly discoverMs: number
   readonly compileMs: number
   readonly inventoryMs: number
@@ -97,6 +105,10 @@ export interface TypeSpecApplicationRefresh {
   readonly snapshot: TypeSpecApplicationSnapshot
   readonly changes: TypeSpecApplicationChanges
   readonly timing: TypeSpecApplicationTiming
+  /** Fresh diagnostic partition used by CLI projections; absent on opaque checkpoint reuse. */
+  readonly checkProjection?: {
+    readonly sharedDiagnostics: readonly Diagnostic[]
+  }
 }
 
 /** Lease over one exact application snapshot and its pinned analysis generations. */

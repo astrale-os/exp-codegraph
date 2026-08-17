@@ -11,6 +11,7 @@ export function createSpecificationValidityConformanceProfile(): ConformanceProf
       dependsOn: [],
       requiresCapabilities: [],
       rules: ['SPECIFICATION-VALID'],
+      evaluationScope: 'specification',
     },
     async evaluate(context) {
       const diagnostics = context.specification.diagnostics.map((entry) => ({

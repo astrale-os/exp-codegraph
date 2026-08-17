@@ -1,4 +1,5 @@
 import type { CliOutput } from './report.ts'
+import type { AnalysisTelemetryEvent } from '../analysis/index.ts'
 
 export type ApplicationProgressPhase =
   | 'discover'
@@ -19,6 +20,23 @@ export interface ApplicationProgressEvent {
 
 const HEARTBEAT_MS = 10_000
 
+const DEV_SPINNER_INTERVAL_MS = 80
+const DEV_SPINNER = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const
+const DEV_PHASES = [
+  ['store.selection', 'Opening durable analysis cache'],
+  ['application.inventory', 'Inventorying repository'],
+  ['application.checkpoint', 'Opening reusable workspace checkpoint'],
+  ['application.discovery', 'Discovering specifications'],
+  ['application.compile', 'Compiling specification contracts'],
+  ['application.statistics', 'Indexing repository statistics'],
+  ['application.analysis', 'Refreshing semantic analysis'],
+  ['application.qualification', 'Qualifying specifications'],
+  ['application.projection', 'Preparing specification viewer'],
+] as const
+
+type DevPhase = (typeof DEV_PHASES)[number][0]
+const devPhaseLabels = new Map<string, string>(DEV_PHASES)
+
 const phaseLabels: Record<Exclude<ApplicationProgressPhase, 'load'>, string> = {
   discover: 'Discovering specifications',
   prepare: 'Preparing specification TypeScript',
@@ -31,6 +49,89 @@ const phaseLabels: Record<Exclude<ApplicationProgressPhase, 'load'>, string> = {
 export interface CliProgress {
   readonly onProgress: (event: ApplicationProgressEvent) => void
   close(): void
+}
+
+export interface DevStartupProgress {
+  /** Return true while startup telemetry has been rendered by this progress view. */
+  onTelemetry(event: AnalysisTelemetryEvent): boolean
+  succeed(): void
+  fail(): void
+}
+
+/** Render real startup phases without inventing a percentage or unstable ETA. */
+export function createDevStartupProgress(output: CliOutput): DevStartupProgress {
+  const started = Date.now()
+  const interactive = output.update !== undefined
+  const completed = new Set<DevPhase>()
+  let active: DevPhase = 'store.selection'
+  let spinner = 0
+  let backend = 'analysis cache'
+  let specifications: number | undefined
+  let closed = false
+  let animation: ReturnType<typeof setInterval> | undefined
+
+  const render = (): void => {
+    if (closed) return
+    const label = devPhaseLabels.get(active) ?? 'Initializing specification viewer'
+    const milestone = `${completed.size}/${DEV_PHASES.length}`
+    const elapsed = formatElapsed(Date.now() - started)
+    output.update?.(
+      `\u001b[36m${DEV_SPINNER[spinner++ % DEV_SPINNER.length]}\u001b[0m \u001b[1m${label}\u001b[0m  \u001b[2m${milestone} · ${elapsed}\u001b[0m`,
+    )
+  }
+
+  const startAnimation = (): void => {
+    if (!interactive || animation) return
+    animation = setInterval(render, DEV_SPINNER_INTERVAL_MS)
+    animation.unref()
+  }
+
+  if (interactive) {
+    output.update?.(
+      '\u001b[36m◆\u001b[0m \u001b[1mOpening durable analysis cache…\u001b[0m',
+    )
+  } else output.out('Initializing specification viewer...')
+
+  return {
+    onTelemetry(event) {
+      if (closed) return false
+      if (event.phase === 'store.selection') {
+        const selected = event.metrics?.backend
+        if (typeof selected === 'string') backend = `${selected} cache`
+        completed.add('store.selection')
+        if (!interactive) output.out(`CODEGRAPH_STORE=${selected ?? 'unknown'}`)
+        return true
+      }
+      if (!devPhaseLabels.has(event.phase)) return false
+      const phase = event.phase as DevPhase
+      const status = event.metrics?.status
+      if (status === 'started') {
+        active = phase
+        startAnimation()
+        if (!interactive) output.out(`${devPhaseLabels.get(phase)}...`)
+      } else if (status === 'completed') {
+        completed.add(phase)
+        const count = event.metrics?.specifications
+        if (typeof count === 'number') specifications = count
+      }
+      render()
+      return true
+    },
+    succeed() {
+      if (closed) return
+      closed = true
+      if (animation) clearInterval(animation)
+      output.clear?.()
+      const count = specifications === undefined ? '' : ` · ${specifications} specifications`
+      output.out(`✓ Specification viewer ready in ${formatElapsed(Date.now() - started)} · ${backend}${count}`)
+    },
+    fail() {
+      if (closed) return
+      closed = true
+      if (animation) clearInterval(animation)
+      output.clear?.()
+    },
+  }
 }
 
 /** Render stable, line-oriented progress that remains useful in agent and CI logs. */
@@ -77,4 +178,11 @@ export function createCliProgress(output: CliOutput, quiet: boolean): CliProgres
 function specDirectory(source: string): string {
   if (source.endsWith('/api.d.ts')) return source.slice(0, -'api.d.ts'.length).replace(/\/$/u, '')
   return source
+}
+
+function formatElapsed(milliseconds: number): string {
+  const seconds = Math.max(0, Math.floor(milliseconds / 1_000))
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`
 }

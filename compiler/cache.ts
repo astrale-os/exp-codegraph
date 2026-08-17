@@ -5,13 +5,6 @@ import type { ApiCompilation } from './compile.ts'
 import type { ApiCompiler } from './contract.ts'
 
 import {
-  cacheEntries,
-  record,
-  restoreCacheEntries,
-  stringRecord,
-  type RestorableCache,
-} from '../cache/memory.ts'
-import {
   operationSnapshot,
   operationSnapshotNamespace,
   withOperationSnapshot,
@@ -31,7 +24,7 @@ interface CachedCompilation {
   readonly compilation: ApiCompilation
 }
 
-export interface CachedApiCompiler extends ApiCompiler, RestorableCache {
+export interface CachedApiCompiler extends ApiCompiler {
   /** Reuse dependency revisions only within one logically coherent catalog read. */
   withRevisionSnapshot<T>(operation: () => Promise<T>): Promise<T>
 }
@@ -64,27 +57,6 @@ export function createCachedApiCompiler(
   }
 
   return {
-    snapshot(scope) {
-      const prefix = `${resolve(scope)}\0`
-      return cacheEntries(new Map([...cache].filter(([key]) => key.startsWith(prefix))))
-    },
-    restore(scope, snapshot) {
-      const prefix = `${resolve(scope)}\0`
-      for (const key of cache.keys()) if (key.startsWith(prefix)) cache.delete(key)
-      sourcePool.clear()
-      tokenPool.clear()
-      for (const [key, cached] of restoreCacheEntries(snapshot, capacity, isCachedCompilation)) {
-        const separator = key.indexOf('\0')
-        if (separator <= 0) continue
-        const compilation = internCompilation(
-          cached.compilation,
-          key.slice(0, separator),
-          sourcePool,
-          tokenPool,
-        )
-        cache.set(key, { compilation })
-      }
-    },
     withRevisionSnapshot(operation) {
       return withOperationSnapshot(operation)
     },
@@ -122,18 +94,6 @@ export function createCachedApiCompiler(
       return result
     },
   }
-}
-
-function isCachedCompilation(value: unknown): value is CachedCompilation {
-  if (!record(value) || !record(value.compilation)) return false
-  const compilation = value.compilation
-  return (
-    typeof compilation.ok === 'boolean' &&
-    Array.isArray(compilation.diagnostics) &&
-    Array.isArray(compilation.dependencies) &&
-    compilation.dependencies.every(stringRecord) &&
-    isCacheable(compilation as unknown as ApiCompilation)
-  )
 }
 
 function internCompilation(
