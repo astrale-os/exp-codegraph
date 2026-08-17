@@ -12,6 +12,10 @@ dist/application/*
 dist/application/node/*
 !dist/application/node/fingerprint.js
 !dist/application/node/fingerprint.js.map
+!dist/application/change/
+dist/application/change/*
+!dist/application/change/impact.js
+!dist/application/change/impact.js.map
 coverage/
 *.tsbuildinfo
 .DS_Store

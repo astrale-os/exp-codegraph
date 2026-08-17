@@ -73,6 +73,7 @@ describe('published package', () => {
       './repository',
       './schema',
       './specification',
+      './workspace',
       './package.json',
     ])
   })
