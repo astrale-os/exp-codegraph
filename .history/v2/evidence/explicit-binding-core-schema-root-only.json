@@ -1,0 +1,56 @@
+{
+  "format": "astrale.codegraph.explicit-spec-binding-prototype",
+  "version": 1,
+  "subject": {
+    "root": "/Users/bryandjafer/Documents/astrale/workspace/kernel-v2/.cache/kernel-codegraph-performance-main",
+    "targets": ["core/schema"]
+  },
+  "prototype": {
+    "milliseconds": 2048.759,
+    "programMilliseconds": 1077.661,
+    "diagnosticsMilliseconds": 10.724,
+    "diagnosticsMode": "roots",
+    "rootDiagnosticsMilliseconds": 10.69,
+    "comparisonMilliseconds": 926.177,
+    "sourceFiles": 771,
+    "maximumRssMiB": 446.828,
+    "modules": [
+      {
+        "target": "core/schema",
+        "status": "fail",
+        "exports": 10,
+        "diagnostics": [
+          "EXPORT_TYPE_INCOMPATIBLE:Kernel",
+          "EXPORT_TYPE_INCOMPATIBLE:KernelSchema",
+          "EXPORT_UNDECLARED:AuthorityOperation",
+          "EXPORT_UNDECLARED:AuthorityOperationOrder",
+          "EXPORT_UNDECLARED:AuthorityOperations",
+          "EXPORT_UNDECLARED:AuthorityRelation",
+          "EXPORT_UNDECLARED:operationOf",
+          "EXPORT_VALUE_INCOMPATIBLE:K",
+          "EXPORT_VALUE_INCOMPATIBLE:KernelSchema",
+          "EXPORT_VALUE_INCOMPATIBLE:OperationCore",
+          "EXPORT_VALUE_INCOMPATIBLE:graph",
+          "EXPORT_VALUE_INCOMPATIBLE:installation",
+          "EXPORT_VALUE_INCOMPATIBLE:syscalls",
+          "EXPORT_VALUE_NAMESPACE:introspection"
+        ]
+      }
+    ]
+  },
+  "scope": {
+    "covered": [
+      "exact exported names",
+      "type and value namespace presence",
+      "bidirectional declared-type assignability",
+      "implementation-to-contract value assignability",
+      "TypeScript error diagnostics"
+    ],
+    "excluded": [
+      "current structural verifier",
+      "dependency policy",
+      "source-location diagnostics"
+    ]
+  },
+  "evidenceSha256": "3d76940234610d6cac8ef1d295a19b5627ebc4dcdfb705abb0a48a19e7358287"
+}

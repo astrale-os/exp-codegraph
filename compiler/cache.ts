@@ -45,7 +45,6 @@ export function createCachedApiCompiler(
   const revisionNamespace = operationSnapshotNamespace<Promise<string>>('api-compiler-revisions')
   const compilationNamespace =
     operationSnapshotNamespace<Promise<ApiCompilation>>('api-compiler-results')
-
   const currentRevision = (file: string): Promise<string> => {
     const revisions = operationSnapshot(revisionNamespace)
     if (!revisions) return dependencies.read(file).then(dependencies.revision)
@@ -63,7 +62,9 @@ export function createCachedApiCompiler(
     async compile(request) {
       const projectRoot = resolve(request.projectRoot ?? dirname(request.mainFile))
       const semantics = request.semantics ?? DEFAULT_DECLARATION_SURFACE_SEMANTICS
-      const key = `${projectRoot}\0${semantics}\0${resolve(request.mainFile)}`
+      const declarationNavigation = request.declarationNavigation !== false
+      const declarationModel = request.declarationModel !== false
+      const key = `${projectRoot}\0${semantics}\0model:${declarationModel}\0navigation:${declarationNavigation}\0${resolve(request.mainFile)}`
       const operationCompilations = operationSnapshot(compilationNamespace)
       const operationCompilation = operationCompilations?.get(key)
       if (operationCompilation) return operationCompilation
@@ -85,11 +86,7 @@ export function createCachedApiCompiler(
       const result = internCompilation(await compilation, projectRoot, sourcePool, tokenPool)
       if (isCacheable(result)) {
         cache.set(key, { compilation: result })
-        while (cache.size > capacity) {
-          const oldest = cache.keys().next().value
-          if (oldest === undefined) break
-          cache.delete(oldest)
-        }
+        while (cache.size > capacity) cache.delete(cache.keys().next().value!)
       }
       return result
     },
@@ -194,6 +191,7 @@ async function isCurrent(
     }
     return true
   } catch {
+    // Revision read uncertainty is a cache miss; the canonical compiler remains authoritative.
     return false
   }
 }

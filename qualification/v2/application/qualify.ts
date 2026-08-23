@@ -54,6 +54,12 @@ try {
     assert(focused.snapshot.qualifications.length > 0, 'Focused qualification selected no owners.')
     assertAuthoritative(focused.snapshot)
     const focusedMemory = memoryMeasurement()
+    const settlement = await service.settle()
+    assert.equal(
+      settlement.checkpoint?.outcome,
+      'published',
+      `Application checkpoint publication did not succeed: ${JSON.stringify(settlement.checkpoint)}`,
+    )
 
     const sqliteFile = join(cache, 'analysis-v2.sqlite')
     const sqliteBytes = (await stat(sqliteFile)).size
@@ -83,6 +89,7 @@ try {
       nativeStartupMs: round(nativeStartupMs),
       sqliteBytes,
       maximumRssMiB: round(maximumRssMiB),
+      checkpointPublicationMs: round(settlement.checkpoint.durationMs),
       rssByPhase: {
         cold: coldMemory,
         warm: warmMemory,
@@ -159,6 +166,7 @@ try {
         reportedNonPassQualifications: audit.nonPass.length,
         diagnostics: 0,
         affectedIncrementalEqualsCold: true,
+        applicationCheckpointPublished: true,
       },
       provenance: {
         nativeSha256: digest(await readFile(native)),

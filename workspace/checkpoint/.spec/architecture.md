@@ -10,3 +10,11 @@ substitutes for a bound on expanded content.
 
 Load failures are typed cache misses. A caller validates its own producer, repository inventory,
 request, generations, and artifact schema before using any restored state.
+
+Callers may admit only the canonical manifest or an exact artifact-key subset before planning a
+request closure. The store still validates the complete bounded manifest and digest-checks every
+requested artifact; omitted artifacts are not read, decoded, or represented as admitted evidence.
+
+`store.optimization.ts` owns only bounded scheduling of independent blob reads and installations.
+Digest validation, durable writes, atomic manifest publication, and cleanup decisions remain in the
+store owner and are unchanged by the scheduling strategy.

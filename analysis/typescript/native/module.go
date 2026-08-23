@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimchecker "github.com/microsoft/typescript-go/shim/checker"
@@ -18,20 +19,21 @@ import (
 // boundary. The generic analyzer never guesses packages or TypeSpec modules
 // from repository layout.
 type moduleObservation struct {
-	boundary   moduleBoundary
-	payload    moduleFactPayload
-	completion completeness
-	evidence   []sourceSpan
+	boundary     moduleBoundary
+	payload      moduleFactPayload
+	declarations []moduleDeclarationProjection
+	completion   completeness
+	evidence     []sourceSpan
 }
 
 func (x *extractor) moduleShards(program *driver.Program) ([]factShard, error) {
 	return x.moduleShardsFor(program, nil, nil)
 }
 
-// moduleShardsFor composes the unchanged public module-fact schema for only
-// the selected semantic owners. Ownership selection is an incremental
-// execution detail; a resulting module fact is byte-identical to its fact in a
-// complete cold projection.
+// moduleShardsFor composes the normalized physical module representation for
+// only the selected semantic owners. Ownership selection is an incremental
+// execution detail; the typed reader hydrates each resulting module to the
+// unchanged complete public payload.
 func (x *extractor) moduleShardsFor(
 	program *driver.Program,
 	selected map[string]bool,
@@ -79,7 +81,7 @@ func (x *extractor) moduleShardsFor(
 		}
 	}
 	for _, observation := range observations {
-		edges = append(edges, x.publicAPIDependencies(observation.boundary, observation.payload)...)
+		edges = append(edges, x.publicAPIDependencies(observation.boundary, observation.payload.Exports)...)
 	}
 	edges = deduplicateDependencies(edges)
 	for _, edge := range edges {
@@ -95,14 +97,82 @@ func (x *extractor) moduleShardsFor(
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	shards := make([]factShard, 0, len(ids))
 	for _, id := range ids {
 		observation := observations[id]
 		sortDependencies(observation.payload.Dependencies)
 		sortDependencies(observation.payload.InboundDependencies)
-		entry := x.newFact(moduleNamespace, "module", id, observation.payload, observation.evidence, observation.completion)
-		shards = append(shards, finishShard(moduleNamespace, id, observation.completion, []fact{entry}))
 	}
+	declarationFacts := map[string]fact{}
+	declarationIDs := make([]string, 0, len(x.moduleDeclarationsByIdentity))
+	for identity := range x.moduleDeclarationsByIdentity {
+		declarationIDs = append(declarationIDs, identity)
+	}
+	sort.Strings(declarationIDs)
+	for _, identity := range declarationIDs {
+		entry := x.newFact(
+			declarationNamespace,
+			"declaration",
+			identity,
+			declarationFactPayload{Declaration: x.moduleDeclarationsByIdentity[identity].declaration},
+			nil,
+			complete(),
+		)
+		declarationFacts[identity] = entry
+	}
+	shards := make([]factShard, 0, len(ids)+len(declarationFacts))
+	for _, id := range ids {
+		observation := observations[id]
+		references := make([]moduleDeclarationReferencePayload, 0, len(observation.declarations))
+		for _, declaration := range observation.declarations {
+			entry, ok := declarationFacts[declaration.Identity]
+			if !ok {
+				return nil, fmt.Errorf("normalized declaration %s has no fact", declaration.Identity)
+			}
+			references = append(references, moduleDeclarationReferencePayload{
+				Fact: entry.ID, Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
+			})
+		}
+		sort.Slice(references, func(i, j int) bool { return references[i].Identity < references[j].Identity })
+		payload := normalizedModuleFactPayload{
+			Target:              observation.payload.Target,
+			Exports:             observation.payload.Exports,
+			Declarations:        references,
+			Dependencies:        observation.payload.Dependencies,
+			InboundDependencies: observation.payload.InboundDependencies,
+			DeclaredPackages:    observation.payload.DeclaredPackages,
+			DevelopmentPackages: observation.payload.DevelopmentPackages,
+			WorkspacePackages:   observation.payload.WorkspacePackages,
+			ErrorCodes:          observation.payload.ErrorCodes,
+			Files:               observation.payload.Files,
+			Issues:              observation.payload.Issues,
+		}
+		entry := x.newFactVersion(
+			moduleNamespace,
+			"module",
+			id,
+			payload,
+			observation.evidence,
+			observation.completion,
+			2,
+		)
+		logicalID, err := logicalModuleFactID(
+			id,
+			observation.payload,
+			observation.declarations,
+			x.moduleDeclarationsByIdentity,
+			observation.evidence,
+		)
+		if err != nil {
+			return nil, err
+		}
+		entry.ID = logicalID
+		shards = append(shards, finishShardVersion(moduleNamespace, id, observation.completion, []fact{entry}, 2))
+	}
+	for _, identity := range declarationIDs {
+		entry := declarationFacts[identity]
+		shards = append(shards, finishShard(declarationNamespace, entry.ID, complete(), []fact{entry}))
+	}
+	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil
 }
 
@@ -153,6 +223,10 @@ func (x *extractor) attachCompilerDiagnostics(diagnostics []driver.Diagnostic, o
 }
 
 func (x *extractor) observeModule(program *driver.Program, boundary moduleBoundary) (*moduleObservation, error) {
+	moduleStarted := time.Now()
+	x.telemetry.record(x.requestID, "projection.module.start", moduleStarted, map[string]any{
+		"module": boundary.ID,
+	})
 	entrypoint := filepath.Clean(filepath.Join(x.root, filepath.FromSlash(boundary.Entrypoint)))
 	var source *shimast.SourceFile
 	for _, candidate := range program.SourceFiles() {
@@ -168,10 +242,10 @@ func (x *extractor) observeModule(program *driver.Program, boundary moduleBounda
 		DeclaredPackages: []string{}, DevelopmentPackages: []string{}, WorkspacePackages: []string{},
 		ErrorCodes: []errorCodePayload{}, Files: x.moduleFiles(boundary, program.SourceFiles()), Issues: []any{},
 	}
-	completion := complete()
+	observation := &moduleObservation{boundary: boundary, payload: payload, completion: complete()}
 	var evidence []sourceSpan
 	if source == nil {
-		payload.Issues = append(payload.Issues, observationIssue(
+		observation.payload.Issues = append(observation.payload.Issues, observationIssue(
 			"MODULE_ENTRYPOINT_NOT_IN_PROJECT",
 			"The configured entrypoint is not included by the TypeScript project.",
 			sourceLocation{File: boundary.Entrypoint, Line: 1, Column: 1},
@@ -182,15 +256,18 @@ func (x *extractor) observeModule(program *driver.Program, boundary moduleBounda
 		}
 		moduleSymbol := x.checker.GetSymbolAtLocation(source.AsNode())
 		if moduleSymbol == nil {
-			payload.Issues = append(payload.Issues, observationIssue(
+			observation.payload.Issues = append(observation.payload.Issues, observationIssue(
 				"MODULE_ENTRYPOINT_SYMBOL_UNRESOLVED",
 				"TypeScript did not expose a module symbol for the configured entrypoint.",
 				x.location(source, source.AsNode()),
 			))
 		} else {
-			partialObservation := x.collectModuleSurface(source, moduleSymbol, boundary, &payload)
+			partialObservation, err := x.collectModuleSurface(source, moduleSymbol, boundary, observation)
+			if err != nil {
+				return nil, err
+			}
 			if partialObservation {
-				completion = partial(
+				observation.completion = partial(
 					"TYPESCRIPT_MODULE_TYPE_STRUCTURE_PARTIAL",
 					"The compiler resolved the complete export set, but at least one declaration type is represented as an explicit unsupported value.",
 					map[string]any{"module": boundary.ID},
@@ -200,16 +277,22 @@ func (x *extractor) observeModule(program *driver.Program, boundary moduleBounda
 	}
 	declared, development, workspace, packageIssue := packageIntent(x.root, filepath.Join(x.root, filepath.FromSlash(boundary.Root)))
 	if packageIssue != nil {
-		payload.Issues = append(payload.Issues, packageIssue)
+		observation.payload.Issues = append(observation.payload.Issues, packageIssue)
 	}
-	payload.DeclaredPackages = declared
-	payload.DevelopmentPackages = development
-	payload.WorkspacePackages = workspace
-	payload.ErrorCodes = x.observeErrorCodes(boundary, program.SourceFiles())
-	return &moduleObservation{boundary: boundary, payload: payload, completion: completion, evidence: evidence}, nil
+	observation.payload.DeclaredPackages = declared
+	observation.payload.DevelopmentPackages = development
+	observation.payload.WorkspacePackages = workspace
+	observation.payload.ErrorCodes = x.observeErrorCodes(boundary, program.SourceFiles())
+	observation.evidence = evidence
+	x.telemetry.record(x.requestID, "projection.module.complete", moduleStarted, map[string]any{
+		"module": boundary.ID, "declarations": len(observation.declarations),
+	})
+	return observation, nil
 }
 
-func (x *extractor) collectModuleSurface(source *shimast.SourceFile, root *shimast.Symbol, boundary moduleBoundary, payload *moduleFactPayload) bool {
+func (x *extractor) collectModuleSurface(source *shimast.SourceFile, root *shimast.Symbol, boundary moduleBoundary, observation *moduleObservation) (bool, error) {
+	started := time.Now()
+	payload := &observation.payload
 	type pendingExport struct {
 		path     []string
 		exported *shimast.Symbol
@@ -262,9 +345,6 @@ func (x *extractor) collectModuleSurface(source *shimast.SourceFile, root *shima
 	for _, item := range pending {
 		kind := declarationKindOf(x.checker, item.target)
 		identity := x.publicSymbolIdentity(item.target)
-		if identity == "" {
-			identity = "ts:<synthetic>#" + percentEncode(item.target.Name)
-		}
 		symbols[identity] = item.target
 		paths[identity] = append(paths[identity], append([]string{}, item.path...))
 		payload.Exports = append(payload.Exports, observedExportPayload{
@@ -279,17 +359,32 @@ func (x *extractor) collectModuleSurface(source *shimast.SourceFile, root *shima
 		pendingSymbols = append(pendingSymbols, identity)
 	}
 	sort.Strings(pendingSymbols)
+	x.telemetry.record(x.requestID, "projection.module.exports", started, map[string]any{
+		"module": boundary.ID, "exports": len(payload.Exports), "declarations": len(pendingSymbols),
+	})
 	seen := map[string]bool{}
 	partialObservation := false
+	processed := 0
 	for len(pendingSymbols) != 0 {
 		identity := pendingSymbols[0]
 		pendingSymbols = pendingSymbols[1:]
 		if seen[identity] {
 			continue
 		}
+		if processed == 0 || processed%128 == 0 {
+			x.telemetry.record(x.requestID, "projection.module.declarations-progress", time.Now(), map[string]any{
+				"module": boundary.ID, "processed": processed, "pending": len(pendingSymbols) + 1,
+				"declaration": identity,
+			})
+		}
 		seen[identity] = true
-		declaration, references := x.observePublicDeclaration(symbols[identity], paths[identity])
-		payload.Declarations = append(payload.Declarations, declaration)
+		declaration, references, partial, err := x.observeModuleDeclaration(symbols[identity], paths[identity])
+		if err != nil {
+			return false, err
+		}
+		observation.declarations = append(observation.declarations, moduleDeclarationProjection{
+			Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
+		})
 		for _, issue := range declaration.Issues {
 			if x.issueBelongsToModule(issue, boundary) {
 				// The declaration fact already scopes its local issue collection. The
@@ -299,9 +394,10 @@ func (x *extractor) collectModuleSurface(source *shimast.SourceFile, root *shima
 				payload.Issues = append(payload.Issues, attachDeclarationToIssues([]any{issue}, declaration.Identity)...)
 			}
 		}
-		if containsUnsupportedObservation(declaration) {
+		if partial {
 			partialObservation = true
 		}
+		processed++
 		for referenceIdentity, reference := range references {
 			if _, exists := symbols[referenceIdentity]; !exists {
 				symbols[referenceIdentity] = reference
@@ -310,8 +406,10 @@ func (x *extractor) collectModuleSurface(source *shimast.SourceFile, root *shima
 		}
 		sort.Strings(pendingSymbols)
 	}
-	sort.Slice(payload.Declarations, func(i, j int) bool { return payload.Declarations[i].Identity < payload.Declarations[j].Identity })
-	return partialObservation
+	sort.Slice(observation.declarations, func(i, j int) bool {
+		return observation.declarations[i].Identity < observation.declarations[j].Identity
+	})
+	return partialObservation, nil
 }
 
 func (x *extractor) issueBelongsToModule(issue any, boundary moduleBoundary) bool {
@@ -361,8 +459,7 @@ func compareExportSymbols(leftExport, leftTarget, rightExport, rightTarget *shim
 	return 0
 }
 
-func containsUnsupportedObservation(value any) bool {
-	encoded := stableJSON(value)
+func containsUnsupportedEncoding(encoded string) bool {
 	return strings.Contains(encoded, `"kind":"unsupported"`) || strings.Contains(encoded, `"code":"TYPESCRIPT_TYPE_UNSUPPORTED"`)
 }
 

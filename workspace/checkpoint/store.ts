@@ -32,9 +32,11 @@ import {
   validateScope,
   validateStoredManifest,
 } from './validation.ts'
+import { mapCheckpointWork } from './store.optimization.ts'
 
 const TEMPORARY_AGE_MS = 24 * 60 * 60 * 1_000
 const LOAD_CONCURRENCY = 32
+const PUBLISH_CONCURRENCY = 32
 
 type BlobLoadResult =
   | {
@@ -117,10 +119,27 @@ export function createFileWorkspaceCheckpointStore(
         return miss('manifest-invalid')
       }
 
+      const requestedKeys = operationOptions.artifactKeys === undefined
+        ? undefined
+        : new Set(operationOptions.artifactKeys)
+      if (
+        requestedKeys &&
+        (requestedKeys.size !== operationOptions.artifactKeys!.length ||
+          [...requestedKeys].some((key) => typeof key !== 'string'))
+      ) {
+        throw new TypeError('Checkpoint artifact selection must contain unique string keys.')
+      }
+      const selectedArtifacts = requestedKeys
+        ? manifest.artifacts.filter(({ key }) => requestedKeys.has(key))
+        : manifest.artifacts
+      if (requestedKeys && selectedArtifacts.length !== requestedKeys.size) {
+        return miss('artifact-missing')
+      }
+
       const artifacts = new Map<string, Uint8Array>()
       let totalBytes = 0
       const seenDigests = new Set<string>()
-      for (const descriptor of manifest.artifacts) {
+      for (const descriptor of selectedArtifacts) {
         throwIfAborted(signal)
         if (descriptor.bytes > limits.maxArtifactBytes) return miss('artifact-too-large')
         if (!seenDigests.has(descriptor.digest)) {
@@ -133,10 +152,10 @@ export function createFileWorkspaceCheckpointStore(
       }
 
       const unique = new Map<string, (typeof manifest.artifacts)[number]>()
-      for (const descriptor of manifest.artifacts) {
+      for (const descriptor of selectedArtifacts) {
         if (!unique.has(descriptor.digest)) unique.set(descriptor.digest, descriptor)
       }
-      const loaded = await mapConcurrent(
+      const loaded = await mapCheckpointWork(
         [...unique.values()],
         LOAD_CONCURRENCY,
         (descriptor) => loadBlob(blobDirectory, descriptor, limits, signal),
@@ -154,7 +173,7 @@ export function createFileWorkspaceCheckpointStore(
       for (const result of successful) {
         rememberTrustedBlob(trustedBlobs, result.digest, result.metadata, maximumTrustedBlobs)
       }
-      for (const descriptor of manifest.artifacts) {
+      for (const descriptor of selectedArtifacts) {
         const artifactBytes = loadedByDigest.get(descriptor.digest)
         if (!artifactBytes) return miss('artifact-missing')
         artifacts.set(descriptor.key, artifactBytes)
@@ -175,40 +194,47 @@ export function createFileWorkspaceCheckpointStore(
 
       const installedDigests = new Set<string>()
       try {
-        for (const artifact of prepared.artifacts) {
-          throwIfAborted(signal)
-          const target = join(blobDirectory, artifact.digest)
-          const trusted = trustedBlobs.get(artifact.digest)
-          if (
-            (trusted && await installedBlobMatchesMetadata(target, trusted, signal)) ||
-            await installedBlobExists(target, artifact.digest, artifact.data, signal, limits)
-          ) {
-            installedDigests.add(artifact.digest)
-            await rememberInstalledBlob(
-              trustedBlobs,
-              target,
-              artifact.digest,
-              maximumTrustedBlobs,
-              signal,
-            )
-            continue
-          }
-          const temporary = temporaryPath(blobDirectory, `.${artifact.digest}`)
-          try {
-            await writeDurably(temporary, artifact.data, signal)
-            await installBlob(temporary, target, artifact.digest, artifact.data, signal, limits)
-            installedDigests.add(artifact.digest)
-            await rememberInstalledBlob(
-              trustedBlobs,
-              target,
-              artifact.digest,
-              maximumTrustedBlobs,
-              signal,
-            )
-          } finally {
-            await removeQuietly(temporary)
-          }
-        }
+        const uniqueArtifacts = [...new Map(
+          prepared.artifacts.map((artifact) => [artifact.digest, artifact] as const),
+        ).values()]
+        const installed = await mapCheckpointWork(
+          uniqueArtifacts,
+          PUBLISH_CONCURRENCY,
+          async (artifact) => {
+            throwIfAborted(signal)
+            const target = join(blobDirectory, artifact.digest)
+            const trusted = trustedBlobs.get(artifact.digest)
+            if (
+              (trusted && await installedBlobMatchesMetadata(target, trusted, signal)) ||
+              await installedBlobExists(target, artifact.digest, artifact.data, signal, limits)
+            ) {
+              await rememberInstalledBlob(
+                trustedBlobs,
+                target,
+                artifact.digest,
+                maximumTrustedBlobs,
+                signal,
+              )
+              return artifact.digest
+            }
+            const temporary = temporaryPath(blobDirectory, `.${artifact.digest}`)
+            try {
+              await writeDurably(temporary, artifact.data, signal)
+              await installBlob(temporary, target, artifact.digest, artifact.data, signal, limits)
+              await rememberInstalledBlob(
+                trustedBlobs,
+                target,
+                artifact.digest,
+                maximumTrustedBlobs,
+                signal,
+              )
+              return artifact.digest
+            } finally {
+              await removeQuietly(temporary)
+            }
+          },
+        )
+        for (const digest of installed) installedDigests.add(digest)
 
         throwIfAborted(signal)
         const manifestTarget = manifestPath(manifestDirectory, validatedScope)
@@ -297,25 +323,6 @@ async function loadBlob(
     bytes,
     metadata: admittedMetadata,
   }
-}
-
-async function mapConcurrent<Value, Result>(
-  values: readonly Value[],
-  concurrency: number,
-  operation: (value: Value) => Promise<Result>,
-): Promise<readonly Result[]> {
-  const output = new Array<Result>(values.length)
-  let next = 0
-  const worker = async (): Promise<void> => {
-    while (next < values.length) {
-      const index = next++
-      output[index] = await operation(values[index]!)
-    }
-  }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, values.length) }, () => worker()),
-  )
-  return output
 }
 
 async function writeDurably(file: string, bytes: Uint8Array, signal?: AbortSignal): Promise<void> {

@@ -212,7 +212,7 @@ function validatePayload(payload) {
         typeof payload.source !== 'object' ||
         typeof payload.source.file !== 'string' ||
         typeof payload.source.revision !== 'string' ||
-        typeof payload.source.text !== 'string') {
+        (payload.source.text !== undefined && typeof payload.source.text !== 'string')) {
         throw new TypeError('API payload source is invalid.');
     }
     if (!Array.isArray(payload.tokens))

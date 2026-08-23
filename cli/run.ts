@@ -8,18 +8,23 @@ import type { RunningDevServer } from '../server/start.ts'
 import type { DevOptions } from '../server/start.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
 import type { ChangedSpecificationScope } from './changes.ts'
+import type { CliAccelerationReceipt } from './acceleration.ts'
 import type { EvidenceTestPlan, EvidenceTestResult } from './evidence.ts'
 import type { CliCommand } from './parse.ts'
 import type { CliOutput } from './report.ts'
+import type { ApplicationCheckpointReference } from '../application/checkpoint/index.ts'
+import type { FileWorkspaceCheckpointStore } from '../workspace/checkpoint/index.ts'
 
 import {
-  MODULE_LAYOUT_PROFILE_ID,
-  MODULE_SCHEMA_PROFILE_ID,
   MODULE_TEST_EVIDENCE_PROFILE_ID,
   SPECIFICATION_VALIDITY_PROFILE_ID,
   type QualificationSnapshot,
 } from '../conformance/index.ts'
 import { USAGE } from './parse.ts'
+import {
+  CHECK_SEMANTIC_PLAN,
+  type CliCheckCatalog,
+} from './semantic-pack/model.ts'
 import { createDevStartupProgress } from './progress.ts'
 import {
   printQualificationProfile,
@@ -29,19 +34,21 @@ import {
 } from './qualification-report.ts'
 import { printDiagnostic } from './report.ts'
 
-const CHECK_PROFILES = [
-  SPECIFICATION_VALIDITY_PROFILE_ID,
-  MODULE_LAYOUT_PROFILE_ID,
-  MODULE_SCHEMA_PROFILE_ID,
-  MODULE_TEST_EVIDENCE_PROFILE_ID,
-] as const
-
 const TEST_PROFILES = [SPECIFICATION_VALIDITY_PROFILE_ID, MODULE_TEST_EVIDENCE_PROFILE_ID] as const
+
+export type {
+  CliCheckCatalog,
+  CliCheckCatalogSpecification,
+} from './semantic-pack/model.ts'
 
 export interface CliServices {
   version(): Promise<string>
   initializeModule(root: string): Promise<string>
-  createApplication(root: string, cache: boolean): Promise<TypeSpecApplicationService>
+  createApplication(
+    root: string,
+    cache: boolean,
+    portableCheckpoint?: CliPortableCheckpoint,
+  ): Promise<TypeSpecApplicationService>
   startDev(
     options: Extract<CliCommand, { name: 'dev' }> & Pick<DevOptions, 'telemetry'>,
   ): Promise<RunningDevServer>
@@ -58,9 +65,18 @@ export interface CliServices {
   ): Promise<EvidenceTestResult>
 }
 
+export interface CliPortableCheckpoint {
+  readonly store: FileWorkspaceCheckpointStore
+  readonly sourceProof: string
+  readonly writable: boolean
+  readonly reference?: ApplicationCheckpointReference
+}
+
 export interface CliResult {
   readonly exitCode: number
   readonly server?: RunningDevServer
+  /** Advisory acceleration evidence; excluded from terminal transcript and semantic result. */
+  readonly acceleration?: CliAccelerationReceipt
   readonly check?: {
     readonly repository: string
     readonly inventory: string
@@ -69,31 +85,11 @@ export interface CliResult {
   }
 }
 
-export interface CliCheckCatalogSpecification {
-  readonly id: string
-  readonly source: string
-  readonly root: string
-  readonly sourceReferences: readonly {
-    readonly target: { readonly source: string }
-  }[]
-  readonly diagnostics: readonly Diagnostic[]
-}
-
-export interface CliCheckCatalog {
-  readonly sharedDiagnostics: readonly Diagnostic[]
-  readonly specifications: readonly CliCheckCatalogSpecification[]
-  readonly qualifications: readonly {
-    readonly id: string
-    readonly source: string
-    readonly status: QualificationSnapshot['status']
-    readonly diagnostics: readonly Diagnostic[]
-  }[]
-}
-
 export async function runCommand(
   command: CliCommand,
   services: CliServices,
   output: CliOutput,
+  portableCheckpoint?: CliPortableCheckpoint,
 ): Promise<CliResult> {
   if (command.name === 'help') {
     output.out(USAGE)
@@ -138,7 +134,7 @@ export async function runCommand(
   if (command.name === 'changed' && command.scopeOnly) return { exitCode: 0 }
 
   const cache = 'cache' in command ? command.cache : true
-  const application = await services.createApplication(command.root, cache)
+  const application = await services.createApplication(command.root, cache, portableCheckpoint)
   let reader: TypeSpecApplicationReader | undefined
   try {
     const refreshed = await application.refresh(refreshOptions(command, changed))
@@ -321,9 +317,11 @@ function refreshOptions(
           ? command.select
           : []
     return {
+      requestedCapabilities: CHECK_SEMANTIC_PLAN.requestedCapabilities,
       qualify: true,
-      compilerAnalysis: false,
-      requestedProfiles: CHECK_PROFILES,
+      compilerAnalysis: CHECK_SEMANTIC_PLAN.compilerAnalysis,
+      requestedProfiles: CHECK_SEMANTIC_PLAN.requestedProfiles,
+      schemaRoots: CHECK_SEMANTIC_PLAN.schemaRoots,
       exclude: command.exclude,
       select,
       focused: select.length > 0,
@@ -345,6 +343,7 @@ function refreshOptions(
     }
   }
   return {
+    requestedCapabilities: ['declaration-models'],
     qualify: true,
     compilerAnalysis: true,
     select: command.select,

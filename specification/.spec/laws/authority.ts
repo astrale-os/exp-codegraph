@@ -17,3 +17,15 @@ export const SPECIFICATION_CONTENT_IDENTITY = defineLaw({
   statement:
     'A snapshot identity is a deterministic digest of normalized authored resources, static diagnostics, and portable coordinates; non-normative context cannot change it.',
 })
+
+export const SPECIFICATION_COMPILER_WORK_OBSERVABILITY = defineLaw({
+  id: 'SPECIFICATION-COMPILER-WORK-OBSERVABILITY',
+  statement:
+    'Batch compilation reports actual declaration sessions, compiler Programs, retries, compatibility fallbacks, worker peak-residency bounds, and overlapping phase work; observation failure cannot change a normative snapshot or diagnostic.',
+  tests: [
+    {
+      file: '../__tests__/specification-snapshot.test.ts',
+      id: 'SPECIFICATION-COMPILER-WORK-OBSERVABILITY',
+    },
+  ],
+})

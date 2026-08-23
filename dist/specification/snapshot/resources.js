@@ -1,5 +1,6 @@
 import { sep } from 'node:path';
-import { readBounded, sourceRevision } from '../../source/file.js';
+import { sourceRevision } from '../../source/file.js';
+import { readOperationSourceText } from '../../source/operation-snapshot.js';
 import { loadSchema } from '../../schema/load.js';
 import { loadSpecificationDeclarationResource } from '../declaration.js';
 import { resolvePort } from '../port.js';
@@ -9,7 +10,7 @@ import { compileLayout } from '../module/layout.js';
 import { compilePackageDefinition, compilePackagePatterns, packageNameFromPath, } from '../module/package.js';
 export async function loadCodeDeclaration(file) {
     try {
-        const text = await readBounded(file.absolute);
+        const text = await readOperationSourceText(file.absolute);
         const compiled = compileCode(file.source, text);
         return {
             ...(compiled.configuration
@@ -70,7 +71,7 @@ export async function loadPorts(root, apiFile, specSource, files) {
 export async function loadDescriptors(kind, files) {
     return compact(await Promise.all(files.map(async (file) => {
         try {
-            const text = await readBounded(file.absolute);
+            const text = await readOperationSourceText(file.absolute);
             const compiled = compileDescriptor(kind, file.source, text);
             return {
                 resource: {
@@ -94,7 +95,7 @@ export async function loadCodeResources(kind, files) {
 }
 export async function loadCodeResource(kind, file) {
     try {
-        const text = await readBounded(file.absolute);
+        const text = await readOperationSourceText(file.absolute);
         return {
             resource: {
                 ref: `./${file.relative}`,
@@ -112,7 +113,7 @@ export async function loadCodeResource(kind, file) {
 }
 export async function loadAuthoredLayout(file) {
     try {
-        const text = await readBounded(file.absolute);
+        const text = await readOperationSourceText(file.absolute);
         const compiled = compileLayout(file.source, text);
         return {
             resource: {
@@ -134,7 +135,7 @@ export async function loadAuthoredLayout(file) {
 export async function loadExamples(files) {
     return compact(await Promise.all(files.map(async (file) => {
         try {
-            const text = await readBounded(file.absolute);
+            const text = await readOperationSourceText(file.absolute);
             return {
                 resource: {
                     ref: `./${file.relative}`,
@@ -155,7 +156,7 @@ export async function loadExamples(files) {
 export async function loadPackages(files) {
     return compact(await Promise.all(files.map(async (file) => {
         try {
-            const text = await readBounded(file.absolute);
+            const text = await readOperationSourceText(file.absolute);
             const compiled = compilePackageDefinition(file.source, text);
             const diagnostics = [...compiled.diagnostics];
             const pathName = packageNameFromPath(file.relative);
@@ -199,7 +200,7 @@ export async function loadPackages(files) {
 }
 export async function loadPackagePatterns(file) {
     try {
-        const text = await readBounded(file.absolute);
+        const text = await readOperationSourceText(file.absolute);
         const compiled = compilePackagePatterns(file.source, text);
         return {
             resources: compiled.definitions.map((definition, index) => ({

@@ -5,6 +5,7 @@ import type { Diagnostic } from '../../source/diagnostic.ts'
 
 import {
   AUTHORING_SPECIFIER,
+  authoredSourceFile,
   authoringHelperBinding,
   calledObjectLiteral,
   isAuthoringSpecifier,
@@ -22,7 +23,7 @@ export interface CodeCompilation {
 
 /** Extract the deliberately small convention-profile code extension without executing it. */
 export function compileCode(source: string, text: string): CodeCompilation {
-  const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = authoredSourceFile(source, text)
   const diagnostics = syntaxDiagnostics(source, text)
   const helper = authoringHelperBinding(file, 'defineCode')
   const assignments: ts.ExportAssignment[] = []

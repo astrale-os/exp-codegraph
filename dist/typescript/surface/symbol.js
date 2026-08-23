@@ -9,7 +9,16 @@ export function canonicalSymbolIdentity(catalogRoot, input) {
         return `${file}:${declaration.pos}:${declaration.kind}`;
     })
         .join('|');
-    return `ts:${coordinates || '<synthetic>'}#${encodeURIComponent(input.getName())}`;
+    return `ts:${coordinates || '<synthetic>'}#${encodeURIComponent(canonicalSymbolName(catalogRoot, input, declarations))}`;
+}
+/**
+ * TypeScript names an external-module SourceFile symbol with its absolute physical filename.
+ * The declaration coordinate already distinguishes that module, so retain a useful logical name
+ * without allowing the checkout root to enter a semantic token or snapshot identity.
+ */
+function canonicalSymbolName(catalogRoot, input, declarations) {
+    const source = declarations.find(ts.isSourceFile);
+    return source ? sourceIdentity(catalogRoot, source.fileName) : input.getName();
 }
 /** Canonical identity used by declaration and executable TypeScript source navigation. */
 export function semanticTokenIdentity(checker, symbol, catalogRoot) {

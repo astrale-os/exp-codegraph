@@ -590,6 +590,12 @@ function packModel(
   sourcePayloads: Map<string, CatalogSourcePayload>,
 ): PackedApiModel {
   const { sources, tokens, ...model } = api
+  const unavailable = sources.find((source) => source.text === undefined)
+  if (unavailable) {
+    throw new Error(
+      `Catalog projection requires declaration-navigation source text: ${unavailable.file}`,
+    )
+  }
   const tokensByFile = tokensGroupedByFile(tokens)
   const knownFiles = new Set(sources.map((source) => source.file))
   const unknownToken = tokens.find((token) => !knownFiles.has(token.file))

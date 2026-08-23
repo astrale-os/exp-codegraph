@@ -227,7 +227,7 @@ async function scenario(
     (entry) => entry.component === 'native'
       && entry.phase === 'projection.modules',
   )
-  const projectedModules = Number(moduleProjection?.metrics?.shards)
+  const projectedModules = Number(moduleProjection?.metrics?.moduleOwners)
   if (expected.minimumModules !== undefined) assert(projectedModules >= expected.minimumModules)
   if (expected.maximumModules !== undefined) assert(projectedModules <= expected.maximumModules)
   const diagnosticProjection = [...events].reverse().find(
@@ -270,6 +270,7 @@ async function scenario(
     mode: expected.mode,
     projectedSources: projected,
     projectedModules,
+    projectedDeclarationShards: Number(moduleProjection?.metrics?.declarationShards),
     diagnosticsProjected: Boolean(diagnosticProjection),
     incrementalMs: round(incrementalMs),
     coldMs: round(coldMs),

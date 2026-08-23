@@ -16,6 +16,50 @@ func TestStableJSONMatchesPortableUnicodeSeparatorSpelling(t *testing.T) {
 	}
 }
 
+func TestLogicalModuleFactIdentityStreaming(t *testing.T) {
+	declaration := observedDeclarationPayload{
+		Identity: "ts:repo:core/example#Value", Name: "Value", Kind: "value",
+		Location:    sourceLocation{File: "core/example/value.ts", Line: 1, Column: 1},
+		ExportPaths: [][]string{}, ReferencedDeclarations: []string{}, Issues: []any{},
+		ValueType: map[string]any{"kind": "primitive", "name": "string"},
+	}
+	paths := [][]string{{"Value"}}
+	payload := moduleFactPayload{
+		Target: moduleTargetPayload{ID: "core/example", Name: "example"},
+		Exports: []observedExportPayload{{
+			Path: paths[0], Name: "Value", Declaration: declaration.Identity, Kind: "value",
+			Location: declaration.Location,
+		}},
+		Declarations: []observedDeclarationPayload{},
+		Dependencies: []dependencyPayload{}, InboundDependencies: []dependencyPayload{},
+		DeclaredPackages: []string{}, DevelopmentPackages: []string{}, WorkspacePackages: []string{},
+		ErrorCodes: []errorCodePayload{}, Files: []string{"core/example/value.ts"}, Issues: []any{},
+	}
+	evidence := []sourceSpan{}
+	logical := payload
+	ownedDeclaration := declaration
+	ownedDeclaration.ExportPaths = paths
+	logical.Declarations = []observedDeclarationPayload{ownedDeclaration}
+	expected := deriveID("fact", moduleNamespace, map[string]any{
+		"kind": "module", "subject": "core/example", "payload": logical, "evidence": evidence,
+	})
+	actual, err := logicalModuleFactID(
+		"core/example",
+		payload,
+		[]moduleDeclarationProjection{{Identity: declaration.Identity, ExportPaths: paths}},
+		map[string]moduleDeclarationObservation{
+			declaration.Identity: {declaration: declaration},
+		},
+		evidence,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if actual != expected {
+		t.Fatalf("streamed logical identity mismatch: expected %s, got %s", expected, actual)
+	}
+}
+
 func TestOwnedPathNormalizesPackageManagerAndSymlinkedDependencies(t *testing.T) {
 	root := t.TempDir()
 	dependency := filepath.Join(

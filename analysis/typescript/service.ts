@@ -3,6 +3,7 @@ import { isAbsolute, relative } from 'node:path'
 
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../protocol/index.ts'
 import type { NativeAnalysisSession } from '../protocol/index.ts'
+import type { NativeSourceChange } from '../protocol/index.ts'
 import type { ProjectUniverseId, SourceId } from '../identity/index.ts'
 import { deriveAnalysisId, portablePath } from '../identity/index.ts'
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
@@ -15,6 +16,11 @@ import {
   materializeNativeDelta,
   materializeNativeTransaction,
 } from './universe-transaction.ts'
+import {
+  changedModuleSubjects,
+  moduleRouting,
+  orderedNativeSourceChanges,
+} from './refresh.optimization.ts'
 
 export async function createTypeScriptAnalysisService(
   options: TypeScriptAnalysisServiceOptions,
@@ -36,6 +42,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
   ) {
     this.#options = options
     this.#session = session
+    this.#universe = options.universe
   }
 
   get universe() {
@@ -45,6 +52,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
   async refresh(
     options: {
       readonly changed?: readonly string[]
+      readonly changes?: readonly NativeSourceChange[]
       readonly invalidate?: boolean
       readonly signal?: AbortSignal
     } = {},
@@ -66,6 +74,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         ...(current ? { base: current.id } : {}),
         ...(current ? { baseSequence: current.sequence } : {}),
         ...(options.changed ? { changed: [...options.changed].sort() } : {}),
+        ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
       },
       { signal: options.signal },
@@ -86,6 +95,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
       return {
         generation: current,
         changedSources: [],
+        changedModules: [],
         invalidatedPasses: [],
         diagnostics: [],
         durationMs: performance.now() - started,
@@ -152,10 +162,14 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         ),
       ),
     ].sort()
+    const changedModules = changedModuleSubjects(transaction)
+    const routing = moduleRouting(transaction)
     return {
       generation: materialized.generation,
       ...(materialized.transaction ? { transaction: materialized.transaction } : {}),
       changedSources,
+      ...(changedModules !== undefined ? { changedModules } : {}),
+      ...(routing ? { moduleRouting: routing } : {}),
       invalidatedPasses,
       diagnostics: [],
       durationMs: performance.now() - started,

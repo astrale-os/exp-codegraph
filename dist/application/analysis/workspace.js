@@ -1,6 +1,8 @@
 import { createMemoryAnalysisStore } from '../../analysis/index.js';
 import { createTypeScriptAnalysisService, TYPESCRIPT_MODULE_FACT_NAMESPACE, } from '../../analysis/typescript/index.js';
 import { resolveApplicationModuleBoundaries } from './boundary.js';
+import { observeCompilerProject } from './workspace-observability.js';
+import { ApplicationCompilerRoutingIndex, groupApplicationCompilerProjects, mapApplicationCompilerProjects, } from './workspace.optimization.js';
 import { materializeApplicationObservations } from '../observation/index.js';
 /** Compose resident ttsc project sessions into one immutable, generation-pinned repository view. */
 export function createApplicationAnalysisWorkspace(options) {
@@ -10,9 +12,10 @@ class ResidentApplicationAnalysisWorkspace {
     #store;
     #ownsStore;
     #services = new Map();
+    #routing = new ApplicationCompilerRoutingIndex();
+    #projectUniverses = new Map();
     #boundaryDigest = '';
     #adoptedGenerations = new Map();
-    #adoptedInventory;
     #disposed = false;
     #options;
     constructor(options) {
@@ -31,12 +34,36 @@ class ResidentApplicationAnalysisWorkspace {
         const resolution = options.compilerAnalysis === false
             ? { boundaries: [], diagnostics: [] }
             : await resolveApplicationModuleBoundaries(this.#options.root, options.specifications);
-        const byProject = groupByProject(resolution.boundaries);
+        const byProject = groupApplicationCompilerProjects(resolution.boundaries);
+        const projects = [...byProject];
         const digest = JSON.stringify([...byProject]);
-        if (options.compilerAnalysis !== false && digest !== this.#boundaryDigest) {
+        const boundaryChanged = options.compilerAnalysis !== false && digest !== this.#boundaryDigest;
+        const compatibleResidentBoundary = options.compilerAnalysis === false || digest === this.#boundaryDigest;
+        if (boundaryChanged) {
             await this.disposeServices();
-            for (const [project, modules] of byProject) {
-                this.#services.set(project, await createTypeScriptAnalysisService({
+            this.#routing.reset();
+            this.#projectUniverses.clear();
+            this.#boundaryDigest = digest;
+        }
+        const retainedProjects = this.#routing.retained(projects, options.residentModules);
+        let refreshProjects = [...this.#routing.affected(projects, options.changes, boundaryChanged || options.invalidate === true || this.#adoptedGenerations.size === 0)];
+        if (this.#services.size &&
+            refreshProjects.some(([project]) => !this.#services.has(project))) {
+            await this.disposeServices();
+            const refreshNames = new Set(refreshProjects.map(([project]) => project));
+            refreshProjects = [
+                ...refreshProjects,
+                ...projects.filter(([project]) => retainedProjects.has(project) && !refreshNames.has(project)),
+            ];
+        }
+        refreshProjects = refreshProjects
+            .sort(([left], [right]) => Number(retainedProjects.has(left)) - Number(retainedProjects.has(right)) ||
+            left.localeCompare(right));
+        const refreshedProjects = await mapApplicationCompilerProjects(refreshProjects, async ([project, modules]) => {
+            options.signal?.throwIfAborted();
+            let service = this.#services.get(project);
+            if (!service) {
+                service = await createTypeScriptAnalysisService({
                     project: {
                         root: this.#options.root,
                         config: project,
@@ -45,24 +72,44 @@ class ResidentApplicationAnalysisWorkspace {
                     },
                     sessions: this.#options.sessions,
                     store: this.#store,
+                    ...(this.#projectUniverses.get(project)
+                        ? { universe: this.#projectUniverses.get(project) }
+                        : {}),
                     ...(this.#options.telemetry ? { telemetry: this.#options.telemetry } : {}),
-                }));
+                });
+                this.#services.set(project, service);
             }
-            this.#boundaryDigest = digest;
+            try {
+                const result = await observeCompilerProject(this.#options.telemetry, project, () => service.refresh({
+                    ...(options.changed ? { changed: options.changed } : {}),
+                    ...(options.changes ? { changes: options.changes } : {}),
+                    ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
+                    ...(options.signal ? { signal: options.signal } : {}),
+                }));
+                this.#routing.update(project, result.moduleRouting);
+                this.#projectUniverses.set(project, result.generation.universe);
+                if (!retainedProjects.has(project)) {
+                    this.#services.delete(project);
+                    await service.dispose();
+                }
+                return { project, result };
+            }
+            catch (error) {
+                this.#services.delete(project);
+                await service.dispose().catch(() => undefined);
+                throw error;
+            }
+        });
+        for (const [project, service] of [...this.#services]) {
+            if (retainedProjects.has(project))
+                continue;
+            this.#services.delete(project);
+            await service.dispose();
         }
-        const results = [];
-        for (const [project] of byProject) {
-            options.signal?.throwIfAborted();
-            const service = this.#services.get(project);
-            if (!service)
-                throw new Error(`Application analysis service is missing for ${project}.`);
-            results.push(await service.refresh({
-                ...(options.changed ? { changed: options.changed } : {}),
-                ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
-                ...(options.signal ? { signal: options.signal } : {}),
-            }));
-        }
-        const generations = new Map(options.compilerAnalysis === false && this.#adoptedInventory === options.inventory.revision
+        const results = [...refreshedProjects]
+            .sort((left, right) => left.project.localeCompare(right.project))
+            .map(({ result }) => result);
+        const generations = new Map(compatibleResidentBoundary
             ? this.#adoptedGenerations
             : []);
         for (const [universe, generation] of results.map((result) => [result.generation.universe, result.generation.id])) {
@@ -83,14 +130,18 @@ class ResidentApplicationAnalysisWorkspace {
         });
         generations.set(observation.universe, observation.generation.id);
         const snapshot = await this.#store.snapshotSet(generations, options.inventory.revision);
+        const affectedModules = compatibleResidentBoundary &&
+            results.every((result) => result.changedModules !== undefined)
+            ? [...new Set(results.flatMap((result) => result.changedModules ?? []))].sort()
+            : undefined;
         this.#adoptedGenerations = new Map(generations);
-        this.#adoptedInventory = options.inventory.revision;
         return {
             snapshot,
             universes: snapshot.universes,
             boundaries: resolution.boundaries,
             results,
             observation,
+            ...(affectedModules ? { affectedModules } : {}),
             diagnostics: [
                 ...resolution.diagnostics.map((diagnostic) => `${diagnostic.file}:${diagnostic.line}:${diagnostic.column} [${diagnostic.code}] ${diagnostic.message}`),
                 ...results.flatMap((result) => result.diagnostics),
@@ -101,7 +152,6 @@ class ResidentApplicationAnalysisWorkspace {
         this.assertOpen();
         const snapshot = await this.#store.snapshotSet(generations, inventory);
         this.#adoptedGenerations = new Map(generations);
-        this.#adoptedInventory = inventory;
         return snapshot;
     }
     async dispose() {
@@ -109,7 +159,7 @@ class ResidentApplicationAnalysisWorkspace {
             return;
         this.#disposed = true;
         this.#adoptedGenerations.clear();
-        this.#adoptedInventory = undefined;
+        this.#projectUniverses.clear();
         await this.disposeServices();
         if (this.#ownsStore)
             await this.#store.dispose();
@@ -126,19 +176,5 @@ class ResidentApplicationAnalysisWorkspace {
         if (this.#disposed)
             throw new Error('Application analysis workspace is disposed.');
     }
-}
-function groupByProject(boundaries) {
-    const values = new Map();
-    for (const boundary of boundaries) {
-        const current = values.get(boundary.project) ?? [];
-        current.push(boundary);
-        values.set(boundary.project, current);
-    }
-    return new Map([...values]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([project, current]) => [
-        project,
-        current.sort((left, right) => left.id.localeCompare(right.id)),
-    ]));
 }
 //# sourceMappingURL=workspace.js.map

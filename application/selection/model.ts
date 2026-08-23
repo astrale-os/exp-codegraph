@@ -14,3 +14,25 @@ export interface SelectedApplicationSpecifications {
   readonly qualification: readonly SpecificationSnapshot[]
   readonly diagnostics: readonly Diagnostic[]
 }
+
+export interface ApplicationSpecificationAnchor {
+  readonly directory: string
+  readonly source: string
+  readonly root: string
+  readonly title: string
+}
+
+export interface PlannedApplicationSpecificationAnchors {
+  readonly requested: readonly string[]
+  readonly primary: readonly ApplicationSpecificationAnchor[]
+  readonly diagnostics: readonly Diagnostic[]
+}
+
+export interface ApplicationDependencyOptimizationPlan {
+  readonly outcome: 'planned' | 'fallback'
+  readonly owners: readonly ApplicationSpecificationAnchor[]
+  readonly inspectedSources: number
+  readonly dependencyEdges: number
+  readonly unavailableSources: number
+  readonly reason?: string
+}

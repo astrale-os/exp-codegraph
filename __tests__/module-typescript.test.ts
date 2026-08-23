@@ -173,6 +173,29 @@ export interface Application { readonly graph: Graph }
     expect(loaded.diagnostics).toEqual([])
   })
 
+  it('keeps public module-reference identities stable across checkout roots', async () => {
+    const files = {
+      'provider/.spec/api.d.ts': 'export interface Shared { readonly value: string }\n',
+      'consumer/.spec/api.d.ts':
+        "export type * as shared from '../../provider/.spec/api.js'\nexport interface Consumer {}\n",
+    }
+    const left = await fixture(files)
+    const right = await fixture(files)
+    fixtures.push(left, right)
+
+    const [leftSnapshot, rightSnapshot] = await Promise.all([
+      compileSpecificationSnapshot(left.root, join(left.root, 'consumer/.spec')),
+      compileSpecificationSnapshot(right.root, join(right.root, 'consumer/.spec')),
+    ])
+
+    expect(leftSnapshot.diagnostics).toEqual([])
+    expect(rightSnapshot.diagnostics).toEqual([])
+    expect(rightSnapshot.sourceReferences).toEqual(leftSnapshot.sourceReferences)
+    expect(rightSnapshot.id).toEqual(leftSnapshot.id)
+    expect(JSON.stringify(leftSnapshot)).not.toContain(left.root)
+    expect(JSON.stringify(rightSnapshot)).not.toContain(right.root)
+  })
+
   it('honors explicit NodeNext resolution modes at the specification boundary', async () => {
     const current = await fixture({
       'package.json': JSON.stringify({ type: 'module' }),

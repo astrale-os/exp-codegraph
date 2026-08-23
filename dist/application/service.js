@@ -1,5 +1,5 @@
-import { readFile, realpath } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { resolve, sep } from 'node:path';
 import { deriveAnalysisId } from '../analysis/index.js';
 import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.js';
 import { MODULE_LAYOUT_PROFILE_ID, createModuleLayoutConformanceProfile, createTypeSpecConformanceProfiles, planConformance, qualifySpecifications, rebindQualificationSnapshot, } from '../conformance/index.js';
@@ -7,14 +7,14 @@ import { createRepositoryPathOwnershipGrouping, createRepositorySourceService, d
 import { withOperationSnapshot } from '../source/operation-snapshot.js';
 import { compileSpecificationSnapshots } from '../specification/index.js';
 import { createApplicationAnalysisWorkspace, createCodegraphApplicationSessionFactory, } from './analysis/index.js';
-import { checkpointGenerations } from './checkpoint/index.js';
+import { applicationCheckpointCorpus, checkpointGenerations } from './checkpoint/index.js';
 import { applicationRepositoryExcludes, discoverSpecificationDirectories, resolveApplicationRoot, } from './discovery/index.js';
 import { TYPE_SPEC_APPLICATION_LIMITS } from './limits.js';
 import { applicationSchemaDependencies } from './observation/index.js';
-import { selectApplicationSpecifications } from './selection/index.js';
+import { applicationSpecificationAnchors, normalizeApplicationSelectionTargets, selectApplicationSpecifications, } from './selection/index.js';
+import { compileRequestedSpecificationClosure } from './selection/closure.js';
 import { assertSpecificationInventory, createApplicationSnapshot } from './snapshot/index.js';
-const ADVISORY_CHECKPOINT_DELAY_MS = 250;
-import { createSpecificationImpactIndex } from './change/index.js';
+import { canRetainPartialSpecificationCorpus, refreshSpecificationCorpus, repositoryInventoryChanges, } from './change/refresh.js';
 /** Assemble specification, exact analysis, and qualification without coupling them to a UI. */
 export async function createTypeSpecApplicationService(options) {
     return createTypeSpecApplicationServiceWithDependencies(options);
@@ -38,7 +38,7 @@ export async function createTypeSpecApplicationServiceWithDependencies(options, 
     return new HeadlessTypeSpecApplicationService(root, repository, {
         resolveRoot: injected.resolveRoot ?? resolveApplicationRoot,
         discover: injected.discover ?? discoverSpecificationDirectories,
-        compile: injected.compile ?? compileSpecificationSnapshots,
+        compile: observedSpecificationCompiler(injected.compile ?? compileSpecificationSnapshots, options.telemetry),
         inventory: injected.inventory ?? inventoryRepository,
         sources: injected.sources ?? createRepositorySourceService,
         statistics: injected.statistics ?? refreshRepositoryStatistics,
@@ -73,6 +73,7 @@ class HeadlessTypeSpecApplicationService {
     #corpus;
     #pendingCheckpoint;
     #checkpointWriter;
+    #checkpointPublication;
     #records = new Map();
     #root;
     #repository;
@@ -96,6 +97,14 @@ class HeadlessTypeSpecApplicationService {
         this.assertOpen();
         const started = performance.now();
         let phase = started;
+        const capabilities = applicationCapabilities(options.requestedCapabilities);
+        if (options.qualify === true &&
+            options.compilerAnalysis !== false &&
+            !capabilities.includes('declaration-models')) {
+            throw new TypeError('Compiler analysis requires the declaration-models capability.');
+        }
+        const statisticsRequested = capabilities.includes('repository-statistics');
+        const compile = specificationCompilerForCapabilities(this.#dependencies.compile, capabilities);
         options.signal?.throwIfAborted();
         this.phaseStarted('application.inventory');
         const inventory = await this.#dependencies.inventory({
@@ -106,7 +115,7 @@ class HeadlessTypeSpecApplicationService {
         });
         const inventoryMs = performance.now() - phase;
         this.phaseCompleted('application.inventory', inventoryMs);
-        const previous = this.current();
+        let previous = this.current();
         const requestKey = applicationRefreshKey(options);
         let checkpointMs = 0;
         if (previous &&
@@ -130,43 +139,59 @@ class HeadlessTypeSpecApplicationService {
                 },
             };
         }
-        const corpusKey = applicationCorpusKey(inventory.revision, options.exclude ?? []);
-        const discoveryKey = applicationDiscoveryKey(options.exclude ?? []);
+        const corpusKey = applicationCorpusKey(inventory.revision, options.exclude ?? [], capabilities);
+        const discoveryKey = applicationCheckpointCorpus(options.exclude ?? []);
         if (!previous && this.#dependencies.checkpoint && checkpointLoadEligible(options)) {
             phase = performance.now();
             this.phaseStarted('application.checkpoint');
-            const loaded = await this.#dependencies.checkpoint.load({
+            const checkpointExpectation = {
                 repository: this.#repository,
                 inventory: inventory.revision,
                 corpus: discoveryKey,
                 request: requestKey,
+                ...applicationCheckpointProjection(this.#root, options, capabilities),
                 ...(options.signal ? { signal: options.signal } : {}),
-            });
+            };
+            const loaded = await this.#dependencies.checkpoint.load(checkpointExpectation);
             checkpointMs = performance.now() - phase;
             let restoredCorpus = false;
+            let restoreError;
             if (loaded.ok) {
                 let restoredAnalysis;
                 try {
-                    assertSpecificationInventory(loaded.content.specifications, loaded.content.inventory);
-                    const restoredSources = this.#dependencies.sources(this.#root, loaded.content.inventory);
+                    const restoredInventory = loaded.content.inventory.revision === inventory.revision
+                        ? inventory
+                        : loaded.content.inventory;
+                    assertSpecificationInventory(loaded.content.specifications, restoredInventory);
+                    const restoredSources = this.#dependencies.sources(this.#root, restoredInventory);
                     const corpus = {
-                        key: applicationCorpusKey(loaded.content.inventory.revision, options.exclude ?? []),
+                        key: applicationCorpusKey(restoredInventory.revision, options.exclude ?? [], capabilities),
                         discoveryKey,
                         specifications: loaded.content.specifications,
-                        inventory: loaded.content.inventory,
+                        inventory: restoredInventory,
                         sources: restoredSources,
                         statistics: loaded.content.statistics,
+                        complete: loaded.content.complete,
+                        ...(loaded.content.complete ? {} : { request: requestKey }),
                     };
                     if (!loaded.exact) {
                         this.#corpus = corpus;
                         restoredCorpus = true;
+                        previous = loaded.content.snapshot;
                         this.phaseCompleted('application.checkpoint', checkpointMs, {
                             outcome: 'corpus-hit',
                             specifications: loaded.content.specifications.length,
+                            checkpointProjection: loaded.work.projection,
+                            checkpointArtifacts: loaded.work.artifacts,
+                            checkpointDecodedBytes: loaded.work.decodedBytes,
+                            checkpointApiPayloads: loaded.work.apiPayloads,
                             inventoryChanged: loaded.content.inventory.revision !== inventory.revision,
                         });
                     }
                     else {
+                        if (!loaded.content.snapshot) {
+                            throw new Error('Exact application checkpoint omitted its snapshot.');
+                        }
                         assertSpecificationInventory(loaded.content.specifications, inventory);
                         if (loaded.content.snapshot.analysis) {
                             restoredAnalysis = await this.#dependencies.analysis.open(checkpointGenerations(loaded.content.snapshot), inventory.revision);
@@ -178,9 +203,19 @@ class HeadlessTypeSpecApplicationService {
                         this.#corpus = corpus;
                         restoredCorpus = true;
                         this.#currentRequestKey = requestKey;
+                        if (loaded.migration) {
+                            this.scheduleCheckpoint(checkpointExpectation, {
+                                ...loaded.content,
+                                snapshot: loaded.content.snapshot,
+                            });
+                        }
                         this.phaseCompleted('application.checkpoint', checkpointMs, {
                             outcome: 'hit',
                             specifications: loaded.content.specifications.length,
+                            checkpointProjection: loaded.work.projection,
+                            checkpointArtifacts: loaded.work.artifacts,
+                            checkpointDecodedBytes: loaded.work.decodedBytes,
+                            checkpointApiPayloads: loaded.work.apiPayloads,
                         });
                         return {
                             snapshot,
@@ -198,15 +233,20 @@ class HeadlessTypeSpecApplicationService {
                         };
                     }
                 }
-                catch {
+                catch (error) {
                     this.#corpus = undefined;
                     await restoredAnalysis?.dispose();
+                    restoreError = {
+                        name: error instanceof Error ? error.name : 'unknown',
+                        message: error instanceof Error ? error.message : String(error),
+                    };
                 }
             }
             if (!restoredCorpus) {
                 this.phaseCompleted('application.checkpoint', checkpointMs, {
                     outcome: 'miss',
                     reason: loaded.ok ? 'restore-rejected' : loaded.reason,
+                    ...(restoreError ? { error: restoreError.name, detail: restoreError.message } : {}),
                 });
             }
         }
@@ -217,17 +257,53 @@ class HeadlessTypeSpecApplicationService {
         let compileMs = 0;
         let statisticsMs = 0;
         let compiledSpecifications = 0;
+        let completeCorpus = true;
+        const retainedCorpus = this.#corpus;
+        const cachedCorpus = retainedCorpus &&
+            (retainedCorpus.complete || retainedCorpus.request === requestKey)
+            ? retainedCorpus
+            : undefined;
+        completeCorpus = cachedCorpus?.complete ?? true;
+        const inventoryChanges = cachedCorpus
+            ? repositoryInventoryChanges(cachedCorpus.inventory, inventory)
+            : [];
+        let discoveredSpecificationCount = cachedCorpus?.specifications.length ?? 0;
         let refreshedSpecificationSources = [];
         let statisticsWork = {
             reusedFiles: [],
             analyzedFiles: [],
             removedFiles: [],
         };
-        const cachedCorpus = this.#corpus;
         if (cachedCorpus?.key === corpusKey) {
             specifications = cachedCorpus.specifications;
             sources = cachedCorpus.sources;
-            statistics = cachedCorpus.statistics;
+            statistics = statisticsRequested ? cachedCorpus.statistics : undefined;
+            if (statisticsRequested && !statistics) {
+                phase = performance.now();
+                this.phaseStarted('application.statistics');
+                const refreshedStatistics = await this.#dependencies.statistics({
+                    inventory,
+                    sources,
+                    groupings: [
+                        ...defaultRepositoryStatisticsGroupings(),
+                        createRepositoryPathOwnershipGrouping('module', specifications.map((specification) => ({
+                            root: specification.root,
+                            key: specification.module.id,
+                            label: specification.title,
+                        }))),
+                    ],
+                    ...(options.signal ? { signal: options.signal } : {}),
+                });
+                statistics = refreshedStatistics.report;
+                statisticsWork = refreshedStatistics.work;
+                statisticsMs = performance.now() - phase;
+                this.phaseCompleted('application.statistics', statisticsMs, {
+                    analyzedFiles: statisticsWork.analyzedFiles.length,
+                    reusedFiles: statisticsWork.reusedFiles.length,
+                    removedFiles: statisticsWork.removedFiles.length,
+                });
+                this.#corpus = { ...cachedCorpus, statistics };
+            }
         }
         else {
             phase = performance.now();
@@ -236,60 +312,95 @@ class HeadlessTypeSpecApplicationService {
                 exclude: applicationRepositoryExcludes(this.#root, options.exclude ?? []),
             });
             discoverMs = performance.now() - phase;
+            discoveredSpecificationCount = directories.length;
+            const anchors = applicationSpecificationAnchors(this.#root, directories);
+            sources = this.#dependencies.sources(this.#root, inventory);
             this.phaseCompleted('application.discovery', discoverMs, {
                 specifications: directories.length,
             });
             phase = performance.now();
             this.phaseStarted('application.compile');
-            const inventoryChanges = cachedCorpus
-                ? repositoryInventoryChanges(cachedCorpus.inventory, inventory)
-                : [];
             if (cachedCorpus?.discoveryKey === discoveryKey && inventoryChanges.length > 0) {
-                const refreshedCorpus = await refreshSpecificationCorpus(this.#root, directories, cachedCorpus.specifications, inventoryChanges, options.changed ?? [], this.#dependencies.compile);
+                const refreshDirectories = !cachedCorpus.complete &&
+                    canRetainPartialSpecificationCorpus(cachedCorpus.specifications, inventoryChanges)
+                    ? cachedCorpus.specifications.map((specification) => resolve(this.#root, specification.root, '.spec'))
+                    : directories;
+                const refreshedCorpus = await refreshSpecificationCorpus(this.#root, refreshDirectories, cachedCorpus.specifications, inventoryChanges, options.changed ?? [], compile);
                 specifications = refreshedCorpus.specifications;
                 refreshedSpecificationSources = refreshedCorpus.refreshedOwners;
                 compiledSpecifications = refreshedCorpus.compiled;
             }
             else {
-                specifications = [
-                    ...(await this.#dependencies.compile(this.#root, directories, {
-                        maximumConcurrency: TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
-                    })),
-                ];
+                const requestPlanned = requestPlannedCompilation(options);
+                const requestedCompilation = requestPlanned
+                    ? await compileRequestedSpecificationClosure(this.#root, anchors, options.select ?? [], inventory, sources, compile, options.signal)
+                    : undefined;
+                specifications = requestedCompilation
+                    ? requestedCompilation.specifications
+                    : [
+                        ...(await compile(this.#root, directories, {
+                            maximumConcurrency: TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
+                        })),
+                    ];
+                completeCorpus = !requestPlanned || specifications.length === anchors.length;
                 refreshedSpecificationSources = specifications.map((value) => value.source);
                 compiledSpecifications = specifications.length;
+                if (requestedCompilation) {
+                    this.phaseCompleted('application.compile.plan', requestedCompilation.planningMilliseconds, {
+                        outcome: requestedCompilation.dependencyPlan.outcome,
+                        primarySpecifications: requestedCompilation.primaryOwners,
+                        preplannedSpecifications: requestedCompilation.dependencyPlan.owners.length,
+                        inspectedSources: requestedCompilation.dependencyPlan.inspectedSources,
+                        dependencyEdges: requestedCompilation.dependencyPlan.dependencyEdges,
+                        unavailableSources: requestedCompilation.dependencyPlan.unavailableSources,
+                        compilerWaves: requestedCompilation.waves,
+                        fallbackSpecifications: requestedCompilation.fallbackOwners,
+                        ...(requestedCompilation.fallbackSources.length
+                            ? { fallbackSources: requestedCompilation.fallbackSources.join(',') }
+                            : {}),
+                        ...(requestedCompilation.dependencyPlan.reason
+                            ? { reason: requestedCompilation.dependencyPlan.reason }
+                            : {}),
+                    });
+                }
             }
             compileMs = performance.now() - phase;
             this.phaseCompleted('application.compile', compileMs, {
                 specifications: compiledSpecifications,
                 retainedSpecifications: specifications.length - compiledSpecifications,
+                completeCorpus,
             });
             assertSpecificationInventory(specifications, inventory);
-            phase = performance.now();
-            this.phaseStarted('application.statistics');
-            sources = this.#dependencies.sources(this.#root, inventory);
-            const refreshedStatistics = await this.#dependencies.statistics({
-                inventory,
-                sources,
-                ...(cachedCorpus ? { previous: cachedCorpus.statistics } : {}),
-                groupings: [
-                    ...defaultRepositoryStatisticsGroupings(),
-                    createRepositoryPathOwnershipGrouping('module', specifications.map((specification) => ({
-                        root: specification.root,
-                        key: specification.module.id,
-                        label: specification.title,
-                    }))),
-                ],
-                ...(options.signal ? { signal: options.signal } : {}),
-            });
-            statistics = refreshedStatistics.report;
-            statisticsWork = refreshedStatistics.work;
-            statisticsMs = performance.now() - phase;
-            this.phaseCompleted('application.statistics', statisticsMs, {
-                analyzedFiles: statisticsWork.analyzedFiles.length,
-                reusedFiles: statisticsWork.reusedFiles.length,
-                removedFiles: statisticsWork.removedFiles.length,
-            });
+            if (statisticsRequested) {
+                phase = performance.now();
+                this.phaseStarted('application.statistics');
+                const refreshedStatistics = await this.#dependencies.statistics({
+                    inventory,
+                    sources,
+                    ...(cachedCorpus?.statistics ? { previous: cachedCorpus.statistics } : {}),
+                    groupings: [
+                        ...defaultRepositoryStatisticsGroupings(),
+                        createRepositoryPathOwnershipGrouping('module', anchors.map((anchor) => ({
+                            root: anchor.root,
+                            key: anchor.source,
+                            label: anchor.title,
+                        }))),
+                    ],
+                    ...(options.signal ? { signal: options.signal } : {}),
+                });
+                statistics = refreshedStatistics.report;
+                statisticsWork = refreshedStatistics.work;
+                statisticsMs = performance.now() - phase;
+                this.phaseCompleted('application.statistics', statisticsMs, {
+                    analyzedFiles: statisticsWork.analyzedFiles.length,
+                    reusedFiles: statisticsWork.reusedFiles.length,
+                    removedFiles: statisticsWork.removedFiles.length,
+                });
+            }
+            else {
+                statistics = undefined;
+                this.phaseCompleted('application.statistics', 0, { outcome: 'not-requested' });
+            }
             this.#corpus = {
                 key: corpusKey,
                 discoveryKey,
@@ -297,6 +408,8 @@ class HeadlessTypeSpecApplicationService {
                 inventory,
                 sources,
                 statistics,
+                complete: completeCorpus,
+                ...(completeCorpus ? {} : { request: requestKey }),
             };
         }
         const selected = selectApplicationSpecifications(this.#root, specifications, {
@@ -326,9 +439,10 @@ class HeadlessTypeSpecApplicationService {
         if (options.qualify) {
             phase = performance.now();
             this.phaseStarted('application.analysis');
+            const residentSources = new Set(selected.selection.kind === 'focused' ? selected.selection.primary : []);
             const refreshed = await this.#dependencies.analysis.refresh({
                 specifications: analysisSpecifications,
-                observationSpecifications: specifications,
+                observationSpecifications: analysisSpecifications,
                 refreshSpecifications: schemaDependencies.length
                     ? analysisSpecifications.map((value) => value.source)
                     : refreshedSpecificationSources,
@@ -338,11 +452,17 @@ class HeadlessTypeSpecApplicationService {
                     ? { compilerAnalysis: options.compilerAnalysis }
                     : {}),
                 ...(options.changed ? { changed: options.changed } : {}),
+                ...(inventoryChanges.length ? { changes: inventoryChanges } : {}),
+                residentModules: selected.qualification
+                    .filter((specification) => residentSources.has(specification.source))
+                    .map((specification) => specification.module.id),
                 ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
                 ...(options.signal ? { signal: options.signal } : {}),
             });
             analysisMs = performance.now() - phase;
-            this.phaseCompleted('application.analysis', analysisMs);
+            this.phaseCompleted('application.analysis', analysisMs, {
+                observedSpecifications: refreshedSpecificationSources.length,
+            });
             analysisSnapshot = refreshed.snapshot;
             observationDiagnostics = refreshed.observation?.diagnostics ?? [];
             changedSources = sortedUnique(refreshed.results.flatMap((result) => result.changedSources));
@@ -352,19 +472,22 @@ class HeadlessTypeSpecApplicationService {
                 this.phaseStarted('application.qualification');
                 const profiles = applicationProfiles(this.#dependencies.profiles, options);
                 const plan = planConformance(profiles, options.requestedProfiles);
-                const localReuse = previous !== undefined &&
-                    this.#currentRequestKey === requestKey &&
-                    plan.ordered.every((profile) => profile.manifest.evaluationScope === 'specification');
+                const hasUniverseProfiles = plan.ordered.some((profile) => profile.manifest.evaluationScope !== 'specification');
+                const reusablePrevious = previous !== undefined &&
+                    (!hasUniverseProfiles || refreshed.affectedModules !== undefined)
+                    ? previous
+                    : undefined;
                 const refreshedOwners = new Set(refreshedSpecificationSources);
-                const previousBySource = new Map((localReuse ? previous.qualifications : []).map((value) => [
-                    value.specification.source,
-                    value,
-                ]));
+                const affectedModules = new Set(refreshed.affectedModules ?? []);
+                const previousBySource = new Map((reusablePrevious?.qualifications ?? [])
+                    .filter((value) => qualificationMatchesPlan(value, plan))
+                    .map((value) => [value.specification.source, value]));
                 const evaluatedSpecifications = selected.qualification.filter((specification) => {
                     const prior = previousBySource.get(specification.source);
                     return (!prior ||
                         prior.specification.id !== specification.id ||
-                        refreshedOwners.has(specification.source));
+                        refreshedOwners.has(specification.source) ||
+                        affectedModules.has(specification.module.id));
                 });
                 const evaluated = await qualifySpecifications({
                     specifications: evaluatedSpecifications,
@@ -404,7 +527,7 @@ class HeadlessTypeSpecApplicationService {
             }
         }
         const sharedDiagnostics = [
-            ...(specifications.length
+            ...(discoveredSpecificationCount
                 ? []
                 : [
                     {
@@ -421,9 +544,10 @@ class HeadlessTypeSpecApplicationService {
         const candidate = createApplicationSnapshot({
             repository: this.#repository,
             inventory: inventory.revision,
+            capabilities,
             selection: selected.selection,
             specifications: selected.included,
-            statistics,
+            ...(statistics ? { statistics } : {}),
             qualifications,
             ...(analysis ? { analysis } : {}),
             diagnostics: [
@@ -434,13 +558,15 @@ class HeadlessTypeSpecApplicationService {
         });
         const snapshot = await this.publish(candidate, sources, analysisSnapshot);
         this.#currentRequestKey = requestKey;
-        if (this.#dependencies.checkpoint && checkpointPublishEligible(options)) {
+        if (completeCorpus &&
+            this.#dependencies.checkpoint &&
+            checkpointPublishEligible(options)) {
             this.scheduleCheckpoint({
                 repository: this.#repository,
                 inventory: inventory.revision,
                 corpus: discoveryKey,
                 request: requestKey,
-            }, { snapshot, specifications, inventory, statistics });
+            }, { snapshot, specifications, inventory, ...(statistics ? { statistics } : {}) });
         }
         return {
             snapshot,
@@ -540,12 +666,21 @@ class HeadlessTypeSpecApplicationService {
         this.#corpus = undefined;
         const records = [...this.#records.values()];
         this.#records.clear();
-        await this.#checkpointWriter;
+        await this.settle();
         await Promise.all(records.map(disposeRecord));
         await this.#dependencies.analysis.dispose();
     }
+    async settle() {
+        await this.#checkpointWriter;
+        return Object.freeze({
+            ...(this.#checkpointPublication
+                ? { checkpoint: Object.freeze(this.#checkpointPublication) }
+                : {}),
+        });
+    }
     scheduleCheckpoint(expectation, content) {
-        if (!this.#dependencies.checkpoint)
+        if (!this.#dependencies.checkpoint ||
+            this.#dependencies.checkpoint.publication === 'disabled')
             return;
         this.#pendingCheckpoint = { expectation, content };
         if (this.#checkpointWriter)
@@ -553,7 +688,7 @@ class HeadlessTypeSpecApplicationService {
         this.#checkpointWriter = (async () => {
             // Publishing is advisory. Start it in a later task so synchronous packing cannot extend the
             // refresh/HMR critical path; dispose still drains the writer before releasing its stores.
-            await new Promise((resolve) => setTimeout(resolve, ADVISORY_CHECKPOINT_DELAY_MS));
+            await new Promise((resolve) => setImmediate(resolve));
             while (this.#pendingCheckpoint) {
                 const pending = this.#pendingCheckpoint;
                 this.#pendingCheckpoint = undefined;
@@ -561,15 +696,36 @@ class HeadlessTypeSpecApplicationService {
                 this.phaseStarted('application.checkpoint');
                 try {
                     await this.#dependencies.checkpoint.publish(pending.expectation, pending.content);
-                    this.phaseCompleted('application.checkpoint', performance.now() - started, {
+                    const durationMs = performance.now() - started;
+                    this.#checkpointPublication = {
+                        repository: pending.expectation.repository,
+                        inventory: pending.expectation.inventory,
+                        outcome: 'published',
+                        durationMs,
+                    };
+                    this.phaseCompleted('application.checkpoint', durationMs, {
                         outcome: 'published',
                     });
                 }
                 catch (error) {
-                    this.phaseCompleted('application.checkpoint', performance.now() - started, {
+                    const durationMs = performance.now() - started;
+                    const name = error instanceof Error ? error.name : 'unknown';
+                    const message = error instanceof Error ? error.message : String(error);
+                    this.#checkpointPublication = {
+                        repository: pending.expectation.repository,
+                        inventory: pending.expectation.inventory,
                         outcome: 'unavailable',
-                        error: error instanceof Error ? error.name : 'unknown',
-                        reason: error instanceof Error ? error.message : String(error),
+                        durationMs,
+                        error: {
+                            code: 'APPLICATION_CHECKPOINT_PUBLICATION_UNAVAILABLE',
+                            name,
+                            message,
+                        },
+                    };
+                    this.phaseCompleted('application.checkpoint', durationMs, {
+                        outcome: 'unavailable',
+                        error: name,
+                        reason: message,
                     });
                 }
             }
@@ -640,8 +796,62 @@ function applicationChanges(previous, current, sources, invalidatedPasses, refre
         invalidatedPasses: sortedUnique(invalidatedPasses),
     };
 }
+function qualificationMatchesPlan(qualification, plan) {
+    if (qualification.profiles.length !== plan.ordered.length ||
+        qualification.profiles.some((profile, index) => {
+            const expected = plan.ordered[index]?.manifest;
+            return !expected || profile.id !== expected.id || profile.version !== expected.version;
+        })) {
+        return false;
+    }
+    const previous = qualification.scope;
+    const expected = plan.scope;
+    if (previous.kind !== expected.kind || previous.authority !== expected.authority)
+        return false;
+    if (previous.kind === 'full' || expected.kind === 'full')
+        return previous.kind === expected.kind;
+    return (sameOrderedStrings(previous.requestedProfiles, expected.requestedProfiles) &&
+        sameOrderedStrings(previous.includedProfiles, expected.includedProfiles) &&
+        sameOrderedStrings(previous.supportProfiles, expected.supportProfiles));
+}
+function sameOrderedStrings(left, right) {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 function sortedUnique(values) {
     return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+function observedSpecificationCompiler(compile, telemetry) {
+    return (root, directories, options = {}) => compile(root, directories, {
+        ...options,
+        onPhase: (phase) => {
+            try {
+                options.onPhase?.(phase);
+            }
+            catch {
+                // Consumer measurement remains diagnostic-only.
+            }
+            dispatchAnalysisTelemetry(telemetry, {
+                component: 'analysis',
+                phase: `application.compile.${phase.phase}`,
+                durationNs: Math.round(phase.durationMs * 1_000_000),
+                metrics: {
+                    status: 'completed',
+                    items: phase.items,
+                    ...(phase.programs === undefined ? {} : { programs: phase.programs }),
+                    ...(phase.sessions === undefined ? {} : { sessions: phase.sessions }),
+                    ...(phase.retries === undefined ? {} : { retries: phase.retries }),
+                    ...(phase.fallbacks === undefined ? {} : { fallbacks: phase.fallbacks }),
+                    ...(phase.workerPeakResidentBytes === undefined
+                        ? {}
+                        : { workerPeakResidentBytes: phase.workerPeakResidentBytes }),
+                    ...(phase.workerResidentUpperBoundBytes === undefined
+                        ? {}
+                        : { workerResidentUpperBoundBytes: phase.workerResidentUpperBoundBytes }),
+                    ...(phase.overlap ? { overlap: phase.overlap } : {}),
+                },
+            });
+        },
+    });
 }
 /**
  * Normalize only semantic refresh inputs. Inventory identity independently pins every local byte;
@@ -649,6 +859,7 @@ function sortedUnique(values) {
  */
 function applicationRefreshKey(options) {
     return JSON.stringify({
+        capabilities: applicationCapabilities(options.requestedCapabilities),
         exclude: sortedUnique(options.exclude ?? []),
         select: sortedUnique(options.select ?? []),
         focused: options.focused === true,
@@ -660,6 +871,26 @@ function applicationRefreshKey(options) {
         qualify: options.qualify === true,
     });
 }
+const DEFAULT_APPLICATION_CAPABILITIES = [
+    'declaration-models',
+    'declaration-navigation',
+    'repository-statistics',
+];
+function applicationCapabilities(requested) {
+    const capabilities = sortedUnique(requested ?? DEFAULT_APPLICATION_CAPABILITIES);
+    for (const capability of capabilities) {
+        if (capability !== 'declaration-models' &&
+            capability !== 'declaration-navigation' &&
+            capability !== 'repository-statistics') {
+            throw new TypeError(`Unknown application capability: ${String(capability)}`);
+        }
+    }
+    if (capabilities.includes('declaration-navigation') &&
+        !capabilities.includes('declaration-models')) {
+        throw new TypeError('declaration-navigation requires declaration-models.');
+    }
+    return capabilities;
+}
 function checkpointLoadEligible(options) {
     return (checkpointPublishEligible(options) &&
         (options.changed?.length ?? 0) === 0 &&
@@ -668,11 +899,22 @@ function checkpointLoadEligible(options) {
 function checkpointPublishEligible(options) {
     return options.invalidate !== true && (options.schemaRoots?.length ?? 0) === 0;
 }
-function applicationCorpusKey(inventory, exclude) {
-    return JSON.stringify({ inventory, exclude: sortedUnique(exclude) });
+function applicationCorpusKey(inventory, exclude, capabilities) {
+    return JSON.stringify({
+        inventory,
+        exclude: sortedUnique(exclude),
+        declarationModels: capabilities.includes('declaration-models'),
+        declarationNavigation: capabilities.includes('declaration-navigation'),
+    });
 }
-function applicationDiscoveryKey(exclude) {
-    return JSON.stringify({ exclude: sortedUnique(exclude) });
+function specificationCompilerForCapabilities(compile, capabilities) {
+    const includeDeclarationNavigation = capabilities.includes('declaration-navigation');
+    const includeDeclarationModels = capabilities.includes('declaration-models');
+    return (root, directories, options = {}) => compile(root, directories, {
+        ...options,
+        includeDeclarationModels,
+        includeDeclarationNavigation,
+    });
 }
 function assertApplicationRoot(root) {
     const segments = resolve(root).split(sep).filter(Boolean);
@@ -686,156 +928,28 @@ function assertApplicationRoot(root) {
         }
     }
 }
-async function refreshSpecificationCorpus(root, directories, previous, inventoryChanges, changedHints, compile) {
-    const available = new Map(directories.map((directory) => [
-        portable(relative(root, resolve(directory))),
-        resolve(directory),
-    ]));
-    const retained = new Map(previous.map((specification) => [
-        portable(relative(root, dirname(resolve(root, specification.source)))),
-        specification,
-    ]));
-    const index = createSpecificationImpactIndex(previous);
-    const impactedOwners = new Set();
-    const compilationOwners = new Set();
-    const specificationsBySource = new Map(previous.map((value) => [value.source, value]));
-    const affected = new Set();
-    for (const directory of available.keys()) {
-        if (!retained.has(directory))
-            affected.add(directory);
-    }
-    const changes = new Map(inventoryChanges.map((change) => [change.path, change.kind]));
-    for (const input of changedHints) {
-        const source = await workspacePath(root, input);
-        if (!source)
-            continue;
-        if (!changes.has(source))
-            changes.set(source, 'change');
-    }
-    for (const [source, kind] of changes) {
-        const impact = index.impact(source, { kind });
-        const fallback = requiresNormativeFallback(source, kind, impact.fallbackReasons);
-        const normative = fallback ||
-            impact.directOwners.some((owner) => specificationsBySource.get(owner) &&
-                normativeSpecificationInputs(specificationsBySource.get(owner)).has(source));
-        const refreshedOwners = normative
-            ? impact.refreshedOwners
-            : deepestSpecificationOwners(impact.directOwners, specificationsBySource);
-        for (const owner of refreshedOwners) {
-            impactedOwners.add(owner);
-            if (normative)
-                compilationOwners.add(owner);
-        }
-    }
-    for (const owner of compilationOwners) {
-        const directory = portable(relative(root, dirname(resolve(root, owner))));
-        if (available.has(directory))
-            affected.add(directory);
-    }
-    const compiled = affected.size
-        ? await compile(root, [...affected].map((directory) => available.get(directory)).filter(Boolean), {
-            maximumConcurrency: TYPE_SPEC_APPLICATION_LIMITS.maximumConcurrentSpecificationCompilations,
-        })
-        : [];
-    const replacements = new Map(compiled.map((specification) => [
-        portable(relative(root, dirname(resolve(root, specification.source)))),
-        specification,
-    ]));
-    const specifications = [...available.keys()]
-        .map((directory) => replacements.get(directory) ?? retained.get(directory))
-        .filter((value) => value !== undefined)
-        .sort((left, right) => left.source.localeCompare(right.source));
-    return {
-        specifications,
-        refreshedOwners: sortedUnique([...impactedOwners, ...compiled.map((value) => value.source)]),
-        compiled: compiled.length,
-    };
+function requestPlannedCompilation(options) {
+    return (options.focused === true &&
+        (options.select?.length ?? 0) > 0 &&
+        options.includeDependents !== true);
 }
-function deepestSpecificationOwners(owners, specifications) {
-    const depth = Math.max(...owners.map((owner) => specifications.get(owner)?.root.split('/').length ?? -1), -1);
-    return owners.filter((owner) => (specifications.get(owner)?.root.split('/').length ?? -1) === depth);
-}
-function normativeSpecificationInputs(specification) {
-    const inputs = new Set();
-    const add = (resource) => {
-        if (!resource)
-            return;
-        inputs.add(resource.source);
-        for (const source of resource.model?.sources ?? [])
-            inputs.add(source.file);
-        for (const dependency of resource.model?.dependencies ?? [])
-            inputs.add(dependency.file);
-    };
-    add(specification.module.api);
-    add(specification.module.code);
-    add(specification.module.internal);
-    for (const resource of specification.module.ports)
-        add(resource);
-    for (const resource of [
-        ...specification.schemas,
-        ...specification.examples,
-        ...specification.capabilities,
-        ...specification.flows,
-        ...specification.laws,
-        ...specification.states,
-        ...(specification.limits ? [specification.limits] : []),
-        ...(specification.layout ? [specification.layout] : []),
-        ...specification.benchmarks,
-        ...specification.packages,
-        ...specification.packagePatterns,
-        ...specification.module.packageAuthority.packages,
-        ...specification.module.packageAuthority.packagePatterns,
-    ])
-        add(resource);
-    inputs.add(specification.module.packageAuthority.source);
-    for (const reference of specification.sourceReferences) {
-        inputs.add(reference.source);
-        inputs.add(reference.target.source);
-    }
-    return inputs;
-}
-function requiresNormativeFallback(source, kind, reasons) {
-    if (reasons.includes('unknown-declaration') ||
-        reasons.includes('package-configuration') ||
-        reasons.includes('typescript-configuration'))
-        return true;
-    if (kind === 'change')
-        return false;
-    if (!(source.startsWith('.spec/') || source.includes('/.spec/')))
-        return false;
-    return !source.endsWith('/architecture.md') && !source.endsWith('/icon.svg');
-}
-function repositoryInventoryChanges(previous, current) {
-    const before = new Map(previous.files.map((file) => [file.path, file.revision]));
-    const after = new Map(current.files.map((file) => [file.path, file.revision]));
-    return sortedUnique([...before.keys(), ...after.keys()]).flatMap((path) => {
-        const left = before.get(path);
-        const right = after.get(path);
-        if (left === right)
-            return [];
-        return [{ path, kind: left === undefined ? 'add' : right === undefined ? 'unlink' : 'change' }];
-    });
-}
-async function workspacePath(root, input) {
-    let target = resolve(root, input);
+function applicationCheckpointProjection(root, options, capabilities) {
+    if (!requestPlannedCompilation(options))
+        return;
     try {
-        target = await realpath(target);
+        return {
+            projection: {
+                requested: normalizeApplicationSelectionTargets(root, options.select ?? []),
+                includeDependents: false,
+                capabilities,
+            },
+        };
     }
     catch {
-        try {
-            target = join(await realpath(dirname(target)), basename(target));
-        }
-        catch {
-            return;
-        }
-    }
-    const path = relative(root, target);
-    if (isAbsolute(path) || path === '..' || path.startsWith(`..${sep}`))
+        // Invalid selection remains a canonical application diagnostic; eager checkpoint admission
+        // preserves that path instead of turning an advisory projection hint into a thrown error.
         return;
-    return portable(path);
-}
-function portable(path) {
-    return sep === '/' ? path : path.split(sep).join('/');
+    }
 }
 function applicationProfiles(profiles, options) {
     if (!options.requireCompleteLayout && !options.requireExactLayout)

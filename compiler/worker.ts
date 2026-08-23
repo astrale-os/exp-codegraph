@@ -1,6 +1,7 @@
 import type { ApiCompilation, CompileApiOptions } from './compile.ts'
 
 import { compileApis } from './compile.ts'
+import { apiCompilerWorkerResourceReport } from './isolation-work.optimization.ts'
 
 const chunks: Buffer[] = []
 for await (const chunk of process.stdin) chunks.push(Buffer.from(chunk))
@@ -26,3 +27,4 @@ try {
 }
 
 for (const compilation of result) process.stdout.write(`${JSON.stringify(compilation)}\n`)
+process.stderr.write(`${apiCompilerWorkerResourceReport()}\n`)

@@ -1,5 +1,5 @@
 import { validateFunctionBodyIR } from '../body/index.js';
-export function validateTypeScriptFactPayload(kind, value) {
+export function validateTypeScriptFactPayload(kind, value, schemaVersion = 1) {
     const diagnostics = [];
     if (!record(value))
         return ['payload:not-object'];
@@ -45,7 +45,12 @@ export function validateTypeScriptFactPayload(kind, value) {
             validateBody(value, diagnostics);
             break;
         case 'module':
-            validateModule(value, diagnostics);
+            validateModule(value, diagnostics, schemaVersion);
+            break;
+        case 'declaration':
+            if (!record(value.declaration) || !observedDeclaration(value.declaration)) {
+                diagnostics.push('declaration:invalid');
+            }
             break;
     }
     return [...new Set(diagnostics)].sort();
@@ -61,7 +66,7 @@ function validateBody(value, diagnostics) {
     if (!completeness(value.completeness))
         diagnostics.push('completeness:invalid');
 }
-function validateModule(value, diagnostics) {
+function validateModule(value, diagnostics, schemaVersion) {
     if (!record(value.target))
         diagnostics.push('target:not-object');
     else {
@@ -73,7 +78,7 @@ function validateModule(value, diagnostics) {
         }
     }
     requireArray(value, 'exports', diagnostics, observedExport);
-    requireArray(value, 'declarations', diagnostics, observedDeclaration);
+    requireArray(value, 'declarations', diagnostics, schemaVersion === 2 ? moduleDeclarationReference : observedDeclaration);
     requireArray(value, 'dependencies', diagnostics, dependency);
     requireArray(value, 'inboundDependencies', diagnostics, dependency);
     for (const key of ['declaredPackages', 'developmentPackages', 'workspacePackages', 'files']) {
@@ -83,6 +88,13 @@ function validateModule(value, diagnostics) {
     if (!Array.isArray(value.issues) || value.issues.some((issue) => !observationIssue(issue))) {
         diagnostics.push('issues:invalid');
     }
+}
+function moduleDeclarationReference(value) {
+    return (record(value) &&
+        string(value.fact) &&
+        string(value.identity) &&
+        Array.isArray(value.exportPaths) &&
+        value.exportPaths.every(strings));
 }
 function bodyShape(value) {
     return (record(value) &&

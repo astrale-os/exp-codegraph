@@ -4,21 +4,23 @@ import { opendir, readFile, stat } from 'node:fs/promises';
 import { extname, join, matchesGlob as nodeMatchesGlob } from 'node:path';
 import { factShardDigest } from '../analysis/facts/index.js';
 import { deriveAnalysisId, portablePath } from '../analysis/identity/index.js';
+import { simpleDirectoryExclusion, simpleRepositoryPathMatch, } from './directory-scope.optimization.js';
 export async function inventoryRepository(options) {
     const scanner = options.scanner ?? createNodeRepositoryScanner();
     const classifiers = [...(options.classifiers ?? defaultRepositoryClassifiers())].sort((left, right) => right.priority - left.priority || left.id.localeCompare(right.id));
     const files = [];
-    for await (const entry of scanner.scan(options.root, {
+    const scanOptions = {
         signal: options.signal,
         scope: options.scope,
-    })) {
+    };
+    const accept = (entry) => {
         options.signal?.throwIfAborted();
         const path = portablePath(entry.path);
         if (!pathIncluded(path, options.scope))
-            continue;
+            return;
         const classification = classify(entry, classifiers);
         if (!classificationIncluded(classification, options.scope))
-            continue;
+            return;
         const source = deriveAnalysisId('source', `repository:${options.repository}`, { path });
         files.push({
             source,
@@ -33,6 +35,14 @@ export async function inventoryRepository(options) {
             ...ownership(path),
             classification,
         });
+    };
+    if (scanner.scanAll) {
+        for (const entry of await scanner.scanAll(options.root, scanOptions))
+            accept(entry);
+    }
+    else {
+        for await (const entry of scanner.scan(options.root, scanOptions))
+            accept(entry);
     }
     files.sort((left, right) => left.path.localeCompare(right.path));
     return {
@@ -177,8 +187,10 @@ async function* scanDirectory(root, relative, signal, exclude = []) {
     for (const entry of entries) {
         signal?.throwIfAborted();
         const path = relative ? `${relative}/${entry.name}` : entry.name;
+        if (path === '.git' || path.startsWith('.git/'))
+            continue;
         if (entry.isDirectory()) {
-            if (path === '.git' || path.startsWith('.git/') || directoryExcluded(path, exclude))
+            if (repositoryDirectoryExcluded(path, exclude))
                 continue;
             yield* scanDirectory(root, path, signal, exclude);
         }
@@ -194,10 +206,13 @@ async function* scanDirectory(root, relative, signal, exclude = []) {
         }
     }
 }
-function directoryExcluded(path, patterns) {
-    return patterns.some((pattern) => matchesGlob(path, pattern) ||
-        matchesGlob(`${path}/__entry__`, pattern) ||
-        (!/[?*\[\]{}]/u.test(pattern) && (path === pattern || path.startsWith(`${pattern}/`))));
+export function repositoryDirectoryExcluded(path, patterns) {
+    return patterns.some((pattern) => {
+        const normalized = portablePath(pattern);
+        const simple = simpleDirectoryExclusion(path, normalized);
+        return simple ?? (nodeMatchesGlob(path, normalized) ||
+            nodeMatchesGlob(`${path}/__entry__`, normalized));
+    });
 }
 function classify(entry, classifiers) {
     const result = {
@@ -244,7 +259,7 @@ function classificationIncluded(value, scope) {
 }
 function matchesGlob(path, pattern) {
     const normalized = portablePath(pattern);
-    return nodeMatchesGlob(path, normalized);
+    return simpleRepositoryPathMatch(path, normalized) ?? nodeMatchesGlob(path, normalized);
 }
 function language(path, content) {
     const extension = extname(path).toLowerCase();

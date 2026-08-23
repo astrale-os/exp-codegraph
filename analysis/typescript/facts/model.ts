@@ -1,6 +1,7 @@
 import type { Fact } from '../../facts/index.ts'
 import type { FactFilter, PageRequest } from '../../query/index.ts'
 import type { TypeScriptBodyFacts } from '../model.ts'
+import type { ObservedDeclaration } from '../surface/index.ts'
 import type {
   TypeScriptDiagnosticFact,
   TypeScriptModuleFact,
@@ -18,7 +19,34 @@ export const TYPESCRIPT_FACT_NAMESPACES = Object.freeze({
   occurrence: 'typescript.occurrence',
   body: 'typescript.body',
   module: 'astrale.typescript.module',
+  declaration: 'astrale.typescript.module',
 } as const)
+
+/** Native projectors callers may request; declaration facts are module support, not a projector. */
+export const TYPESCRIPT_ANALYSIS_CAPABILITIES = Object.freeze([
+  TYPESCRIPT_FACT_NAMESPACES.project,
+  TYPESCRIPT_FACT_NAMESPACES.diagnostic,
+  TYPESCRIPT_FACT_NAMESPACES.source,
+  TYPESCRIPT_FACT_NAMESPACES.symbol,
+  TYPESCRIPT_FACT_NAMESPACES.occurrence,
+  TYPESCRIPT_FACT_NAMESPACES.body,
+  TYPESCRIPT_FACT_NAMESPACES.module,
+] as const)
+
+export interface TypeScriptDeclarationFact {
+  readonly declaration: ObservedDeclaration
+}
+
+export interface TypeScriptModuleDeclarationReference {
+  readonly fact: Fact['id']
+  readonly identity: string
+  readonly exportPaths: readonly (readonly string[])[]
+}
+
+export interface NormalizedTypeScriptModuleFact
+  extends Omit<TypeScriptModuleFact, 'declarations'> {
+  readonly declarations: readonly TypeScriptModuleDeclarationReference[]
+}
 
 export interface TypeScriptFactPayloadByKind {
   readonly project: TypeScriptProjectFact
@@ -28,6 +56,7 @@ export interface TypeScriptFactPayloadByKind {
   readonly occurrence: TypeScriptOccurrenceFact
   readonly body: TypeScriptBodyFacts
   readonly module: TypeScriptModuleFact
+  readonly declaration: TypeScriptDeclarationFact
 }
 
 export type TypeScriptFactKind = keyof TypeScriptFactPayloadByKind
@@ -35,8 +64,8 @@ export type TypeScriptFact<Kind extends TypeScriptFactKind> = Fact<
   TypeScriptFactPayloadByKind[Kind]
 > & { readonly namespace: (typeof TYPESCRIPT_FACT_NAMESPACES)[Kind] }
 export type AnyTypeScriptFact = {
-  readonly [Kind in TypeScriptFactKind]: TypeScriptFact<Kind>
-}[TypeScriptFactKind]
+  readonly [Kind in Exclude<TypeScriptFactKind, 'declaration'>]: TypeScriptFact<Kind>
+}[Exclude<TypeScriptFactKind, 'declaration'>]
 export type TypeScriptFactFilter = Omit<FactFilter, 'namespaces'>
 
 export interface TypeScriptFactPage<Kind extends TypeScriptFactKind> {
@@ -60,7 +89,7 @@ export interface TypeScriptFactReader {
     kind: Kind,
     filter?: TypeScriptFactFilter,
   ): AsyncIterable<TypeScriptFact<Kind>>
-  /** Validate every base TypeScript namespace in one generation-pinned store traversal. */
+  /** Validate support while yielding every logical base TypeScript fact exactly once. */
   exportAll(filter?: TypeScriptFactFilter): AsyncIterable<AnyTypeScriptFact>
 }
 

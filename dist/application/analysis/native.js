@@ -20,6 +20,9 @@ export function createCodegraphApplicationSessionFactory(options = {}) {
                 ...(options.maximumTransactionBytes !== undefined
                     ? { maximumTransactionBytes: options.maximumTransactionBytes }
                     : {}),
+                ...(options.maximumResidentBytes !== undefined
+                    ? { maximumResidentBytes: options.maximumResidentBytes }
+                    : {}),
                 ...(options.environment
                     ? { environment: definedEnvironment(options.environment) }
                     : {}),

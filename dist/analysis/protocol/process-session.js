@@ -1,12 +1,22 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { isAbsolute } from 'node:path';
 import { createInterface } from 'node:readline';
+import { promisify } from 'node:util';
 import { validateFactShard } from '../facts/index.js';
 import { admitAnalysisId, portablePath } from '../identity/index.js';
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.js';
 import { admitFactPayloadCodecs, admittedFactShardPayloadBytes, createFactWithPhysicalPayload, createFactWithSemanticPayload, physicalPayloadForTransport, } from '../facts/representation/index.js';
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from './model.js';
+export class NativeAnalysisProcessResourceError extends Error {
+    name = 'NativeAnalysisProcessResourceError';
+    code;
+    constructor(code, message, options) {
+        super(message, options);
+        this.code = code;
+    }
+}
+const executeFile = promisify(execFile);
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
     maximumFrameBytes: 64 * 1_024 * 1_024,
     transactionChunkFrameBytes: 8 * 1_024 * 1_024,
@@ -28,6 +38,7 @@ export function createProcessNativeAnalysisSessionFactory(options) {
     const maximumPhysicalTransactionBytes = options.maximumPhysicalTransactionBytes ??
         DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumPhysicalTransactionBytes;
     const maximumErrorBytes = options.maximumErrorBytes ?? DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumErrorBytes;
+    const maximumResidentBytes = options.maximumResidentBytes;
     validateLimit(maximumFrameBytes, 'maximumFrameBytes');
     validateLimit(transactionChunkFrameBytes, 'transactionChunkFrameBytes');
     if (transactionChunkFrameBytes > maximumFrameBytes) {
@@ -36,6 +47,12 @@ export function createProcessNativeAnalysisSessionFactory(options) {
     validateLimit(maximumTransactionBytes, 'maximumTransactionBytes');
     validateLimit(maximumPhysicalTransactionBytes, 'maximumPhysicalTransactionBytes');
     validateLimit(maximumErrorBytes, 'maximumErrorBytes');
+    if (maximumResidentBytes !== undefined) {
+        validateLimit(maximumResidentBytes, 'maximumResidentBytes');
+        if (process.platform === 'win32') {
+            throw new TypeError('Native resident-memory monitoring is unavailable on win32.');
+        }
+    }
     const payloadCodecs = admitFactPayloadCodecs(options.payloadCodecs);
     return {
         async open(project, openOptions = {}) {
@@ -80,7 +97,7 @@ export function createProcessNativeAnalysisSessionFactory(options) {
                     lines.on('line', (line) => receiveTelemetry(line, telemetry));
                 }
             }
-            return await ProcessNativeAnalysisSession.open(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, telemetry, payloadCodecs, openOptions.signal);
+            return await ProcessNativeAnalysisSession.open(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, maximumResidentBytes, options.sampleResidentBytes ?? sampleProcessResidentBytes, telemetry, payloadCodecs, openOptions.signal);
         },
     };
 }
@@ -95,11 +112,18 @@ class ProcessNativeAnalysisSession {
     #maximumPhysicalTransactionBytes;
     #telemetry;
     #payloadCodecs;
-    constructor(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, telemetry, payloadCodecs) {
+    #maximumResidentBytes;
+    #sampleResidentBytes;
+    #residentMonitor;
+    #residentSamplePending = false;
+    #peakResidentBytes = 0;
+    constructor(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, maximumResidentBytes, sampleResidentBytes, telemetry, payloadCodecs) {
         this.#child = child;
         this.#maximumFrameBytes = maximumFrameBytes;
         this.#maximumTransactionBytes = maximumTransactionBytes;
         this.#maximumPhysicalTransactionBytes = maximumPhysicalTransactionBytes;
+        this.#maximumResidentBytes = maximumResidentBytes;
+        this.#sampleResidentBytes = sampleResidentBytes;
         this.#telemetry = telemetry;
         this.#payloadCodecs = payloadCodecs;
         child.stderr.setEncoding('utf8');
@@ -123,13 +147,15 @@ class ProcessNativeAnalysisSession {
         });
         child.once('error', (error) => this.fail(error));
         child.once('exit', (code, signal) => {
+            this.stopResidentMonitor();
             if (!this.#disposed || this.#pending.size) {
                 this.fail(new Error(`Native analysis process exited code=${String(code)} signal=${String(signal)}${this.#stderr ? `: ${this.#stderr}` : ''}`));
             }
         });
+        this.startResidentMonitor();
     }
-    static async open(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, telemetry, payloadCodecs, signal) {
-        const session = new ProcessNativeAnalysisSession(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, telemetry, payloadCodecs);
+    static async open(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, maximumResidentBytes, sampleResidentBytes, telemetry, payloadCodecs, signal) {
+        const session = new ProcessNativeAnalysisSession(child, maximumFrameBytes, maximumTransactionBytes, maximumPhysicalTransactionBytes, maximumErrorBytes, maximumResidentBytes, sampleResidentBytes, telemetry, payloadCodecs);
         if (signal) {
             if (signal.aborted) {
                 child.kill('SIGTERM');
@@ -190,6 +216,7 @@ class ProcessNativeAnalysisSession {
         if (this.#disposed)
             return;
         this.#disposed = true;
+        this.stopResidentMonitor();
         const exit = new Promise((resolve) => {
             if (this.#child.exitCode !== null || this.#child.signalCode !== null)
                 resolve();
@@ -362,6 +389,7 @@ class ProcessNativeAnalysisSession {
         const error = reason instanceof Error ? reason : new Error('Native analysis request aborted.');
         this.#failure = error;
         this.#disposed = true;
+        this.stopResidentMonitor();
         this.rejectPending(error);
         this.#child.kill('SIGTERM');
     }
@@ -369,6 +397,7 @@ class ProcessNativeAnalysisSession {
         if (!this.#failure)
             this.#failure = error;
         this.#disposed = true;
+        this.stopResidentMonitor();
         this.rejectPending(this.#failure);
         if (this.#child.exitCode === null && this.#child.signalCode === null)
             this.#child.kill('SIGTERM');
@@ -386,6 +415,71 @@ class ProcessNativeAnalysisSession {
         if (this.#disposed)
             throw new Error('Native analysis session is disposed.');
     }
+    startResidentMonitor() {
+        if (this.#maximumResidentBytes === undefined)
+            return;
+        this.sampleResidentMemory();
+        this.#residentMonitor = setInterval(() => this.sampleResidentMemory(), 100);
+        this.#residentMonitor.unref();
+    }
+    stopResidentMonitor() {
+        if (this.#residentMonitor)
+            clearInterval(this.#residentMonitor);
+        this.#residentMonitor = undefined;
+    }
+    sampleResidentMemory() {
+        if (this.#maximumResidentBytes === undefined ||
+            this.#residentSamplePending ||
+            this.#child.pid === undefined ||
+            this.#child.exitCode !== null ||
+            this.#child.signalCode !== null) {
+            return;
+        }
+        this.#residentSamplePending = true;
+        Promise.resolve()
+            .then(() => this.#sampleResidentBytes(this.#child.pid))
+            .then((residentBytes) => {
+            this.#residentSamplePending = false;
+            if (this.#disposed || this.#child.exitCode !== null || this.#child.signalCode !== null) {
+                return;
+            }
+            if (!Number.isSafeInteger(residentBytes) || residentBytes < 1) {
+                this.fail(new NativeAnalysisProcessResourceError('NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED', 'Native analysis resident-memory monitor returned invalid evidence.'));
+                return;
+            }
+            if (residentBytes > this.#peakResidentBytes) {
+                this.#peakResidentBytes = residentBytes;
+                if (this.#telemetry) {
+                    dispatchAnalysisTelemetry(this.#telemetry, {
+                        component: 'transport',
+                        phase: 'process.resources',
+                        durationNs: 0,
+                        metrics: {
+                            residentBytes,
+                            peakResidentBytes: residentBytes,
+                            maximumResidentBytes: this.#maximumResidentBytes,
+                        },
+                    });
+                }
+            }
+            if (residentBytes > this.#maximumResidentBytes) {
+                this.fail(new NativeAnalysisProcessResourceError('NATIVE_ANALYSIS_RESIDENT_LIMIT', `Native analysis resident memory exceeded the configured limit: bytes=${residentBytes} limit=${this.#maximumResidentBytes}.`));
+            }
+        })
+            .catch((error) => {
+            this.#residentSamplePending = false;
+            if (this.#disposed || this.#child.exitCode !== null || this.#child.signalCode !== null) {
+                return;
+            }
+            this.fail(new NativeAnalysisProcessResourceError('NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED', `Native analysis resident-memory monitor failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }));
+        });
+    }
+}
+async function sampleProcessResidentBytes(pid) {
+    const { stdout } = await executeFile('ps', ['-o', 'rss=', '-p', String(pid)], {
+        encoding: 'utf8',
+    });
+    return Number.parseInt(stdout.trim(), 10) * 1_024;
 }
 function encodedPhysicalPayloadBytes(value) {
     const upserts = value.upserts.map((shard) => ({

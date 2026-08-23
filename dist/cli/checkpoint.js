@@ -1,68 +1,133 @@
 import { createHash } from 'node:crypto';
+import { join, resolve } from 'node:path';
 import { applicationRepositoryExcludes, resolveApplicationRoot, } from '../application/discovery/index.js';
 import { resolveApplicationRepositoryIdentity } from '../application/index.js';
-import { codegraphProducerFingerprint, createCheckpointedRepositoryInventory, nodeApplicationRepositoryKey, nodeApplicationWorkspaceCheckpointDirectory, } from '../application/node/index.js';
+import { codegraphProducerFingerprint, createCheckpointedRepositoryInventory, createGitSourceProofProvider, nodeApplicationRepositoryKey, nodeApplicationWorkspaceCheckpointDirectory, } from '../application/node/index.js';
 import { selectApplicationSpecifications } from '../application/selection/index.js';
 import { defaultTypeSpecCacheDirectory } from '../cache/file-store.js';
 import { createFileWorkspaceCheckpointStore, decodeWorkspaceCheckpointJson, encodeWorkspaceCheckpointJson, WORKSPACE_CHECKPOINT_JSON_ENCODING, } from '../workspace/checkpoint/index.js';
-import { CLI_CHECK_LIMITS } from './limits.js';
+import { cliAccelerationError, createCliAccelerationEvent as accelerationEvent, createCliAccelerationReceipt, } from './acceleration.js';
 import { reportProjectedCheckResult, runCommand } from './run.js';
-const FORMAT = 'astrale.codegraph.cli-check-result';
-const VERSION = 1;
-const RESULT = 'cli/check-result.json.br';
-const CATALOG_FORMAT = 'astrale.codegraph.cli-check-catalog';
-const CATALOG_VERSION = 1;
-const CATALOG = 'cli/check-catalog.json.br';
-const MAXIMUM_RESULT_BYTES = 16 * 1024 * 1024;
-const MAXIMUM_CATALOG_BYTES = CLI_CHECK_LIMITS.maximumCatalogCheckpointDecodedBytes;
+import { CHECK_CATALOG_ARTIFACT as CATALOG, CHECK_CATALOG_FORMAT as CATALOG_FORMAT, CHECK_CATALOG_VERSION as CATALOG_VERSION, CHECK_RESULT_ARTIFACT as RESULT, CHECK_RESULT_FORMAT as FORMAT, CHECK_RESULT_VERSION as VERSION, MAXIMUM_CHECK_CATALOG_BYTES as MAXIMUM_CATALOG_BYTES, MAXIMUM_CHECK_RESULT_BYTES as MAXIMUM_RESULT_BYTES, isStoredCheckCatalog, isStoredCheckResult, } from './semantic-pack/model.js';
+import { loadSemanticPack, portableApplicationReference, publishSemanticPack, semanticPackScope, } from './semantic-pack/store.js';
 /**
  * Admit an exact previous check result before constructing the application. Any cache uncertainty
  * is advisory: the canonical command runs and is the only producer of publishable output.
  */
 export async function runCliCommand(command, services, output) {
-    if (command.name !== 'check' || !command.cache)
+    if (command.name !== 'check')
         return runCommand(command, services, output);
+    const suppliedSemanticPackDirectory = process.env.ASTRALE_TYPESPEC_SEMANTIC_PACK_DIR?.trim();
+    if (!command.cache && !suppliedSemanticPackDirectory) {
+        return runCommand(command, services, output);
+    }
     const root = await resolveApplicationRoot(command.root);
     const cacheDirectory = defaultTypeSpecCacheDirectory();
-    const store = createFileWorkspaceCheckpointStore({
-        directory: nodeApplicationWorkspaceCheckpointDirectory(cacheDirectory, root),
-        maxArtifacts: 4_096,
-        maximumScopes: 512,
-    });
+    const store = command.cache
+        ? createFileWorkspaceCheckpointStore({
+            directory: nodeApplicationWorkspaceCheckpointDirectory(cacheDirectory, root),
+            maxArtifacts: 4_096,
+            maximumScopes: 512,
+        })
+        : undefined;
+    let semanticStore;
+    let semanticPackWritable = false;
+    let portableCheckpoint;
     let canonicalStarted = false;
+    const events = [];
     try {
         const producerFingerprint = await codegraphProducerFingerprint();
         const repositoryKey = await nodeApplicationRepositoryKey(root);
         const repository = await resolveApplicationRepositoryIdentity(root, repositoryKey);
         const request = checkRequest(command);
-        const scope = `cli-check-${sha256(request)}`;
         const family = checkFamily(command);
-        const catalogScope = `cli-check-catalog-${sha256(family)}`;
-        const inventory = await createCheckpointedRepositoryInventory({
+        const repositoryExcludes = applicationRepositoryExcludes(root, command.exclude);
+        const loadInventory = () => createCheckpointedRepositoryInventory({
             root,
-            store,
+            store: store,
             producerFingerprint: `${producerFingerprint}:repository-inventory/3`,
-        })({
-            root,
-            repository,
-            scope: { exclude: applicationRepositoryExcludes(root, command.exclude) },
+        })({ root, repository, scope: { exclude: repositoryExcludes } });
+        const inventoryPromise = store && !suppliedSemanticPackDirectory
+            ? loadInventory()
+            : undefined;
+        const proofStarted = performance.now();
+        const proofAdmission = await createGitSourceProofProvider().admit(root, {
+            version: 'application-source-scope/1',
+            exclude: repositoryExcludes,
+            ignored: 'reject-semantic',
         });
+        events.push({
+            operation: 'source-proof',
+            outcome: proofAdmission.ok ? 'admitted' : 'fallback',
+            code: proofAdmission.ok ? 'proof-admitted' : proofAdmission.code,
+            durationMs: performance.now() - proofStarted,
+            ...(proofAdmission.ok
+                ? {}
+                : { error: { name: 'SourceProofFallback', message: proofAdmission.message } }),
+        });
+        const sourceProof = proofAdmission.ok ? proofAdmission.proof.id : undefined;
+        if (sourceProof) {
+            semanticPackWritable = suppliedSemanticPackDirectory === undefined;
+            semanticStore = createFileWorkspaceCheckpointStore({
+                directory: suppliedSemanticPackDirectory
+                    ? resolve(suppliedSemanticPackDirectory)
+                    : join(cacheDirectory, 'semantic-packs', 'checks'),
+                maxArtifacts: 4_096,
+                maximumScopes: 1_024,
+            });
+            const semantic = await loadSemanticPack(semanticStore, semanticPackScope({ sourceProof, producerFingerprint, repository, family }), { producerFingerprint, sourceProof, request, family, repository }, command.select.length > 0);
+            events.push(semantic.event);
+            if (semantic.result) {
+                replay(output, semantic.result.transcript);
+                return withAcceleration({
+                    exitCode: semantic.result.exitCode,
+                    check: {
+                        repository: semantic.result.repository,
+                        inventory: semantic.result.inventory,
+                        snapshot: semantic.result.snapshot,
+                    },
+                }, events);
+            }
+            if (semantic.catalog) {
+                const transcript = [];
+                const projected = projectCatalogCheck(root, command, semantic.catalog, transcript);
+                replay(output, transcript);
+                return withAcceleration(projected, events);
+            }
+            if (semanticPackWritable || semantic.application) {
+                portableCheckpoint = {
+                    store: semanticStore,
+                    sourceProof,
+                    writable: semanticPackWritable,
+                    ...(semantic.application ? { reference: semantic.application } : {}),
+                };
+            }
+        }
+        if (!store) {
+            canonicalStarted = true;
+            return withAcceleration(await runCommand(command, services, output, portableCheckpoint), events);
+        }
+        const scope = `cli-check-${sha256(request)}`;
+        const catalogScope = `cli-check-catalog-${sha256(family)}`;
+        const inventory = await (inventoryPromise ?? loadInventory());
         const cached = await loadResult(store, scope, {
             producerFingerprint,
+            ...(sourceProof ? { sourceProof } : {}),
             request,
             repository,
             inventory: inventory.revision,
-        });
-        if (cached) {
-            replay(output, cached.transcript);
-            return {
-                exitCode: cached.exitCode,
+        }, 'workspace-result-read');
+        events.push(cached.event);
+        if (cached.value) {
+            replay(output, cached.value.transcript);
+            return withAcceleration({
+                exitCode: cached.value.exitCode,
                 check: {
-                    repository: cached.repository,
-                    inventory: cached.inventory,
-                    snapshot: cached.snapshot,
+                    repository: cached.value.repository,
+                    inventory: cached.value.inventory,
+                    snapshot: cached.value.snapshot,
                 },
-            };
+            }, events);
         }
         if (command.select.length) {
             const catalog = await loadCatalog(store, catalogScope, {
@@ -71,13 +136,15 @@ export async function runCliCommand(command, services, output) {
                 repository,
                 inventory: inventory.revision,
             });
-            if (catalog) {
+            events.push(catalog.event);
+            if (catalog.value) {
                 const transcript = [];
-                const projected = projectCatalogCheck(root, command, catalog, transcript);
-                await publishResult(store, scope, {
+                const projected = projectCatalogCheck(root, command, catalog.value, transcript);
+                const stored = {
                     format: FORMAT,
                     version: VERSION,
                     producerFingerprint,
+                    ...(sourceProof ? { sourceProof } : {}),
                     request,
                     repository,
                     inventory: inventory.revision,
@@ -85,34 +152,46 @@ export async function runCliCommand(command, services, output) {
                     exitCode: projected.exitCode,
                     transcript,
                     catalogStatus: 'projected',
-                });
+                };
+                events.push(await publishResult(store, scope, stored, 'workspace-result-publish'));
+                if (semanticStore && sourceProof && semanticPackWritable) {
+                    const application = await portableApplicationReference(semanticStore, producerFingerprint, sourceProof, repository, inventory.revision, command.exclude);
+                    events.push(await publishSemanticPack(semanticStore, semanticPackScope({ sourceProof, producerFingerprint, repository, family }), stored, family, sourceProof, { ...(application ? { application } : {}) }));
+                }
                 replay(output, transcript);
-                return projected;
+                return withAcceleration(projected, events);
             }
         }
         const transcript = [];
         const recording = recordingOutput(output, transcript);
         canonicalStarted = true;
-        const result = await runCommand(command, services, recording);
+        const result = await runCommand(command, services, recording, portableCheckpoint);
         if (result.check &&
             result.check.repository === repository &&
             result.check.inventory === inventory.revision) {
-            const catalogStatus = !command.select.length && result.check.catalog
-                ? await publishCatalog(store, catalogScope, {
+            let catalogStatus = 'not-applicable';
+            let catalog;
+            if (!command.select.length && result.check.catalog) {
+                catalog = {
                     format: CATALOG_FORMAT,
                     version: CATALOG_VERSION,
                     producerFingerprint,
+                    ...(sourceProof ? { sourceProof } : {}),
                     family,
                     repository,
                     inventory: inventory.revision,
                     snapshot: result.check.snapshot,
                     catalog: result.check.catalog,
-                })
-                : 'not-applicable';
-            await publishResult(store, scope, {
+                };
+                const published = await publishCatalog(store, catalogScope, catalog);
+                catalogStatus = published.status;
+                events.push(published.event);
+            }
+            const stored = {
                 format: FORMAT,
                 version: VERSION,
                 producerFingerprint,
+                ...(sourceProof ? { sourceProof } : {}),
                 request,
                 repository,
                 inventory: inventory.revision,
@@ -120,21 +199,37 @@ export async function runCliCommand(command, services, output) {
                 exitCode: result.exitCode,
                 transcript,
                 catalogStatus,
-            });
+            };
+            events.push(await publishResult(store, scope, stored, 'workspace-result-publish'));
+            if (semanticStore && sourceProof && semanticPackWritable) {
+                const application = await portableApplicationReference(semanticStore, producerFingerprint, sourceProof, repository, inventory.revision, command.exclude);
+                events.push(await publishSemanticPack(semanticStore, semanticPackScope({ sourceProof, producerFingerprint, repository, family }), stored, family, sourceProof, {
+                    ...(catalog ? { catalog } : {}),
+                    ...(application ? { application } : {}),
+                }));
+            }
         }
-        return result;
+        return withAcceleration(result, events);
     }
     catch (error) {
         if (canonicalStarted)
             throw error;
+        events.push({
+            operation: 'admission',
+            outcome: 'fallback',
+            code: 'acceleration-admission-failed',
+            durationMs: 0,
+            error: cliAccelerationError(error),
+        });
         // Admission is strictly advisory. Re-run without touching the canonical command semantics.
-        return runCommand(command, services, output);
+        return withAcceleration(await runCommand(command, services, output), events);
     }
     finally {
-        await store.dispose();
+        await Promise.all([store?.dispose(), semanticStore?.dispose()]);
     }
 }
-async function publishResult(store, scope, stored) {
+async function publishResult(store, scope, stored, operation) {
+    const started = performance.now();
     try {
         const artifact = encodeWorkspaceCheckpointJson(stored, {
             maximumDecodedBytes: MAXIMUM_RESULT_BYTES,
@@ -146,6 +241,7 @@ async function publishResult(store, scope, stored) {
                 producerFingerprint: stored.producerFingerprint,
                 payload: {
                     request: stored.request,
+                    ...(stored.sourceProof ? { sourceProof: stored.sourceProof } : {}),
                     repository: stored.repository,
                     inventory: stored.inventory,
                     snapshot: stored.snapshot,
@@ -158,20 +254,32 @@ async function publishResult(store, scope, stored) {
             },
             artifacts: { [RESULT]: artifact.value },
         });
+        return {
+            ...accelerationEvent(operation, 'published', 'published', started),
+            work: {
+                bytesWritten: artifact.value.byteLength,
+                bytesDecoded: artifact.decodedBytes,
+                writtenShards: 1,
+            },
+        };
     }
-    catch {
-        // A read-only, damaged, or racing cache cannot change a successful canonical check.
+    catch (error) {
+        return accelerationEvent(operation, 'failed', 'publication-failed', started, error);
     }
 }
 async function publishCatalog(store, scope, stored) {
+    const started = performance.now();
     let artifact;
     try {
         artifact = encodeWorkspaceCheckpointJson(stored, {
             maximumDecodedBytes: MAXIMUM_CATALOG_BYTES,
         });
     }
-    catch {
-        return 'encode-failed';
+    catch (error) {
+        return {
+            status: 'encode-failed',
+            event: accelerationEvent('catalog-publish', 'failed', 'encode-failed', started, error),
+        };
     }
     try {
         await store.publish(scope, {
@@ -181,6 +289,7 @@ async function publishCatalog(store, scope, stored) {
                 producerFingerprint: stored.producerFingerprint,
                 payload: {
                     family: stored.family,
+                    ...(stored.sourceProof ? { sourceProof: stored.sourceProof } : {}),
                     repository: stored.repository,
                     inventory: stored.inventory,
                     snapshot: stored.snapshot,
@@ -192,68 +301,121 @@ async function publishCatalog(store, scope, stored) {
             },
             artifacts: { [CATALOG]: artifact.value },
         });
-        return 'available';
+        return {
+            status: 'available',
+            event: {
+                ...accelerationEvent('catalog-publish', 'published', 'catalog-published', started),
+                work: {
+                    bytesWritten: artifact.value.byteLength,
+                    bytesDecoded: artifact.decodedBytes,
+                    writtenShards: 1,
+                },
+            },
+        };
     }
-    catch {
-        return 'publish-failed';
+    catch (error) {
+        return {
+            status: 'publish-failed',
+            event: accelerationEvent('catalog-publish', 'failed', 'publication-failed', started, error),
+        };
     }
 }
-async function loadResult(store, scope, expectation) {
+async function loadResult(store, scope, expectation, operation) {
+    const started = performance.now();
+    const miss = (code) => ({
+        event: accelerationEvent(operation, 'miss', code, started),
+    });
     try {
         const loaded = await store.load(scope);
-        if (!loaded.ok ||
-            loaded.manifest.format !== FORMAT ||
+        if (!loaded.ok)
+            return miss(loaded.reason);
+        if (loaded.manifest.format !== FORMAT ||
             loaded.manifest.version !== VERSION ||
             loaded.manifest.producerFingerprint !== expectation.producerFingerprint) {
-            return;
+            return miss('manifest-incompatible');
         }
         const bytes = loaded.artifacts.get(RESULT);
         if (!bytes)
-            return;
-        const decoded = decodeWorkspaceCheckpointJson(bytes, {
+            return miss('artifact-missing');
+        const artifact = decodeWorkspaceCheckpointJson(bytes, {
             maximumDecodedBytes: MAXIMUM_RESULT_BYTES,
-        }).value;
+        });
+        const decoded = artifact.value;
         if (!isStoredCheckResult(decoded))
-            return;
+            return miss('payload-invalid');
         if (decoded.producerFingerprint !== expectation.producerFingerprint ||
             decoded.request !== expectation.request ||
             decoded.repository !== expectation.repository ||
-            decoded.inventory !== expectation.inventory) {
-            return;
+            (expectation.sourceProof !== undefined && decoded.sourceProof !== expectation.sourceProof) ||
+            (expectation.inventory !== undefined && decoded.inventory !== expectation.inventory)) {
+            return miss('identity-mismatch');
         }
-        return decoded;
+        return {
+            value: decoded,
+            event: {
+                ...accelerationEvent(operation, 'hit', 'admitted', started),
+                work: {
+                    bytesRead: bytes.byteLength,
+                    bytesDecoded: artifact.decodedBytes,
+                    loadedShards: 1,
+                },
+            },
+        };
     }
-    catch {
-        return;
+    catch (error) {
+        return {
+            event: accelerationEvent(operation, 'failed', 'load-failed', started, error),
+        };
     }
 }
-async function loadCatalog(store, scope, expectation) {
+async function loadCatalog(store, scope, expectation, operation = 'catalog-read') {
+    const started = performance.now();
+    const miss = (code) => ({
+        event: accelerationEvent(operation, 'miss', code, started),
+    });
     try {
         const loaded = await store.load(scope);
-        if (!loaded.ok ||
-            loaded.manifest.format !== CATALOG_FORMAT ||
+        if (!loaded.ok)
+            return miss(loaded.reason);
+        if (loaded.manifest.format !== CATALOG_FORMAT ||
             loaded.manifest.version !== CATALOG_VERSION ||
             loaded.manifest.producerFingerprint !== expectation.producerFingerprint) {
-            return;
+            return miss('manifest-incompatible');
         }
         const bytes = loaded.artifacts.get(CATALOG);
         if (!bytes)
-            return;
-        const decoded = decodeWorkspaceCheckpointJson(bytes, {
+            return miss('artifact-missing');
+        const artifact = decodeWorkspaceCheckpointJson(bytes, {
             maximumDecodedBytes: MAXIMUM_CATALOG_BYTES,
-        }).value;
+        });
+        const decoded = artifact.value;
         if (!isStoredCheckCatalog(decoded))
-            return;
+            return miss('payload-invalid');
         if (decoded.producerFingerprint !== expectation.producerFingerprint ||
+            (expectation.sourceProof !== undefined && decoded.sourceProof !== expectation.sourceProof) ||
             decoded.family !== expectation.family ||
-            decoded.repository !== expectation.repository ||
-            decoded.inventory !== expectation.inventory) {
-            return;
+            decoded.repository !== expectation.repository) {
+            return miss('identity-mismatch');
         }
-        return decoded;
+        if (expectation.inventory !== undefined && decoded.inventory !== expectation.inventory) {
+            return miss('identity-mismatch');
+        }
+        return {
+            value: decoded,
+            event: {
+                ...accelerationEvent(operation, 'hit', 'catalog-admitted', started),
+                work: {
+                    bytesRead: bytes.byteLength,
+                    bytesDecoded: artifact.decodedBytes,
+                    loadedShards: 1,
+                },
+            },
+        };
     }
-    catch {
-        return;
+    catch (error) {
+        return {
+            event: accelerationEvent(operation, 'failed', 'load-failed', started, error),
+        };
     }
 }
 function projectCatalogCheck(root, command, stored, transcript) {
@@ -329,78 +491,13 @@ function replay(output, transcript) {
             output.error(entry.message);
     }
 }
-function isStoredCheckResult(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-        return false;
-    const result = value;
-    return (result.format === FORMAT &&
-        result.version === VERSION &&
-        typeof result.producerFingerprint === 'string' &&
-        typeof result.request === 'string' &&
-        typeof result.repository === 'string' &&
-        typeof result.inventory === 'string' &&
-        typeof result.snapshot === 'string' &&
-        Number.isSafeInteger(result.exitCode) &&
-        (result.exitCode === 0 || result.exitCode === 1) &&
-        Array.isArray(result.transcript) &&
-        result.transcript.every((entry) => entry &&
-            typeof entry === 'object' &&
-            !Array.isArray(entry) &&
-            (entry.channel === 'stdout' || entry.channel === 'stderr') &&
-            typeof entry.message === 'string'));
-}
-function isStoredCheckCatalog(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-        return false;
-    const stored = value;
-    if (stored.format !== CATALOG_FORMAT ||
-        stored.version !== CATALOG_VERSION ||
-        typeof stored.producerFingerprint !== 'string' ||
-        typeof stored.family !== 'string' ||
-        typeof stored.repository !== 'string' ||
-        typeof stored.inventory !== 'string' ||
-        typeof stored.snapshot !== 'string' ||
-        !stored.catalog ||
-        typeof stored.catalog !== 'object') {
-        return false;
-    }
-    const catalog = stored.catalog;
-    return (Array.isArray(catalog.sharedDiagnostics) &&
-        Array.isArray(catalog.specifications) &&
-        catalog.specifications.every(isCatalogSpecification) &&
-        Array.isArray(catalog.qualifications) &&
-        catalog.qualifications.every(isCatalogQualification));
-}
-function isCatalogSpecification(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-        return false;
-    const specification = value;
-    return (typeof specification.id === 'string' &&
-        typeof specification.source === 'string' &&
-        typeof specification.root === 'string' &&
-        Array.isArray(specification.sourceReferences) &&
-        specification.sourceReferences.every((reference) => reference &&
-            typeof reference === 'object' &&
-            !Array.isArray(reference) &&
-            reference.target &&
-            typeof reference.target === 'object' &&
-            !Array.isArray(reference.target) &&
-            typeof reference.target.source === 'string') &&
-        Array.isArray(specification.diagnostics));
-}
-function isCatalogQualification(value) {
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-        return false;
-    const qualification = value;
-    return (typeof qualification.id === 'string' &&
-        typeof qualification.status === 'string' &&
-        typeof qualification.source === 'string' &&
-        Array.isArray(qualification.diagnostics));
-}
 function sortedUnique(values) {
     return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
 function sha256(value) {
     return createHash('sha256').update(value).digest('hex');
+}
+function withAcceleration(result, events) {
+    return { ...result, acceleration: createCliAccelerationReceipt(events) };
 }
 //# sourceMappingURL=checkpoint.js.map

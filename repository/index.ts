@@ -1,3 +1,7 @@
-export * from './model.ts'
+export { createNodeRepositoryScanner, defaultRepositoryClassifiers, inventoryRepository, repositoryFacts } from './model.ts'
+export type { RepositoryClassification, RepositoryContent, RepositoryDelivery, RepositoryLifecycle, RepositoryProvenance, RepositoryPurpose } from './model.ts'
+export type { RepositoryFile, RepositoryInventory, RepositoryInventoryOptions, RepositoryScope } from './model.ts'
+export type { RepositoryClassifier, RepositoryScanEntry, RepositoryScanner } from './model.ts'
 export * from './source/index.ts'
+export * from './source-proof/index.ts'
 export * from './statistics/index.ts'

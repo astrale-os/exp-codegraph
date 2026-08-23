@@ -26,6 +26,12 @@ export interface NativeProjectDescriptor {
   readonly modules?: readonly NativeModuleBoundary[]
 }
 
+/** Inventory-proven source transition; `unknown` preserves conservative rebuilding. */
+export interface NativeSourceChange {
+  readonly path: string
+  readonly kind: 'change' | 'add' | 'unlink' | 'unknown'
+}
+
 export type NativeAnalysisRequest =
   | {
       readonly id: number
@@ -34,6 +40,7 @@ export type NativeAnalysisRequest =
       /** Required with `base`; binds restart/adoption to the store's exact sequence. */
       readonly baseSequence?: number
       readonly changed?: readonly string[]
+      readonly changes?: readonly NativeSourceChange[]
       readonly invalidate?: boolean
     }
   | {
@@ -127,6 +134,10 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   /** Maximum encoded physical bytes assembled before semantic decoding. */
   readonly maximumPhysicalTransactionBytes?: number
   readonly maximumErrorBytes?: number
+  /** Optional adapter-owned native-process resident-set watchdog. */
+  readonly maximumResidentBytes?: number
+  /** Qualification seam for a receiver-bound resident-set evidence provider. */
+  readonly sampleResidentBytes?: (pid: number) => Promise<number>
   /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
   readonly telemetry?: AnalysisTelemetrySink
   /** Explicit physical payload capabilities negotiated with the native producer. */
@@ -140,6 +151,16 @@ export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS: Readonly<{
   readonly maximumPhysicalTransactionBytes: number
   readonly maximumErrorBytes: number
 }>
+
+export class NativeAnalysisProcessResourceError extends Error {
+  readonly name: 'NativeAnalysisProcessResourceError'
+  readonly code: 'NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED' | 'NATIVE_ANALYSIS_RESIDENT_LIMIT'
+  constructor(
+    code: 'NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED' | 'NATIVE_ANALYSIS_RESIDENT_LIMIT',
+    message: string,
+    options?: ErrorOptions,
+  )
+}
 
 /** Adapt one explicitly selected native executable to the generic resident-session contract. */
 export function createProcessNativeAnalysisSessionFactory(

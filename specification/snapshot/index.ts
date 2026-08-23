@@ -2,6 +2,7 @@ export { compileSpecificationSnapshot } from './compile.ts'
 export {
   compileSpecificationSnapshots,
   type SpecificationCompilationBatchOptions,
+  type SpecificationCompilationPhase,
 } from './batch.ts'
 export { specificationModuleId } from './identity.ts'
 export type {

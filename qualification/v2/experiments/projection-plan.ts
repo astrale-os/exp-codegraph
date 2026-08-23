@@ -14,6 +14,7 @@ import {
 import { stableJson } from '../../../analysis/identity/model.ts'
 import {
   createTypeScriptAnalysisService,
+  TYPESCRIPT_ANALYSIS_CAPABILITIES,
   TYPESCRIPT_FACT_NAMESPACES,
   TYPESCRIPT_FACT_PAYLOAD_CODECS,
 } from '../../../analysis/typescript/index.ts'
@@ -21,7 +22,7 @@ import {
 const binary = resolve(requiredArgument('--native-binary'))
 const output = argument('--output')
 const temporary = await mkdtemp(join(tmpdir(), 'codegraph-projection-plan-'))
-const namespaces = Object.values(TYPESCRIPT_FACT_NAMESPACES).sort()
+const capabilities = [...TYPESCRIPT_ANALYSIS_CAPABILITIES].sort()
 
 const phases = new Map<string, readonly string[]>([
   [TYPESCRIPT_FACT_NAMESPACES.project, ['projection.project']],
@@ -78,20 +79,25 @@ export function compareAlias(expected: ExpectedDeclaration): void {
 `,
   )
 
-  const full = await analyze(namespaces)
+  const full = await analyze(capabilities)
   const results = []
-  for (const namespace of namespaces) {
-    const selected = await analyze([namespace])
+  for (const capability of capabilities) {
+    const selected = await analyze([capability])
+    const namespaces = providedNamespaces(capability)
     assert.equal(selected.universe, full.universe)
-    assert.deepEqual(selected.namespaces, [namespace])
-    assert.deepEqual(selected.facts, full.facts.filter((fact) => fact.namespace === namespace))
+    assert.deepEqual(selected.namespaces, namespaces)
+    assert.deepEqual(
+      selected.facts,
+      full.facts.filter((fact) => namespaces.includes(fact.namespace)),
+    )
     assert.deepEqual(
       selected.manifest,
-      full.manifest.filter((reference) => reference.namespace === namespace),
+      full.manifest.filter((reference) => namespaces.includes(reference.namespace)),
     )
-    assert.deepEqual(selected.semanticPhases, [...(phases.get(namespace) ?? [])].sort())
+    assert.deepEqual(selected.semanticPhases, [...(phases.get(capability) ?? [])].sort())
     results.push({
-      namespace,
+      capability,
+      namespaces,
       facts: selected.facts.length,
       shards: selected.manifest.length,
       stages: selected.semanticPhases,
@@ -135,6 +141,10 @@ export function compareAlias(expected: ExpectedDeclaration): void {
   }
 } finally {
   await rm(temporary, { recursive: true, force: true })
+}
+
+function providedNamespaces(capability: string): readonly string[] {
+  return [capability]
 }
 
 async function analyze(capabilities: readonly string[], moduleName = 'fixture'): Promise<{

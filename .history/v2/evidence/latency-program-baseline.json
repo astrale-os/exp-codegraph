@@ -1,0 +1,128 @@
+{
+  "format": "astrale.codegraph.latency-program-baseline",
+  "version": 1,
+  "status": "baseline",
+  "subject": {
+    "codegraph": "16aca70db070aac335d0aa4ef9c07eafea91ee74",
+    "kernel": "a19601a15be360df89be52ec54bdbf7867248372",
+    "node": "v24.18.1",
+    "platform": "darwin",
+    "architecture": "arm64"
+  },
+  "check": {
+    "selectedBackendColdMilliseconds": 85500,
+    "selectedBackendReplayMilliseconds": 890,
+    "privateSpecificationDocumentationEditMilliseconds": 84780,
+    "wholeColdMilliseconds": 100690,
+    "wholeReplayMilliseconds": 710,
+    "instrumentedSelected": {
+      "totalMilliseconds": 94560,
+      "inventoryMilliseconds": 1270,
+      "compileMilliseconds": 89360,
+      "statisticsMilliseconds": 2520,
+      "analysisMilliseconds": 980,
+      "qualificationMilliseconds": 340
+    }
+  },
+  "verify": {
+    "selectedBackendMilliseconds": 899740,
+    "outcome": "semantic-transaction-limit",
+    "decodedSemanticBytes": 628045875,
+    "maximumDecodedSemanticBytes": 402653184
+  },
+  "complexity": {
+    "scope": {
+      "sourceExtensions": [".ts", ".tsx", ".go", ".mjs"],
+      "excludedSegments": [
+        "__tests__",
+        "dist",
+        "node_modules",
+        "native-packages",
+        "qualification",
+        "scripts",
+        ".history",
+        ".spec"
+      ],
+      "excludedSuffixes": [".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", ".config.ts", ".config.tsx"]
+    },
+    "files": 353,
+    "directories": 79,
+    "physicalLines": 65484,
+    "sizeBands": {
+      "over250": 73,
+      "over500": 30,
+      "over1000": 8,
+      "over2000": 0
+    },
+    "relativeImportCycles": [],
+    "boundaryDefinitions": 95,
+    "repeatedBoundaryNames": [
+      ["validateCompleteness", 2],
+      ["validateManifest", 2],
+      ["validateReference", 2]
+    ],
+    "optimizationFiles": [],
+    "optimizationImports": [],
+    "largest": [
+      ["typescript/surface/declaration.ts", 1798],
+      ["conformance/module/comparison/declaration/evaluator.ts", 1582],
+      ["analysis/typescript/native/surface_type.go", 1564],
+      ["viewer/shell/navigation.tsx", 1419],
+      ["conformance/module/comparison/type/evaluator.ts", 1334],
+      ["application/service.ts", 1115],
+      ["analysis/protocol/process-session.ts", 1113],
+      ["api/project.ts", 1037]
+    ]
+  },
+  "checkpointRepairCandidate": {
+    "scope": "diagnostic-only evidence before final retained qualification",
+    "selectedBackendColdMilliseconds": 72170,
+    "privateArchitectureEditCliMilliseconds": 2770,
+    "privateArchitectureEditApplicationMilliseconds": 1390.80675,
+    "privateArchitectureOwnersRefreshed": 1,
+    "privateArchitectureSpecificationsCompiled": 0,
+    "privateArchitectureSpecificationsQualified": 1,
+    "privateArchitectureSpecificationsReused": 168,
+    "privateLayoutCommentEditApplicationMilliseconds": 2494.904875,
+    "privateLayoutCommentOwnersRefreshed": 1,
+    "privateLayoutCommentSpecificationsCompiled": 1,
+    "privateLayoutCommentSpecificationsQualified": 1,
+    "privateLayoutCommentSpecificationsReused": 168,
+    "requestPlannedSelectedColdMilliseconds": 44620,
+    "requestPlannedFrontierFixedApplicationMilliseconds": 28070.99075,
+    "requestPlannedFrontierFixedCompileMilliseconds": 24574.243625,
+    "requestPlannedUniqueSpecificationsCompiled": 169,
+    "requestPlannedApplicationEqualsFullProjection": true,
+    "retainedBatch32SelectedApplicationMilliseconds": 30840.957292,
+    "retainedBatch32CompileMilliseconds": 27031.237208,
+    "retainedBatch32DeclarationMilliseconds": 19164.73525,
+    "retainedBatch32TypeScriptMilliseconds": 6715.279291,
+    "statisticsCapabilityMinimalCliMilliseconds": 25340,
+    "statisticsCapabilityMinimalStatisticsMilliseconds": 0,
+    "preplannedOneWaveApplicationMilliseconds": 14882.382666,
+    "preplannedOneWaveCompileMilliseconds": 13642.520625,
+    "preplannedPrimarySpecifications": 29,
+    "preplannedClosureSpecifications": 169,
+    "preplannedInspectedSources": 1335,
+    "preplannedDependencyEdges": 1498,
+    "preplannedCompilerWaves": 1,
+    "preplannedFallbackSpecifications": 0,
+    "preplannedApplicationIdentity": "application:3cf3b8c997fa42db840aec0a3f1ae932c0c8afd2bafb80741f7134d3423974c4",
+    "sourceProofCleanMilliseconds": 850,
+    "sourceProofCleanOverlayEntries": 0,
+    "portableSemanticPackProducerMilliseconds": 16403.637083,
+    "portableSemanticPackCiMilliseconds": 603.474,
+    "portableSemanticPackCrossPathTranscriptEqual": true,
+    "portableSemanticPackCiOrdinaryCache": "empty",
+    "sharedCompilerExperiments": {
+      "single256MiBWorker": "rejected: explicit OOM diagnostics changed the application identity",
+      "single512MiBWorkerMilliseconds": 21982.038458,
+      "single512MiBWorkerIdentityEqual": true,
+      "concurrentIndependentPreparationMilliseconds": 15107.574042,
+      "catalogWideModuleProgramMilliseconds": 15409.556125,
+      "retainedPolicy": "32-entry declaration workers and 32-module TypeScript programs"
+    },
+    "checkpointPublication": "published",
+    "canonicalKernelDiagnostics": 48
+  }
+}

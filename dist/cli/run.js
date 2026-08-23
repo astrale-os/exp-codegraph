@@ -1,16 +1,11 @@
-import { MODULE_LAYOUT_PROFILE_ID, MODULE_SCHEMA_PROFILE_ID, MODULE_TEST_EVIDENCE_PROFILE_ID, SPECIFICATION_VALIDITY_PROFILE_ID, } from '../conformance/index.js';
+import { MODULE_TEST_EVIDENCE_PROFILE_ID, SPECIFICATION_VALIDITY_PROFILE_ID, } from '../conformance/index.js';
 import { USAGE } from './parse.js';
+import { CHECK_SEMANTIC_PLAN, } from './semantic-pack/model.js';
 import { createDevStartupProgress } from './progress.js';
 import { printQualificationProfile, printQualificationRule, printQualificationSummary, qualificationDiagnostics, } from './qualification-report.js';
 import { printDiagnostic } from './report.js';
-const CHECK_PROFILES = [
-    SPECIFICATION_VALIDITY_PROFILE_ID,
-    MODULE_LAYOUT_PROFILE_ID,
-    MODULE_SCHEMA_PROFILE_ID,
-    MODULE_TEST_EVIDENCE_PROFILE_ID,
-];
 const TEST_PROFILES = [SPECIFICATION_VALIDITY_PROFILE_ID, MODULE_TEST_EVIDENCE_PROFILE_ID];
-export async function runCommand(command, services, output) {
+export async function runCommand(command, services, output, portableCheckpoint) {
     if (command.name === 'help') {
         output.out(USAGE);
         return { exitCode: command.successful ? 0 : 2 };
@@ -55,7 +50,7 @@ export async function runCommand(command, services, output) {
     if (command.name === 'changed' && command.scopeOnly)
         return { exitCode: 0 };
     const cache = 'cache' in command ? command.cache : true;
-    const application = await services.createApplication(command.root, cache);
+    const application = await services.createApplication(command.root, cache, portableCheckpoint);
     let reader;
     try {
         const refreshed = await application.refresh(refreshOptions(command, changed));
@@ -197,9 +192,11 @@ function refreshOptions(command, changed) {
                 ? command.select
                 : [];
         return {
+            requestedCapabilities: CHECK_SEMANTIC_PLAN.requestedCapabilities,
             qualify: true,
-            compilerAnalysis: false,
-            requestedProfiles: CHECK_PROFILES,
+            compilerAnalysis: CHECK_SEMANTIC_PLAN.compilerAnalysis,
+            requestedProfiles: CHECK_SEMANTIC_PLAN.requestedProfiles,
+            schemaRoots: CHECK_SEMANTIC_PLAN.schemaRoots,
             exclude: command.exclude,
             select,
             focused: select.length > 0,
@@ -220,6 +217,7 @@ function refreshOptions(command, changed) {
         };
     }
     return {
+        requestedCapabilities: ['declaration-models'],
         qualify: true,
         compilerAnalysis: true,
         select: command.select,

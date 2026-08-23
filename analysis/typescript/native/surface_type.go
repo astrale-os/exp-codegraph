@@ -570,9 +570,6 @@ func genericReferenceWithoutArguments(symbol *shimast.Symbol, arguments []any) b
 
 func (n *nativeTypeNormalizer) reference(symbol *shimast.Symbol, arguments []any) any {
 	identity := n.x.publicSymbolIdentity(symbol)
-	if identity == "" {
-		identity = "ts:<synthetic>#" + percentEncode(symbol.Name)
-	}
 	n.references[identity] = symbol
 	if arguments == nil {
 		arguments = []any{}

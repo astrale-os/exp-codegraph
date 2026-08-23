@@ -1,7 +1,6 @@
-import { createHash } from 'node:crypto';
 import { basename, dirname, relative } from 'node:path';
 import { loadSpecificationDeclarationResource } from '../declaration.js';
-import { specificationModuleId } from './identity.js';
+import { specificationModuleId, specificationSnapshotIdentity } from './identity.js';
 import { duplicatePortNameDiagnostics } from '../port.js';
 import { inventoryModuleFiles } from '../module/inventory.js';
 import { deduplicateDiagnostics, loadAuthoredLayout, loadCodeDeclaration, loadCodeResource, loadCodeResources, loadDescriptors, loadExamples, loadPackagePatterns, loadPackages, loadPorts, loadSchemas, moduleTitle, normativeResourceRevision, portable, revisionOf, } from './resources.js';
@@ -108,30 +107,8 @@ export async function compileSpecificationSnapshot(root, specDirectory) {
         sourceReferences: typeScript.references,
         diagnostics: deduplicateDiagnostics(diagnostics),
     };
-    const id = specificationIdentity(compiled);
+    const id = specificationSnapshotIdentity(compiled);
     return immutable({ ...compiled, id });
-}
-function specificationIdentity(snapshot) {
-    const digest = createHash('sha256')
-        .update('astrale.typespec.specification\0')
-        .update(stableJson(snapshot))
-        .digest('hex');
-    return `specification:${digest}`;
-}
-function stableJson(value) {
-    return JSON.stringify(canonical(value));
-}
-function canonical(value) {
-    if (Array.isArray(value))
-        return value.map(canonical);
-    if (value === undefined)
-        return { $undefined: true };
-    if (!value || typeof value !== 'object')
-        return value;
-    return Object.fromEntries(Object.entries(value)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, canonical(entry)]));
 }
 function immutable(value) {
     if (!value || typeof value !== 'object' || Object.isFrozen(value))

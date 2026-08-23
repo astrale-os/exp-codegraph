@@ -4,6 +4,7 @@ import type {
   AnalysisTelemetrySink,
   NativeAnalysisSessionFactory,
   NativeModuleBoundary,
+  NativeSourceChange,
   ProjectUniverseId,
   RepositoryId,
   SourceManifestId,
@@ -25,6 +26,9 @@ export interface ApplicationAnalysisRefreshOptions {
   readonly schemaDependencies?: readonly ApplicationSchemaDependencyResource[]
   readonly compilerAnalysis?: boolean
   readonly changed?: readonly string[]
+  readonly changes?: readonly NativeSourceChange[]
+  /** Focused primary module identities eligible for bounded resident compiler retention. */
+  readonly residentModules?: readonly string[]
   readonly invalidate?: boolean
   readonly signal?: AbortSignal
 }
@@ -36,6 +40,8 @@ export interface ApplicationAnalysisRefresh {
   readonly results: readonly TypeScriptRefreshResult[]
   readonly observation: ApplicationObservationRefresh
   readonly diagnostics: readonly string[]
+  /** Exact changed module subjects, or absent when qualification must conservatively refresh all owners. */
+  readonly affectedModules?: readonly string[]
 }
 
 /** Resident multi-project analysis owned by an application, never by a presentation projection. */

@@ -18,7 +18,7 @@ export function createSpecificationValidityConformanceProfile() {
                 profile: SPECIFICATION_VALIDITY_PROFILE_ID,
                 rule: 'SPECIFICATION-VALID',
                 subject: context.specification.module.id,
-                specificationPointer: entry.pointer,
+                ...(entry.pointer ? { specificationPointer: entry.pointer } : {}),
                 evidence: [],
                 inputs: [],
                 actual: entry,

@@ -23,7 +23,8 @@ export interface ApiDiagnostic {
 export interface ApiSource {
   readonly file: string
   readonly revision: string
-  readonly text: string
+  /** Present only when the declaration-navigation projection was requested. */
+  readonly text?: string
 }
 
 export interface ApiDeclarationMetadata {

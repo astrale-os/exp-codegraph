@@ -113,6 +113,32 @@ describe('workspace checkpoint store', () => {
     ])
   })
 
+  /** @evidence CHECKPOINT-SELECTIVE-ARTIFACT-ADMISSION */
+  it('admits a manifest or selected artifact without reading an omitted corrupt blob', async () => {
+    const directory = await root()
+    const store = createFileWorkspaceCheckpointStore({ directory })
+    const selected = Buffer.from('selected')
+    const omitted = Buffer.from('omitted')
+    await store.publish('selective', {
+      manifest: manifest({ kind: 'sharded' }),
+      artifacts: { selected, omitted },
+    })
+    await writeFile(join(directory, 'blobs', 'sha256', digest(omitted)), 'corrupt')
+
+    const manifestOnly = await store.load('selective', { artifactKeys: [] })
+    expect(manifestOnly).toMatchObject({ ok: true })
+    if (manifestOnly.ok) expect(manifestOnly.artifacts.size).toBe(0)
+    const loaded = await store.load('selective', { artifactKeys: ['selected'] })
+    expect(loaded).toMatchObject({ ok: true })
+    if (loaded.ok) expect([...loaded.artifacts.entries()]).toEqual([['selected', selected]])
+    await expect(store.load('selective', { artifactKeys: ['omitted'] }))
+      .resolves.toMatchObject({ ok: false, reason: 'artifact-corrupt' })
+    await expect(store.load('selective', { artifactKeys: ['absent'] }))
+      .resolves.toMatchObject({ ok: false, reason: 'artifact-missing' })
+    await expect(store.load('selective', { artifactKeys: ['selected', 'selected'] }))
+      .rejects.toThrow('unique string keys')
+  })
+
   it('writes deterministic canonical JSON and sorted artifact descriptors', async () => {
     const firstDirectory = await root()
     const secondDirectory = await root()

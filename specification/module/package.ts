@@ -7,6 +7,7 @@ import type { Diagnostic } from '../../source/diagnostic.ts'
 import { isPackageName } from '../../source/package-name.ts'
 import {
   AUTHORING_SPECIFIER,
+  authoredSourceFile,
   authoringHelperBinding,
   calledObjectLiteral as callObject,
   isAuthoringSpecifier,
@@ -149,7 +150,7 @@ interface ParsedModule {
 }
 
 function parseModule(source: string, text: string, imported: string): ParsedModule {
-  const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = authoredSourceFile(source, text)
   const diagnostics = syntaxDiagnostics(source, text)
   const helper = authoringHelperBinding(file, imported)
   for (const statement of file.statements) {

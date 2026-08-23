@@ -670,6 +670,9 @@ function mergeVerificationRecords(previous, projected, inputs) {
 function verificationInputRevisions(snapshot) {
     const impact = createSpecificationImpactIndex(snapshot.specifications);
     const bySource = new Map(snapshot.specifications.map((specification) => [specification.source, []]));
+    if (!snapshot.statistics) {
+        throw new Error('Live verification requires repository-statistics capability.');
+    }
     for (const file of snapshot.statistics.files) {
         for (const owner of impact.impact(file.path).refreshedOwners) {
             bySource.get(owner)?.push([file.path, file.revision]);

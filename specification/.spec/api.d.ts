@@ -184,6 +184,28 @@ export function compileSpecificationSnapshot(
 
 export interface SpecificationCompilationBatchOptions {
   readonly maximumConcurrency?: number
+  readonly onPhase?: (phase: SpecificationCompilationPhase) => void
+  /** Restorable candidates admitted only when the exact delta cannot affect declarations. */
+  readonly previous?: readonly SpecificationSnapshot[]
+  /** Exact inventory delta used to reject unsafe declaration restoration. */
+  readonly changed?: readonly string[]
+  /** Include presentation-only source navigation in declaration models. */
+  readonly includeDeclarationNavigation?: boolean
+  /** Include complete normalized declaration models after exact diagnostics pass. */
+  readonly includeDeclarationModels?: boolean
+}
+
+export interface SpecificationCompilationPhase {
+  readonly phase: 'inventory' | 'declarations' | 'typescript' | 'snapshots'
+  readonly durationMs: number
+  readonly items: number
+  readonly programs?: number
+  readonly sessions?: number
+  readonly retries?: number
+  readonly fallbacks?: number
+  readonly workerPeakResidentBytes?: number
+  readonly workerResidentUpperBoundBytes?: number
+  readonly overlap?: 'typescript-snapshots'
 }
 
 /** Compile one coherent corpus through bounded shared declaration and TypeScript waves. */

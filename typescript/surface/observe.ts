@@ -11,7 +11,7 @@ import type { DeclarationTypeScriptProject } from './project.ts'
 import type { DeclarationSurfaceSemantics } from './semantics.ts'
 
 import { workspacePackageCoordinate } from '../package-coordinate.ts'
-import { observeDeclaration } from './declaration.ts'
+import { observeDeclarationOnce } from './observe.optimization.ts'
 import {
   canonicalSymbolIdentity,
   declarationKind,
@@ -118,14 +118,16 @@ export function observePublicSurface(
       })
       continue
     }
-    const observation = observeDeclaration(
+    const observation = observeDeclarationOnce(
       catalogRoot,
       project.checker,
       symbol,
-      paths.get(identity) ?? [],
       semantics,
     )
-    declarations.set(identity, observation.declaration)
+    declarations.set(identity, {
+      ...observation.declaration,
+      exportPaths: paths.get(identity) ?? [],
+    })
     issues.push(
       ...observation.declaration.issues.map((issue) => ({
         ...issue,

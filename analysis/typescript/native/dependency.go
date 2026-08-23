@@ -392,17 +392,13 @@ func packageImportMatches(pattern, specifier string) bool {
 	return index >= 0 && strings.HasPrefix(specifier, pattern[:index]) && strings.HasSuffix(specifier, pattern[index+1:])
 }
 
-func (x *extractor) publicAPIDependencies(boundary moduleBoundary, payload moduleFactPayload) []dependencyPayload {
-	byIdentity := map[string]observedDeclarationPayload{}
-	for _, declaration := range payload.Declarations {
-		byIdentity[declaration.Identity] = declaration
-	}
+func (x *extractor) publicAPIDependencies(boundary moduleBoundary, exports []observedExportPayload) []dependencyPayload {
 	type pendingDeclaration struct {
 		identity string
 		path     []string
 	}
 	pending := []pendingDeclaration{}
-	for _, exported := range payload.Exports {
+	for _, exported := range exports {
 		pending = append(pending, pendingDeclaration{
 			identity: exported.Declaration,
 			path:     []string{exported.Declaration},
@@ -418,10 +414,11 @@ func (x *extractor) publicAPIDependencies(boundary moduleBoundary, payload modul
 			continue
 		}
 		visited[identity] = true
-		declaration, exists := byIdentity[identity]
+		observation, exists := x.moduleDeclarationsByIdentity[identity]
 		if !exists {
 			continue
 		}
+		declaration := observation.declaration
 		// The public surface closure remains transitive after it crosses an
 		// ownership boundary. Stopping at the first external declaration loses
 		// both deeper owner relationships and additional occurrences that fold

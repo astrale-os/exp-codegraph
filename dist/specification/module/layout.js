@@ -2,7 +2,7 @@ import { lstat, readdir } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import ts from 'typescript';
 import { sourceRevision } from '../../source/file.js';
-import { AUTHORING_SPECIFIER, authoringHelperBinding, isAuthoringSpecifier, literalProperty, nodeDiagnostic, plainStringLiteral as stringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
+import { AUTHORING_SPECIFIER, authoredSourceFile, authoringHelperBinding, isAuthoringSpecifier, literalProperty, nodeDiagnostic, plainStringLiteral as stringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
 export const DEFAULT_LAYOUT_IGNORE_PATTERNS = [
     '**/.check-workspace.cjs',
     '**/__tests__/**',
@@ -12,7 +12,7 @@ export const DEFAULT_LAYOUT_IGNORE_PATTERNS = [
 ];
 /** Extract one closed literal path list without executing it. */
 export function compileLayout(source, text) {
-    const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const file = authoredSourceFile(source, text);
     const diagnostics = syntaxDiagnostics(source, text);
     const helper = authoringHelperBinding(file, 'defineLayout');
     const assignments = [];

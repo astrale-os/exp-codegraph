@@ -1,3 +1,3 @@
 export * from './model.js';
-export { checkpointGenerations, createApplicationCheckpoint } from './checkpoint.js';
+export { admitApplicationCheckpointManifest, applicationCheckpointCorpus, applicationCheckpointScope, checkpointGenerations, createApplicationCheckpoint, } from './checkpoint.js';
 //# sourceMappingURL=index.js.map

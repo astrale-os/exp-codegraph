@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { readFileSync, realpathSync, statSync } from 'node:fs'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { readFileSync, realpathSync } from 'node:fs'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import ts from 'typescript'
 
 import type { ObservedSurface } from '../analysis/typescript/surface/model.ts'
@@ -13,12 +13,10 @@ import type {
   ApiDiagnostic,
   ApiModel,
   ApiSource,
-  ApiToken,
   SourceRange,
 } from './model.ts'
 
 import { sourceRevision } from '../source/file.ts'
-import { workspacePackageCoordinate } from '../typescript/package-coordinate.ts'
 import { observePublicSurface } from '../typescript/surface/observe.ts'
 import {
   DEFAULT_DECLARATION_SURFACE_SEMANTICS,
@@ -28,20 +26,45 @@ import {
   factoryFacetDeclarations,
   firstDeclaration,
   resolveAlias,
-  semanticTokenIdentity,
 } from '../typescript/surface/symbol.ts'
 import {
-  collectExternalReferences,
+  compareDeclarationText as compare,
+  declarationDependencyOnce,
+  declarationDisplayPath as displayPath,
+  declarationPortablePath as portable,
+  declarationProgramRealpathOnce,
+  declarationSourceDiagnosticsOnce,
+  createReusingDeclarationCompilerHost,
+  semanticTokensOnce,
+} from './project.optimization.ts'
+import {
   type ExternalReference,
   isExternalSpecifier,
   renderExternalModules,
 } from './external.ts'
+import {
+  createDeclarationSourceCorpus,
+  declarationPathInside as inside,
+  declarationRealpathSafe as realpathSafe,
+  permittedDeclarationPath,
+  type DeclarationEntry,
+} from './source-corpus.ts'
+import {
+  declarationMetadataIndexOnce,
+  declarationMetadataOnce,
+  type DeclarationMetadataCandidate,
+} from './metadata.optimization.ts'
+import { createDeclarationDiagnosticsUniverse } from './diagnostics-universe.optimization.ts'
 
 export interface CompileApiOptions {
   readonly mainFile: string
   readonly projectRoot?: string
   /** The only supported semantics are the authored V2 contract. */
   readonly semantics?: DeclarationSurfaceSemantics
+  /** Include source-navigation tokens for presentation consumers; semantic models do not require them. */
+  readonly declarationNavigation?: boolean
+  /** Build the complete normalized declaration model after exact diagnostics pass. */
+  readonly declarationModel?: boolean
 }
 
 interface PreparedApiCompilation {
@@ -49,21 +72,101 @@ interface PreparedApiCompilation {
   readonly mainFile: string
   readonly projectRoot: string
   readonly semantics: DeclarationSurfaceSemantics
+  readonly declarationNavigation: boolean
+  readonly declarationModel: boolean
 }
 
-interface DeclarationEntry {
+export interface DeclarationCompilerUniverseProjection {
+  readonly mainFile: string
+  readonly projectRoot: string
   readonly files: ReadonlySet<string>
-  readonly externalReferences: readonly ExternalReference[]
-  readonly ambientEffects: boolean
+  readonly semantics?: DeclarationSurfaceSemantics
+  readonly declarationNavigation?: boolean
+  readonly declarationModel?: boolean
 }
 
-// Keep the byte ceiling as the primary admission bound. Real hierarchical public contracts can
-// legitimately cross more than 128 small declaration fragments without becoming unsafe to parse.
-const MAX_API_SOURCES = 192
-const MAX_API_SOURCE_BYTES = 8 * 1024 * 1024
+/** Plan minimum semantics-compatible declaration components without performing owner projection. */
+export function planDeclarationCompilerUniverses(
+  options: readonly CompileApiOptions[],
+): readonly (readonly number[])[] {
+  const groups = new Map<string, PreparedApiCompilation[]>()
+  const fallback: number[][] = []
+  for (const [index, request] of options.entries()) {
+    try {
+      const mainFile = realpathSync(resolve(request.mainFile))
+      const projectRoot = realpathSync(resolve(request.projectRoot ?? dirname(mainFile)))
+      if (!inside(projectRoot, mainFile) || !mainFile.endsWith('.d.ts')) {
+        fallback.push([index])
+        continue
+      }
+      const group = groups.get(projectRoot) ?? []
+      group.push({
+        index,
+        mainFile,
+        projectRoot,
+        semantics: request.semantics ?? DEFAULT_DECLARATION_SURFACE_SEMANTICS,
+        declarationNavigation: request.declarationNavigation !== false,
+        declarationModel: request.declarationModel !== false,
+      })
+      groups.set(projectRoot, group)
+    } catch {
+      fallback.push([index])
+    }
+  }
+  const components: number[][] = []
+  for (const [projectRoot, requests] of groups) {
+    const compilerOptions = declarationCompilerOptions()
+    const sourceCorpus = createDeclarationSourceCorpus(
+      projectRoot,
+      compilerOptions,
+      createReusingDeclarationCompilerHost(compilerOptions),
+    )
+    const entries = new Map<string, DeclarationEntry>()
+    const valid: PreparedApiCompilation[] = []
+    for (const request of requests) {
+      try {
+        entries.set(request.mainFile, sourceCorpus.discover(request.mainFile))
+        valid.push(request)
+      } catch {
+        fallback.push([request.index])
+      }
+    }
+    components.push(
+      ...partitionDeclarationEntries(valid, entries).map((partition) =>
+        partition.map(({ index }) => index),
+      ),
+    )
+  }
+  return [...components, ...fallback].sort(
+    (left, right) => left[0]! - right[0]!,
+  )
+}
 
 export function compileDeclarationApi(options: CompileApiOptions): ApiCompilation {
   return compileDeclarationApis([options])[0]!
+}
+
+/** Project exact API models from one already-admitted compatible compiler universe. */
+export function projectDeclarationCompilerUniverse(
+  project: DeclarationTypeScriptProject,
+  requests: readonly DeclarationCompilerUniverseProjection[],
+  programDiagnostics: readonly ts.Diagnostic[] = ts.getPreEmitDiagnostics(project.program),
+): readonly ApiCompilation[] {
+  return requests.map((request, index) =>
+    compilePreparedApi(
+      {
+        index,
+        mainFile: request.mainFile,
+        projectRoot: request.projectRoot,
+        semantics: request.semantics ?? DEFAULT_DECLARATION_SURFACE_SEMANTICS,
+        declarationNavigation: request.declarationNavigation !== false,
+        declarationModel: request.declarationModel !== false,
+      },
+      request.files,
+      project,
+      programDiagnostics,
+    ),
+  )
 }
 
 /** Compile declaration entrypoints sharing a project root against one immutable TypeScript program. */
@@ -78,6 +181,8 @@ export function compileDeclarationApis(
       const mainFile = realpathSync(resolve(request.mainFile))
       const projectRoot = realpathSync(resolve(request.projectRoot ?? dirname(mainFile)))
       const semantics = request.semantics ?? DEFAULT_DECLARATION_SURFACE_SEMANTICS
+      const declarationNavigation = request.declarationNavigation !== false
+      const declarationModel = request.declarationModel !== false
       if (!inside(projectRoot, mainFile)) {
         results[index] = failed(
           'API_ENTRYPOINT_OUTSIDE_ROOT',
@@ -93,7 +198,14 @@ export function compileDeclarationApis(
         continue
       }
       const group = groups.get(projectRoot) ?? []
-      group.push({ index, mainFile, projectRoot, semantics })
+      group.push({
+        index,
+        mainFile,
+        projectRoot,
+        semantics,
+        declarationNavigation,
+        declarationModel,
+      })
       groups.set(projectRoot, group)
     } catch (error) {
       results[index] = failed(
@@ -115,18 +227,14 @@ function compileProjectGroup(
   results: ApiCompilation[],
 ): void {
   const compilerOptions = declarationCompilerOptions()
-  const discoveryHost = ts.createCompilerHost(compilerOptions)
+  const discoveryHost = createReusingDeclarationCompilerHost(compilerOptions)
+  const sourceCorpus = createDeclarationSourceCorpus(projectRoot, compilerOptions, discoveryHost)
   const entries = new Map<string, DeclarationEntry>()
   const valid: PreparedApiCompilation[] = []
 
   for (const request of requests) {
     try {
-      const entry = discoverDeclarationEntry(
-        request.mainFile,
-        projectRoot,
-        compilerOptions,
-        discoveryHost,
-      )
+      const entry = sourceCorpus.discover(request.mainFile)
       entries.set(request.mainFile, entry)
       valid.push(request)
     } catch (error) {
@@ -137,6 +245,34 @@ function compileProjectGroup(
     }
   }
   if (!valid.length) return
+
+  if (
+    valid.every((request) => !request.declarationModel) &&
+    valid.every((request) => !entries.get(request.mainFile)!.ambientEffects)
+  ) {
+    try {
+      const files = new Set(valid.flatMap(({ mainFile }) => [...entries.get(mainFile)!.files]))
+      const project = createDeclarationDiagnosticsUniverse(
+        projectRoot,
+        valid.map(({ mainFile }) => mainFile),
+        files,
+        (file) => sourceCorpus.evidence(file).externalReferences,
+        compilerOptions,
+      )
+      const diagnostics = ts.getPreEmitDiagnostics(project.program)
+      for (const request of valid) {
+        results[request.index] = compilePreparedApi(
+          request,
+          entries.get(request.mainFile)!.files,
+          project,
+          diagnostics,
+        )
+      }
+      return
+    } catch {
+      // Optimization uncertainty retains the compatibility-partitioned canonical compiler below.
+    }
+  }
 
   const partitions = partitionDeclarationEntries(valid, entries)
   for (const partition of partitions) {
@@ -191,7 +327,10 @@ function partitionDeclarationEntries(
   requests: readonly PreparedApiCompilation[],
   entries: ReadonlyMap<string, DeclarationEntry>,
 ): PreparedApiCompilation[][] {
-  const compatible = new Map<string, PreparedApiCompilation[]>()
+  const compatible: Array<{
+    readonly requests: PreparedApiCompilation[]
+    readonly modules: Map<string, string>
+  }> = []
   const isolated: PreparedApiCompilation[][] = []
   for (const request of requests) {
     const entry = entries.get(request.mainFile)!
@@ -199,37 +338,20 @@ function partitionDeclarationEntries(
       isolated.push([request])
       continue
     }
-    // External package declarations are projected from each entrypoint's own syntax. Entrypoints
-    // may share a Program only when those virtual modules are byte-for-byte identical; otherwise
-    // one declaration could enrich a neighbor's package identity.
-    const signature = externalProjectionSignature(entry.externalReferences)
-    const group = compatible.get(signature) ?? []
-    group.push(request)
-    compatible.set(signature, group)
-  }
-  return [...compatible.values(), ...isolated]
-}
-
-function externalProjectionSignature(references: readonly ExternalReference[]): string {
-  return JSON.stringify([...renderExternalModules([references])])
-}
-
-function sourceHasAmbientEffects(source: ts.SourceFile): boolean {
-  if (!ts.isExternalModule(source) || source.libReferenceDirectives.length > 0) return true
-  let ambient = false
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isNamespaceExportDeclaration(node) ||
-      (ts.isModuleDeclaration(node) &&
-        ((node.flags & ts.NodeFlags.GlobalAugmentation) !== 0 || ts.isStringLiteral(node.name)))
-    ) {
-      ambient = true
-      return
+    const modules = new Map(renderExternalModules([entry.externalReferences]))
+    const group = compatible.find(({ modules: current }) =>
+      [...modules].every(
+        ([specifier, source]) => !current.has(specifier) || current.get(specifier) === source,
+      ),
+    )
+    if (!group) {
+      compatible.push({ requests: [request], modules })
+      continue
     }
-    ts.forEachChild(node, visit)
+    group.requests.push(request)
+    for (const [specifier, source] of modules) group.modules.set(specifier, source)
   }
-  visit(source)
-  return ambient
+  return [...compatible.map(({ requests }) => requests), ...isolated]
 }
 
 function compilePreparedApi(
@@ -241,7 +363,7 @@ function compilePreparedApi(
   const { mainFile, projectRoot } = request
   try {
     const dependencies = compilationDependencies(project.program, projectRoot, files)
-    const authored = authoredSources(projectRoot, mainFile, files)
+    const authored = authoredSources(project.program, projectRoot, mainFile, files)
     const authoredSet = new Set(authored)
     const diagnostics = [
       ...declarationDiagnostics(programDiagnostics, projectRoot, authoredSet),
@@ -250,13 +372,19 @@ function compilePreparedApi(
     if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
       return { ok: false, diagnostics, dependencies }
     }
+    if (!request.declarationModel) return { ok: true, diagnostics, dependencies }
     const ownedFiles = new Set(authored)
     const surface: ObservedSurface = observePublicSurface(projectRoot, project, mainFile, {
       explicitExportsOnly: true,
       ownedFiles,
       semantics: request.semantics,
     })
-    const sources = sourceModels(project.program, projectRoot, authored)
+    const sources = sourceModels(
+      project.program,
+      projectRoot,
+      authored,
+      request.declarationNavigation,
+    )
     const metadata = declarationMetadata(
       project,
       surface.declarations.map((item) => item.identity),
@@ -280,7 +408,9 @@ function compilePreparedApi(
     if (diagnostics.some((diagnostic) => diagnostic.severity === 'error')) {
       return { ok: false, diagnostics, dependencies }
     }
-    const tokens = semanticTokens(project, sources, projectRoot)
+    const tokens = request.declarationNavigation
+      ? semanticTokensOnce(project, sources, projectRoot)
+      : []
     const sourceDigest = hash(
       dependencies.map((dependency) => `${dependency.file}\0${dependency.revision}`).join('\0'),
     )
@@ -318,12 +448,7 @@ function compilationDependencies(
   files: ReadonlySet<string>,
 ): ApiCompilationDependency[] {
   return [...files]
-    .flatMap((file) => {
-      if (!inside(root, file) || !file.endsWith('.d.ts')) return []
-      const source = program.getSourceFile(file)
-      if (!source) return []
-      return [{ file: displayPath(file, root), revision: sourceRevision(source.text) }]
-    })
+    .flatMap((file) => declarationDependencyOnce(program, root, file) ?? [])
     .sort((left, right) => compare(left.file, right.file))
 }
 
@@ -373,7 +498,7 @@ function createDeclarationProject(
   externalReferences: readonly (readonly ExternalReference[])[],
   options: ts.CompilerOptions,
 ): DeclarationTypeScriptProject {
-  const host = ts.createCompilerHost(options)
+  const host = createReusingDeclarationCompilerHost(options)
   const externalModules = createExternalModules(externalReferences, projectRoot)
   const virtualSources = new Map(
     [...externalModules.values()].map((external) => [external.file, external.source]),
@@ -450,70 +575,6 @@ interface ExternalModule {
   readonly source: string
 }
 
-function discoverDeclarationEntry(
-  mainFile: string,
-  projectRoot: string,
-  options: ts.CompilerOptions,
-  host: ts.CompilerHost,
-): DeclarationEntry {
-  const externalReferences: ExternalReference[] = []
-  const pending = [mainFile]
-  const seen = new Set<string>()
-  let sourceBytes = 0
-  let ambientEffects = false
-  while (pending.length) {
-    const file = resolve(pending.pop()!)
-    if (seen.has(file)) continue
-    if (seen.size >= MAX_API_SOURCES) {
-      throw new Error(`API exceeds ${MAX_API_SOURCES} declaration sources.`)
-    }
-    seen.add(file)
-    const declaredBytes = statSync(file).size
-    if (sourceBytes + declaredBytes > MAX_API_SOURCE_BYTES) {
-      throw new Error(`API sources exceed ${MAX_API_SOURCE_BYTES} bytes.`)
-    }
-    sourceBytes += declaredBytes
-    const text = host.readFile(file)
-    if (text === undefined) continue
-    const source = ts.createSourceFile(file, text, options.target ?? ts.ScriptTarget.ES2022, true)
-    ambientEffects ||= sourceHasAmbientEffects(source)
-    if (source.typeReferenceDirectives.length) {
-      throw new Error(
-        'External type-reference directives are unsupported in API declarations; use an explicit type-only import.',
-      )
-    }
-    for (const reference of source.referencedFiles) {
-      const target = realpathSafe(resolve(dirname(file), reference.fileName))
-      if (!target || !permittedDeclarationPath(projectRoot, target)) {
-        throw new Error(
-          `API declaration path reference must target a .spec declaration: ${reference.fileName}`,
-        )
-      }
-      pending.push(target)
-    }
-    externalReferences.push(...collectExternalReferences(source))
-    for (const statement of source.statements) {
-      if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
-        const specifier = statement.moduleSpecifier.text
-        if (!isExternalSpecifier(specifier)) {
-          enqueueRelativeDeclaration(specifier, file, projectRoot, options, host, pending)
-        }
-      } else if (
-        ts.isExportDeclaration(statement) &&
-        statement.moduleSpecifier &&
-        ts.isStringLiteral(statement.moduleSpecifier)
-      ) {
-        const specifier = statement.moduleSpecifier.text
-        if (!isExternalSpecifier(specifier)) {
-          enqueueRelativeDeclaration(specifier, file, projectRoot, options, host, pending)
-        }
-      }
-    }
-  }
-
-  return { files: seen, externalReferences, ambientEffects }
-}
-
 function createExternalModules(
   references: readonly (readonly ExternalReference[])[],
   projectRoot: string,
@@ -534,35 +595,18 @@ function createExternalModules(
   )
 }
 
-function enqueueRelativeDeclaration(
-  specifier: string,
-  containingFile: string,
-  projectRoot: string,
-  options: ts.CompilerOptions,
-  host: ts.CompilerHost,
-  pending: string[],
-): void {
-  const resolved = ts.resolveModuleName(specifier, containingFile, options, host).resolvedModule
-  if (!resolved?.resolvedFileName.endsWith('.d.ts')) return
-  const canonical = realpathSafe(resolved.resolvedFileName)
-  if (canonical && permittedDeclarationPath(projectRoot, canonical)) pending.push(canonical)
-}
-
-function permittedDeclarationPath(projectRoot: string, file: string): boolean {
-  if (!file.endsWith('.d.ts') || file.includes(`${sep}node_modules${sep}`)) return false
-  if (inside(projectRoot, file)) return true
-  return Boolean(
-    file.includes(`${sep}.spec${sep}`) && workspacePackageCoordinate(projectRoot, file),
-  )
-}
-
 function externalCoordinate(specifier: string): string {
   return /^(?:node|bun|deno):/u.test(specifier) ? `platform:${specifier}` : `package:${specifier}`
 }
 
-function authoredSources(root: string, mainFile: string, files: ReadonlySet<string>): string[] {
+function authoredSources(
+  program: ts.Program,
+  root: string,
+  mainFile: string,
+  files: ReadonlySet<string>,
+): string[] {
   const values = [...files]
-    .map((file) => realpathSafe(file))
+    .map((file) => declarationProgramRealpathOnce(program, file))
     .filter(
       (file): file is string =>
         Boolean(file) &&
@@ -573,11 +617,20 @@ function authoredSources(root: string, mainFile: string, files: ReadonlySet<stri
   return unique
 }
 
-function sourceModels(program: ts.Program, root: string, files: readonly string[]): ApiSource[] {
+function sourceModels(
+  program: ts.Program,
+  root: string,
+  files: readonly string[],
+  includeText: boolean,
+): ApiSource[] {
   return files.map((file) => {
     const source = program.getSourceFile(file)
     const text = source?.text ?? readFileSync(file, 'utf8')
-    return { file: displayPath(file, root), revision: sourceRevision(text), text }
+    return {
+      file: displayPath(file, root),
+      revision: sourceRevision(text),
+      ...(includeText ? { text } : {}),
+    }
   })
 }
 
@@ -612,20 +665,26 @@ function pseudoPrivateDeclarationDiagnostics(
   for (const file of [...authored].sort(compare)) {
     const source = program.getSourceFile(file)
     if (!source) continue
-    for (const statement of source.statements) {
-      for (const name of topLevelApiBindingNames(statement)) {
-        if (!name.text.startsWith('_')) continue
-        diagnostics.push({
-          source: 'api',
-          code: 'API_PSEUDO_PRIVATE_DECLARATION',
-          severity: 'error',
-          message:
-            `Top-level API binding ${JSON.stringify(name.text)} uses an underscore that does not create privacy. ` +
-            'Inline or qualify a private dependency, or export a deliberate semantic concept.',
-          range: rangeOf(source, name.getStart(source), name.getEnd(), root),
-        })
-      }
-    }
+    diagnostics.push(
+      ...declarationSourceDiagnosticsOnce(source, root, () => {
+        const values: ApiDiagnostic[] = []
+        for (const statement of source.statements) {
+          for (const name of topLevelApiBindingNames(statement)) {
+            if (!name.text.startsWith('_')) continue
+            values.push({
+              source: 'api',
+              code: 'API_PSEUDO_PRIVATE_DECLARATION',
+              severity: 'error',
+              message:
+                `Top-level API binding ${JSON.stringify(name.text)} uses an underscore that does not create privacy. ` +
+                'Inline or qualify a private dependency, or export a deliberate semantic concept.',
+              range: rangeOf(source, name.getStart(source), name.getEnd(), root),
+            })
+          }
+        }
+        return values
+      }),
+    )
   }
   return diagnostics
 }
@@ -678,10 +737,20 @@ function declarationMetadata(
 ): Record<string, ApiDeclarationMetadata> {
   const included = new Set(identities)
   const metadata: Record<string, ApiDeclarationMetadata> = {}
-  for (const source of project.program.getSourceFiles()) {
-    const file = realpathSafe(source.fileName)
-    if (!source.isDeclarationFile || !file || !files.has(file)) continue
-    visit(source)
+  const index = declarationMetadataIndexOnce(project.checker, root, () =>
+    metadataIndex(project, root),
+  )
+  for (const identity of included) {
+    const candidates = index.get(identity) ?? []
+    for (const candidate of candidates) {
+      if (!files.has(candidate.file)) continue
+      metadata[candidate.key] = declarationMetadataOnce(
+        project.checker,
+        root,
+        candidate,
+        () => metadataOf(project.checker, candidate.symbol, candidate.node),
+      )
+    }
   }
   for (const identity of included) {
     const type = metadata[`${identity}#facet:type`]
@@ -696,6 +765,35 @@ function declarationMetadata(
   return Object.fromEntries(
     Object.entries(metadata).sort(([left], [right]) => compare(left, right)),
   )
+}
+
+function metadataIndex(
+  project: DeclarationTypeScriptProject,
+  root: string,
+): ReadonlyMap<string, readonly DeclarationMetadataCandidate[]> {
+  const index = new Map<string, DeclarationMetadataCandidate[]>()
+  for (const source of project.program.getSourceFiles()) {
+    const file = realpathSafe(source.fileName)
+    if (!source.isDeclarationFile || !file || !permittedDeclarationPath(root, file)) continue
+    const candidates = metadataCandidates(project, root, file, source)
+    for (const candidate of candidates) {
+      const values = index.get(candidate.ownerIdentity) ?? []
+      values.push(candidate)
+      index.set(candidate.ownerIdentity, values)
+    }
+  }
+  return index
+}
+
+function metadataCandidates(
+  project: DeclarationTypeScriptProject,
+  root: string,
+  file: string,
+  source: ts.SourceFile,
+): readonly DeclarationMetadataCandidate[] {
+  const candidates: DeclarationMetadataCandidate[] = []
+  visit(source)
+  return candidates
 
   function visit(node: ts.Node): void {
     if (
@@ -713,15 +811,15 @@ function declarationMetadata(
           root,
           resolveAlias(project.checker, ownerSymbol),
         )
-        if (included.has(ownerIdentity)) {
-          const memberSymbol = project.checker.getSymbolAtLocation(node.name)
-          if (memberSymbol) {
-            metadata[`${ownerIdentity}#${memberName}`] = metadataOf(
-              project.checker,
-              resolveAlias(project.checker, memberSymbol),
-              node,
-            )
-          }
+        const memberSymbol = project.checker.getSymbolAtLocation(node.name)
+        if (memberSymbol) {
+          candidates.push({
+            file,
+            ownerIdentity,
+            key: `${ownerIdentity}#${memberName}`,
+            symbol: resolveAlias(project.checker, memberSymbol),
+            node,
+          })
         }
       }
     }
@@ -731,21 +829,21 @@ function declarationMetadata(
       if (symbol) {
         const target = resolveAlias(project.checker, symbol)
         const identity = canonicalSymbolIdentity(root, target)
-        if (included.has(identity)) {
-          const facets = factoryFacetDeclarations(project.checker, target)
-          const facet = facets
-            ? node === facets.type
-              ? 'type'
-              : node === facets.value
-                ? 'value'
-                : undefined
-            : undefined
-          metadata[facet ? `${identity}#facet:${facet}` : identity] = metadataOf(
-            project.checker,
-            target,
-            node,
-          )
-        }
+        const facets = factoryFacetDeclarations(project.checker, target)
+        const facet = facets
+          ? node === facets.type
+            ? 'type'
+            : node === facets.value
+              ? 'value'
+              : undefined
+          : undefined
+        candidates.push({
+          file,
+          ownerIdentity: identity,
+          key: facet ? `${identity}#facet:${facet}` : identity,
+          symbol: target,
+          node,
+        })
       }
     }
     ts.forEachChild(node, visit)
@@ -833,41 +931,6 @@ function isShapeFreeDeclaration(node: ts.Node): boolean {
   return false
 }
 
-function semanticTokens(
-  project: DeclarationTypeScriptProject,
-  sources: readonly ApiSource[],
-  root: string,
-): ApiToken[] {
-  const sourceSet = new Set(sources.map((source) => source.file))
-  const tokens: ApiToken[] = []
-  for (const source of project.program.getSourceFiles()) {
-    const file = displayPath(source.fileName, root)
-    if (!sourceSet.has(file)) continue
-    visit(source)
-    function visit(node: ts.Node): void {
-      if (ts.isIdentifier(node) || ts.isStringLiteral(node)) {
-        const symbol = project.checker.getSymbolAtLocation(node)
-        if (symbol) {
-          const target = resolveAlias(project.checker, symbol)
-          const identity = semanticTokenIdentity(project.checker, target, root)
-          const declaration = target.declarations?.some((item) => item === node.parent)
-            ? identity
-            : undefined
-          tokens.push({
-            file,
-            from: node.getStart(source),
-            to: node.getEnd(),
-            text: node.getText(source),
-            ...(declaration ? { declaration } : { target: identity }),
-          })
-        }
-      }
-      ts.forEachChild(node, visit)
-    }
-  }
-  return tokens.sort((left, right) => compare(left.file, right.file) || left.from - right.from)
-}
-
 function semanticSurface(surface: ObservedSurface): unknown {
   const identities = new Map(
     surface.declarations.map((declaration) => [
@@ -886,7 +949,7 @@ function semanticSurface(surface: ObservedSurface): unknown {
   const normalize = (value: unknown, key?: string): unknown => {
     if (Array.isArray(value)) {
       const items = value.map((item) => normalize(item))
-      return key === 'referencedDeclarations' ? items.sort(compareUnknown) : items
+      return key === 'referencedDeclarations' ? sortCanonical(items) : items
     }
     if (!value || typeof value !== 'object') return value
     const output: Record<string, unknown> = {}
@@ -904,10 +967,15 @@ function semanticSurface(surface: ObservedSurface): unknown {
     }
     return output
   }
-  const exports = surface.exports.map((item) => normalize(item)).sort(compareUnknown)
-  const declarations = surface.declarations.map((item) => normalize(item)).sort(compareUnknown)
-  const issues = surface.issues.map((item) => normalize(item)).sort(compareUnknown)
+  const exports = sortCanonical(surface.exports.map((item) => normalize(item)))
+  const declarations = sortCanonical(surface.declarations.map((item) => normalize(item)))
+  const issues = sortCanonical(surface.issues.map((item) => normalize(item)))
   return { exports, declarations, issues }
+}
+
+function sortCanonical(values: unknown[]): unknown[] {
+  return values.map((value) => [stableJson(value), value] as const)
+    .sort(([left], [right]) => compare(left, right)).map(([, value]) => value)
 }
 
 function compilerDiagnostic(diagnostic: ts.Diagnostic, root: string): ApiDiagnostic {
@@ -1004,34 +1072,4 @@ function stableJson(value: unknown): string {
 
 function hash(value: string): string {
   return createHash('sha256').update(value).digest('hex')
-}
-
-function realpathSafe(file: string): string | undefined {
-  try {
-    return realpathSync(resolve(file))
-  } catch {
-    return undefined
-  }
-}
-
-function inside(root: string, target: string): boolean {
-  const path = relative(root, target)
-  return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
-}
-
-function displayPath(file: string, root: string): string {
-  const path = relative(root, resolve(file))
-  return inside(root, resolve(file)) ? portable(path || '.') : portable(resolve(file))
-}
-
-function portable(path: string): string {
-  return sep === '/' ? path : path.split(sep).join('/')
-}
-
-function compare(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0
-}
-
-function compareUnknown(left: unknown, right: unknown): number {
-  return compare(stableJson(left), stableJson(right))
 }

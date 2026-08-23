@@ -14,6 +14,7 @@ import type { PortablePass } from '../../pass/.spec/api.js'
 import type {
   NativeAnalysisSessionFactory,
   NativeProjectDescriptor,
+  NativeSourceChange,
 } from '../../protocol/.spec/api.js'
 import type { AnalysisStore } from '../../query/.spec/api.js'
 import type { AnalysisTelemetrySink } from '../../profiling/.spec/api.js'
@@ -27,6 +28,9 @@ import type {
 import type { ValueResult } from '../value/.spec/api.js'
 
 export const TYPESCRIPT_MODULE_FACT_NAMESPACE: 'astrale.typescript.module'
+/** Declaration support shares the module capability namespace and is distinguished by fact kind. */
+export const TYPESCRIPT_DECLARATION_FACT_NAMESPACE: 'astrale.typescript.module'
+export const TYPESCRIPT_DECLARATION_FACT_KIND: 'declaration'
 
 export interface TypeScriptModuleTarget {
   readonly id: string
@@ -51,6 +55,8 @@ export interface TypeScriptDependencyOccurrence {
   readonly location: SourceLocation
   /** Canonical public declaration when the evidence comes from exported type closure. */
   readonly declaration?: string
+  /** Deterministic public-declaration path from the module export to this closure target. */
+  readonly publicPath?: readonly string[]
 }
 
 /**
@@ -148,9 +154,23 @@ export interface TypeScriptRefreshResult {
   readonly generation: AnalysisGeneration
   readonly transaction?: FactTransaction
   readonly changedSources: readonly SourceId[]
+  /** Exact changed module subjects; absent after a full or uncertain refresh. */
+  readonly changedModules?: readonly string[]
+  readonly moduleRouting?: TypeScriptModuleRouting
   readonly invalidatedPasses: readonly PassId[]
   readonly diagnostics: readonly string[]
   readonly durationMs: number
+}
+
+export interface TypeScriptModuleRoutingEntry {
+  readonly module: string
+  readonly files: readonly string[]
+  readonly dependencies: readonly string[]
+}
+
+export interface TypeScriptModuleRouting {
+  readonly complete: boolean
+  readonly modules: readonly TypeScriptModuleRoutingEntry[]
 }
 
 export interface TypeScriptAnalysisService {
@@ -159,6 +179,7 @@ export interface TypeScriptAnalysisService {
   dispose(): Promise<void>
   refresh(options?: {
     readonly changed?: readonly string[]
+    readonly changes?: readonly NativeSourceChange[]
     readonly invalidate?: boolean
     readonly signal?: AbortSignal
   }): Promise<TypeScriptRefreshResult>
@@ -168,6 +189,8 @@ export interface TypeScriptAnalysisServiceOptions {
   readonly project: NativeProjectDescriptor
   readonly sessions: NativeAnalysisSessionFactory
   readonly store: AnalysisStore
+  /** Previously materialized universe adopted by a newly opened compiler process. */
+  readonly universe?: ProjectUniverseId
   readonly telemetry?: AnalysisTelemetrySink
 }
 
@@ -175,6 +198,7 @@ export interface TypeScriptAnalysisPipelineOptions {
   readonly project: NativeProjectDescriptor
   readonly sessions: NativeAnalysisSessionFactory
   readonly store: AnalysisStore
+  readonly universe?: ProjectUniverseId
   readonly passes: readonly PortablePass[]
   readonly requestedCapabilities: readonly string[]
   readonly producer: ProducerIdentity

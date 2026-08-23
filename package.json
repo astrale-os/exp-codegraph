@@ -97,7 +97,7 @@
     "native:build": "node scripts/native/build.mjs",
     "native:assemble": "node scripts/native/assemble.mjs",
     "native:assert-release": "node scripts/native/assert-release.mjs",
-    "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/application/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json && tsgo --noEmit -p qualification/v2/experiments/tsconfig.json && tsgo --noEmit -p qualification/v2/self-host/tsconfig.json",
+    "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/application/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json && tsgo --noEmit -p qualification/v2/experiments/tsconfig.json && tsgo --noEmit -p qualification/v2/maintainability/tsconfig.json && tsgo --noEmit -p qualification/v2/performance/tsconfig.json && tsgo --noEmit -p qualification/v2/self-host/tsconfig.json",
     "test": "pnpm run build && vitest run --testTimeout 60000 --maxWorkers 1",
     "test:file": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
     "test:watch": "vitest --testTimeout 15000 --maxWorkers 2",

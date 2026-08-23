@@ -13,13 +13,16 @@ import {
   createFileWorkspaceCheckpointStore,
   type FileWorkspaceCheckpointStore,
 } from '../../workspace/checkpoint/index.ts'
-import { createApplicationCheckpoint } from '../checkpoint/index.ts'
 import { resolveApplicationRoot } from '../discovery/index.ts'
 import { createTypeSpecApplicationServiceWithDependencies } from '../service.ts'
+import {
+  createNodeApplicationCheckpoint,
+  type PortableNodeApplicationCheckpoint,
+} from './checkpoint.ts'
 import { codegraphProducerFingerprint } from './fingerprint.ts'
 import {
   createCheckpointedRepositoryInventory,
-  createNodeRepositoryInventory,
+  createGitRepositoryInventory,
 } from './inventory.ts'
 
 export interface NodeTypeSpecApplicationOptions {
@@ -31,6 +34,8 @@ export interface NodeTypeSpecApplicationOptions {
   readonly maximumRetainedGenerations?: number
   readonly telemetry?: AnalysisTelemetrySink
   readonly native?: CodegraphApplicationSessionOptions
+  /** Caller-owned portable store; the Node application never disposes it. */
+  readonly portableCheckpoint?: PortableNodeApplicationCheckpoint
 }
 
 /** Node-owned store/native composition around the portable headless application service. */
@@ -76,21 +81,23 @@ export async function createNodeTypeSpecApplicationService(
     },
   })
   try {
-    const producer = workspaceCheckpoint ? await codegraphProducerFingerprint() : undefined
+    const producer = workspaceCheckpoint || options.portableCheckpoint
+      ? await codegraphProducerFingerprint()
+      : undefined
+    const checkpoint = producer
+      ? createNodeApplicationCheckpoint({
+          producerFingerprint: `${producer}:application-checkpoint/4`,
+          ...(workspaceCheckpoint ? { local: workspaceCheckpoint } : {}),
+          ...(options.portableCheckpoint ? { portable: options.portableCheckpoint } : {}),
+        })
+      : undefined
     const application = await createTypeSpecApplicationServiceWithDependencies(
       {
         root,
         repository,
         maximumRetainedSnapshots: options.maximumRetainedSnapshots,
         analysis: { store, maximumRetainedGenerations },
-        ...(workspaceCheckpoint
-          ? {
-              checkpoint: createApplicationCheckpoint({
-                store: workspaceCheckpoint,
-                producerFingerprint: `${producer!}:application-checkpoint/3`,
-              }),
-            }
-          : {}),
+        ...(checkpoint ? { checkpoint } : {}),
         ...(options.telemetry ? { telemetry: options.telemetry } : {}),
         ...(options.native ? { native: options.native } : {}),
       },
@@ -101,7 +108,44 @@ export async function createNodeTypeSpecApplicationService(
               store: workspaceCheckpoint,
               producerFingerprint: `${producer!}:repository-inventory/3`,
             })
-          : createNodeRepositoryInventory({ root }),
+          : createGitRepositoryInventory({
+              root,
+              ...(options.telemetry
+                ? {
+                    onDecision: (decision) =>
+                      dispatchAnalysisTelemetry(options.telemetry, {
+                        component: 'analysis',
+                        phase: 'application.inventory.git',
+                        durationNs: Math.round(decision.durationMs * 1_000_000),
+                        metrics: {
+                          status: 'completed',
+                          outcome: decision.outcome,
+                          code: decision.code,
+                          ...(decision.proofMs !== undefined
+                            ? { proofMs: decision.proofMs }
+                            : {}),
+                          ...(decision.treeMs !== undefined ? { treeMs: decision.treeMs } : {}),
+                          ...(decision.blobsMs !== undefined ? { blobsMs: decision.blobsMs } : {}),
+                          ...(decision.projectionMs !== undefined
+                            ? { projectionMs: decision.projectionMs }
+                            : {}),
+                          ...(decision.filesTraversed !== undefined
+                            ? { filesTraversed: decision.filesTraversed }
+                            : {}),
+                          ...(decision.bytesTraversed !== undefined
+                            ? { bytesTraversed: decision.bytesTraversed }
+                            : {}),
+                          ...(decision.bytesRead !== undefined
+                            ? { bytesRead: decision.bytesRead }
+                            : {}),
+                          ...(decision.bytesHashed !== undefined
+                            ? { bytesHashed: decision.bytesHashed }
+                            : {}),
+                        },
+                      }),
+                  }
+                : {}),
+            }),
       },
     )
     return ownStore(application, store, workspaceCheckpoint)
@@ -121,15 +165,15 @@ function ownStore(
     refresh: (options) => application.refresh(options),
     current: () => application.current(),
     open: (snapshot) => application.open(snapshot),
+    settle: () => application.settle(),
     async dispose() {
       if (disposed) return
       disposed = true
-      const results = await Promise.allSettled([
-        application.dispose(),
-        store.dispose(),
-        checkpoint?.dispose(),
-      ])
-      const rejected = results.find(
+      // Application disposal drains its scheduled checkpoint writer. Keep the checkpoint store
+      // alive until that lifecycle edge has settled, then release the owned physical resources.
+      const applicationResult = await Promise.allSettled([application.dispose()])
+      const resourceResults = await Promise.allSettled([store.dispose(), checkpoint?.dispose()])
+      const rejected = [...applicationResult, ...resourceResults].find(
         (result): result is PromiseRejectedResult => result.status === 'rejected',
       )
       if (rejected) throw rejected.reason

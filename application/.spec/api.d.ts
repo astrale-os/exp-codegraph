@@ -21,6 +21,10 @@ interface Diagnostic {
 }
 
 export type TypeSpecApplicationSnapshotId = `application:${string}`
+export type TypeSpecApplicationCapability =
+  | 'declaration-models'
+  | 'declaration-navigation'
+  | 'repository-statistics'
 
 export type TypeSpecApplicationSelection =
   | { readonly kind: 'full'; readonly authority: 'full-ci' }
@@ -41,9 +45,10 @@ export interface TypeSpecApplicationSnapshot {
   readonly id: TypeSpecApplicationSnapshotId
   readonly repository: `repository:${string}`
   readonly inventory: `source-manifest:${string}`
+  readonly capabilities: readonly TypeSpecApplicationCapability[]
   readonly selection: TypeSpecApplicationSelection
   readonly specifications: readonly SpecificationSnapshot[]
-  readonly statistics: RepositoryStatisticsReport
+  readonly statistics?: RepositoryStatisticsReport
   readonly qualifications: readonly QualificationSnapshot[]
   readonly analysis?: {
     readonly id: `snapshot-set:${string}`
@@ -59,6 +64,7 @@ export interface TypeSpecApplicationSnapshot {
 }
 
 export interface TypeSpecApplicationRefreshOptions {
+  readonly requestedCapabilities?: readonly TypeSpecApplicationCapability[]
   readonly exclude?: readonly string[]
   readonly select?: readonly string[]
   readonly focused?: boolean
@@ -78,6 +84,7 @@ export interface TypeSpecApplicationService {
   refresh(options?: TypeSpecApplicationRefreshOptions): Promise<TypeSpecApplicationRefresh>
   current(): TypeSpecApplicationSnapshot | undefined
   open(snapshot?: TypeSpecApplicationSnapshotId): Promise<TypeSpecApplicationReader>
+  settle(): Promise<TypeSpecApplicationSettlement>
   dispose(): Promise<void>
 }
 
@@ -111,6 +118,22 @@ export interface TypeSpecApplicationRefresh {
   readonly checkProjection?: {
     readonly sharedDiagnostics: readonly Diagnostic[]
   }
+}
+
+export interface TypeSpecApplicationCheckpointPublication {
+  readonly repository: `repository:${string}`
+  readonly inventory: `source-manifest:${string}`
+  readonly outcome: 'published' | 'unavailable'
+  readonly durationMs: number
+  readonly error?: {
+    readonly code: 'APPLICATION_CHECKPOINT_PUBLICATION_UNAVAILABLE'
+    readonly name: string
+    readonly message: string
+  }
+}
+
+export interface TypeSpecApplicationSettlement {
+  readonly checkpoint?: TypeSpecApplicationCheckpointPublication
 }
 
 export interface TypeSpecApplicationReader {

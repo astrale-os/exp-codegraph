@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	shimast "github.com/microsoft/typescript-go/shim/ast"
-	shimcompiler "github.com/microsoft/typescript-go/shim/compiler"
 	shimcore "github.com/microsoft/typescript-go/shim/core"
 	shimtsoptions "github.com/microsoft/typescript-go/shim/tsoptions"
 	"github.com/samchon/ttsc/packages/ttsc/driver"
@@ -23,6 +21,7 @@ type generationState struct {
 	sources            map[string]sourceRecord
 	sourceShards       map[string][]string
 	moduleDependencies []dependencyPayload
+	moduleDeclarations map[string][]string
 	sourceManifest     string
 }
 
@@ -105,13 +104,17 @@ func (a *analyzer) close() error {
 
 func (a *analyzer) refresh(input request) (transaction *factTransaction, unchanged string, err error) {
 	started := time.Now()
+	changes, err := admittedSourceChanges(input)
+	if err != nil {
+		return nil, "", err
+	}
 	var before runtime.MemStats
 	if a.telemetry != nil {
 		runtime.ReadMemStats(&before)
 	}
 	defer func() {
 		metrics := map[string]any{
-			"changedPaths": len(input.Changed), "invalidate": input.Invalidate,
+			"changedPaths": len(changes), "invalidate": input.Invalidate,
 			"outcome": map[bool]string{true: "error", false: "success"}[err != nil],
 		}
 		if a.telemetry != nil {
@@ -125,7 +128,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		a.telemetry.record(input.ID, "refresh.total", started, metrics)
 	}()
 	if a.pending != nil {
-		if input.Base != a.current || input.Invalidate || len(input.Changed) != 0 {
+		if input.Base != a.current || input.Invalidate || len(changes) != 0 {
 			return nil, "", protocolError("COMMIT_PENDING", "A native generation is awaiting application-store acknowledgement.")
 		}
 		return a.pending.transaction, "", nil
@@ -137,7 +140,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	// Callers own change discovery. Once a resident base exists, an empty
 	// change set is a true no-op and must not re-walk or re-extract the complete
 	// compiler universe merely to rediscover the same content-addressed shards.
-	if input.Base != "" && !adopting && !input.Invalidate && len(input.Changed) == 0 && !a.pendingFull {
+	if input.Base != "" && !adopting && !input.Invalidate && len(changes) == 0 && !a.pendingFull {
 		return nil, input.Base, nil
 	}
 	compilerAdvanced := false
@@ -159,16 +162,20 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		selection.full = true
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": "rebuild"})
 	} else {
-		selection, err = a.apply(input.Changed)
+		selection, compilerAdvanced, err = a.apply(changes)
 		if err != nil {
 			return nil, "", err
 		}
-		compilerAdvanced = len(input.Changed) != 0
 		mode := "resident-apply"
 		if selection.full {
 			mode = "resident-full"
+		} else if !compilerAdvanced {
+			mode = "resident-skip"
 		}
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": mode})
+		if !compilerAdvanced && input.Base != "" {
+			return nil, input.Base, nil
+		}
 	}
 
 	universeStarted := time.Now()
@@ -287,6 +294,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		generation: generation, manifest: manifest, digests: digests,
 		sources: sourceRecordMap(sources), sourceShards: mergeSourceShardOwnership(base, sources, shards, selection.full),
 		moduleDependencies: mergeModuleDependencies(base.moduleDependencies, shards, selection.full),
+		moduleDeclarations: mergeModuleDeclarationReferences(base.moduleDeclarations, shards, selection.full),
 		sourceManifest:     sourceManifest,
 	}
 	if adopting && generationID == input.Base {
@@ -336,8 +344,9 @@ func (a *analyzer) install(state generationState, universe string, rollover bool
 
 // extract produces a complete snapshot for uncertain changes and only
 // replacement shards for compiler-proven private edits. Module facts retain
-// their public monolithic schema, but private edits reproject only their owning
-// module boundaries. Public shape, dependency, global diagnostic, topology,
+// their complete public typed projection through normalized declaration
+// support, while private edits reproject only their owning module boundaries.
+// Public shape, dependency, global diagnostic, topology,
 // configuration, and uncertain changes conservatively select every module.
 func (a *analyzer) extract(
 	universe string,
@@ -421,7 +430,21 @@ func (a *analyzer) extract(
 			return nil, nil, nil, err
 		}
 		shards = append(shards, modules...)
-		a.telemetry.record(requestID, "projection.modules", phase, map[string]any{"shards": len(modules)})
+		moduleOwners, declarationShards, declarationReferences := moduleProjectionCounts(modules)
+		currentDeclarations := declarationReferenceSet(
+			mergeModuleDeclarationReferences(base.moduleDeclarations, modules, selection.full),
+		)
+		for fact := range declarationReferenceSet(base.moduleDeclarations) {
+			if !currentDeclarations[fact] {
+				replaced[deriveID("fact-shard-key", declarationNamespace, map[string]any{"owner": fact})] = true
+			}
+		}
+		a.telemetry.record(requestID, "projection.modules", phase, map[string]any{
+			"shards": len(modules), "moduleOwners": moduleOwners, "declarationShards": declarationShards,
+			"declarationCacheHits": x.moduleDeclarationCacheHits, "declarationCacheMisses": x.moduleDeclarationCacheMisses,
+			"canonicalDeclarationBytes": x.moduleDeclarationBytes,
+			"declarationReferences":     declarationReferences,
+		})
 	}
 	if a.projection.sourceOwned() {
 		sourceShards, err := x.sourceShards(files, selected, a.telemetry, requestID)
@@ -482,38 +505,6 @@ func mergeSourceShardOwnership(
 		owners[source] = sortedUnique(owners[source])
 	}
 	return owners
-}
-
-func mergeModuleDependencies(
-	base []dependencyPayload,
-	shards []factShard,
-	full bool,
-) []dependencyPayload {
-	replaced := map[string]bool{}
-	for _, shard := range shards {
-		if shard.Namespace == moduleNamespace && len(shard.Facts) == 1 {
-			replaced[shard.Facts[0].Subject] = true
-		}
-	}
-	edges := []dependencyPayload{}
-	if !full {
-		for _, edge := range base {
-			if !replaced[edge.SourceModule] {
-				edges = append(edges, edge)
-			}
-		}
-	}
-	for _, shard := range shards {
-		if shard.Namespace != moduleNamespace || len(shard.Facts) != 1 {
-			continue
-		}
-		payload, ok := shard.Facts[0].Payload.(moduleFactPayload)
-		if !ok {
-			continue
-		}
-		edges = append(edges, payload.Dependencies...)
-	}
-	return deduplicateDependencies(edges)
 }
 
 func shardSourceOwner(shard factShard) string {
@@ -745,179 +736,6 @@ func parsedProjectConfigs(program *driver.Program) ([]*shimtsoptions.ParsedComma
 	}
 	sort.Slice(configs, func(i, j int) bool { return configs[i].ConfigName() < configs[j].ConfigName() })
 	return configs, nil
-}
-
-func (a *analyzer) apply(changed []string) (refreshSelection, error) {
-	paths := sortedUnique(append([]string{}, changed...))
-	if len(paths) == 0 {
-		return refreshSelection{}, nil
-	}
-	if a.session.Program().HasLinkedProgramPlugins() {
-		if err := a.rebuild(); err != nil {
-			return refreshSelection{}, err
-		}
-		return refreshSelection{full: true}, nil
-	}
-	absolutePaths := make([]string, 0, len(paths))
-	previousFiles := make([]*shimast.SourceFile, 0, len(paths))
-	oldShapes := make(map[string]string, len(paths))
-	full := false
-	for _, path := range paths {
-		absolute, err := a.absoluteChangedPath(path)
-		if err != nil {
-			return refreshSelection{}, err
-		}
-		if _, resident := a.session.SourceText(absolute); !resident {
-			// New roots, deletions/renames, tsconfig changes, and files newly
-			// admitted by an include glob require the compiler to rediscover the
-			// project root set rather than applying a single-file overlay.
-			if err := a.rebuild(); err != nil {
-				return refreshSelection{}, err
-			}
-			return refreshSelection{full: true}, nil
-		}
-		source := a.session.Program().SourceFile(absolute)
-		if source == nil || source.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(source) {
-			full = true
-		} else {
-			shape, err := a.session.Program().DeclarationShapeDigest(source)
-			if err != nil {
-				return refreshSelection{}, err
-			}
-			oldShapes[absolute] = shape
-		}
-		absolutePaths = append(absolutePaths, absolute)
-		previousFiles = append(previousFiles, source)
-	}
-	trackDiagnostics := a.projection.diagnostics || a.projection.modules
-	previousDiagnostics := diagnosticProjectionFingerprint{}
-	if trackDiagnostics && !full {
-		previousDiagnostics = diagnosticFingerprint(a.session.Program(), previousFiles)
-	}
-	previousDependencies := ""
-	if a.projection.modules && !full {
-		previousDependencies = a.moduleDependencyFingerprint(a.session.Program(), previousFiles)
-	}
-	selected := make([]string, 0, len(absolutePaths))
-	public := []string{}
-	for _, absolute := range absolutePaths {
-		content, err := os.ReadFile(absolute)
-		if err != nil {
-			if os.IsNotExist(err) {
-				if err := a.rebuild(); err != nil {
-					return refreshSelection{}, err
-				}
-				return refreshSelection{full: true}, nil
-			}
-			return refreshSelection{}, err
-		}
-		if reused := a.session.Apply(absolute, string(content)); !reused {
-			full = true
-		}
-		updated := a.session.Program().SourceFile(absolute)
-		if updated == nil {
-			full = true
-			continue
-		}
-		selected = append(selected, updated.FileName())
-	}
-	if full {
-		return refreshSelection{full: true}, nil
-	}
-	updatedFiles := make([]*shimast.SourceFile, 0, len(absolutePaths))
-	for _, absolute := range absolutePaths {
-		updated := a.session.Program().SourceFile(absolute)
-		if updated == nil || updated.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(updated) {
-			return refreshSelection{full: true}, nil
-		}
-		shape, err := a.session.Program().DeclarationShapeDigest(updated)
-		if err != nil {
-			return refreshSelection{}, err
-		}
-		if shape != oldShapes[absolute] {
-			public = append(public, updated.FileName())
-		}
-		updatedFiles = append(updatedFiles, updated)
-	}
-	if len(public) != 0 {
-		selected = affectedSourceClosure(a.session.Program(), selected, public)
-	}
-	selection := refreshSelection{
-		files:              sortedUnique(selected),
-		allModules:         len(public) != 0,
-		diagnosticsChanged: len(public) != 0,
-	}
-	if trackDiagnostics {
-		current := diagnosticFingerprint(a.session.Program(), updatedFiles)
-		selection.diagnosticsChanged = selection.diagnosticsChanged || current.all != previousDiagnostics.all
-		if current.global != previousDiagnostics.global {
-			selection.allModules = true
-		}
-	}
-	if a.projection.modules && a.moduleDependencyFingerprint(a.session.Program(), updatedFiles) != previousDependencies {
-		selection.allModules = true
-	}
-	return selection, nil
-}
-
-// affectedSourceClosure expands declaration-shape changes through the exact
-// reverse dependency graph retained by TypeScript. Private implementation
-// edits therefore select one source, while public changes reproject every
-// transitive consumer without falling back to a repository-wide walk.
-func affectedSourceClosure(program *driver.Program, changed, public []string) []string {
-	reverse := map[string][]string{}
-	physicalByCanonical := map[string]string{}
-	for _, source := range program.SourceFiles() {
-		physicalByCanonical[string(source.Path())] = filepath.Clean(source.FileName())
-	}
-	for _, source := range program.SourceFiles() {
-		owner := filepath.Clean(source.FileName())
-		for _, referenced := range shimcompiler.GetReferencedFilePaths(program.TSProgram, source) {
-			if target := physicalByCanonical[referenced]; target != "" {
-				reverse[target] = append(reverse[target], owner)
-			}
-		}
-	}
-	selected := map[string]bool{}
-	for _, path := range changed {
-		selected[filepath.Clean(path)] = true
-	}
-	queue := sortedUnique(append([]string{}, public...))
-	for len(queue) != 0 {
-		path := filepath.Clean(queue[0])
-		queue = queue[1:]
-		if !selected[path] {
-			selected[path] = true
-		}
-		for _, dependent := range reverse[path] {
-			if !selected[dependent] {
-				selected[dependent] = true
-				queue = append(queue, dependent)
-			}
-		}
-	}
-	result := make([]string, 0, len(selected))
-	for path := range selected {
-		result = append(result, path)
-	}
-	sort.Strings(result)
-	return result
-}
-
-func (a *analyzer) absoluteChangedPath(path string) (string, error) {
-	if strings.IndexByte(path, 0) >= 0 {
-		return "", protocolError("PATH_INVALID", "A changed path contains NUL.")
-	}
-	absolute := path
-	if !filepath.IsAbs(absolute) {
-		absolute = filepath.Join(a.root, filepath.FromSlash(path))
-	}
-	absolute = filepath.Clean(absolute)
-	relative, err := filepath.Rel(a.root, absolute)
-	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", protocolError("PATH_OUTSIDE_ROOT", "A changed path escapes the project root.")
-	}
-	return absolute, nil
 }
 
 func (a *analyzer) rebuild() error {

@@ -1,2 +1,8 @@
 export * from './model.ts'
-export { checkpointGenerations, createApplicationCheckpoint } from './checkpoint.ts'
+export {
+  admitApplicationCheckpointManifest,
+  applicationCheckpointCorpus,
+  applicationCheckpointScope,
+  checkpointGenerations,
+  createApplicationCheckpoint,
+} from './checkpoint.ts'

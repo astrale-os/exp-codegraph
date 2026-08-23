@@ -4,34 +4,33 @@ import ts from 'typescript';
 import { sourceRevision } from '../../source/file.js';
 import { operationSnapshot, operationSnapshotNamespace, readSourceRevision, } from '../../source/operation-snapshot.js';
 import { isAuthoringSpecifier } from './authoring-syntax.js';
+import { canonicalModuleTypeScriptPath } from './typescript-reference.optimization.js';
 import { visitModuleReferences } from './typescript-reference.js';
 const resolutions = operationSnapshotNamespace('module-resolutions');
-export function captureModuleTypeScriptEvidence(program, options, selectedSources = program.getSourceFiles()) {
+const canonicalFile = canonicalModuleTypeScriptPath;
+export function captureModuleTypeScriptEvidence(program, options, selectedSources = program.getSourceFiles(), observed) {
     const sources = selectedSources;
     return {
-        dependencies: sources
-            .map((source) => ({
-            file: canonicalFile(source.fileName),
-            revision: sourceRevision(source.text),
-        }))
-            .sort((left, right) => compare(left.file, right.file)),
-        resolutions: observeResolutions(sources, options),
+        sources: sources.map((source) => ({
+            dependency: {
+                file: canonicalFile(source.fileName),
+                revision: sourceRevision(source.text),
+            },
+            resolutions: observeResolutions([source], options, observed),
+        })).sort((left, right) => compare(left.dependency.file, right.dependency.file)),
     };
 }
 export async function moduleTypeScriptEvidenceCurrent(evidence, options) {
     const batchSize = 64;
-    for (let index = 0; index < evidence.dependencies.length; index += batchSize) {
-        const batch = evidence.dependencies.slice(index, index + batchSize);
-        const revisions = await Promise.all(batch.map(({ file }) => readSourceRevision(file)));
-        if (batch.some(({ revision }, offset) => revision !== revisions[offset]))
+    for (let index = 0; index < evidence.sources.length; index += batchSize) {
+        const batch = evidence.sources.slice(index, index + batchSize);
+        const revisions = await Promise.all(batch.map(({ dependency }) => readSourceRevision(dependency.file)));
+        if (batch.some(({ dependency }, offset) => dependency.revision !== revisions[offset]))
             return false;
     }
-    return evidence.resolutions.every((expected) => {
-        const current = resolveObserved(expected, options);
-        return current === expected.resolvedFile;
-    });
+    return evidence.sources.every(({ resolutions }) => resolutions.every((expected) => resolveObserved(expected, options) === expected.resolvedFile));
 }
-function observeResolutions(sources, options) {
+function observeResolutions(sources, options, observed) {
     const values = [];
     for (const parsed of sources) {
         const file = canonicalFile(parsed.fileName);
@@ -39,7 +38,7 @@ function observeResolutions(sources, options) {
             if (dynamic)
                 return;
             const mode = ts.getModeForUsageLocation(parsed, node, options);
-            values.push(resolutionEvidence('module', file, specifier, mode, options));
+            values.push(resolutionEvidence('module', file, specifier, mode, options, observed));
         });
         for (const reference of parsed.referencedFiles) {
             values.push(resolutionEvidence('path', file, reference.fileName, undefined, options));
@@ -55,19 +54,23 @@ function observeResolutions(sources, options) {
         compare(left.specifier, right.specifier) ||
         Number(left.mode ?? -1) - Number(right.mode ?? -1));
 }
-function resolutionEvidence(kind, containingFile, specifier, mode, options) {
+function resolutionEvidence(kind, containingFile, specifier, mode, options, observed) {
     const identity = { kind, containingFile, specifier, mode };
-    const resolvedFile = resolveObserved(identity, options);
+    const key = moduleTypeScriptResolutionKey(kind, containingFile, specifier, mode);
+    const resolvedFile = observed?.has(key) ? observed.get(key) ?? undefined : resolveObserved(identity, options);
     return { ...identity, ...(resolvedFile ? { resolvedFile } : {}) };
 }
 function resolveObserved(evidence, options) {
-    const key = `${evidence.kind}\0${evidence.containingFile}\0${evidence.specifier}\0${evidence.mode ?? 'default'}`;
+    const key = moduleTypeScriptResolutionKey(evidence.kind, evidence.containingFile, evidence.specifier, evidence.mode);
     const snapshot = operationSnapshot(resolutions);
     if (snapshot?.has(key))
         return snapshot.get(key) ?? undefined;
     const result = resolveFresh(evidence, options);
     snapshot?.set(key, result ?? null);
     return result;
+}
+export function moduleTypeScriptResolutionKey(kind, containingFile, specifier, mode) {
+    return `${kind}\0${containingFile}\0${specifier}\0${mode ?? 'default'}`;
 }
 function resolveFresh(evidence, options) {
     if (evidence.kind === 'path') {
@@ -83,10 +86,6 @@ function resolveFresh(evidence, options) {
         : evidence.containingFile;
     const target = ts.resolveModuleName(evidence.specifier, containingFile, options, ts.sys, undefined, undefined, evidence.mode).resolvedModule?.resolvedFileName;
     return target ? canonicalFile(target) : undefined;
-}
-function canonicalFile(path) {
-    const absolute = resolve(path);
-    return ts.sys.realpath ? ts.sys.realpath(absolute) : absolute;
 }
 function compare(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;

@@ -59,6 +59,11 @@ export interface WorkspaceCheckpointOperationOptions {
   readonly signal?: AbortSignal
 }
 
+export interface WorkspaceCheckpointLoadOptions extends WorkspaceCheckpointOperationOptions {
+  /** Omit for eager compatibility, pass an empty list to admit only the manifest. */
+  readonly artifactKeys?: readonly string[]
+}
+
 export interface FileWorkspaceCheckpointStoreOptions {
   readonly directory: string
   readonly maxManifestBytes?: number
@@ -97,7 +102,7 @@ export type WorkspaceCheckpointLoadResult = WorkspaceCheckpointHit | WorkspaceCh
 export interface FileWorkspaceCheckpointStore {
   load(
     scope: string,
-    options?: WorkspaceCheckpointOperationOptions,
+    options?: WorkspaceCheckpointLoadOptions,
   ): Promise<WorkspaceCheckpointLoadResult>
   publish(
     scope: string,

@@ -11,6 +11,7 @@ export {
   compileSpecificationSnapshots,
 } from './snapshot/index.ts'
 export type { SpecificationCompilationBatchOptions } from './snapshot/index.ts'
+export type { SpecificationCompilationPhase } from './snapshot/index.ts'
 export { specificationModuleId } from './snapshot/index.ts'
 export type {
   AuthoredLawResource,

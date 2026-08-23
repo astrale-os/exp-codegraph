@@ -13,6 +13,7 @@ import type {
 import { sourceRevision } from '../../source/file.ts'
 import {
   AUTHORING_SPECIFIER,
+  authoredSourceFile,
   authoringHelperBinding,
   isAuthoringSpecifier,
   literalProperty,
@@ -49,7 +50,7 @@ export interface LayoutConformance {
 
 /** Extract one closed literal path list without executing it. */
 export function compileLayout(source: string, text: string): LayoutCompilation {
-  const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = authoredSourceFile(source, text)
   const diagnostics = syntaxDiagnostics(source, text)
   const helper = authoringHelperBinding(file, 'defineLayout')
   const assignments: ts.ExportAssignment[] = []

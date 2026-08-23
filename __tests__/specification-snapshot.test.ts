@@ -1,9 +1,12 @@
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   compileSpecificationSnapshot,
+  compileSpecificationSnapshots,
+  type SpecificationCompilationPhase,
 } from '../specification/index.ts'
+import { specificationApiCompiler } from '../compiler/default.ts'
 import { fixture, type Fixture } from './fixture.ts'
 
 const fixtures: Fixture[] = []
@@ -13,6 +16,51 @@ afterEach(async () => {
 })
 
 describe('immutable normative specification snapshots', () => {
+  /** @evidence SPECIFICATION-COMPILER-WORK-OBSERVABILITY */
+  it('reports actual bounded compiler sessions and programs for a shared corpus wave', async () => {
+    const current = await fixture({
+      'left/.spec/api.d.ts': 'export interface Left { readonly value: string }\n',
+      'right/.spec/api.d.ts': 'export interface Right { readonly value: number }\n',
+    })
+    fixtures.push(current)
+    const phases: SpecificationCompilationPhase[] = []
+
+    const snapshots = await compileSpecificationSnapshots(
+      current.root,
+      [join(current.root, 'left/.spec'), join(current.root, 'right/.spec')],
+      {
+        onPhase: (phase) => {
+          phases.push(phase)
+          throw new Error('diagnostic observer fixture')
+        },
+      },
+    )
+
+    expect(snapshots).toHaveLength(2)
+    expect(phases.find(({ phase }) => phase === 'declarations')).toMatchObject({
+      items: 2,
+      programs: 1,
+      sessions: 1,
+      retries: 0,
+      fallbacks: 0,
+      workerPeakResidentBytes: expect.any(Number),
+      workerResidentUpperBoundBytes: expect.any(Number),
+    })
+    expect(
+      phases.find(({ phase }) => phase === 'declarations')?.workerResidentUpperBoundBytes,
+    ).toBeGreaterThan(0)
+    expect(
+      phases.find(({ phase }) => phase === 'declarations')?.workerResidentUpperBoundBytes,
+    ).toBe(
+      phases.find(({ phase }) => phase === 'declarations')?.workerPeakResidentBytes,
+    )
+    expect(phases.find(({ phase }) => phase === 'typescript')).toMatchObject({
+      items: 2,
+      programs: 1,
+      sessions: 1,
+    })
+  })
+
   it('compiles normative APIs with the authored V2 declaration surface', async () => {
     const current = await fixture({
       'module/.spec/api.d.ts': `
@@ -97,6 +145,62 @@ export default defineLayout({
     const afterRationale = await compileSpecificationSnapshot(current.root, directory)
     expect(afterRationale.id).toBe(snapshot.id)
     expect(afterRationale.revision).toBe(snapshot.revision)
+  })
+
+  it('restores unchanged declaration results for a private resource delta', async () => {
+    const current = await fixture({
+      'module/.spec/api.d.ts': 'export interface API { value: Missing }\n',
+      'module/.spec/layout.ts':
+        "import { defineLayout } from '@astrale-os/codegraph/authoring'\nexport default defineLayout(['owned.ts'])\n",
+      'module/owned.ts': 'export {}\n',
+    })
+    fixtures.push(current)
+    const directory = join(current.root, 'module/.spec')
+    const previous = await compileSpecificationSnapshots(current.root, [directory])
+    await current.write(
+      'module/.spec/layout.ts',
+      "import { defineLayout } from '@astrale-os/codegraph/authoring'\nexport default defineLayout(['owned.ts', 'other.ts'])\n",
+    )
+    const compile = vi.spyOn(specificationApiCompiler, 'compile')
+
+    const restored = await compileSpecificationSnapshots(current.root, [directory], {
+      previous,
+      changed: ['module/.spec/layout.ts'],
+    })
+    expect(compile).not.toHaveBeenCalled()
+
+    const canonical = await compileSpecificationSnapshots(current.root, [directory])
+    expect(compile).toHaveBeenCalled()
+    expect(restored).toEqual(canonical)
+
+    compile.mockClear()
+    await current.write('module/.spec/api.d.ts', 'export interface API { revised: Missing }\n')
+    await compileSpecificationSnapshots(current.root, [directory], {
+      previous: canonical,
+      changed: ['module/.spec/api.d.ts'],
+    })
+    expect(compile).toHaveBeenCalled()
+    compile.mockRestore()
+  })
+
+  it('reuses shared authoring ASTs without changing standalone syntax diagnostics', async () => {
+    const current = await fixture({
+      'module/.spec/api.d.ts': 'export interface API {}\n',
+      'module/.spec/laws/broken.ts':
+        "import { defineLaw } from '@astrale-os/codegraph/authoring'\nexport const BROKEN = defineLaw({\n",
+    })
+    fixtures.push(current)
+    const directory = join(current.root, 'module/.spec')
+
+    const canonical = await compileSpecificationSnapshot(current.root, directory)
+    const [batched] = await compileSpecificationSnapshots(current.root, [directory])
+
+    expect(batched).toEqual(canonical)
+    expect(batched?.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: expect.stringMatching(/^MODULE_TYPESCRIPT_/u) }),
+      ]),
+    )
   })
 
   it('accepts the imported authoring helper identity and rejects a same-spelled local function', async () => {

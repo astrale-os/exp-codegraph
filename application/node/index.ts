@@ -1,3 +1,5 @@
 export * from './service.ts'
+export * from './checkpoint.ts'
 export * from './fingerprint.ts'
 export * from './inventory.ts'
+export * from './source-proof.ts'

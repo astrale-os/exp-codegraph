@@ -1,10 +1,62 @@
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { SpecificationSnapshot } from '../../specification/index.ts'
 import type {
   SelectApplicationSpecificationsOptions,
+  ApplicationSpecificationAnchor,
+  PlannedApplicationSpecificationAnchors,
   SelectedApplicationSpecifications,
 } from './model.ts'
+
+export function applicationSpecificationAnchors(
+  root: string,
+  directories: readonly string[],
+): readonly ApplicationSpecificationAnchor[] {
+  return directories
+    .map((directory) => {
+      const moduleRoot = dirname(directory)
+      const sourceRoot = portable(relative(root, moduleRoot)) || '.'
+      return {
+        directory,
+        source: portable(relative(root, join(directory, 'api.d.ts'))),
+        root: sourceRoot,
+        title:
+          sourceRoot === '.'
+            ? basename(root) || 'module'
+            : sourceRoot.split('/').filter(Boolean).join('.'),
+      }
+    })
+    .sort((left, right) => left.source.localeCompare(right.source))
+}
+
+export function planApplicationSpecificationAnchors(
+  root: string,
+  anchors: readonly ApplicationSpecificationAnchor[],
+  select: readonly string[],
+): PlannedApplicationSpecificationAnchors {
+  let requested: readonly string[]
+  try {
+    requested = normalizeApplicationSelectionTargets(root, select)
+  } catch (error) {
+    return {
+      requested: [],
+      primary: [],
+      diagnostics: [selectionDiagnostic('SELECTION_INVALID', error)],
+    }
+  }
+  const primary = requested.flatMap((target) => applicationSelectionOwners(anchors, target))
+  if (!primary.length) {
+    return {
+      requested,
+      primary: [],
+      diagnostics: [
+        selectionDiagnostic('SELECTION_EMPTY', `No specification matches: ${requested.join(', ')}`),
+      ],
+    }
+  }
+  const bySource = new Map(primary.map((anchor) => [anchor.source, anchor]))
+  return { requested, primary: [...bySource.values()].sort(compareSource), diagnostics: [] }
+}
 
 /** Select requested owners, optional dependents, and their normative dependency closure. */
 export function selectApplicationSpecifications(
@@ -22,7 +74,7 @@ export function selectApplicationSpecifications(
   }
   let requested: readonly string[]
   try {
-    requested = [...new Set(options.select.map((value) => selectionTarget(root, value)))].sort()
+    requested = normalizeApplicationSelectionTargets(root, options.select)
   } catch (error) {
     return invalidSelection(specifications, options, 'SELECTION_INVALID', error)
   }
@@ -37,9 +89,9 @@ export function selectApplicationSpecifications(
       ),
     ] as const),
   )
-  const selected = new Set(
-    requested.flatMap((target) => selectedOwners(specifications, target)),
-  )
+  const selected = new Set(requested.flatMap((target) =>
+    applicationSelectionOwners(specifications, target).map((value) => value.source),
+  ))
   if (!selected.size) {
     return invalidSelection(
       specifications,
@@ -123,6 +175,14 @@ function invalidSelection(
   }
 }
 
+/** Normalize authored selection arguments once at the application boundary. */
+export function normalizeApplicationSelectionTargets(
+  root: string,
+  inputs: readonly string[],
+): readonly string[] {
+  return [...new Set(inputs.map((input) => selectionTarget(root, input)))].sort()
+}
+
 function selectionTarget(root: string, input: string): string {
   const absolute = isAbsolute(input) ? resolve(input) : resolve(root, input)
   const path = relative(resolve(root), absolute)
@@ -132,26 +192,26 @@ function selectionTarget(root: string, input: string): string {
   return portable(path || '.')
 }
 
-function selectedOwners(
-  specifications: readonly SpecificationSnapshot[],
+/** Match one normalized target against portable owner coordinates. */
+export function applicationSelectionOwners<Owner extends { readonly source: string; readonly root: string }>(
+  specifications: readonly Owner[],
   target: string,
-): string[] {
-  if (target === '.') return specifications.map((specification) => specification.source)
+): Owner[] {
+  if (target === '.') return [...specifications]
   const exactSource = specifications.find((specification) =>
     target === specification.source || target === dirname(specification.source),
   )
-  if (exactSource) return [exactSource.source]
+  if (exactSource) return [exactSource]
   if (specifications.some((specification) => target === specification.root)) {
     return specifications
       .filter((specification) =>
         specification.root === target || specification.root.startsWith(`${target}/`),
       )
-      .map((specification) => specification.source)
   }
   const descendants = specifications.filter((specification) =>
     specification.root.startsWith(`${target}/`),
   )
-  if (descendants.length) return descendants.map((specification) => specification.source)
+  if (descendants.length) return descendants
   const containing = specifications.filter(
     (specification) =>
       specification.root !== '.' && target.startsWith(`${specification.root}/`),
@@ -159,7 +219,20 @@ function selectedOwners(
   const longest = Math.max(0, ...containing.map((specification) => specification.root.length))
   return containing
     .filter((specification) => specification.root.length === longest)
-    .map((specification) => specification.source)
+}
+
+function selectionDiagnostic(code: string, error: unknown) {
+  return {
+    code,
+    message: error instanceof Error ? error.message : String(error),
+    file: '.',
+    line: 1,
+    column: 1,
+  }
+}
+
+function compareSource<Owner extends { readonly source: string }>(left: Owner, right: Owner): number {
+  return left.source.localeCompare(right.source)
 }
 
 function portable(path: string): string {

@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
+import { specificationSnapshotIdentity } from '../../specification/snapshot/identity.js';
 import { decodeWorkspaceCheckpointJson, encodeWorkspaceCheckpointJson, WORKSPACE_CHECKPOINT_JSON_ENCODING, } from '../../workspace/checkpoint/index.js';
+import { canonicalJson, sha256 } from '../../workspace/checkpoint/validation.js';
 import { createApplicationSnapshot } from '../snapshot/index.js';
+import { applicationCheckpointSpecificationDependencies, projectedApplicationCheckpointSources, } from './projection.optimization.js';
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.js';
 import { packSpecificationSnapshot, unpackSpecificationSnapshot, } from './representation.js';
 const FORMAT = 'astrale.codegraph.application-checkpoint';
-const VERSION = 3;
+const VERSION = 5;
 const MAXIMUM_DECODED_ARTIFACT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointArtifactBytes;
 const MAXIMUM_DECODED_CHECKPOINT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointBytes;
 const SCOPE_PREFIX = 'application-';
@@ -22,10 +25,33 @@ export function createApplicationCheckpoint(options) {
     }
     let persisted;
     const checkpoint = {
+        publication: 'enabled',
         async load(expectation) {
             let loaded;
             try {
-                loaded = await options.store.load(checkpointScope(expectation), signalOptions(expectation));
+                if (expectation.projection) {
+                    const admitted = await options.store.load(applicationCheckpointScope(expectation), { artifactKeys: [], ...signalOptions(expectation) });
+                    if (!admitted.ok) {
+                        return miss(admitted.reason === 'manifest-missing'
+                            ? 'missing'
+                            : admitted.reason.includes('corrupt')
+                                ? 'corrupt'
+                                : 'unavailable');
+                    }
+                    const payload = compatibleManifestPayload(admitted.manifest, expectation, options.producerFingerprint);
+                    if (!payload)
+                        return miss('incompatible');
+                    if (payload.request !== expectation.request &&
+                        payload.inventory === expectation.inventory) {
+                        try {
+                            return await loadProjectedApplicationCorpus(options.store, admitted.manifest, payload, expectation);
+                        }
+                        catch {
+                            return miss('corrupt');
+                        }
+                    }
+                }
+                loaded = await options.store.load(applicationCheckpointScope(expectation), signalOptions(expectation));
             }
             catch {
                 return miss('unavailable');
@@ -38,14 +64,9 @@ export function createApplicationCheckpoint(options) {
                         : 'unavailable');
             }
             try {
-                const payload = record(loaded.manifest.payload);
-                if (loaded.manifest.format !== FORMAT ||
-                    loaded.manifest.version !== VERSION ||
-                    loaded.manifest.producerFingerprint !== options.producerFingerprint ||
-                    payload.repository !== expectation.repository ||
-                    payload.corpus !== expectation.corpus) {
+                const payload = compatibleManifestPayload(loaded.manifest, expectation, options.producerFingerprint);
+                if (!payload)
                     return miss('incompatible');
-                }
                 if (payload.encoding !== WORKSPACE_CHECKPOINT_JSON_ENCODING ||
                     !Number.isSafeInteger(payload.decodedBytes) ||
                     payload.decodedBytes < 0 ||
@@ -55,6 +76,9 @@ export function createApplicationCheckpoint(options) {
                 if (representation !== undefined && representation !== PACKED_REPRESENTATION) {
                     return miss('incompatible');
                 }
+                if (typeof payload.statistics !== 'boolean')
+                    return miss('incompatible');
+                const hasStatistics = payload.statistics;
                 const decoded = { bytes: 0, artifacts: new Map() };
                 const apiPayloads = new Map();
                 let apiPayloadIndex = [];
@@ -89,7 +113,9 @@ export function createApplicationCheckpoint(options) {
                     });
                     return specification;
                 });
-                const statistics = jsonArtifact(loaded.artifacts, STATISTICS, decoded);
+                const statistics = hasStatistics
+                    ? jsonArtifact(loaded.artifacts, STATISTICS, decoded)
+                    : undefined;
                 const inventory = jsonArtifact(loaded.artifacts, INVENTORY, decoded);
                 const qualificationIndex = artifactIndex(loaded.artifacts, QUALIFICATIONS, decoded);
                 const qualificationDescriptors = new Map();
@@ -105,14 +131,19 @@ export function createApplicationCheckpoint(options) {
                     return qualification;
                 });
                 const core = record(jsonArtifact(loaded.artifacts, SNAPSHOT, decoded));
+                const capabilities = stringArray(core.capabilities);
                 if (decoded.bytes !== payload.decodedBytes)
                     return miss('corrupt');
-                if (statistics.repository !== expectation.repository ||
-                    statistics.inventory !== inventory.revision ||
+                if ((statistics !== undefined &&
+                    (statistics.repository !== expectation.repository ||
+                        statistics.inventory !== inventory.revision)) ||
                     inventory.repository !== expectation.repository ||
                     inventory.revision !== payload.inventory ||
                     !Array.isArray(inventory.files) ||
-                    !Array.isArray(statistics.files))
+                    (statistics !== undefined && !Array.isArray(statistics.files)) ||
+                    !validCapabilities(capabilities) ||
+                    !sameStrings(stringArray(payload.capabilities), capabilities) ||
+                    capabilities.includes('repository-statistics') !== hasStatistics)
                     return miss('incompatible');
                 const bySource = new Map(specifications.map((value) => [value.source, value]));
                 const analysis = core.analysis === undefined
@@ -147,9 +178,10 @@ export function createApplicationCheckpoint(options) {
                 const candidate = createApplicationSnapshot({
                     repository: expectation.repository,
                     inventory: inventory.revision,
+                    capabilities: capabilities,
                     selection: core.selection,
                     specifications: included,
-                    statistics,
+                    ...(statistics ? { statistics } : {}),
                     qualifications,
                     ...(analysis === undefined ? {} : { analysis }),
                     diagnostics: array(core.diagnostics),
@@ -164,14 +196,23 @@ export function createApplicationCheckpoint(options) {
                     artifacts: loaded.artifacts,
                     decodedBytes: decoded.artifacts,
                 };
-                const content = { snapshot: candidate, specifications, inventory, statistics };
-                if (representation === undefined) {
-                    await checkpoint.publish(expectation, content).catch(() => undefined);
-                }
+                const content = {
+                    snapshot: candidate,
+                    specifications,
+                    inventory,
+                    complete: true,
+                    ...(statistics ? { statistics } : {}),
+                };
                 return {
                     ok: true,
                     exact: payload.inventory === expectation.inventory &&
                         payload.request === expectation.request,
+                    request: payload.request === expectation.request,
+                    migration: representation === undefined,
+                    work: {
+                        projection: 'complete', artifacts: loaded.artifacts.size, decodedBytes: decoded.bytes,
+                        specifications: specifications.length, apiPayloads: apiPayloads.size,
+                    },
                     content,
                 };
             }
@@ -183,10 +224,14 @@ export function createApplicationCheckpoint(options) {
             const snapshot = content.snapshot;
             if (snapshot.repository !== expectation.repository ||
                 snapshot.inventory !== expectation.inventory ||
-                content.statistics.repository !== expectation.repository ||
-                content.statistics.inventory !== expectation.inventory ||
+                (content.statistics !== undefined &&
+                    (content.statistics.repository !== expectation.repository ||
+                        content.statistics.inventory !== expectation.inventory)) ||
                 content.inventory.repository !== expectation.repository ||
-                content.inventory.revision !== expectation.inventory) {
+                content.inventory.revision !== expectation.inventory ||
+                !validCapabilities(snapshot.capabilities) ||
+                snapshot.capabilities.includes('repository-statistics') !==
+                    (content.statistics !== undefined)) {
                 throw new Error('Application checkpoint content does not match its exact expectation.');
             }
             const apiPayloads = new Map();
@@ -212,6 +257,8 @@ export function createApplicationCheckpoint(options) {
                 };
             });
             const requiredApiPayloads = new Set(specificationIndex.flatMap((value) => value.payloads));
+            const specificationsBySource = new Map(content.specifications.map((value) => [value.source, value]));
+            const corpusSources = new Set(specificationsBySource.keys());
             const apiPayloadIndex = [...requiredApiPayloads]
                 .sort((left, right) => left.localeCompare(right))
                 .map((source) => ({
@@ -263,12 +310,15 @@ export function createApplicationCheckpoint(options) {
             };
             add(CORPUS, specificationIndex.map(({ source, key, identity, payloads }) => ({
                 source,
+                root: specificationsBySource.get(source).root,
                 key,
                 identity,
                 payloads,
+                dependencies: applicationCheckpointSpecificationDependencies(specificationsBySource.get(source), corpusSources),
             })));
             add(API_PAYLOADS, apiPayloadIndex.map(({ source, key, identity }) => ({ source, key, identity })));
-            add(STATISTICS, content.statistics);
+            if (content.statistics)
+                add(STATISTICS, content.statistics);
             add(INVENTORY, content.inventory);
             add(QUALIFICATIONS, qualificationIndex.map(({ source, key, identity }) => ({
                 source,
@@ -276,6 +326,7 @@ export function createApplicationCheckpoint(options) {
                 identity,
             })));
             add(SNAPSHOT, {
+                capabilities: snapshot.capabilities,
                 selection: snapshot.selection,
                 specifications: snapshot.specifications.map((value) => value.source),
                 ...(snapshot.analysis === undefined ? {} : { analysis: snapshot.analysis }),
@@ -300,7 +351,7 @@ export function createApplicationCheckpoint(options) {
                 else if (!retain(descriptor.key))
                     throw new Error(`Retained qualification artifact is missing: ${descriptor.source}`);
             }
-            await options.store.publish(checkpointScope(expectation), {
+            await options.store.publish(applicationCheckpointScope(expectation), {
                 manifest: {
                     format: FORMAT,
                     version: VERSION,
@@ -310,9 +361,12 @@ export function createApplicationCheckpoint(options) {
                         inventory: expectation.inventory,
                         corpus: expectation.corpus,
                         request: expectation.request,
+                        capabilities: snapshot.capabilities,
+                        ...(expectation.sourceProof ? { sourceProof: expectation.sourceProof } : {}),
                         snapshot: snapshot.id,
                         encoding: WORKSPACE_CHECKPOINT_JSON_ENCODING,
                         representation: PACKED_REPRESENTATION,
+                        statistics: content.statistics !== undefined,
                         decodedBytes,
                     },
                 },
@@ -332,8 +386,213 @@ export function createApplicationCheckpoint(options) {
     };
     return checkpoint;
 }
-function checkpointScope(expectation) {
-    return `${SCOPE_PREFIX}${createHash('sha256').update(expectation.corpus).digest('hex').slice(0, 32)}`;
+export function applicationCheckpointCorpus(exclude) {
+    return JSON.stringify({
+        exclude: [...new Set(exclude)].sort((left, right) => left.localeCompare(right)),
+    });
+}
+export function applicationCheckpointScope(expectation) {
+    const identity = expectation.sourceProof
+        ? `${expectation.corpus}\0${expectation.sourceProof}`
+        : expectation.corpus;
+    return `${SCOPE_PREFIX}${createHash('sha256').update(identity).digest('hex').slice(0, 32)}`;
+}
+export async function admitApplicationCheckpointManifest(options, expectation) {
+    try {
+        const loaded = await options.store.load(applicationCheckpointScope(expectation), {
+            artifactKeys: [],
+        });
+        if (!loaded.ok) {
+            return {
+                ok: false,
+                reason: loaded.reason === 'manifest-missing' ? 'missing' : 'unavailable',
+            };
+        }
+        const payload = record(loaded.manifest.payload);
+        if (loaded.manifest.format !== FORMAT ||
+            loaded.manifest.version !== VERSION ||
+            loaded.manifest.producerFingerprint !== options.producerFingerprint ||
+            payload.repository !== expectation.repository ||
+            payload.inventory !== expectation.inventory ||
+            payload.corpus !== expectation.corpus ||
+            payload.sourceProof !== expectation.sourceProof) {
+            return { ok: false, reason: 'incompatible' };
+        }
+        return {
+            ok: true,
+            reference: {
+                scope: loaded.manifest.scope,
+                manifestSha256: checkpointManifestSha256(loaded.manifest),
+            },
+        };
+    }
+    catch {
+        return { ok: false, reason: 'unavailable' };
+    }
+}
+function compatibleManifestPayload(manifest, expectation, producerFingerprint) {
+    const payload = record(manifest.payload);
+    if (manifest.format !== FORMAT ||
+        manifest.version !== VERSION ||
+        manifest.producerFingerprint !== producerFingerprint ||
+        (expectation.manifestSha256 !== undefined &&
+            checkpointManifestSha256(manifest) !== expectation.manifestSha256) ||
+        payload.repository !== expectation.repository ||
+        payload.corpus !== expectation.corpus ||
+        payload.sourceProof !== expectation.sourceProof)
+        return;
+    return payload;
+}
+async function loadProjectedApplicationCorpus(store, admittedManifest, payload, expectation) {
+    const projection = expectation.projection;
+    if (!projection)
+        return miss('incompatible');
+    if (payload.representation !== PACKED_REPRESENTATION ||
+        payload.encoding !== WORKSPACE_CHECKPOINT_JSON_ENCODING ||
+        !Number.isSafeInteger(payload.decodedBytes) ||
+        payload.decodedBytes < 0 ||
+        payload.decodedBytes > MAXIMUM_DECODED_CHECKPOINT_BYTES ||
+        !validCapabilities(projection.capabilities) ||
+        !sameStrings(stringArray(payload.capabilities), projection.capabilities) ||
+        typeof payload.statistics !== 'boolean' ||
+        payload.statistics !== projection.capabilities.includes('repository-statistics'))
+        return miss('incompatible');
+    const scope = applicationCheckpointScope(expectation);
+    const indexKeys = [
+        CORPUS,
+        API_PAYLOADS,
+        INVENTORY,
+        ...(payload.statistics ? [STATISTICS] : []),
+    ];
+    const indexed = await store.load(scope, {
+        artifactKeys: indexKeys,
+        ...signalOptions(expectation),
+    });
+    if (!indexed.ok)
+        return checkpointStoreMiss(indexed.reason);
+    if (checkpointManifestSha256(indexed.manifest) !== checkpointManifestSha256(admittedManifest)) {
+        return miss('unavailable');
+    }
+    const decoded = { bytes: 0, artifacts: new Map() };
+    const corpusIndex = corpusArtifactIndex(indexed.artifacts, decoded);
+    const apiPayloadIndex = artifactIndex(indexed.artifacts, API_PAYLOADS, decoded);
+    const apiArtifacts = new Map(apiPayloadIndex.map(({ source, key }) => [source, key]));
+    if (apiArtifacts.size !== apiPayloadIndex.length) {
+        throw new TypeError('Checkpoint API payload index contains duplicate sources.');
+    }
+    const inventory = jsonArtifact(indexed.artifacts, INVENTORY, decoded);
+    const statistics = payload.statistics
+        ? jsonArtifact(indexed.artifacts, STATISTICS, decoded)
+        : undefined;
+    if (inventory.repository !== expectation.repository ||
+        inventory.revision !== payload.inventory ||
+        inventory.revision !== expectation.inventory ||
+        !Array.isArray(inventory.files) ||
+        (statistics !== undefined &&
+            (statistics.repository !== expectation.repository ||
+                statistics.inventory !== inventory.revision ||
+                !Array.isArray(statistics.files))))
+        return miss('incompatible');
+    const selectedSources = projectedApplicationCheckpointSources(corpusIndex, projection);
+    const selected = corpusIndex.filter(({ source }) => selectedSources.has(source));
+    const payloadSources = new Set(selected.flatMap(({ payloads }) => payloads));
+    const selectedPayloads = [...payloadSources].sort().map((source) => {
+        const key = apiArtifacts.get(source);
+        if (!key)
+            throw new Error(`Checkpoint API payload index is missing: ${source}`);
+        return { source, key };
+    });
+    const selectedKeys = [
+        ...selected.map(({ key }) => key),
+        ...selectedPayloads.map(({ key }) => key),
+    ];
+    const loaded = await store.load(scope, {
+        artifactKeys: selectedKeys,
+        ...signalOptions(expectation),
+    });
+    if (!loaded.ok)
+        return checkpointStoreMiss(loaded.reason);
+    if (checkpointManifestSha256(loaded.manifest) !== checkpointManifestSha256(admittedManifest)) {
+        return miss('unavailable');
+    }
+    const apiPayloads = new Map();
+    for (const { source, key } of selectedPayloads) {
+        apiPayloads.set(source, jsonArtifact(loaded.artifacts, key, decoded));
+    }
+    const specifications = selected.map((descriptor) => {
+        const packed = jsonArtifact(loaded.artifacts, descriptor.key, decoded);
+        if (packed.source !== descriptor.source ||
+            packed.id !== descriptor.identity ||
+            !sameStrings(packedSpecificationPayloadKeys(packed), descriptor.payloads))
+            throw new Error(`Checkpoint specification index drifted: ${descriptor.source}`);
+        const specification = unpackSpecificationSnapshot(packed, apiPayloads);
+        const { id: _id, ...identityPreimage } = specification;
+        if (specificationSnapshotIdentity(identityPreimage) !== specification.id) {
+            throw new Error(`Checkpoint specification identity is invalid: ${descriptor.source}`);
+        }
+        return specification;
+    });
+    if (decoded.bytes > payload.decodedBytes)
+        return miss('corrupt');
+    return {
+        ok: true,
+        exact: false,
+        request: false,
+        migration: false,
+        work: {
+            projection: 'request-closure', artifacts: indexKeys.length + selectedKeys.length,
+            decodedBytes: decoded.bytes, specifications: specifications.length,
+            apiPayloads: apiPayloads.size,
+        },
+        content: {
+            specifications,
+            inventory,
+            complete: specifications.length === corpusIndex.length,
+            ...(statistics ? { statistics } : {}),
+        },
+    };
+}
+function corpusArtifactIndex(artifacts, decoded) {
+    const value = jsonArtifact(artifacts, CORPUS, decoded);
+    if (!Array.isArray(value) || !value.every(isCorpusIndexDescriptor)) {
+        throw new TypeError('Checkpoint corpus index is invalid.');
+    }
+    const entries = value;
+    const sources = entries.map(({ source }) => source);
+    if (new Set(sources).size !== sources.length || !sameStrings([...sources].sort(), sources)) {
+        throw new TypeError('Checkpoint corpus index is not uniquely source-ordered.');
+    }
+    const admittedSources = new Set(sources);
+    if (entries.some(({ dependencies }) => dependencies.some((source) => !admittedSources.has(source)))) {
+        throw new TypeError('Checkpoint corpus dependency is outside the admitted index.');
+    }
+    return entries;
+}
+function isCorpusIndexDescriptor(value) {
+    const entry = recordOrUndefined(value);
+    return Boolean(entry &&
+        typeof entry.source === 'string' &&
+        typeof entry.root === 'string' &&
+        typeof entry.key === 'string' &&
+        typeof entry.identity === 'string' &&
+        Array.isArray(entry.payloads) &&
+        entry.payloads.every((item) => typeof item === 'string') &&
+        new Set(entry.payloads).size === entry.payloads.length &&
+        Array.isArray(entry.dependencies) &&
+        entry.dependencies.every((item) => typeof item === 'string') &&
+        new Set(entry.dependencies).size === entry.dependencies.length &&
+        sameStrings([...entry.payloads].sort(), entry.payloads) &&
+        sameStrings([...entry.dependencies].sort(), entry.dependencies));
+}
+function checkpointStoreMiss(reason) {
+    return miss(reason === 'manifest-missing'
+        ? 'missing'
+        : reason.includes('corrupt')
+            ? 'corrupt'
+            : 'unavailable');
+}
+function checkpointManifestSha256(manifest) {
+    return sha256(Buffer.from(canonicalJson(manifest), 'utf8'));
 }
 function signalOptions(expectation) {
     return expectation.signal ? { signal: expectation.signal } : {};
@@ -390,6 +649,14 @@ function array(value) {
 }
 function sameStrings(left, right) {
     return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+function validCapabilities(values) {
+    return (values.length <= 3 &&
+        values.every((value) => value === 'declaration-models' ||
+            value === 'declaration-navigation' ||
+            value === 'repository-statistics') &&
+        (!values.includes('declaration-navigation') || values.includes('declaration-models')) &&
+        values.every((value, index) => index === 0 || values[index - 1] < value));
 }
 function stringArray(value) {
     const values = array(value);

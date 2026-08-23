@@ -20,3 +20,15 @@ export const CHECKPOINT_PUBLICATION_IS_ATOMIC = defineLaw({
     },
   ],
 })
+
+export const CHECKPOINT_SELECTIVE_ARTIFACT_ADMISSION = defineLaw({
+  id: 'CHECKPOINT-SELECTIVE-ARTIFACT-ADMISSION',
+  statement:
+    'Manifest-only and selected-artifact loads validate the complete bounded manifest and every requested artifact digest while performing no read or admission of an omitted artifact.',
+  tests: [
+    {
+      file: '../../__tests__/workspace-checkpoint.test.ts',
+      id: 'CHECKPOINT-SELECTIVE-ARTIFACT-ADMISSION',
+    },
+  ],
+})

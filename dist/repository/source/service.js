@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { deriveAnalysisId, portablePath } from '../../analysis/index.js';
 import { readBytesBounded, sourceRevision } from '../../source/file.js';
+import { operationSourceText } from '../../source/operation-snapshot.js';
 export const DEFAULT_REPOSITORY_SOURCE_MAXIMUM_TEXT_BYTES = 16 * 1024 * 1024;
 /** Read text only when its bytes still match one immutable repository inventory. */
 export function createRepositorySourceService(root, inventory, options = {}) {
@@ -53,11 +54,16 @@ export function createRepositorySourceService(root, inventory, options = {}) {
                 };
             }
             try {
-                const bytes = await readBytesBounded(resolve(root, file.path), maximumTextBytes);
-                const text = decodeUtf8(bytes);
+                const absolute = resolve(root, file.path);
+                const admitted = operationSourceText(absolute);
+                if (admitted && admitted.bytes > maximumTextBytes) {
+                    throw new Error(`File exceeds ${maximumTextBytes} bytes.`);
+                }
+                const bytes = admitted ? undefined : await readBytesBounded(absolute, maximumTextBytes);
+                const text = admitted?.text ?? decodeUtf8(bytes);
                 request.signal?.throwIfAborted();
                 const actual = deriveAnalysisId('source-revision', `${file.source}`, {
-                    digest: sourceRevision(bytes),
+                    digest: admitted?.digest ?? sourceRevision(bytes),
                     encoding: 'bytes',
                 });
                 if (actual !== expected) {

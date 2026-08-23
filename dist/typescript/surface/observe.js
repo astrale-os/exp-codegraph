@@ -1,7 +1,7 @@
 import { relative, sep } from 'node:path';
 import ts from 'typescript';
 import { workspacePackageCoordinate } from '../package-coordinate.js';
-import { observeDeclaration } from './declaration.js';
+import { observeDeclarationOnce } from './observe.optimization.js';
 import { canonicalSymbolIdentity, declarationKind, exportIsTypeOnly, firstDeclaration, hasNamespaceFacet, isPureNamespaceSymbol, locationOf, resolveAlias, symbolWithinCatalog, } from './symbol.js';
 export function observePublicSurface(catalogRoot, project, entrypoint, options = {}) {
     const semantics = options.semantics ?? 'specification-v2';
@@ -71,8 +71,11 @@ export function observePublicSurface(catalogRoot, project, entrypoint, options =
             });
             continue;
         }
-        const observation = observeDeclaration(catalogRoot, project.checker, symbol, paths.get(identity) ?? [], semantics);
-        declarations.set(identity, observation.declaration);
+        const observation = observeDeclarationOnce(catalogRoot, project.checker, symbol, semantics);
+        declarations.set(identity, {
+            ...observation.declaration,
+            exportPaths: paths.get(identity) ?? [],
+        });
         issues.push(...observation.declaration.issues.map((issue) => ({
             ...issue,
             declaration: issue.declaration ?? identity,

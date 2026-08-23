@@ -3,8 +3,10 @@ import { constants } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, rename, rm, } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { SHA256, canonicalJson, isAbort, isRecord, normalizeLimits, preparePublication, sha256, throwIfAborted, validateScope, validateStoredManifest, } from './validation.js';
+import { mapCheckpointWork } from './store.optimization.js';
 const TEMPORARY_AGE_MS = 24 * 60 * 60 * 1_000;
 const LOAD_CONCURRENCY = 32;
+const PUBLISH_CONCURRENCY = 32;
 /** Create a generic advisory filesystem-backed checkpoint store. */
 export function createFileWorkspaceCheckpointStore(options) {
     const limits = normalizeLimits(options);
@@ -67,10 +69,24 @@ export function createFileWorkspaceCheckpointStore(options) {
             catch {
                 return miss('manifest-invalid');
             }
+            const requestedKeys = operationOptions.artifactKeys === undefined
+                ? undefined
+                : new Set(operationOptions.artifactKeys);
+            if (requestedKeys &&
+                (requestedKeys.size !== operationOptions.artifactKeys.length ||
+                    [...requestedKeys].some((key) => typeof key !== 'string'))) {
+                throw new TypeError('Checkpoint artifact selection must contain unique string keys.');
+            }
+            const selectedArtifacts = requestedKeys
+                ? manifest.artifacts.filter(({ key }) => requestedKeys.has(key))
+                : manifest.artifacts;
+            if (requestedKeys && selectedArtifacts.length !== requestedKeys.size) {
+                return miss('artifact-missing');
+            }
             const artifacts = new Map();
             let totalBytes = 0;
             const seenDigests = new Set();
-            for (const descriptor of manifest.artifacts) {
+            for (const descriptor of selectedArtifacts) {
                 throwIfAborted(signal);
                 if (descriptor.bytes > limits.maxArtifactBytes)
                     return miss('artifact-too-large');
@@ -83,11 +99,11 @@ export function createFileWorkspaceCheckpointStore(options) {
                 }
             }
             const unique = new Map();
-            for (const descriptor of manifest.artifacts) {
+            for (const descriptor of selectedArtifacts) {
                 if (!unique.has(descriptor.digest))
                     unique.set(descriptor.digest, descriptor);
             }
-            const loaded = await mapConcurrent([...unique.values()], LOAD_CONCURRENCY, (descriptor) => loadBlob(blobDirectory, descriptor, limits, signal));
+            const loaded = await mapCheckpointWork([...unique.values()], LOAD_CONCURRENCY, (descriptor) => loadBlob(blobDirectory, descriptor, limits, signal));
             const failed = loaded.find((result) => !result.ok);
             if (failed)
                 return miss(failed.reason);
@@ -96,7 +112,7 @@ export function createFileWorkspaceCheckpointStore(options) {
             for (const result of successful) {
                 rememberTrustedBlob(trustedBlobs, result.digest, result.metadata, maximumTrustedBlobs);
             }
-            for (const descriptor of manifest.artifacts) {
+            for (const descriptor of selectedArtifacts) {
                 const artifactBytes = loadedByDigest.get(descriptor.digest);
                 if (!artifactBytes)
                     return miss('artifact-missing');
@@ -115,27 +131,29 @@ export function createFileWorkspaceCheckpointStore(options) {
             throwIfAborted(signal);
             const installedDigests = new Set();
             try {
-                for (const artifact of prepared.artifacts) {
+                const uniqueArtifacts = [...new Map(prepared.artifacts.map((artifact) => [artifact.digest, artifact])).values()];
+                const installed = await mapCheckpointWork(uniqueArtifacts, PUBLISH_CONCURRENCY, async (artifact) => {
                     throwIfAborted(signal);
                     const target = join(blobDirectory, artifact.digest);
                     const trusted = trustedBlobs.get(artifact.digest);
                     if ((trusted && await installedBlobMatchesMetadata(target, trusted, signal)) ||
                         await installedBlobExists(target, artifact.digest, artifact.data, signal, limits)) {
-                        installedDigests.add(artifact.digest);
                         await rememberInstalledBlob(trustedBlobs, target, artifact.digest, maximumTrustedBlobs, signal);
-                        continue;
+                        return artifact.digest;
                     }
                     const temporary = temporaryPath(blobDirectory, `.${artifact.digest}`);
                     try {
                         await writeDurably(temporary, artifact.data, signal);
                         await installBlob(temporary, target, artifact.digest, artifact.data, signal, limits);
-                        installedDigests.add(artifact.digest);
                         await rememberInstalledBlob(trustedBlobs, target, artifact.digest, maximumTrustedBlobs, signal);
+                        return artifact.digest;
                     }
                     finally {
                         await removeQuietly(temporary);
                     }
-                }
+                });
+                for (const digest of installed)
+                    installedDigests.add(digest);
                 throwIfAborted(signal);
                 const manifestTarget = manifestPath(manifestDirectory, validatedScope);
                 const manifestTemporary = temporaryPath(manifestDirectory, `.${validatedScope}`);
@@ -214,18 +232,6 @@ async function loadBlob(directory, descriptor, limits, signal) {
         bytes,
         metadata: admittedMetadata,
     };
-}
-async function mapConcurrent(values, concurrency, operation) {
-    const output = new Array(values.length);
-    let next = 0;
-    const worker = async () => {
-        while (next < values.length) {
-            const index = next++;
-            output[index] = await operation(values[index]);
-        }
-    };
-    await Promise.all(Array.from({ length: Math.min(concurrency, values.length) }, () => worker()));
-    return output;
 }
 async function writeDurably(file, bytes, signal) {
     throwIfAborted(signal);

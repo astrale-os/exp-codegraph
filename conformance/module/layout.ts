@@ -108,7 +108,7 @@ function conformanceRule(fact: Fact<ApplicationLayoutObservationFact>): Conforma
     profile: MODULE_LAYOUT_PROFILE_ID,
     rule: layoutRules[2],
     subject: fact.subject,
-    specificationPointer: entry.pointer,
+    ...(entry.pointer ? { specificationPointer: entry.pointer } : {}),
     evidence: fact.provenance.evidence,
     inputs: [fact.id],
     actual: entry,

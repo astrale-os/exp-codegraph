@@ -4,6 +4,7 @@ import { validateModuleSchemaCatalog } from '../../schema/catalog.js';
 import { compileLayout, observeLayout } from '../../specification/module/layout.js';
 import { resolveTestEvidence } from '../../specification/module/test-evidence.js';
 import { APPLICATION_LAYOUT_FACT_NAMESPACE, APPLICATION_CONTEXT_FACT_NAMESPACE, APPLICATION_SCHEMA_FACT_NAMESPACE, APPLICATION_TEST_FACT_NAMESPACE, } from './model.js';
+import { indexApplicationObservationInventory, } from './materialize.optimization.js';
 const OBSERVATION_PASS = deriveAnalysisId('pass', 'astrale.typespec.application-observation', { version: 1 });
 const OBSERVATION_PRODUCER = {
     id: deriveAnalysisId('producer', 'astrale.typespec.application-observation', { version: 1 }),
@@ -27,6 +28,7 @@ export async function materializeApplicationObservations(options) {
         : [];
     const currentByKey = new Map(currentManifest.map((entry) => [entry.key, entry]));
     const requested = options.refresh ? new Set(options.refresh) : undefined;
+    const inventoryIndex = indexApplicationObservationInventory(options.inventory);
     const shards = [];
     const retained = [];
     const schemaDependencies = options.schemaDependencies ?? [];
@@ -64,7 +66,7 @@ export async function materializeApplicationObservations(options) {
             observeSpecificationLayout(options.root, specification),
             observeSpecificationTests(options.root, specification),
         ]);
-        shards.push(observationShard(provisional, APPLICATION_LAYOUT_FACT_NAMESPACE, specification, 'layout-observation', layout), observationShard(provisional, APPLICATION_TEST_FACT_NAMESPACE, specification, 'test-evidence', tests), observationShard(provisional, APPLICATION_SCHEMA_FACT_NAMESPACE, specification, 'schema-catalog', observeSpecificationSchemas(specification, schemaDiagnostics)), observationShard(provisional, APPLICATION_CONTEXT_FACT_NAMESPACE, specification, 'module-context', observeSpecificationContext(specification, options.inventory)));
+        shards.push(observationShard(provisional, APPLICATION_LAYOUT_FACT_NAMESPACE, specification, 'layout-observation', layout), observationShard(provisional, APPLICATION_TEST_FACT_NAMESPACE, specification, 'test-evidence', tests), observationShard(provisional, APPLICATION_SCHEMA_FACT_NAMESPACE, specification, 'schema-catalog', observeSpecificationSchemas(specification, schemaDiagnostics)), observationShard(provisional, APPLICATION_CONTEXT_FACT_NAMESPACE, specification, 'module-context', observeSpecificationContext(specification, inventoryIndex)));
     }
     shards.sort((left, right) => left.key.localeCompare(right.key));
     const manifest = [...retained, ...shards.map(shardReference)].sort((left, right) => left.key.localeCompare(right.key));
@@ -119,9 +121,8 @@ function observationKeys(specification) {
 function observeSpecificationContext(specification, inventory) {
     const specDirectory = specification.source.slice(0, -'/api.d.ts'.length);
     const historyRoot = specification.root === '.' ? '.history/' : `${specification.root}/.history/`;
-    const byPath = new Map(inventory.files.map((file) => [file.path, file]));
     const resource = (path) => {
-        const file = byPath.get(path);
+        const file = inventory.byPath.get(path);
         return file ? contextResource(file) : undefined;
     };
     return {
@@ -132,10 +133,8 @@ function observeSpecificationContext(specification, inventory) {
         ...(resource(`${specDirectory}/icon.svg`)
             ? { icon: resource(`${specDirectory}/icon.svg`) }
             : {}),
-        history: inventory.files
-            .filter((file) => file.path.startsWith(historyRoot))
+        history: (inventory.historyByRoot.get(historyRoot) ?? [])
             .map(contextResource)
-            .sort((left, right) => left.path.localeCompare(right.path)),
     };
 }
 function contextResource(file) {

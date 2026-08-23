@@ -17,7 +17,10 @@ import {
   type ApplicationTestEvidenceFact,
   type ApplicationResolvedTestEvidence,
 } from '../application/observation/index.ts'
-import type { TypeSpecApplicationReader } from '../application/index.ts'
+import type {
+  TypeSpecApplicationReader,
+  TypeSpecApplicationSnapshot,
+} from '../application/index.ts'
 import {
   MODULE_STRUCTURE_PROFILE_ID,
   type QualificationSnapshot,
@@ -154,6 +157,7 @@ async function projectSpecification(
   const verification = qualification && hasCompilerQualification(qualification)
     ? projectQualification(qualification)
     : undefined
+  const statistics = requiredApplicationStatistics(reader.snapshot)
   const revision = specification.revision
   return {
     title: specification.title,
@@ -169,7 +173,7 @@ async function projectSpecification(
         packages: [...specification.module.packages],
         diagnostics: moduleDiagnostics,
         ...(moduleFact
-          ? { code: presentationCode(moduleFact.payload, reader.snapshot.statistics) }
+          ? { code: presentationCode(moduleFact.payload, statistics) }
           : {}),
         ...(contract ? { contract } : {}),
       },
@@ -204,6 +208,15 @@ async function projectSpecification(
     contracts: contract ? [contract.id] : [],
     ...(verification ? { verification } : {}),
   }
+}
+
+function requiredApplicationStatistics(
+  snapshot: TypeSpecApplicationSnapshot,
+): NonNullable<TypeSpecApplicationSnapshot['statistics']> {
+  if (!snapshot.statistics) {
+    throw new Error('Application catalog projection requires repository-statistics capability.')
+  }
+  return snapshot.statistics
 }
 
 async function oneFact<Payload>(

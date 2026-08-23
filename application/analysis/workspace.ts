@@ -2,7 +2,6 @@ import type {
   AnalysisGenerationId,
   AnalysisSnapshotSet,
   AnalysisStore,
-  NativeModuleBoundary,
   ProjectUniverseId,
   SourceManifestId,
 } from '../../analysis/index.ts'
@@ -14,6 +13,12 @@ import {
   TYPESCRIPT_MODULE_FACT_NAMESPACE,
 } from '../../analysis/typescript/index.ts'
 import { resolveApplicationModuleBoundaries } from './boundary.ts'
+import { observeCompilerProject } from './workspace-observability.ts'
+import {
+  ApplicationCompilerRoutingIndex,
+  groupApplicationCompilerProjects,
+  mapApplicationCompilerProjects,
+} from './workspace.optimization.ts'
 import { materializeApplicationObservations } from '../observation/index.ts'
 import type {
   ApplicationAnalysisRefresh,
@@ -33,9 +38,10 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
   readonly #store: AnalysisStore
   readonly #ownsStore: boolean
   readonly #services = new Map<string, TypeScriptAnalysisService>()
+  readonly #routing = new ApplicationCompilerRoutingIndex()
+  readonly #projectUniverses = new Map<string, ProjectUniverseId>()
   #boundaryDigest = ''
   #adoptedGenerations = new Map<ProjectUniverseId, AnalysisGenerationId>()
-  #adoptedInventory: SourceManifestId | undefined
   #disposed = false
   readonly #options: ApplicationAnalysisWorkspaceOptions
 
@@ -59,44 +65,95 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
           this.#options.root,
           options.specifications,
         )
-    const byProject = groupByProject(resolution.boundaries)
+    const byProject = groupApplicationCompilerProjects(resolution.boundaries)
+    const projects = [...byProject]
     const digest = JSON.stringify([...byProject])
-    if (options.compilerAnalysis !== false && digest !== this.#boundaryDigest) {
+    const boundaryChanged =
+      options.compilerAnalysis !== false && digest !== this.#boundaryDigest
+    const compatibleResidentBoundary =
+      options.compilerAnalysis === false || digest === this.#boundaryDigest
+    if (boundaryChanged) {
       await this.disposeServices()
-      for (const [project, modules] of byProject) {
-        this.#services.set(
-          project,
-          await createTypeScriptAnalysisService({
-            project: {
-              root: this.#options.root,
-              config: project,
-              capabilities: [TYPESCRIPT_MODULE_FACT_NAMESPACE],
-              modules,
-            },
-            sessions: this.#options.sessions,
-            store: this.#store,
-            ...(this.#options.telemetry ? { telemetry: this.#options.telemetry } : {}),
-          }),
-        )
-      }
+      this.#routing.reset()
+      this.#projectUniverses.clear()
       this.#boundaryDigest = digest
     }
-
-    const results = []
-    for (const [project] of byProject) {
-      options.signal?.throwIfAborted()
-      const service = this.#services.get(project)
-      if (!service) throw new Error(`Application analysis service is missing for ${project}.`)
-      results.push(
-        await service.refresh({
-          ...(options.changed ? { changed: options.changed } : {}),
-          ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
-          ...(options.signal ? { signal: options.signal } : {}),
-        }),
-      )
+    const retainedProjects = this.#routing.retained(projects, options.residentModules)
+    let refreshProjects = [...this.#routing.affected(
+        projects,
+        options.changes,
+        boundaryChanged || options.invalidate === true || this.#adoptedGenerations.size === 0,
+      )]
+    if (
+      this.#services.size &&
+      refreshProjects.some(([project]) => !this.#services.has(project))
+    ) {
+      await this.disposeServices()
+      const refreshNames = new Set(refreshProjects.map(([project]) => project))
+      refreshProjects = [
+        ...refreshProjects,
+        ...projects.filter(
+          ([project]) => retainedProjects.has(project) && !refreshNames.has(project),
+        ),
+      ]
     }
+    refreshProjects = refreshProjects
+      .sort(([left], [right]) =>
+        Number(retainedProjects.has(left)) - Number(retainedProjects.has(right)) ||
+        left.localeCompare(right),
+      )
+    const refreshedProjects = await mapApplicationCompilerProjects(refreshProjects, async ([project, modules]) => {
+      options.signal?.throwIfAborted()
+      let service = this.#services.get(project)
+      if (!service) {
+        service = await createTypeScriptAnalysisService({
+          project: {
+            root: this.#options.root,
+            config: project,
+            capabilities: [TYPESCRIPT_MODULE_FACT_NAMESPACE],
+            modules,
+          },
+          sessions: this.#options.sessions,
+          store: this.#store,
+          ...(this.#projectUniverses.get(project)
+            ? { universe: this.#projectUniverses.get(project) }
+            : {}),
+          ...(this.#options.telemetry ? { telemetry: this.#options.telemetry } : {}),
+        })
+        this.#services.set(project, service)
+      }
+      try {
+        const result = await observeCompilerProject(this.#options.telemetry, project, () =>
+          service.refresh({
+            ...(options.changed ? { changed: options.changed } : {}),
+            ...(options.changes ? { changes: options.changes } : {}),
+            ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
+            ...(options.signal ? { signal: options.signal } : {}),
+          }),
+        )
+        this.#routing.update(project, result.moduleRouting)
+        this.#projectUniverses.set(project, result.generation.universe)
+        if (!retainedProjects.has(project)) {
+          this.#services.delete(project)
+          await service.dispose()
+        }
+        return { project, result }
+      } catch (error) {
+        this.#services.delete(project)
+        await service.dispose().catch(() => undefined)
+        throw error
+      }
+    })
+    for (const [project, service] of [...this.#services]) {
+      if (retainedProjects.has(project)) continue
+      this.#services.delete(project)
+      await service.dispose()
+    }
+    const results = [...refreshedProjects]
+      .sort((left, right) => left.project.localeCompare(right.project))
+      .map(({ result }) => result)
     const generations = new Map<ProjectUniverseId, AnalysisGenerationId>(
-      options.compilerAnalysis === false && this.#adoptedInventory === options.inventory.revision
+      compatibleResidentBoundary
         ? this.#adoptedGenerations
         : [],
     )
@@ -120,14 +177,18 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
     })
     generations.set(observation.universe, observation.generation.id)
     const snapshot = await this.#store.snapshotSet(generations, options.inventory.revision)
+    const affectedModules = compatibleResidentBoundary &&
+      results.every((result) => result.changedModules !== undefined)
+      ? [...new Set(results.flatMap((result) => result.changedModules ?? []))].sort()
+      : undefined
     this.#adoptedGenerations = new Map(generations)
-    this.#adoptedInventory = options.inventory.revision
     return {
       snapshot,
       universes: snapshot.universes,
       boundaries: resolution.boundaries,
       results,
       observation,
+      ...(affectedModules ? { affectedModules } : {}),
       diagnostics: [
         ...resolution.diagnostics.map(
           (diagnostic) =>
@@ -145,7 +206,6 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
     this.assertOpen()
     const snapshot = await this.#store.snapshotSet(generations, inventory)
     this.#adoptedGenerations = new Map(generations)
-    this.#adoptedInventory = inventory
     return snapshot
   }
 
@@ -153,7 +213,7 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
     if (this.#disposed) return
     this.#disposed = true
     this.#adoptedGenerations.clear()
-    this.#adoptedInventory = undefined
+    this.#projectUniverses.clear()
     await this.disposeServices()
     if (this.#ownsStore) await this.#store.dispose()
   }
@@ -171,23 +231,4 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
   private assertOpen(): void {
     if (this.#disposed) throw new Error('Application analysis workspace is disposed.')
   }
-}
-
-function groupByProject(
-  boundaries: readonly NativeModuleBoundary[],
-): ReadonlyMap<string, readonly NativeModuleBoundary[]> {
-  const values = new Map<string, NativeModuleBoundary[]>()
-  for (const boundary of boundaries) {
-    const current = values.get(boundary.project) ?? []
-    current.push(boundary)
-    values.set(boundary.project, current)
-  }
-  return new Map(
-    [...values]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([project, current]) => [
-        project,
-        current.sort((left, right) => left.id.localeCompare(right.id)),
-      ]),
-  )
 }

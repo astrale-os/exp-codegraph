@@ -88,6 +88,7 @@ async function projectSpecification(root, reader, source) {
     const verification = qualification && hasCompilerQualification(qualification)
         ? projectQualification(qualification)
         : undefined;
+    const statistics = requiredApplicationStatistics(reader.snapshot);
     const revision = specification.revision;
     return {
         title: specification.title,
@@ -103,7 +104,7 @@ async function projectSpecification(root, reader, source) {
                 packages: [...specification.module.packages],
                 diagnostics: moduleDiagnostics,
                 ...(moduleFact
-                    ? { code: presentationCode(moduleFact.payload, reader.snapshot.statistics) }
+                    ? { code: presentationCode(moduleFact.payload, statistics) }
                     : {}),
                 ...(contract ? { contract } : {}),
             },
@@ -138,6 +139,12 @@ async function projectSpecification(root, reader, source) {
         contracts: contract ? [contract.id] : [],
         ...(verification ? { verification } : {}),
     };
+}
+function requiredApplicationStatistics(snapshot) {
+    if (!snapshot.statistics) {
+        throw new Error('Application catalog projection requires repository-statistics capability.');
+    }
+    return snapshot.statistics;
 }
 async function oneFact(reader, namespace, subject) {
     const matches = [];

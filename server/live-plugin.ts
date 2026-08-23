@@ -831,6 +831,9 @@ function verificationInputRevisions(
   const bySource = new Map(
     snapshot.specifications.map((specification) => [specification.source, [] as string[][]]),
   )
+  if (!snapshot.statistics) {
+    throw new Error('Live verification requires repository-statistics capability.')
+  }
   for (const file of snapshot.statistics.files) {
     for (const owner of impact.impact(file.path).refreshedOwners) {
       bySource.get(owner)?.push([file.path, file.revision])

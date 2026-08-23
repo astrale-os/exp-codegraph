@@ -14,6 +14,7 @@ import { planPasses, runPortablePasses } from '../pass/index.ts'
 import {
   NATIVE_ANALYSIS_PROTOCOL_VERSION,
   type NativeAnalysisSession,
+  type NativeSourceChange,
 } from '../protocol/index.ts'
 import type { AnalysisQuery } from '../query/index.ts'
 import type {
@@ -22,6 +23,7 @@ import type {
   TypeScriptRefreshResult,
 } from './model.ts'
 import { materializeNativeDelta, materializeNativeTransaction } from './universe-transaction.ts'
+import { changedModuleSubjects, orderedNativeSourceChanges } from './refresh.optimization.ts'
 
 /**
  * Compose one private resident compiler lineage with portable passes and publish
@@ -50,6 +52,7 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
   ) {
     this.#options = options
     this.#session = session
+    this.#universe = options.universe
   }
 
   get universe() {
@@ -59,6 +62,7 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
   async refresh(
     options: {
       readonly changed?: readonly string[]
+      readonly changes?: readonly NativeSourceChange[]
       readonly invalidate?: boolean
       readonly signal?: AbortSignal
     } = {},
@@ -77,6 +81,7 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
         ...(nativeBase ? { base: nativeBase.id } : {}),
         ...(nativeBase ? { baseSequence: nativeBase.sequence } : {}),
         ...(options.changed ? { changed: [...options.changed].sort() } : {}),
+        ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
       },
       { signal: options.signal },
@@ -207,6 +212,7 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
         await this.#options.store.commit(transaction, { signal: options.signal })
       }
 
+      const changedModules = changedModuleSubjects(nativeTransaction)
       return {
         generation: transaction?.next ?? current ?? stagedGeneration,
         ...(transaction ? { transaction } : {}),
@@ -216,6 +222,7 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
           nativeTransaction,
           options.changed,
         ),
+        ...(changedModules !== undefined ? { changedModules } : {}),
         invalidatedPasses: [
           ...new Set([
             ...passesFrom(nativeTransaction),

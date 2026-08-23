@@ -10,14 +10,20 @@ const (
 const typescriptBodyPayloadCodec = "typescript.body.packed/1"
 
 type request struct {
-	ID           int      `json:"id"`
-	Kind         string   `json:"kind"`
-	Base         string   `json:"base,omitempty"`
-	BaseSequence int      `json:"baseSequence,omitempty"`
-	Generation   string   `json:"generation,omitempty"`
-	Sequence     int      `json:"sequence,omitempty"`
-	Changed      []string `json:"changed,omitempty"`
-	Invalidate   bool     `json:"invalidate,omitempty"`
+	ID           int            `json:"id"`
+	Kind         string         `json:"kind"`
+	Base         string         `json:"base,omitempty"`
+	BaseSequence int            `json:"baseSequence,omitempty"`
+	Generation   string         `json:"generation,omitempty"`
+	Sequence     int            `json:"sequence,omitempty"`
+	Changed      []string       `json:"changed,omitempty"`
+	Changes      []sourceChange `json:"changes,omitempty"`
+	Invalidate   bool           `json:"invalidate,omitempty"`
+}
+
+type sourceChange struct {
+	Path string `json:"path"`
+	Kind string `json:"kind"`
 }
 
 type response struct {
@@ -176,6 +182,24 @@ type observedDeclarationPayload struct {
 	Issues                  []any          `json:"issues"`
 }
 
+type declarationFactPayload struct {
+	Declaration observedDeclarationPayload `json:"declaration"`
+}
+
+type moduleDeclarationReferencePayload struct {
+	Fact        string     `json:"fact"`
+	Identity    string     `json:"identity"`
+	ExportPaths [][]string `json:"exportPaths"`
+}
+
+// moduleDeclarationProjection is the operation-owned logical edge retained
+// while composing schema-v2 module and declaration shards. The canonical
+// declaration payload lives once in extractor.moduleDeclarationsByIdentity.
+type moduleDeclarationProjection struct {
+	Identity    string
+	ExportPaths [][]string
+}
+
 type moduleTargetPayload struct {
 	ID         string   `json:"id"`
 	Name       string   `json:"name"`
@@ -199,6 +223,20 @@ type moduleFactPayload struct {
 	ErrorCodes          []errorCodePayload           `json:"errorCodes"`
 	Files               []string                     `json:"files"`
 	Issues              []any                        `json:"issues"`
+}
+
+type normalizedModuleFactPayload struct {
+	Target              moduleTargetPayload                 `json:"target"`
+	Exports             []observedExportPayload             `json:"exports"`
+	Declarations        []moduleDeclarationReferencePayload `json:"declarations"`
+	Dependencies        []dependencyPayload                 `json:"dependencies"`
+	InboundDependencies []dependencyPayload                 `json:"inboundDependencies"`
+	DeclaredPackages    []string                            `json:"declaredPackages"`
+	DevelopmentPackages []string                            `json:"developmentPackages"`
+	WorkspacePackages   []string                            `json:"workspacePackages"`
+	ErrorCodes          []errorCodePayload                  `json:"errorCodes"`
+	Files               []string                            `json:"files"`
+	Issues              []any                               `json:"issues"`
 }
 
 type dependencyPayload struct {

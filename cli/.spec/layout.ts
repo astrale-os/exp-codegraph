@@ -3,6 +3,7 @@ import { defineLayout } from '@astrale-os/codegraph/authoring'
 export default defineLayout({
   exact: true,
   entries: [
+    'acceleration.ts',
     'application.ts',
     'changes.ts',
     'checkpoint.ts',
@@ -13,6 +14,10 @@ export default defineLayout({
     'qualification-report.ts',
     'report.ts',
     'run.ts',
+    'semantic-pack/',
+    'semantic-pack/identity.ts',
+    'semantic-pack/model.ts',
+    'semantic-pack/store.ts',
     'version.ts',
   ],
 })

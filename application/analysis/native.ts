@@ -12,6 +12,8 @@ export interface CodegraphApplicationSessionOptions {
   readonly maximumFrameBytes?: number
   readonly transactionChunkFrameBytes?: number
   readonly maximumTransactionBytes?: number
+  /** Optional native-process resident-set watchdog owned by the Node application adapter. */
+  readonly maximumResidentBytes?: number
   readonly telemetry?: AnalysisTelemetrySink
 }
 
@@ -36,6 +38,9 @@ export function createCodegraphApplicationSessionFactory(
           : {}),
         ...(options.maximumTransactionBytes !== undefined
           ? { maximumTransactionBytes: options.maximumTransactionBytes }
+          : {}),
+        ...(options.maximumResidentBytes !== undefined
+          ? { maximumResidentBytes: options.maximumResidentBytes }
           : {}),
         ...(options.environment
           ? { environment: definedEnvironment(options.environment) }

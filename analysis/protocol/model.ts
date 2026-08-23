@@ -23,6 +23,12 @@ export interface NativeProjectDescriptor {
   readonly modules?: readonly NativeModuleBoundary[]
 }
 
+/** Inventory-proven source transition; `unknown` preserves the conservative rebuild path. */
+export interface NativeSourceChange {
+  readonly path: string
+  readonly kind: 'change' | 'add' | 'unlink' | 'unknown'
+}
+
 export type NativeAnalysisRequest =
   | {
       readonly id: number
@@ -31,6 +37,7 @@ export type NativeAnalysisRequest =
       /** Required with `base`; binds restart/adoption to the store's exact sequence. */
       readonly baseSequence?: number
       readonly changed?: readonly string[]
+      readonly changes?: readonly NativeSourceChange[]
       readonly invalidate?: boolean
     }
   | {

@@ -50,7 +50,7 @@ function schemaRule(fact) {
         profile: MODULE_SCHEMA_PROFILE_ID,
         rule: SCHEMA_RULE,
         subject: fact.subject,
-        specificationPointer: entry.pointer,
+        ...(entry.pointer ? { specificationPointer: entry.pointer } : {}),
         evidence: fact.provenance.evidence,
         inputs: [fact.id],
         actual: entry,

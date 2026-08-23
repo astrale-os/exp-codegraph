@@ -1,4 +1,5 @@
 import { compileApis } from './compile.js';
+import { apiCompilerWorkerResourceReport } from './isolation-work.optimization.js';
 const chunks = [];
 for await (const chunk of process.stdin)
     chunks.push(Buffer.from(chunk));
@@ -24,4 +25,5 @@ catch (error) {
 }
 for (const compilation of result)
     process.stdout.write(`${JSON.stringify(compilation)}\n`);
+process.stderr.write(`${apiCompilerWorkerResourceReport()}\n`);
 //# sourceMappingURL=worker.js.map

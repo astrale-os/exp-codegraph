@@ -1,7 +1,8 @@
 import { sep } from 'node:path'
 
 import type { Diagnostic } from '../../source/diagnostic.ts'
-import { readBounded, sourceRevision } from '../../source/file.ts'
+import { sourceRevision } from '../../source/file.ts'
+import { readOperationSourceText } from '../../source/operation-snapshot.ts'
 import { loadSchema } from '../../schema/load.ts'
 import { loadSpecificationDeclarationResource } from '../declaration.ts'
 import type {
@@ -41,7 +42,7 @@ export async function loadCodeDeclaration(
   file: ModuleFile,
 ): Promise<{ resource?: CodeDeclarationResource; diagnostics: Diagnostic[] }> {
   try {
-    const text = await readBounded(file.absolute)
+    const text = await readOperationSourceText(file.absolute)
     const compiled = compileCode(file.source, text)
     return {
       ...(compiled.configuration
@@ -141,7 +142,7 @@ export async function loadDescriptors<Kind extends DescriptorKind>(
     await Promise.all(
       files.map(async (file) => {
         try {
-          const text = await readBounded(file.absolute)
+          const text = await readOperationSourceText(file.absolute)
           const compiled = compileDescriptor(kind, file.source, text)
           return {
             resource: {
@@ -174,7 +175,7 @@ export async function loadCodeResource(
   file: ModuleFile,
 ): Promise<{ resource?: ModuleCodeResource; diagnostics: Diagnostic[] }> {
   try {
-    const text = await readBounded(file.absolute)
+    const text = await readOperationSourceText(file.absolute)
     return {
       resource: {
         ref: `./${file.relative}`,
@@ -194,7 +195,7 @@ export async function loadAuthoredLayout(
   file: ModuleFile,
 ): Promise<{ readonly resource?: AuthoredLayoutResource; readonly diagnostics: readonly Diagnostic[] }> {
   try {
-    const text = await readBounded(file.absolute)
+    const text = await readOperationSourceText(file.absolute)
     const compiled = compileLayout(file.source, text)
     return {
       resource: {
@@ -220,7 +221,7 @@ export async function loadExamples(
     await Promise.all(
       files.map(async (file) => {
         try {
-          const text = await readBounded(file.absolute)
+          const text = await readOperationSourceText(file.absolute)
           return {
             resource: {
               ref: `./${file.relative}`,
@@ -247,7 +248,7 @@ export async function loadPackages(
     await Promise.all(
       files.map(async (file) => {
         try {
-          const text = await readBounded(file.absolute)
+          const text = await readOperationSourceText(file.absolute)
           const compiled = compilePackageDefinition(file.source, text)
           const diagnostics = [...compiled.diagnostics]
           const pathName = packageNameFromPath(file.relative)
@@ -294,7 +295,7 @@ export async function loadPackagePatterns(
   file: ModuleFile,
 ): Promise<Resources<PackagePatternResource>> {
   try {
-    const text = await readBounded(file.absolute)
+    const text = await readOperationSourceText(file.absolute)
     const compiled = compilePackagePatterns(file.source, text)
     return {
       resources: compiled.definitions.map((definition, index) => ({

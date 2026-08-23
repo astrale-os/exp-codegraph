@@ -9,9 +9,6 @@ import (
 
 func (x *extractor) observePublicDeclaration(symbol *shimast.Symbol, exportPaths [][]string) (observedDeclarationPayload, map[string]*shimast.Symbol) {
 	identity := x.publicSymbolIdentity(symbol)
-	if identity == "" {
-		identity = "ts:<synthetic>#" + percentEncode(symbol.Name)
-	}
 	kind := declarationKindOf(x.checker, symbol)
 	declaration := firstDeclaration(symbol)
 	issues := []any{}

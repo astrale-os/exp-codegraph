@@ -1,4 +1,5 @@
 import ts from 'typescript';
+import { operationAuthoringSyntaxSource } from './authoring-syntax.optimization.js';
 export const AUTHORING_SPECIFIER = '@astrale-os/codegraph/authoring';
 /** Temporary source-compatible spelling retained while repositories migrate to Codegraph. */
 export const AUTHORING_SPECIFIER_ALIASES = [
@@ -49,7 +50,18 @@ export function plainStringLiteral(expression) {
         ? expression.text
         : undefined;
 }
+/** Reuse an admitted compiler-universe AST or parse the standalone authored source exactly once. */
+export function authoredSourceFile(source, text) {
+    return operationAuthoringSyntaxSource(source, text) ??
+        ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+}
 export function syntaxDiagnostics(source, text) {
+    const admitted = operationAuthoringSyntaxSource(source, text);
+    if (admitted?.parseDiagnostics) {
+        return admitted.parseDiagnostics
+            .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
+            .map((entry) => compilerDiagnostic(source, entry));
+    }
     const result = ts.transpileModule(text, {
         fileName: source,
         reportDiagnostics: true,
@@ -57,18 +69,19 @@ export function syntaxDiagnostics(source, text) {
     });
     return (result.diagnostics ?? [])
         .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
-        .map((entry) => {
-        const position = entry.file && entry.start !== undefined
-            ? entry.file.getLineAndCharacterOfPosition(entry.start)
-            : undefined;
-        return {
-            code: `MODULE_TYPESCRIPT_${entry.code}`,
-            message: ts.flattenDiagnosticMessageText(entry.messageText, '\n'),
-            file: source,
-            line: (position?.line ?? 0) + 1,
-            column: (position?.character ?? 0) + 1,
-        };
-    });
+        .map((entry) => compilerDiagnostic(source, entry));
+}
+function compilerDiagnostic(source, entry) {
+    const position = entry.file && entry.start !== undefined
+        ? entry.file.getLineAndCharacterOfPosition(entry.start)
+        : undefined;
+    return {
+        code: `MODULE_TYPESCRIPT_${entry.code}`,
+        message: ts.flattenDiagnosticMessageText(entry.messageText, '\n'),
+        file: source,
+        line: (position?.line ?? 0) + 1,
+        column: (position?.character ?? 0) + 1,
+    };
 }
 export function nodeDiagnostic(code, message, source, file, node) {
     const position = file.getLineAndCharacterOfPosition(node.getStart(file));

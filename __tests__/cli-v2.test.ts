@@ -237,6 +237,41 @@ describe('headless V2 CLI', { timeout: 30_000 }, () => {
     expect(concurrent).toEqual([oracle, oracle])
     expect(elapsedMilliseconds).toBeLessThan(5_000)
   })
+
+  it('replays a SourceProof-keyed semantic check pack from a relocated clean checkout', async () => {
+    const current = await gitRepository({
+      'selected/.spec/api.d.ts': 'export interface Selected { readonly id: string }\n',
+    })
+    const cache = await fixture({})
+    const relocated = await fixture({})
+    fixtures.push(cache, relocated)
+    const environment = { ASTRALE_TYPESPEC_CACHE_DIR: cache.root, CI: 'false' }
+    const cold = await run(
+      ['check', current.root, '--select', 'selected', '--quiet'],
+      environment,
+    )
+    await rm(relocated.root, { recursive: true, force: true })
+    await exec('git', ['clone', '--quiet', current.root, relocated.root])
+    const beforeWorkspaces = await readdir(join(cache.root, 'workspaces'))
+
+    const started = performance.now()
+    const replayed = await run(
+      ['check', relocated.root, '--select', 'selected', '--quiet'],
+      {
+        ...environment,
+        CI: 'true',
+        ASTRALE_TYPESPEC_SEMANTIC_PACK_DIR: join(cache.root, 'semantic-packs/checks'),
+      },
+    )
+    const elapsedMilliseconds = performance.now() - started
+
+    expect(replayed).toEqual(cold)
+    expect(elapsedMilliseconds).toBeLessThan(3_000)
+    expect(await readdir(join(cache.root, 'workspaces'))).toEqual(beforeWorkspaces)
+    expect(await readdir(join(cache.root, 'semantic-packs/checks'), { recursive: true })).toEqual(
+      expect.arrayContaining([expect.stringContaining('semantic-check-')]),
+    )
+  })
 })
 
 async function repository(files: Record<string, string>): Promise<Fixture> {
@@ -245,6 +280,25 @@ async function repository(files: Record<string, string>): Promise<Fixture> {
     ...files,
   })
   fixtures.push(current)
+  return current
+}
+
+async function gitRepository(files: Record<string, string>): Promise<Fixture> {
+  const current = await repository(files)
+  await exec('git', ['-C', current.root, 'init', '--quiet'])
+  await exec('git', ['-C', current.root, 'add', '--all'])
+  await exec('git', [
+    '-C',
+    current.root,
+    '-c',
+    'user.name=Codegraph Fixture',
+    '-c',
+    'user.email=codegraph@example.invalid',
+    'commit',
+    '--quiet',
+    '-m',
+    'fixture',
+  ])
   return current
 }
 

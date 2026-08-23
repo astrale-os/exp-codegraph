@@ -1,6 +1,7 @@
 import { basename } from 'node:path';
 /** Generated, dependency, and VCS trees excluded from one application-owned repository inventory. */
 export const APPLICATION_REPOSITORY_EXCLUDES = Object.freeze([
+    '.git',
     '.git/**',
     'node_modules/**',
     '**/node_modules/**',
@@ -12,6 +13,8 @@ export const APPLICATION_REPOSITORY_EXCLUDES = Object.freeze([
     '**/.cache/**',
     '.pnpm-store/**',
     '**/.pnpm-store/**',
+    '.husky/_/**',
+    '**/.husky/_/**',
     'evidence/artifacts/**',
     '**/evidence/artifacts/**',
     'benchmark/artifacts/**',

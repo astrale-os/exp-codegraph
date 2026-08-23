@@ -1,320 +1,414 @@
-# TODO: Verified semantic build products for true cold latency
+# Codegraph latency program
 
-Status: proposed roadmap
+Status: active execution DAG
 
-Related decision: [V2-REV-027](.history/v2/revisions/V2-REV-027.md)
+Governing decision: [V2-REV-028](.history/v2/revisions/V2-REV-028.md)
 
-## Thesis
+## Goal
 
-`cg check` should query a verified semantic build product. It should not construct the complete
-semantic world on every request.
+Make `cg check` and `cg verify` state-of-the-art on the governed Kernel corpus on warm, workspace-
+cold, delta, and source-only starts without weakening any capability, diagnostic, identity, failure,
+selection, or security contract.
 
-A truthful workspace-cold start below three seconds is achievable when an exact, portable semantic
-pack is supplied to an otherwise empty Codegraph cache. A source-only genesis build below three
-seconds is a distinct and harder goal. Both must remain visible, and both must preserve the canonical
-compiler and source snapshot as semantic authority.
-
-The work is therefore a production/consumption redesign around the existing immutable generations,
-not a semantic rewrite:
-
-> Preserve the compiler and source as authority; make their results portable, proof-carrying,
-> query-planned build products.
-
-## Baseline and problem statement
-
-The investigated cold path was:
+The acceptance oracle is immutable:
 
 ```text
-process start
--> prove complete repository inventory
--> discover every specification
--> compile the entire specification corpus
--> compute repository-wide statistics
--> only then apply module selection
--> observe layout, schema, and tests
--> qualify profiles
--> render diagnostics
+optimized(S, E, R) === canonicalSlow(S, E, R)
 ```
 
-The retained Kernel evidence records:
+Equality covers byte-ordered stdout and stderr, exit status, typed failure, source/inventory proof,
+application and qualification identities, diagnostics and ordering, selection/primary/support/
+dependent closure, fact and shard roots, and externally visible effects. Timing and physical cache
+representation are deliberately excluded.
 
-- 184 seconds for the cold whole CLI path.
-- 162 seconds for the canonical in-memory cold path.
-- 1.205-1.545 seconds for five fresh-process warm whole checks.
-- A complete compact check catalog of 59,543 compressed bytes and 995,343 decoded bytes.
-- The CLI check path sets `compilerAnalysis: false`, so native ttsc/project analysis was not the
-  cause of this baseline.
-- 326 specification anchors and 357 unique API, internal, and port declaration entrypoints in the
-  investigated corpus.
-- Four declaration entrypoints per isolated compiler batch, implying 90 initial Node worker batches
-  for that corpus, potentially more after retries.
-- TypeScript analysis grouped in batches of 32, implying at least eleven additional programs for
-  326 modules in the investigated implementation.
-- A sequential statistics pass that reread admitted text even though statistics did not contribute
-  to visible `cg check` diagnostics.
-- Module selection occurred only after whole-corpus compilation and statistics.
-
-See the retained [restart evidence](.history/v2/evidence/cli-restart-kernel-2026-08-17.summary.json).
-It proves the magnitude and the compactness of the read/projection product, but it does not retain
-enough phase timing to assign an exact percentage of the 162 seconds to compilation. Worker and
-program counts identify the strongest structural bottleneck; they are not a fabricated timing
-attribution.
-
-V2-REV-027 and its implementation already establish advisory checkpoints, immutable generations,
-content-addressed derived artifacts, exact owner/dependency deltas, and fail-closed fallback. This
-roadmap extends that foundation to a portable semantic product and a request-planned check path.
-
-## First-principles contract
-
-Let:
-
-- `S` be the exact source snapshot, including relevant directory topology.
-- `E` be the exact engine, producer, profile, configuration, and schema identities.
-- `R` be the normalized check request.
-- `F(S, E, R)` be the canonical result: ordered output, exit status, and semantic identities.
-
-Today, cold work is approximately:
-
-```text
-T_cold =
-  T_boot
-+ T_inventory(all paths and bytes)
-+ T_discovery(all specifications)
-+ sum(T_compile(specification))
-+ T_statistics(all admitted text)
-+ sum(T_observe(specification))
-+ sum(T_qualify(specification))
-+ T_render
-```
-
-The target is:
-
-```text
-T_check =
-  T_boot
-+ T_source_attestation
-+ T_pack_open
-+ T_request_plan
-+ sum(T_recompute(cache misses in affected closure))
-+ T_render
-```
-
-For an unchanged exact pack, the affected closure is empty. Runtime should then be dominated by
-boot, source attestation, bounded pack reads, and requested output rather than total repository size.
-
-There is a hard boundary: without a prior Merkle root, filesystem journal, Git tree, or semantic
-artifact, an exact algorithm must inspect every input that could change the result. Source-only
-`<3s` cannot be guaranteed for an unbounded repository. A Git Merkle tree plus an exact dirty overlay
-can make admission proportional to the changed set rather than total repository size.
-
-## Target data flow
+## DAG
 
 ```mermaid
-flowchart LR
-  S[Git tree plus dirty overlay] --> P[Exact SourceProof]
-  P --> M[Semantic pack manifest]
-  M --> C[Content-addressed shards]
-  R[Check request] --> Q[Capability CheckPlan]
-  C --> Q
-  Q --> L[Lazy evaluator and projector]
-  L --> O[Ordered diagnostics and exit]
-
-  P --> D{Missing or changed shards?}
-  D -->|yes| B[Canonical corpus compiler]
-  B --> C
-  D -->|no| Q
+flowchart TD
+  G0["G0 exact-origin baseline"] --> G1["G1 qualification constitution"]
+  G1 --> G2["G2 checkpoint repair"]
+  G1 --> G3["G3 request-planned check"]
+  G1 --> G5["G5 Git SourceProof"]
+  G1 --> G7["G7 normalized verify facts"]
+  G3 --> G4["G4 shared corpus compiler"]
+  G3 --> G6["G6 semantic packs"]
+  G5 --> G6
+  G2 --> G9["G9 installed qualification"]
+  G4 --> G9
+  G6 --> G9
+  G7 --> G9
+  G1 --> G8["G8 maintainability and observability"]
+  G2 --> G8
+  G3 --> G8
+  G4 --> G8
+  G5 --> G8
+  G6 --> G8
+  G7 --> G8
+  G8 --> G9
 ```
 
-## Invariants and non-goals
+G2, G3/G4, G5/G6, and G7 are independent branches after G1. If one branch encounters a classified
+blocker, work continues on another ready branch. Every branch keeps the canonical miss path and can
+be reverted independently.
 
-- [ ] Preserve source plus the canonical compiler as semantic authority.
-- [ ] Treat every checkpoint and semantic pack as untrusted acceleration.
-- [ ] Make a missing, stale, corrupt, incompatible, oversized, or incomplete artifact an explicit
-      miss; never allow it to fabricate a pass.
-- [ ] Keep source-only genesis performance visible even after workspace-cold performance graduates.
-- [ ] Do not require a daemon for machine-cold or workspace-cold correctness.
-- [ ] Do not start with a Rust/native rewrite. First remove repeated work and profile the remaining
-      CPU cost.
-- [ ] Do not change semantic or data-model behavior in the performance path.
+## Execution protocol
 
-## Phase 0: Freeze the oracle and retain causal measurements
+Each node moves through `not-started -> baseline -> implementing -> focused-qualified -> corpus-
+qualified -> complete`. A node may instead become `split` or `superseded`; it is never declared
+complete because a timeout, memory limit, or test was removed.
 
-- [ ] Define candidate equivalence as:
+Before editing a node:
 
-  ```text
-  candidate(S, E, R) == canonical_no_pack_no_cache(S, E, R)
-  ```
+1. pin Codegraph and Kernel commits, worktree status, installed package digest, platform, and
+   harness digest;
+2. name the semantic owner, proof-loss boundary, consumers, and governing contracts;
+3. capture production physical LOC, file/directory counts, large-file distribution, and repeated
+   boundary guards for the affected slice;
+4. run the focused canonical baseline and retain raw evidence; and
+5. freeze the node's capability manifest and oracle workloads outside candidate control.
 
-- [ ] Compare byte-ordered stdout and stderr, exit status, failure identity, inventory/source root,
-      specification identities, observation identities, qualification identities, generation and
-      shard roots, and selection/support/dependency closure.
-- [ ] Retain wall time, CPU time, bytes read and hashed, directories traversed, compiler worker
-      count, TypeScript program count, specifications compiled/observed/qualified, shards loaded and
-      written, decoded bytes, and peak RSS.
-- [ ] Preserve phase timings in qualification evidence rather than exposing transient counters only.
-- [ ] Freeze whole, leaf, dependency-heavy subtree, and multi-select workloads.
-- [ ] Freeze valid and diagnostic mutations covering add/delete/rename/revert, `.spec` anchors, API,
-      ports, packages, config, layout, test evidence, dirty/untracked paths, and A -> B -> A branch
-      sequences.
+After editing a node:
 
-## Phase 1: Admit an exact `SourceProof`
+1. run owner types and focused deterministic/fault tests;
+2. run optimized and forced-canonical paths from the same admitted source snapshot;
+3. compare semantic receipts before evaluating performance;
+4. run the node's latency, work-counter, memory, and representation gates;
+5. inspect the focused diff, import direction, LOC/guard delta, and unrelated worktree state; and
+6. retain a self-hashed receipt plus an independently recomputed verification receipt.
 
-Add a repository/workspace attestation layer that proves:
+### Loop breaker
 
-- [ ] Git tree identity for tracked clean content.
-- [ ] Exact dirty tracked and untracked overlay.
-- [ ] Relevant directory topology, including meaningful empty directories.
-- [ ] Symlink, case-sensitivity, and file-kind behavior.
-- [ ] Producer, package, profile, configuration, and schema identities.
-- [ ] TOCTOU stability while the snapshot is admitted.
+An identical failing command may be repeated once only to classify noise. A third attempt requires
+one of: a code/configuration change, a smaller reproducer, new instrumentation, a different bounded
+implementation, or an explicit external-state recovery condition. Otherwise the node is split and
+the next ready DAG node proceeds. Performance noise never permits threshold changes from the same
+candidate run.
 
-Metadata and filesystem journals may narrow candidates, but every changed or uncertain candidate
-must be content-hashed. Journal overflow or uncertainty must widen visibly to a full scan. This
-extends exact inventory; it never replaces source authority.
+### Fallback taxonomy
 
-## Phase 2: Publish a proof-carrying semantic pack
+Every fallback has a stable code and causal counters:
 
-Define an immutable DAG containing independently content-addressed products:
+- `proof-unsupported`: source proof cannot be established; run complete scanner;
+- `proof-unstable`: input changed while being read; retry admission once, then full scan;
+- `plan-uncertain`: exact owner/dependency closure is unknown; run complete compiler;
+- `compiler-isolated`: owner cannot share safe compiler state; run isolated canonical compilation;
+- `pack-miss`: source, producer, configuration, profile, schema, closure, digest, or bound mismatch;
+- `checkpoint-unavailable`: checkpoint load or publication failed; run or retain canonical result;
+- `verify-staging-miss`: staged manifest cannot be admitted; rebuild canonical bounded shards.
 
-- [ ] Source/input manifest.
-- [ ] Per-module `SpecificationSnapshot` shards.
-- [ ] Ownership and reverse-dependency index.
-- [ ] Layout, schema, and test-observation shards.
-- [ ] Qualification shards.
-- [ ] Exact analysis generation references.
-- [ ] Optional compact check projection.
-- [ ] Component-level producer fingerprints.
+Fallback frequency is a gate. A candidate cannot meet latency by silently returning replayed output,
+skipping work without proof, or classifying ordinary inputs as unsupported.
 
-Each shard key must commit to its semantic inputs:
+## G0 — Exact-origin baseline
 
-```text
-H(
-  artifact kind,
-  schema version,
-  exact producer component,
-  exact input shard digests,
-  qualification profile
-)
-```
+Dependencies: none.
 
-Admit a pack only when:
+- [x] Fetch Codegraph origin and prove no remote branch is ahead of `origin/main`.
+- [x] Leave the intentionally dirty primary Codegraph and Kernel worktrees untouched.
+- [x] Create an isolated branch from exact Codegraph `origin/main`.
+- [x] Pin the exact Kernel `origin/main` and installed Codegraph producer.
+- [x] Record selected cold, selected replay, private-edit, whole cold, whole replay, and selected
+      verify timings.
+- [x] Attribute selected cold phases and the verify transaction bound.
+- [x] Retain baseline complexity and capability manifests in a machine-readable qualification
+      fixture.
 
-- [ ] Source attestation matches exactly.
-- [ ] Every required producer, profile, configuration, and schema identity matches.
-- [ ] Referenced artifacts verify their content digest and decoded bounds.
-- [ ] The manifest proves the complete request closure.
-- [ ] Semantic identities recompute correctly.
+Exit: exact commits, worktree evidence, raw measurements, capability manifest, and complexity
+baseline are independently reproducible.
 
-Otherwise, record a miss and run the canonical compiler. Publication must be atomic; interrupted or
-concurrent publishers must never expose a partial product.
+## G1 — Qualification constitution
 
-## Phase 3: Plan checks by capability
+Dependencies: G0.
 
-Replace the monolithic application binding with an explicit request plan. The default check should
-request only:
+- [x] Ratify V2-REV-028 and the immutable canonical oracle.
+- [x] Define one versioned semantic receipt shared by canonical and optimized runners.
+- [x] Add independent receipt verification that ignores candidate summaries and requires a counted
+      owner-isolated canonical execution rather than trusting the receipt mode label.
+- [x] Freeze check workloads: whole, leaf, dependency-heavy, multi-select, valid, and diagnostic.
+      Receipt v3 binds exact Kernel `bfe6be8e7`, constitution digest, selectors, flags, expected
+      outcomes, and canonical owner bounds; shape-equivalent relabeling fails before timing.
+- [x] Make the C1 verifier require canonical coverage for whole, at-most-25-owner leaf,
+      at-least-100-owner dependency-heavy, multi-select, valid, and diagnostic workloads before
+      evaluating timing. The ratified selector lock now owns the visible governed set; independent
+      hidden holdouts remain outside candidate control for G9.
+- [x] Freeze mutations: private docs, API, ports, package authority, config, layout, test evidence,
+      create, delete, rename, revert, dirty/untracked/ignored, symlink, mode, and A -> B -> A.
+      The constitution freezes all 17 mutation classes; execution remains a G9 graduation gate.
+- [x] Freeze failure cases: corruption, truncation, oversize, concurrency, cancellation, TOCTOU,
+      missing producer, missing closure, and unreadable source.
+      The constitution freezes all nine failure classes; execution remains a G9 graduation gate.
+- [x] Require exact equality before any timing predicate is evaluated.
+- [x] Record wall/CPU time, bytes traversed/read/hashed/decoded, compiler sessions and programs,
+      compiled/observed/qualified owners, loaded/written shards, fallbacks, and phase timings. The
+      receipt-v3 vector is now derived from raw Git/application/compiler/codec events and
+      independently recomputed. Each declaration worker must self-report its exact Node peak RSS;
+      qualification gates the conservative sum of parent, worker-maxima, and native peaks. This
+      cross-platform upper bound can overestimate non-overlap but cannot undercount residency.
 
-```text
-CheckPlan(default check) =
-  specification validity
-+ requested layout mode
-+ schema catalog
-+ test evidence
-+ selected dependency closure
-```
+Exit: qualification can fail a semantically different fast result even when the result is under its
+latency target, and can fail a slow result even when it self-reports compliant counters.
 
-- [ ] Make repository statistics an independent capability.
-- [ ] Make viewer source presentation an independent capability.
-- [ ] Make implementation analysis an independent capability.
-- [ ] Let server/viewer consumers request those capabilities without imposing them on `cg check`.
-- [ ] Make selection and closure planning possible before unrelated repository-wide projection.
-- [ ] Version application identity deliberately when capability membership changes; do not retain an
-      old identity contract while silently dropping statistics or another component.
+## G2 — Observable application checkpoint incrementality
 
-## Phase 4: Build a real whole-corpus compiler
+Dependencies: G1.
 
-Optimize the source-only and pack-miss path behind the same canonical interface:
+- [x] Omit absent optional diagnostic fields before checkpoint representation.
+- [x] Add a diagnostic-rich checkpoint round-trip reproducing the Kernel failure.
+- [x] Replace telemetry-only publication failure with a typed lifecycle publication receipt.
+- [x] Preserve advisory semantics: cache failure does not change canonical diagnostics or exit.
+- [x] Make focused application qualification require a valid published checkpoint and successful
+      reopen; wire the same assertion into retained corpus qualification before G2 completion.
+- [x] Add focused fault tests for serialization and store rejection; cancellation and concurrent
+      replacement remain covered by the generic checkpoint store suite.
+- [x] Gate one private `.spec` documentation edit below 5 seconds with exactly one owner compiled,
+      observed, and qualified and zero unrelated artifact rewrites.
+- [x] Graduate the same case below 3 seconds after checkpoint repair; retain it through G3/G4.
 
-- [ ] Replace process churn with one memory-bounded isolated corpus worker, with isolated fallback
-      for modules proven unsafe by the existing ambient-effect analysis.
-- [ ] Share files, ASTs, and module resolution across declaration entrypoints.
-- [ ] Use one or a small number of TypeScript programs partitioned only by proven semantic context.
-- [ ] Project API, internal, and port results from the shared semantic session.
-- [ ] Unify declaration extraction and module-reference analysis over the same compiler state where
-      semantic equivalence is proven.
-- [ ] Observe layouts from the admitted inventory rather than rescanning every module root.
-- [ ] Share parsed test evidence by source digest.
-- [ ] Evaluate specification-local qualification shards in bounded parallel batches.
-- [ ] Keep exact counters for compiler sessions, programs, fallbacks, inputs, and affected closure.
+Exit: the original undefined-field reproduction publishes and reopens; every publication failure is
+attributable; the private-edit receipt equals independent cold semantics and satisfies causal and
+latency gates.
 
-Competing pack/storage implementations may be evaluated as controlled black boxes—such as bounded
-Brotli JSON, read-only SQLite, a compact binary format, or a memory-mapped index—but each must consume
-the same source snapshot and equal the same canonical result.
+## G3 — Request-planned cold check
 
-## Phase 5: Qualify honest cold classes
+Dependencies: G1.
 
-Freeze these terms and report them separately:
+- [x] Split cheap anchor/ownership/dependency discovery from normative compilation.
+- [x] Resolve normalized request, owner selection, and support closure before unrelated compilation;
+      dependent expansion deliberately retains the complete fallback until reverse edges are indexed.
+- [x] Compile, observe, and qualify only the required closure.
+- [x] Introduce application capabilities and stop requesting repository statistics from ordinary
+      `cg check`; retain exact statistics for viewer/report consumers.
+- [x] Bind capabilities into request and application identity.
+- [x] Make dependent-expansion and uncertain closure evidence visibly widen to a complete canonical
+      check; add stable fallback receipts before G3 completion.
+- [ ] Differentially qualify whole, leaf, dependency-heavy, multi-select, invalid selection, and
+      diagnostic owners.
 
-| Class | Starting state | Target |
-| --- | --- | ---: |
-| C0 result replay | Exact request transcript already exists | `<1s` aspirational |
-| C1 workspace-cold | Empty Codegraph cache; matching semantic pack supplied | every run `<3s` |
-| C2 delta-cold | Previous exact pack plus ordinary edit | every owner-bounded run `<3s` |
-| C3 genesis | Source only; no pack anywhere | separate gate; ultimately `<3s` on governed Kernel |
+Exit: selected cold work counters are proportional to the exact selected/support closure, ordinary
+check performs zero statistics analysis, and all outputs equal forced-canonical output.
 
-C1 is the product cold-start contract. Pack production belongs in checkout/install, CI artifact
-hydration, release packaging, or an existing development lifecycle—not inside the timed command.
-Solving C1 permits the claim "cold start solved," not "cold build solved."
+## G4 — Bounded shared corpus compiler
 
-### Portable-pack qualification
+Dependencies: G3.
 
-- [ ] Start with an empty workspace cache.
-- [ ] Supply a read-only pack produced by a separate process at a different absolute path.
-- [ ] Prohibit any prior `cg check` request from priming the workspace.
-- [ ] Verify exact source, producer, schema, profile, and pack provenance before timing.
+- [x] Inventory current worker batches and add declaration/TypeScript/snapshot phase attribution;
+      parsed-file, resolution-read, and retry counters remain.
+- [ ] Define a correctness-owned compiler-session interface independent of pooling mechanics.
+- [x] Put private isolation batching in owner-local `*.optimization.ts`; persistent session reuse and
+      memoization remain.
+- [x] Reuse source text, ASTs, module resolution, and compatible compiler programs across owners;
+      declaration and implementation stages remain separate universes.
+- [x] Retain a fresh-process one/two/four integrated-universe experiment: all variants construct the
+      same 609 unique sources once and preserve exact export/diagnostic digests; one universe is
+      fastest at 669 ms for the selected 537-root corpus.
+- [x] Preserve isolation for ambient-effect or incompatible-context owners with a counted fallback.
+- [x] Execute the explicit binding decision experiment: two minimal modules agree, while latest
+      Kernel `core/schema` exposes branded-identity mismatches and five implementation exports absent
+      from its authoritative specification; retain the current verifier. Root-scoped TypeScript
+      diagnostics are exactly equal for binding roots and reduce that phase from 2.62 s to 10.69 ms
+      in a fresh bounded prototype.
+- [x] Prove request-planned compilation equals full-corpus projection on focused fixtures and the
+      selected Kernel oracle; retain shared/isolated fault equality before G4 completion.
+- [ ] Requalify bounded concurrency, memory, cancellation, and process cleanup on latest Kernel.
+      One-at-a-time/one-resident routing and the typed 768 MiB native watchdog pass focused tests,
+      but latest `core/schema` alone exceeds ten seconds in the legacy surface extractor and one
+      serial project reached 2.35 GiB before an operator stop. No V1/canonical run is permitted
+      until this leaf passes the watchdog. Schema-v2 composition no longer reconstructs repeated
+      declaration closures merely to preserve logical fact identities, and a focused fixture proves
+      exact logical and physical identity equality. A direct one-core latest-Kernel probe still
+      times out after ten seconds inside transitive declaration normalization: Program open is
+      155 ms, export enumeration is 149 ms, 128 declarations complete, and 123 remain pending.
+- [ ] Graduate selected C3 below 3 seconds against the owner-isolated canonical path. On latest
+      Kernel `bfe6be8e7`, two fresh source-only optimized receipts complete in 2.755 s and 2.728 s,
+      compile exactly the selected 29 owners plus 140 support owners, start no native compiler, and
+      produce identical terminal output. The target is met on the optimized side, but graduation
+      remains open because the resource-conservation constraint precludes another multi-minute
+      latest-source canonical replay.
 
-### Anti-gamed latency gate
+Exit: one bounded shared session is the ordinary path, isolated fallback is rare and attributable,
+and C3 meets the hard target or has a retained causal lower-bound receipt that identifies the next
+splittable leaf without redefining C3.
 
-- [ ] Run 100 fresh operating-system processes across multiple fresh runners.
-- [ ] Use no priming and interleave request shapes.
-- [ ] Require every C1 sample below 3000 ms and p95 below 2500 ms.
-- [ ] Include hidden mutation and repository holdouts.
-- [ ] Require exact oracle equality before considering latency.
-- [ ] Checksum-bind raw argv, PID, timestamps, hardware, hashes, pack provenance, and causal counters.
-- [ ] Have an independent verifier recompute the evidence rather than trust its summary.
+## G5 — Git-backed SourceProof
 
-### Fail-closed qualification
+Dependencies: G1.
 
-- [ ] Wrong source root.
-- [ ] Producer, profile, configuration, or schema drift.
-- [ ] Missing, corrupt, oversized, truncated, or cyclic shards.
-- [ ] Concurrent publishers and aborted publication.
-- [ ] Journal overflow and incomplete changed-path hints.
-- [ ] TOCTOU mutation during admission.
+- [x] Add a tiny receiver-bound Node Git executable adapter; portable layers see only opaque proof
+      and changed-path evidence.
+- [x] Bind repository format, Git object format, `HEAD^{tree}`, source-scope version, and a sorted
+      Codegraph-digested dirty overlay.
+- [x] Parse `git status --porcelain=v2 -z --untracked-files=all --ignore-submodules=none --no-renames`.
+- [x] Preserve creates, updates, deletes, symlinks, and executable modes; dirty submodules visibly
+      fall back while clean gitlink identities remain tree-bound.
+- [x] Re-stat before/after dirty reads and reject unstable evidence.
+- [x] Define ignored semantic input policy and bind meaningful directory topology explicitly.
+- [x] Fallback visibly for conflicts, sparse/unsupported worktrees, unreadable files, dirty
+      submodules, uncertain parsing, and mutation.
+- [x] Differentially compare clean, dirty, ignored, excluded, cancellation, and relocated proof
+      admission, including conflict, sparse, unreadable, dirty-submodule, and two-attempt
+      mutation-race fallback.
 
-Recovery may have its own latency classification, but it must always produce the canonical outcome.
+Exit: clean admission is independent of repository file count after Git has proved the tree; dirty
+admission hashes only exact overlay candidates; every uncertainty runs the complete scanner.
 
-## Phase 6: Consolidate after graduation
+## G6 — Portable semantic packs
 
-- [ ] Consolidate CLI result caching, application checkpoints, and semantic packs around one shared
-      content-addressed store instead of maintaining overlapping persistence models.
-- [ ] Retain the canonical slow compiler as oracle and recovery path.
-- [ ] Remove obsolete repository-sized JSON hydration and worktree-path coupling.
-- [ ] Keep terminal transcript memoization only as a final projection optimization.
-- [ ] Replace monolithic executable fingerprints with exact component fingerprints without weakening
-      admission.
-- [ ] Remove stale formats and dead migration code only after negative scans and restart
-      compatibility tests.
-- [ ] Re-run warm, incremental, server, and viewer qualification to prove cold improvements do not
-      regress already-qualified behavior.
+Dependencies: G3 and G5.
 
-## Definition of done
+- [x] Define content-addressed manifest and bounded independent shards for ownership,
+      specifications, observations, qualifications, optional analysis, and compact check output.
+      Semantic-pack v2 commits the compact result/catalog plus the application manifest DAG; its
+      explicit check plan excludes compiler analysis and schema roots, so no unused optional
+      analysis shard is part of this command's complete closure.
+- [x] Deliver the compact check-output shard as the first independently gated pack slice.
+- [x] Publish a SourceProof-bound whole-check catalog shard and consume it read-only in an empty
+      local cache to answer another selected request through the canonical selection projection,
+      with byte-exact terminal and exit parity and zero application construction.
+- [x] Bind SourceProof, producer components, configuration, profiles, schema, and capability plan.
+      The ordered four-profile check plan, empty capabilities/schema roots, and disabled compiler
+      analysis are explicit manifest-v2 identity; drift misses before any result shard load.
+- [x] Validate every digest, decoded bound, identity, and complete request closure before use.
+      The shared store validates selected descriptors/digests and decoded limits, while application
+      projection admits the manifest-owned selected/support closure and exact API payloads only.
+- [x] Add manifest-only and exact artifact-key admission to the shared content-addressed store so a
+      future pack planner can validate and read only its requested closure; eager callers retain
+      their existing behavior and omitted artifacts are never represented as admitted evidence.
+- [x] Bind the existing sharded application checkpoint to SourceProof, commit its canonical manifest
+      digest from the semantic-pack root, and restore it read-only after a compact-shard miss with
+      zero compilation and no supplied-store mutation. A non-exact focused restore now admits the
+      corpus index first and reads only the exact selected/support specification and API-payload
+      closure; an omitted corrupt owner remains unread. Optional analysis is deliberately absent
+      from the bound check plan rather than eagerly serialized.
+- [x] Publish one atomic manifest after all shards exist; handle concurrency and interruption.
+      Exact result and catalog share one atomic semantic root committed only after the referenced
+      application manifest DAG exists. Concurrent/interrupted root replacement, selected closure,
+      omitted corruption, and manifest-plan drift are all fault-qualified.
+- [x] Fault-qualify the semantic root itself: exact identity mismatches miss, malformed application
+      references are rejected before result exposure, concurrent publishers expose one internally
+      consistent result, and an interrupted replacement preserves the prior complete root.
+- [x] Produce compact check output in one process/path and consume it read-only from another path
+      with an empty local cache, including explicit `CI=true` admission.
+- [x] Retain the canonical compiler and publish a compact replacement only after successful
+      canonical work.
+- [x] Implement an independent C1 series verifier that requires 100 receipt-v3 processes, at least
+      two equivalent runner instances, balanced/interleaved whole, leaf, dependency-heavy, and
+      multi-select request shapes, both valid and diagnostic outcomes, exact per-shape canonical
+      equality before timing, every sample below 3 seconds, and p95 below 2.5 seconds. Corpus
+      execution remains part of G9 and cannot be proxied by its synthetic test.
+- [ ] Consolidate overlapping checkpoint storage only after pack graduation.
 
-- [ ] C1 workspace-cold satisfies the exact equality and latency gates on the governed Kernel corpus.
-- [ ] C2 delta-cold satisfies exact owner/dependency closure equality and latency gates.
-- [ ] C3 genesis has a separately reported, reproducible full-build gate with causal measurements.
-- [ ] Corrupt, stale, incomplete, or incompatible acceleration always fails closed to canonical work.
-- [ ] A portable pack works from a different absolute path with an empty local Codegraph cache.
-- [ ] Performance evidence distinguishes source attestation, pack open, planning, recomputation, and
-      rendering rather than reporting only whole-command time.
-- [ ] Documentation and CLI output use the C0-C3 terminology without conflating cold start and cold
-      build.
+Exit: C1 runs in 100 fresh processes/runners, every sample below 3 seconds and p95 below 2.5
+seconds, with no prior request prime and exact canonical receipts. C0 remains below 1 second.
+
+## G7 — Normalized and staged verify facts
+
+Dependencies: G1.
+
+- [x] Measure unique declaration payloads, repeated embeddings, module fanout, and allocation peaks.
+- [x] Store declarations once as content-addressed shards and reference IDs from module facts.
+- [x] Preserve the unchanged logical module fact identity with a streaming canonical preimage; do
+      not rebuild the repeated schema-v1 declaration monolith behind schema-v2 shards. Retain an
+      exact physical-fact digest comparison against the pre-optimization normalized producer.
+- [x] Preserve public API closure, declaration provenance, stable identity, ordering, and query
+      results under a compatibility-qualified projection.
+- [x] Project requested module owners on cold runs and exact affected owners on incremental runs.
+- [x] Stream/stage bounded physical and semantic shards; atomically publish one manifest.
+- [x] Keep the 384 MiB semantic response limit and all per-frame/physical limits.
+- [x] Fault-test missing/reordered/corrupt/duplicate/oversized shards, cancellation, and commit-late;
+      bind the reader, bounded-frame, cancellation, atomic-publication, and store-acknowledgement
+      cases to stable specification evidence IDs.
+
+Exit: V0 selected, V1 whole, and V2 incremental all complete below existing bounds, exact queries
+equal canonical normalized facts, and no one-shot transaction approaches the global corpus size.
+
+## G8 — Maintainability and observability ratchets
+
+Dependencies: G1 and every implemented branch node.
+
+- [x] Freeze a repository-owned baseline of production physical LOC, source files, directories,
+      largest files, size bands, import cycles, and repeated guards/decoders.
+- [x] Reject regressions beyond explicit per-slice budgets; candidate code cannot rewrite baseline.
+- [x] Prefer focused nested owners and small cohesive files; reject empty wrappers and dense LOC
+      gaming.
+- [x] Require performance mechanics in `*.optimization.ts` where separable.
+- [x] Enforce correctness owner -> owner-local optimization dependency through an exact ratified
+      import allowlist; prohibit every unratified concrete optimization import. A registration or
+      composition-root framework was rejected because it adds mutable indirection and startup work
+      without strengthening the private semantic boundary.
+- [x] Require stable failure/fallback families, phase spans, causal counters, and publication
+      receipts. The governed boundary gate pins existing protocol/resource messages, SourceProof,
+      semantic-pack, compiler isolation, and checkpoint miss families; receipt-v3 and focused fault
+      suites retain the phase/counter/publication evidence.
+- [x] Check no silent catch at persistence, compiler, protocol, pack, and source-proof boundaries.
+      The AST gate rejects empty catches, erased error bindings, and bare catches without an exit or
+      explicit diagnostic/advisory/concurrency/fallback rationale across the exact boundary list.
+- [x] Retain before/after physical LOC and repeated guard counts for every refactor slice.
+
+Exit: architecture tests and retained receipts make complexity, dependency direction, silent
+failures, and counter omissions blocking regressions without rewarding fragmentation.
+
+## G9 — Installed exact-SHA graduation
+
+Dependencies: G2, G4, G6, G7, and G8.
+
+- [ ] Build and pack Codegraph from exact branch SHA.
+- [ ] Install into a clean exact Kernel `origin/main` worktree without touching the primary tree.
+- [ ] Run C0/C1/C2/C3 and V0/V1/V2 with hidden holdouts and independent receipt verification.
+- [ ] Run owner types, focused tests, complete Codegraph tests, governance, package/install tests,
+      self-hosting, and Kernel plan-derived applicable checks.
+- [ ] Confirm no remote Codegraph branch advanced the delivery base; rebase and rerun affected gates
+      if it did.
+- [ ] Inspect final diff, complexity deltas, generated/package contents, and retained evidence.
+- [ ] Report semantic status separately from latency status and current Kernel diagnostics.
+
+Exit: all classes pass from the stated starting states on exact SHAs; no limit, capability, test, or
+diagnostic was weakened; receipts and reproduction commands are retained.
+
+## Current baseline
+
+Codegraph: `16aca70db070aac335d0aa4ef9c07eafea91ee74` (`origin/main` at admission).
+
+Kernel: `a19601a15be360df89be52ec54bdbf7867248372` (`origin/main` at admission).
+
+Latest refreshed qualification Kernel: `bfe6be8e7964f3d9d8b0b9d932802bd4d1cd740b`
+(`origin/main`, two commits after the last complete matrix).
+
+| Journey | Result |
+| --- | ---: |
+| selected backend cold check | 85.50 s |
+| selected backend identical replay | 0.89 s |
+| private spec documentation edit after prime | 84.78 s |
+| whole cold check | 100.69 s |
+| whole identical replay | 0.71 s |
+| selected backend verify | 899.74 s then 598.95 MiB / 384 MiB rejection |
+
+The last complete exact matrix remains the retained `b2221a4e1` evidence and is not represented as
+current. On `bfe6be8e7`, selected verify exposed unsafe eager native residency: five projects
+completed, the sixth was killed by the operating system, and no V1 or canonical run was started.
+Serial lifecycle then isolated the problem to `core/schema/tsconfig.json`: that one project reached
+about 2.35 GiB after 161 seconds, while a one-owner projection still exceeded a ten-second hard
+timeout. The plain compiler control lists 660 files in 0.82 seconds, so the legacy independent
+implementation-surface projection—not TypeScript Program construction—is the failing leaf. Future
+qualification uses a typed 768 MiB native-PID watchdog and cannot claim success without
+peak-residency evidence.
+
+The explicit binding prototype gives the forward path without deciding the migration prematurely.
+For `core/schema`, a fresh root-only run completes in 2.05 seconds at 446.83 MiB; targeted compiler
+diagnostics cost 10.69 ms and are exactly equal to whole-program diagnostics for the binding roots.
+Independent assignability still costs 926 ms and misclassifies branded identities, so it is not a
+replacement oracle. Exact export enumeration also finds five real implementation names absent from
+the authoritative `.spec`: `AuthorityOperation`, `AuthorityOperationOrder`, `AuthorityOperations`,
+`AuthorityRelation`, and `operationOf`.
+
+The latest Kernel currently has independent conformance diagnostics. Performance receipts compare
+optimized and canonical results at the same source state; they never relabel those diagnostics as a
+Codegraph performance failure or hide them to obtain a pass.
+
+Latest source-only C3 evidence is now materially better than the retained `b2221a4e1` matrix. On
+`bfe6be8e7`, clean Git-tree admission avoids the complete scanner, bounds ignored-path evidence to
+31 directory candidates, and retains the same SourceProof identity. Declaration compilation stays
+in minimum-compatible Programs, module TypeScript stays in its faster stage-local Program, and
+TypeScript preparation overlaps immutable snapshot resource loading. Two independently self-hashed
+runs complete in 2.755 s and 2.728 s at 616.74 MiB and 609.64 MiB parent RSS. This is optimized
+target evidence only: the latest canonical pair remains deliberately pending rather than being
+proxied by older evidence or a semantic pack.

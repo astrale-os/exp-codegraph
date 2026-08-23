@@ -19,6 +19,7 @@ export {
   type WorkspaceCheckpointLoadResult,
   type WorkspaceCheckpointManifest,
   type WorkspaceCheckpointManifestInput,
+  type WorkspaceCheckpointLoadOptions,
   type WorkspaceCheckpointMiss,
   type WorkspaceCheckpointMissReason,
   type WorkspaceCheckpointOperationOptions,

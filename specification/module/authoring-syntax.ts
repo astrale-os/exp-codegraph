@@ -1,6 +1,7 @@
 import ts from 'typescript'
 
 import type { Diagnostic } from '../../source/diagnostic.ts'
+import { operationAuthoringSyntaxSource } from './authoring-syntax.optimization.ts'
 
 export const AUTHORING_SPECIFIER = '@astrale-os/codegraph/authoring'
 /** Temporary source-compatible spelling retained while repositories migrate to Codegraph. */
@@ -69,7 +70,21 @@ export function plainStringLiteral(expression: ts.Expression): string | undefine
     : undefined
 }
 
+/** Reuse an admitted compiler-universe AST or parse the standalone authored source exactly once. */
+export function authoredSourceFile(source: string, text: string): ts.SourceFile {
+  return operationAuthoringSyntaxSource(source, text) ??
+    ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+}
+
 export function syntaxDiagnostics(source: string, text: string): Diagnostic[] {
+  const admitted = operationAuthoringSyntaxSource(source, text) as
+    | (ts.SourceFile & { readonly parseDiagnostics?: readonly ts.Diagnostic[] })
+    | undefined
+  if (admitted?.parseDiagnostics) {
+    return admitted.parseDiagnostics
+      .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
+      .map((entry) => compilerDiagnostic(source, entry))
+  }
   const result = ts.transpileModule(text, {
     fileName: source,
     reportDiagnostics: true,
@@ -77,19 +92,21 @@ export function syntaxDiagnostics(source: string, text: string): Diagnostic[] {
   })
   return (result.diagnostics ?? [])
     .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
-    .map((entry) => {
-      const position =
-        entry.file && entry.start !== undefined
-          ? entry.file.getLineAndCharacterOfPosition(entry.start)
-          : undefined
-      return {
-        code: `MODULE_TYPESCRIPT_${entry.code}`,
-        message: ts.flattenDiagnosticMessageText(entry.messageText, '\n'),
-        file: source,
-        line: (position?.line ?? 0) + 1,
-        column: (position?.character ?? 0) + 1,
-      }
-    })
+    .map((entry) => compilerDiagnostic(source, entry))
+}
+
+function compilerDiagnostic(source: string, entry: ts.Diagnostic): Diagnostic {
+  const position =
+    entry.file && entry.start !== undefined
+      ? entry.file.getLineAndCharacterOfPosition(entry.start)
+      : undefined
+  return {
+    code: `MODULE_TYPESCRIPT_${entry.code}`,
+    message: ts.flattenDiagnosticMessageText(entry.messageText, '\n'),
+    file: source,
+    line: (position?.line ?? 0) + 1,
+    column: (position?.character ?? 0) + 1,
+  }
 }
 
 export function nodeDiagnostic(

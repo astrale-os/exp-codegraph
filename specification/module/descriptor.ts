@@ -11,6 +11,7 @@ import type { TestEvidenceReference } from '../../authoring/evidence.ts'
 
 import {
   AUTHORING_SPECIFIER,
+  authoredSourceFile,
   authoringHelperBinding,
   calledObjectLiteral as descriptorObject,
   isAuthoringSpecifier,
@@ -44,7 +45,7 @@ export function compileDescriptor<Kind extends DescriptorKind>(
   text: string,
 ): DescriptorCompilation<Kind> {
   const diagnostics = syntaxDiagnostics(source, text)
-  const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const file = authoredSourceFile(source, text)
   const helper = authoringHelperBinding(file, helperName(kind))
   const definitions: unknown[] = []
 

@@ -74,7 +74,7 @@ function evidenceRule(
     profile: MODULE_TEST_EVIDENCE_PROFILE_ID,
     rule: TEST_EVIDENCE_RULE,
     subject: fact.subject,
-    specificationPointer: entry.pointer,
+    ...(entry.pointer ? { specificationPointer: entry.pointer } : {}),
     evidence: fact.provenance.evidence,
     inputs: [fact.id],
     actual: entry,

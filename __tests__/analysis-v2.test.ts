@@ -305,6 +305,7 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     ).rejects.toThrow('escapes')
   })
 
+  /** @evidence CODEGRAPH-PROTOCOL-CANCELLATION */
   it('adapts, validates, aborts, and disposes an explicit native process session', async () => {
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-native-session-'))
     temporary.push(root)
@@ -478,6 +479,49 @@ lines.on('line', (line) => {
     await Promise.all([plain.dispose(), profiled.dispose()])
   })
 
+  it('terminates a native session with visible evidence when its resident budget is exceeded', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-native-resident-limit-'))
+    temporary.push(root)
+    const sidecar = join(root, 'sidecar.mjs')
+    await writeFile(
+      sidecar,
+      `
+import { createInterface } from 'node:readline'
+const lines = createInterface({ input: process.stdin })
+lines.on('line', (line) => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+})
+`,
+    )
+    const events: import('../analysis/index.ts').AnalysisTelemetryEvent[] = []
+    const session = await createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+      maximumResidentBytes: 1_024,
+      sampleResidentBytes: async () => 2_048,
+      telemetry: (event) => events.push(event),
+    }).open({ root, config: 'tsconfig.json', capabilities: ['fixture'] })
+    await expect(
+      Promise.resolve().then(() => session.request({ id: 1, kind: 'refresh' })),
+    ).rejects.toMatchObject({
+      name: 'NativeAnalysisProcessResourceError',
+      code: 'NATIVE_ANALYSIS_RESIDENT_LIMIT',
+      message: expect.stringContaining('resident memory exceeded the configured limit'),
+    })
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          component: 'transport',
+          phase: 'process.resources',
+          metrics: expect.objectContaining({ maximumResidentBytes: 1_024 }),
+        }),
+      ]),
+    )
+    await session.dispose()
+  })
+
+  /** @evidence CODEGRAPH-PROTOCOL-BOUNDED-FRAMES */
   it('assembles bounded native transaction frames and rejects unsafe stream sequences', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-native-framing-'))
     temporary.push(root)
@@ -602,6 +646,7 @@ lines.on('line', (line) => {
     await transactionLimit.dispose()
   })
 
+  /** @evidence CODEGRAPH-PROTOCOL-SEMANTIC-PAYLOAD-LIMIT */
   it('enforces decoded semantic payload limits independently of compact wire size', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-native-semantic-limit-'))
     temporary.push(root)
@@ -833,6 +878,65 @@ lines.on('line', (line) => {
       expect(restored.transaction).toBeUndefined()
       expect(await snapshotOfFacts(store, firstUniverse)).toEqual(['first'])
       expect(await snapshotOfFacts(store, secondUniverse)).toEqual(['second'])
+    } finally {
+      await service.dispose()
+      await store.dispose()
+    }
+  })
+
+  /** @evidence CODEGRAPH-PROTOCOL-COMMIT-LATE */
+  it('acknowledges native publication only after the application store commits', async () => {
+    const transaction = buildTransaction({ sequence: 1, values: ['commit-late'] })
+    const backing = createMemoryAnalysisStore()
+    let rejectCommit = true
+    const store: AnalysisStore = {
+      dispose: () => backing.dispose(),
+      current: (universe) => backing.current(universe),
+      commit: async (candidate, options) => {
+        if (rejectCommit) throw new Error('qualified store rejection')
+        await backing.commit(candidate, options)
+      },
+      open: (universe, generation) => backing.open(universe, generation),
+      snapshotSet: (generations, inventory) => backing.snapshotSet(generations, inventory),
+    }
+    const acknowledged: string[] = []
+    const sessions: NativeAnalysisSessionFactory = {
+      async open() {
+        return {
+          async request(request) {
+            if (request.kind !== 'refresh') throw new Error('Unexpected native request.')
+            return {
+              id: request.id,
+              protocolVersion: 1,
+              kind: 'transaction' as const,
+              transaction,
+            }
+          },
+          async acknowledge(value) {
+            acknowledged.push(value.generation)
+          },
+          async dispose() {},
+        }
+      },
+    }
+    const service = await createTypeScriptAnalysisService({
+      project: {
+        root: resolve('/tmp/typespec-v2-commit-late'),
+        config: 'tsconfig.json',
+        capabilities: ['fixture.values'],
+      },
+      sessions,
+      store,
+    })
+    try {
+      await expect(service.refresh()).rejects.toThrow('qualified store rejection')
+      expect(acknowledged).toEqual([])
+      expect(await backing.current(transaction.next.universe)).toBeUndefined()
+
+      rejectCommit = false
+      await expect(service.refresh()).resolves.toMatchObject({ generation: transaction.next })
+      expect(acknowledged).toEqual([transaction.next.id])
+      expect(await backing.current(transaction.next.universe)).toEqual(transaction.next)
     } finally {
       await service.dispose()
       await store.dispose()
@@ -2109,6 +2213,7 @@ process.exit(0)
     }
   })
 
+  /** @evidence TYPESCRIPT-ATOMIC-PUBLICATION */
   it('publishes native and portable analysis atomically while retaining private native lineage', async () => {
     const root = await mkdtemp(join(tmpdir(), 'typespec-v2-pipeline-'))
     temporary.push(root)

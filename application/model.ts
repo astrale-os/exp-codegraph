@@ -18,6 +18,10 @@ import type { Diagnostic } from '../source/diagnostic.ts'
 import type { SpecificationSnapshot } from '../specification/index.ts'
 
 export type TypeSpecApplicationSnapshotId = `application:${string}`
+export type TypeSpecApplicationCapability =
+  | 'declaration-models'
+  | 'declaration-navigation'
+  | 'repository-statistics'
 
 export type TypeSpecApplicationSelection =
   | { readonly kind: 'full'; readonly authority: 'full-ci' }
@@ -41,10 +45,11 @@ export interface TypeSpecApplicationSnapshot {
   readonly repository: RepositoryId
   /** Exact repository inventory shared by specification, analysis, and source reads. */
   readonly inventory: SourceManifestId
+  readonly capabilities: readonly TypeSpecApplicationCapability[]
   readonly selection: TypeSpecApplicationSelection
   readonly specifications: readonly SpecificationSnapshot[]
   /** Complete repository-wide physical statistics retained independently from UI projections. */
-  readonly statistics: RepositoryStatisticsReport
+  readonly statistics?: RepositoryStatisticsReport
   readonly qualifications: readonly QualificationSnapshot[]
   readonly analysis?: {
     readonly id: SnapshotSetId
@@ -60,6 +65,8 @@ export interface TypeSpecApplicationSnapshot {
 }
 
 export interface TypeSpecApplicationRefreshOptions {
+  /** Defaults to the complete application capability set for non-request-planned consumers. */
+  readonly requestedCapabilities?: readonly TypeSpecApplicationCapability[]
   readonly exclude?: readonly string[]
   readonly select?: readonly string[]
   readonly focused?: boolean
@@ -111,6 +118,23 @@ export interface TypeSpecApplicationRefresh {
   }
 }
 
+/** Non-semantic lifecycle evidence for the latest advisory checkpoint publication. */
+export interface TypeSpecApplicationCheckpointPublication {
+  readonly repository: RepositoryId
+  readonly inventory: SourceManifestId
+  readonly outcome: 'published' | 'unavailable'
+  readonly durationMs: number
+  readonly error?: {
+    readonly code: 'APPLICATION_CHECKPOINT_PUBLICATION_UNAVAILABLE'
+    readonly name: string
+    readonly message: string
+  }
+}
+
+export interface TypeSpecApplicationSettlement {
+  readonly checkpoint?: TypeSpecApplicationCheckpointPublication
+}
+
 /** Lease over one exact application snapshot and its pinned analysis generations. */
 export interface TypeSpecApplicationReader {
   readonly snapshot: TypeSpecApplicationSnapshot
@@ -123,5 +147,7 @@ export interface TypeSpecApplicationService {
   refresh(options?: TypeSpecApplicationRefreshOptions): Promise<TypeSpecApplicationRefresh>
   current(): TypeSpecApplicationSnapshot | undefined
   open(snapshot?: TypeSpecApplicationSnapshotId): Promise<TypeSpecApplicationReader>
+  /** Drain scheduled advisory work and return attributable non-semantic lifecycle evidence. */
+  settle(): Promise<TypeSpecApplicationSettlement>
   dispose(): Promise<void>
 }

@@ -40,6 +40,10 @@ import {
   type ApplicationTestEvidenceFact,
 } from './model.ts'
 import type { ApplicationSchemaDependencyResource } from './schema-dependency.ts'
+import {
+  indexApplicationObservationInventory,
+  type ApplicationObservationInventoryIndex,
+} from './materialize.optimization.ts'
 
 const OBSERVATION_PASS = deriveAnalysisId(
   'pass',
@@ -83,6 +87,7 @@ export async function materializeApplicationObservations(
     : []
   const currentByKey = new Map(currentManifest.map((entry) => [entry.key, entry] as const))
   const requested = options.refresh ? new Set(options.refresh) : undefined
+  const inventoryIndex = indexApplicationObservationInventory(options.inventory)
   const shards: FactShard[] = []
   const retained: FactShardReference[] = []
   const schemaDependencies = options.schemaDependencies ?? []
@@ -163,7 +168,7 @@ export async function materializeApplicationObservations(
         APPLICATION_CONTEXT_FACT_NAMESPACE,
         specification,
         'module-context',
-        observeSpecificationContext(specification, options.inventory),
+        observeSpecificationContext(specification, inventoryIndex),
       ),
     )
   }
@@ -230,13 +235,12 @@ function observationKeys(specification: SpecificationSnapshot): readonly FactSha
 
 function observeSpecificationContext(
   specification: SpecificationSnapshot,
-  inventory: RepositoryInventory,
+  inventory: ApplicationObservationInventoryIndex,
 ): ApplicationModulePresentationFact {
   const specDirectory = specification.source.slice(0, -'/api.d.ts'.length)
   const historyRoot = specification.root === '.' ? '.history/' : `${specification.root}/.history/`
-  const byPath = new Map(inventory.files.map((file) => [file.path, file] as const))
   const resource = (path: string) => {
-    const file = byPath.get(path)
+    const file = inventory.byPath.get(path)
     return file ? contextResource(file) : undefined
   }
   return {
@@ -247,10 +251,8 @@ function observeSpecificationContext(
     ...(resource(`${specDirectory}/icon.svg`)
       ? { icon: resource(`${specDirectory}/icon.svg`)! }
       : {}),
-    history: inventory.files
-      .filter((file) => file.path.startsWith(historyRoot))
+    history: (inventory.historyByRoot.get(historyRoot) ?? [])
       .map(contextResource)
-      .sort((left, right) => left.path.localeCompare(right.path)),
   }
 }
 

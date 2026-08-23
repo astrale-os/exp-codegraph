@@ -38,6 +38,10 @@ export function DeclarationEditor({
   focusOffset,
   onNavigate,
 }: DeclarationEditorProps) {
+  const text = source.text
+  if (text === undefined) {
+    throw new Error(`Declaration editor requires navigation source text: ${source.file}`)
+  }
   const host = useRef<HTMLDivElement | null>(null)
   const view = useRef<EditorView | null>(null)
   const navigate = useRef(onNavigate)
@@ -47,14 +51,14 @@ export function DeclarationEditor({
     if (!host.current) return
     const tokens = api?.tokens.filter((token) => token.file === source.file) ?? []
     const throws = detectedThrowReferences(
-      source.text,
+      text,
       Object.values(api?.metadata ?? {}).flatMap((metadata) => metadata.errors),
     )
     const decorations = tokenDecorations(tokens, api)
     const editor = new EditorView({
       parent: host.current,
       state: EditorState.create({
-        doc: source.text,
+        doc: text,
         extensions: [
           foldGutter({ openText: '⌄', closedText: '›' }),
           lineNumbers(),
@@ -67,7 +71,7 @@ export function DeclarationEditor({
           EditorView.lineWrapping,
           EditorView.decorations.of(decorations),
           EditorView.decorations.of(throwDecorations(throws)),
-          EditorView.decorations.of(unknownPlaceholderDecorations(source.text)),
+          EditorView.decorations.of(unknownPlaceholderDecorations(text)),
           EditorView.contentAttributes.of({
             'aria-label': `${source.file} declaration source`,
             spellcheck: 'false',

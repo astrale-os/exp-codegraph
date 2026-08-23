@@ -40,7 +40,18 @@ export async function resolveTestEvidence(root, moduleRoot, laws, states) {
             testEvidence: await resolveReferences(definition.tests, resource.source),
         }))),
     })));
-    return { laws: resolvedLaws, states: resolvedStates, diagnostics };
+    return {
+        laws: resolvedLaws,
+        states: resolvedStates,
+        diagnostics: diagnostics.sort(compareDiagnostic),
+    };
+}
+function compareDiagnostic(left, right) {
+    return (compare(left.file, right.file) ||
+        left.line - right.line ||
+        left.column - right.column ||
+        compare(left.code, right.code) ||
+        compare(left.message, right.message));
 }
 async function resolveReference(reference, root, rootReal, moduleRoot, cache) {
     const path = reference.file;
@@ -61,9 +72,7 @@ async function resolveReference(reference, root, rootReal, moduleRoot, cache) {
         throw evidenceFailure('TEST_EVIDENCE_PATH_INVALID', 'Test evidence must point to a .test or .spec JavaScript/TypeScript file.');
     }
     const actual = await realpath(absolute).catch((error) => {
-        throw evidenceFailure('TEST_EVIDENCE_FILE_INVALID', error instanceof Error
-            ? `Test evidence file cannot be read: ${error.message}`
-            : String(error));
+        throw evidenceFailure('TEST_EVIDENCE_FILE_INVALID', `Test evidence file cannot be read (${fileErrorCode(error)}).`);
     });
     if (!within(rootReal, actual)) {
         throw evidenceFailure('TEST_EVIDENCE_PATH_INVALID', 'Test evidence resolves outside the specification catalog root.');
@@ -100,9 +109,7 @@ async function parseTestFile(absolute, source) {
         text = await readBounded(absolute);
     }
     catch (error) {
-        throw evidenceFailure('TEST_EVIDENCE_FILE_INVALID', error instanceof Error
-            ? `Test evidence file cannot be read: ${error.message}`
-            : String(error));
+        throw evidenceFailure('TEST_EVIDENCE_FILE_INVALID', `Test evidence file cannot be read (${fileErrorCode(error)}).`);
     }
     const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, scriptKind(source));
     const parseDiagnostics = file.parseDiagnostics;
@@ -137,6 +144,12 @@ async function parseTestFile(absolute, source) {
         throw evidenceFailure('TEST_EVIDENCE_ID_AMBIGUOUS', 'A test evidence id is declared more than once in the same file.');
     }
     return { source, text, revision: sourceRevision(text), tests };
+}
+function fileErrorCode(error) {
+    if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+        return error.code;
+    }
+    return error instanceof Error ? error.name : 'unknown';
 }
 function evidenceId(text, declaration, source, file) {
     const comments = ts.getLeadingCommentRanges(text, declaration.getFullStart()) ?? [];
@@ -202,6 +215,9 @@ function within(parent, child) {
 }
 function portable(value) {
     return value.split(sep).join('/');
+}
+function compare(left, right) {
+    return left < right ? -1 : left > right ? 1 : 0;
 }
 function evidenceFailure(code, message) {
     return { code, message };

@@ -14,6 +14,7 @@ import type {
   NativeAnalysisSessionFactory,
   NativeModuleBoundary,
   NativeProjectDescriptor,
+  NativeSourceChange,
 } from '../protocol/index.ts'
 import type { AnalysisStore } from '../query/index.ts'
 import type { AnalysisTelemetrySink } from '../profiling/index.ts'
@@ -27,6 +28,8 @@ import type {
 import type { ValueResult } from './value/model.ts'
 
 export const TYPESCRIPT_MODULE_FACT_NAMESPACE = 'astrale.typescript.module' as const
+export const TYPESCRIPT_DECLARATION_FACT_NAMESPACE = TYPESCRIPT_MODULE_FACT_NAMESPACE
+export const TYPESCRIPT_DECLARATION_FACT_KIND = 'declaration' as const
 
 export type TypeScriptModuleTarget = NativeModuleBoundary
 
@@ -119,9 +122,24 @@ export interface TypeScriptRefreshResult {
   readonly generation: AnalysisGeneration
   readonly transaction?: FactTransaction
   readonly changedSources: readonly SourceId[]
+  /** Exact logical module subjects whose normalized fact changed; absent after a full/uncertain refresh. */
+  readonly changedModules?: readonly string[]
+  /** Compact exact routing evidence used to avoid retaining unrelated compiler processes. */
+  readonly moduleRouting?: TypeScriptModuleRouting
   readonly invalidatedPasses: readonly PassId[]
   readonly diagnostics: readonly string[]
   readonly durationMs: number
+}
+
+export interface TypeScriptModuleRoutingEntry {
+  readonly module: string
+  readonly files: readonly string[]
+  readonly dependencies: readonly string[]
+}
+
+export interface TypeScriptModuleRouting {
+  readonly complete: boolean
+  readonly modules: readonly TypeScriptModuleRoutingEntry[]
 }
 
 export interface TypeScriptAnalysisService {
@@ -130,6 +148,7 @@ export interface TypeScriptAnalysisService {
   dispose(): Promise<void>
   refresh(options?: {
     readonly changed?: readonly string[]
+    readonly changes?: readonly NativeSourceChange[]
     readonly invalidate?: boolean
     readonly signal?: AbortSignal
   }): Promise<TypeScriptRefreshResult>
@@ -139,6 +158,8 @@ export interface TypeScriptAnalysisServiceOptions {
   readonly project: NativeProjectDescriptor
   readonly sessions: NativeAnalysisSessionFactory
   readonly store: AnalysisStore
+  /** Previously materialized universe adopted by a newly opened compiler process. */
+  readonly universe?: ProjectUniverseId
   readonly telemetry?: AnalysisTelemetrySink
 }
 
@@ -146,6 +167,7 @@ export interface TypeScriptAnalysisPipelineOptions {
   readonly project: NativeProjectDescriptor
   readonly sessions: NativeAnalysisSessionFactory
   readonly store: AnalysisStore
+  readonly universe?: ProjectUniverseId
   readonly passes: readonly PortablePass[]
   readonly requestedCapabilities: readonly string[]
   readonly producer: ProducerIdentity

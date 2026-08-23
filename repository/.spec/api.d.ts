@@ -9,6 +9,7 @@ import type {
 } from '../../analysis/identity/.spec/api.js'
 
 export * from '../source/.spec/api.js'
+export * from '../source-proof/.spec/api.js'
 export * from '../statistics/.spec/api.js'
 
 export type RepositoryPurpose =
@@ -82,6 +83,11 @@ export interface RepositoryScanEntry {
 }
 
 export interface RepositoryScanner {
+  /** Optional bounded batch path for an already-admitted immutable corpus. */
+  scanAll?(
+    root: string,
+    options?: { readonly signal?: AbortSignal; readonly scope?: RepositoryScope },
+  ): Promise<readonly RepositoryScanEntry[]>
   scan(
     root: string,
     options?: { readonly signal?: AbortSignal; readonly scope?: RepositoryScope },

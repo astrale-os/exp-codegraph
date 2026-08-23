@@ -1,13 +1,14 @@
 import { isUtf8 } from 'node:buffer'
 import { createHash } from 'node:crypto'
 import { opendir, readFile, stat } from 'node:fs/promises'
-import { join, matchesGlob, resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import type {
   RepositoryInventory,
   RepositoryInventoryOptions,
   RepositoryScanEntry,
   RepositoryScanner,
+  SourceProofProvider,
 } from '../../repository/index.ts'
 
 import { deriveAnalysisId, type SourceManifestId } from '../../analysis/index.ts'
@@ -18,7 +19,16 @@ import {
   WORKSPACE_CHECKPOINT_JSON_ENCODING,
   type FileWorkspaceCheckpointStore,
 } from '../../workspace/checkpoint/index.ts'
+import { seedOperationSourceText } from '../../source/operation-snapshot.ts'
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.ts'
+import { inventoryGitHead } from './git-inventory.optimization.ts'
+import { captureGitExecutable, createGitSourceProofProvider } from './source-proof.ts'
+import {
+  repositoryDirectoryExcluded,
+  repositoryDirectoryTopologyFingerprint,
+} from './topology.ts'
+
+export { repositoryDirectoryTopologyFingerprint } from './topology.ts'
 
 const FORMAT = 'astrale.codegraph.repository-inventory-checkpoint'
 const VERSION = 3
@@ -38,6 +48,128 @@ export interface CheckpointedRepositoryInventoryOptions {
 export interface NodeRepositoryInventoryOptions {
   readonly root: string
   readonly inventory?: typeof inventoryRepository
+}
+
+export interface GitRepositoryInventoryOptions extends NodeRepositoryInventoryOptions {
+  readonly proof?: SourceProofProvider
+  readonly onDecision?: (decision: {
+    readonly outcome: 'used' | 'fallback'
+    readonly code: string
+    readonly durationMs: number
+    readonly proofMs?: number
+    readonly treeMs?: number
+    readonly blobsMs?: number
+    readonly projectionMs?: number
+    readonly filesTraversed?: number
+    readonly bytesTraversed?: number
+    readonly bytesRead?: number
+    readonly bytesHashed?: number
+  }) => void
+}
+
+/** Use immutable Git blobs for a clean source-cold corpus; retain the canonical scanner otherwise. */
+export function createGitRepositoryInventory(
+  options: GitRepositoryInventoryOptions,
+): typeof inventoryRepository {
+  const root = resolve(options.root)
+  const fallback = createNodeRepositoryInventory(options)
+  const proof = options.proof ?? createGitSourceProofProvider()
+  const git = captureGitExecutable()
+  const inventory = options.inventory ?? inventoryRepository
+  return async (request) => {
+    if (resolve(request.root) !== root || request.scanner || request.classifiers) {
+      return fallback(request)
+    }
+    const started = performance.now()
+    const stagedInventory = inventoryGitHead(git, root, request, inventory).then(
+      (value) => ({ ok: true as const, value }),
+      (error: unknown) => ({ ok: false as const, error }),
+    )
+    try {
+      const proofStarted = performance.now()
+      const admitted = await proof.admit(
+        root,
+        {
+          version: 'application-source-scope/1',
+          exclude: request.scope?.exclude ?? [],
+          ignored: 'reject-semantic',
+        },
+        request.signal,
+      )
+      const proofMs = performance.now() - proofStarted
+      if (!admitted.ok || admitted.proof.overlay.length) {
+        return fallback(request).then((canonical) => {
+          observeDecision(options, {
+            outcome: 'fallback',
+            code: admitted.ok ? 'dirty-worktree' : admitted.code,
+            durationMs: performance.now() - started,
+            proofMs,
+            ...inventoryWork(canonical),
+          })
+          return canonical
+        })
+      }
+      const staged = await stagedInventory
+      if (!staged.ok) throw staged.error
+      if (staged.value.headTree !== admitted.proof.headTree) {
+        throw new Error('Git HEAD changed during inventory admission.')
+      }
+      const materialized = staged.value
+      for (const source of materialized.sourceTexts) {
+        seedOperationSourceText(resolve(root, source.path), {
+          text: source.text,
+          bytes: source.bytes,
+          digest: source.digest,
+        })
+      }
+      observeDecision(options, {
+        outcome: 'used',
+        code: 'clean-git-tree',
+        durationMs: performance.now() - started,
+        proofMs,
+        treeMs: materialized.treeMs,
+        blobsMs: materialized.blobsMs,
+        projectionMs: materialized.projectionMs,
+        filesTraversed: materialized.filesTraversed,
+        bytesTraversed: materialized.bytesTraversed,
+        bytesRead: materialized.bytesRead,
+        bytesHashed: materialized.bytesHashed,
+      })
+      return bindDirectoryTopology(materialized.inventory, admitted.proof.topologyDigest)
+    } catch (error) {
+      request.signal?.throwIfAborted()
+      return fallback(request).then((canonical) => {
+        observeDecision(options, {
+          outcome: 'fallback',
+          code: error instanceof Error ? error.name : 'git-inventory-failed',
+          durationMs: performance.now() - started,
+          ...inventoryWork(canonical),
+        })
+        return canonical
+      })
+    }
+  }
+}
+
+function inventoryWork(inventory: RepositoryInventory) {
+  const bytes = inventory.files.reduce((total, file) => total + file.bytes, 0)
+  return {
+    filesTraversed: inventory.files.length,
+    bytesTraversed: bytes,
+    bytesRead: bytes,
+    bytesHashed: bytes,
+  }
+}
+
+function observeDecision(
+  options: GitRepositoryInventoryOptions,
+  decision: Parameters<NonNullable<GitRepositoryInventoryOptions['onDecision']>>[0],
+): void {
+  try {
+    options.onDecision?.(decision)
+  } catch {
+    // Diagnostic observation cannot change inventory semantics.
+  }
 }
 
 /** Bind Node application inventory identity to relevant directories as well as regular files. */
@@ -77,10 +209,9 @@ export function createCheckpointedRepositoryInventory(
     let metadata: readonly RepositoryFileMetadata[]
     let topology: string
     try {
-      ;[metadata, topology] = await Promise.all([
-        scanMetadata(root, '', request.scope?.exclude ?? [], request.signal),
-        repositoryDirectoryTopologyFingerprint(root, request.scope?.exclude ?? [], request.signal),
-      ])
+      const directories: string[] = []
+      metadata = await scanMetadata(root, '', request.scope?.exclude ?? [], directories, request.signal)
+      topology = digestJson(directories)
     } catch {
       return fallback(request)
     }
@@ -207,39 +338,6 @@ interface RetainedInventory {
   readonly entries: readonly CachedRepositoryEntry[]
 }
 
-/** Digest every admitted directory path, including empty optional specification directories. */
-export async function repositoryDirectoryTopologyFingerprint(
-  root: string,
-  exclude: readonly string[],
-  signal?: AbortSignal,
-): Promise<string> {
-  const directories: string[] = []
-  await scanDirectories(resolve(root), '', exclude, directories, signal)
-  return digestJson(directories)
-}
-
-async function scanDirectories(
-  root: string,
-  relative: string,
-  exclude: readonly string[],
-  directories: string[],
-  signal?: AbortSignal,
-): Promise<void> {
-  signal?.throwIfAborted()
-  const directory = await opendir(relative ? join(root, relative) : root)
-  const entries = []
-  for await (const entry of directory) entries.push(entry)
-  entries.sort((left, right) => left.name.localeCompare(right.name))
-  for (const entry of entries) {
-    signal?.throwIfAborted()
-    if (!entry.isDirectory()) continue
-    const path = relative ? `${relative}/${entry.name}` : entry.name
-    if (path === '.git' || path.startsWith('.git/') || directoryExcluded(path, exclude)) continue
-    directories.push(path)
-    await scanDirectories(root, path, exclude, directories, signal)
-  }
-}
-
 function bindDirectoryTopology(
   inventory: RepositoryInventory,
   topology: string,
@@ -312,6 +410,7 @@ async function scanMetadata(
   root: string,
   relative: string,
   exclude: readonly string[],
+  directories: string[],
   signal?: AbortSignal,
 ): Promise<readonly RepositoryFileMetadata[]> {
   signal?.throwIfAborted()
@@ -323,9 +422,11 @@ async function scanMetadata(
   for (const entry of entries) {
     signal?.throwIfAborted()
     const path = relative ? `${relative}/${entry.name}` : entry.name
+    if (path === '.git' || path.startsWith('.git/')) continue
     if (entry.isDirectory()) {
-      if (path === '.git' || path.startsWith('.git/') || directoryExcluded(path, exclude)) continue
-      files.push(...(await scanMetadata(root, path, exclude, signal)))
+      if (repositoryDirectoryExcluded(path, exclude)) continue
+      directories.push(path)
+      files.push(...(await scanMetadata(root, path, exclude, directories, signal)))
       continue
     }
     if (!entry.isFile()) continue
@@ -375,15 +476,6 @@ function isCachedEntries(value: unknown): value is readonly CachedRepositoryEntr
         typeof entry.metadata.modified === 'string' &&
         typeof entry.metadata.changed === 'string',
     )
-  )
-}
-
-function directoryExcluded(path: string, patterns: readonly string[]): boolean {
-  return patterns.some(
-    (pattern) =>
-      matchesGlob(path, pattern) ||
-      matchesGlob(`${path}/__entry__`, pattern) ||
-      (!/[?*\[\]{}]/u.test(pattern) && (path === pattern || path.startsWith(`${pattern}/`))),
   )
 }
 

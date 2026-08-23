@@ -59,7 +59,7 @@ function referenceCandidates(spec, index) {
             continue;
         const declarations = new Map(api.surface.declarations.map((item) => [item.identity, item]));
         const visibleLabels = new Map();
-        const sources = new Map(api.sources.map((source) => [source.file, source.text]));
+        const sources = new Map(api.sources.flatMap((source) => source.text === undefined ? [] : [[source.file, source.text]]));
         for (const item of api.surface.exports) {
             const target = declarationTarget(index, item.declaration, item.kind);
             if (!target)

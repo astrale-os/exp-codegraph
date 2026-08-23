@@ -9,6 +9,7 @@ import {
   readSourceRevision,
 } from '../../source/operation-snapshot.ts'
 import { isAuthoringSpecifier } from './authoring-syntax.ts'
+import { canonicalModuleTypeScriptPath } from './typescript-reference.optimization.ts'
 import { visitModuleReferences } from './typescript-reference.ts'
 
 interface TypeScriptDependencyEvidence {
@@ -16,7 +17,7 @@ interface TypeScriptDependencyEvidence {
   readonly revision: string
 }
 
-interface TypeScriptResolutionEvidence {
+export interface TypeScriptResolutionEvidence {
   readonly kind: 'module' | 'path' | 'type'
   readonly containingFile: string
   readonly specifier: string
@@ -25,26 +26,30 @@ interface TypeScriptResolutionEvidence {
 }
 
 export interface ModuleTypeScriptEvidence {
-  readonly dependencies: readonly TypeScriptDependencyEvidence[]
-  readonly resolutions: readonly TypeScriptResolutionEvidence[]
+  readonly sources: readonly {
+    readonly dependency: TypeScriptDependencyEvidence
+    readonly resolutions: readonly TypeScriptResolutionEvidence[]
+  }[]
 }
 
 const resolutions = operationSnapshotNamespace<string | null>('module-resolutions')
+const canonicalFile = canonicalModuleTypeScriptPath
 
 export function captureModuleTypeScriptEvidence(
   program: ts.Program,
   options: ts.CompilerOptions,
   selectedSources: readonly ts.SourceFile[] = program.getSourceFiles(),
+  observed?: ReadonlyMap<string, string | null>,
 ): ModuleTypeScriptEvidence {
   const sources = selectedSources
   return {
-    dependencies: sources
-      .map((source) => ({
+    sources: sources.map((source) => ({
+      dependency: {
         file: canonicalFile(source.fileName),
         revision: sourceRevision(source.text),
-      }))
-      .sort((left, right) => compare(left.file, right.file)),
-    resolutions: observeResolutions(sources, options),
+      },
+      resolutions: observeResolutions([source], options, observed),
+    })).sort((left, right) => compare(left.dependency.file, right.dependency.file)),
   }
 }
 
@@ -53,20 +58,22 @@ export async function moduleTypeScriptEvidenceCurrent(
   options: ts.CompilerOptions,
 ): Promise<boolean> {
   const batchSize = 64
-  for (let index = 0; index < evidence.dependencies.length; index += batchSize) {
-    const batch = evidence.dependencies.slice(index, index + batchSize)
-    const revisions = await Promise.all(batch.map(({ file }) => readSourceRevision(file)))
-    if (batch.some(({ revision }, offset) => revision !== revisions[offset])) return false
+  for (let index = 0; index < evidence.sources.length; index += batchSize) {
+    const batch = evidence.sources.slice(index, index + batchSize)
+    const revisions = await Promise.all(
+      batch.map(({ dependency }) => readSourceRevision(dependency.file)),
+    )
+    if (batch.some(({ dependency }, offset) => dependency.revision !== revisions[offset])) return false
   }
-  return evidence.resolutions.every((expected) => {
-    const current = resolveObserved(expected, options)
-    return current === expected.resolvedFile
-  })
+  return evidence.sources.every(({ resolutions }) =>
+    resolutions.every((expected) => resolveObserved(expected, options) === expected.resolvedFile),
+  )
 }
 
 function observeResolutions(
   sources: readonly ts.SourceFile[],
   options: ts.CompilerOptions,
+  observed?: ReadonlyMap<string, string | null>,
 ): TypeScriptResolutionEvidence[] {
   const values: TypeScriptResolutionEvidence[] = []
   for (const parsed of sources) {
@@ -74,7 +81,7 @@ function observeResolutions(
     visitModuleReferences(parsed, (specifier, node, dynamic) => {
       if (dynamic) return
       const mode = ts.getModeForUsageLocation(parsed, node, options)
-      values.push(resolutionEvidence('module', file, specifier, mode, options))
+      values.push(resolutionEvidence('module', file, specifier, mode, options, observed))
     })
     for (const reference of parsed.referencedFiles) {
       values.push(resolutionEvidence('path', file, reference.fileName, undefined, options))
@@ -102,9 +109,11 @@ function resolutionEvidence(
   specifier: string,
   mode: ts.ResolutionMode,
   options: ts.CompilerOptions,
+  observed?: ReadonlyMap<string, string | null>,
 ): TypeScriptResolutionEvidence {
   const identity = { kind, containingFile, specifier, mode }
-  const resolvedFile = resolveObserved(identity, options)
+  const key = moduleTypeScriptResolutionKey(kind, containingFile, specifier, mode)
+  const resolvedFile = observed?.has(key) ? observed.get(key) ?? undefined : resolveObserved(identity, options)
   return { ...identity, ...(resolvedFile ? { resolvedFile } : {}) }
 }
 
@@ -112,12 +121,26 @@ function resolveObserved(
   evidence: Omit<TypeScriptResolutionEvidence, 'resolvedFile'>,
   options: ts.CompilerOptions,
 ): string | undefined {
-  const key = `${evidence.kind}\0${evidence.containingFile}\0${evidence.specifier}\0${evidence.mode ?? 'default'}`
+  const key = moduleTypeScriptResolutionKey(
+    evidence.kind,
+    evidence.containingFile,
+    evidence.specifier,
+    evidence.mode,
+  )
   const snapshot = operationSnapshot(resolutions)
   if (snapshot?.has(key)) return snapshot.get(key) ?? undefined
   const result = resolveFresh(evidence, options)
   snapshot?.set(key, result ?? null)
   return result
+}
+
+export function moduleTypeScriptResolutionKey(
+  kind: TypeScriptResolutionEvidence['kind'],
+  containingFile: string,
+  specifier: string,
+  mode: ts.ResolutionMode,
+): string {
+  return `${kind}\0${containingFile}\0${specifier}\0${mode ?? 'default'}`
 }
 
 function resolveFresh(
@@ -154,11 +177,6 @@ function resolveFresh(
     evidence.mode,
   ).resolvedModule?.resolvedFileName
   return target ? canonicalFile(target) : undefined
-}
-
-function canonicalFile(path: string): string {
-  const absolute = resolve(path)
-  return ts.sys.realpath ? ts.sys.realpath(absolute) : absolute
 }
 
 function compare(left: string, right: string): number {

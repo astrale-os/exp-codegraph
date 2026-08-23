@@ -1,4 +1,45 @@
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+export function applicationSpecificationAnchors(root, directories) {
+    return directories
+        .map((directory) => {
+        const moduleRoot = dirname(directory);
+        const sourceRoot = portable(relative(root, moduleRoot)) || '.';
+        return {
+            directory,
+            source: portable(relative(root, join(directory, 'api.d.ts'))),
+            root: sourceRoot,
+            title: sourceRoot === '.'
+                ? basename(root) || 'module'
+                : sourceRoot.split('/').filter(Boolean).join('.'),
+        };
+    })
+        .sort((left, right) => left.source.localeCompare(right.source));
+}
+export function planApplicationSpecificationAnchors(root, anchors, select) {
+    let requested;
+    try {
+        requested = normalizeApplicationSelectionTargets(root, select);
+    }
+    catch (error) {
+        return {
+            requested: [],
+            primary: [],
+            diagnostics: [selectionDiagnostic('SELECTION_INVALID', error)],
+        };
+    }
+    const primary = requested.flatMap((target) => applicationSelectionOwners(anchors, target));
+    if (!primary.length) {
+        return {
+            requested,
+            primary: [],
+            diagnostics: [
+                selectionDiagnostic('SELECTION_EMPTY', `No specification matches: ${requested.join(', ')}`),
+            ],
+        };
+    }
+    const bySource = new Map(primary.map((anchor) => [anchor.source, anchor]));
+    return { requested, primary: [...bySource.values()].sort(compareSource), diagnostics: [] };
+}
 /** Select requested owners, optional dependents, and their normative dependency closure. */
 export function selectApplicationSpecifications(root, specifications, options = {}) {
     if (!options.select?.length) {
@@ -11,7 +52,7 @@ export function selectApplicationSpecifications(root, specifications, options = 
     }
     let requested;
     try {
-        requested = [...new Set(options.select.map((value) => selectionTarget(root, value)))].sort();
+        requested = normalizeApplicationSelectionTargets(root, options.select);
     }
     catch (error) {
         return invalidSelection(specifications, options, 'SELECTION_INVALID', error);
@@ -23,7 +64,7 @@ export function selectApplicationSpecifications(root, specifications, options = 
             .map((reference) => reference.target.source)
             .filter((source) => source !== specification.source && bySource.has(source))),
     ]));
-    const selected = new Set(requested.flatMap((target) => selectedOwners(specifications, target)));
+    const selected = new Set(requested.flatMap((target) => applicationSelectionOwners(specifications, target).map((value) => value.source)));
     if (!selected.size) {
         return invalidSelection(specifications, options, 'SELECTION_EMPTY', `No specification matches: ${requested.join(', ')}`, requested);
     }
@@ -95,6 +136,10 @@ function invalidSelection(specifications, options, code, error, requested = []) 
         ],
     };
 }
+/** Normalize authored selection arguments once at the application boundary. */
+export function normalizeApplicationSelectionTargets(root, inputs) {
+    return [...new Set(inputs.map((input) => selectionTarget(root, input)))].sort();
+}
 function selectionTarget(root, input) {
     const absolute = isAbsolute(input) ? resolve(input) : resolve(root, input);
     const path = relative(resolve(root), absolute);
@@ -103,25 +148,36 @@ function selectionTarget(root, input) {
     }
     return portable(path || '.');
 }
-function selectedOwners(specifications, target) {
+/** Match one normalized target against portable owner coordinates. */
+export function applicationSelectionOwners(specifications, target) {
     if (target === '.')
-        return specifications.map((specification) => specification.source);
+        return [...specifications];
     const exactSource = specifications.find((specification) => target === specification.source || target === dirname(specification.source));
     if (exactSource)
-        return [exactSource.source];
+        return [exactSource];
     if (specifications.some((specification) => target === specification.root)) {
         return specifications
-            .filter((specification) => specification.root === target || specification.root.startsWith(`${target}/`))
-            .map((specification) => specification.source);
+            .filter((specification) => specification.root === target || specification.root.startsWith(`${target}/`));
     }
     const descendants = specifications.filter((specification) => specification.root.startsWith(`${target}/`));
     if (descendants.length)
-        return descendants.map((specification) => specification.source);
+        return descendants;
     const containing = specifications.filter((specification) => specification.root !== '.' && target.startsWith(`${specification.root}/`));
     const longest = Math.max(0, ...containing.map((specification) => specification.root.length));
     return containing
-        .filter((specification) => specification.root.length === longest)
-        .map((specification) => specification.source);
+        .filter((specification) => specification.root.length === longest);
+}
+function selectionDiagnostic(code, error) {
+    return {
+        code,
+        message: error instanceof Error ? error.message : String(error),
+        file: '.',
+        line: 1,
+        column: 1,
+    };
+}
+function compareSource(left, right) {
+    return left.source.localeCompare(right.source);
 }
 function portable(path) {
     return sep === '/' ? path : path.split(sep).join('/');

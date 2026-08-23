@@ -1,6 +1,6 @@
 import ts from 'typescript';
 import { isPackageName } from '../../source/package-name.js';
-import { AUTHORING_SPECIFIER, authoringHelperBinding, calledObjectLiteral as callObject, isAuthoringSpecifier, literalProperty as property, literalPropertyName as propertyName, nodeDiagnostic, plainStringLiteral as stringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
+import { AUTHORING_SPECIFIER, authoredSourceFile, authoringHelperBinding, calledObjectLiteral as callObject, isAuthoringSpecifier, literalProperty as property, literalPropertyName as propertyName, nodeDiagnostic, plainStringLiteral as stringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
 export function compilePackageDefinition(source, text) {
     const parsed = parseModule(source, text, 'definePackage');
     const diagnostics = [...parsed.diagnostics];
@@ -91,7 +91,7 @@ export function matchesPackagePattern(pattern, packageName) {
     return isPackagePattern(pattern) && packageName.startsWith(pattern.slice(0, -1));
 }
 function parseModule(source, text, imported) {
-    const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const file = authoredSourceFile(source, text);
     const diagnostics = syntaxDiagnostics(source, text);
     const helper = authoringHelperBinding(file, imported);
     for (const statement of file.statements) {

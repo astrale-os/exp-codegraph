@@ -10,6 +10,11 @@ import {
   compileApisIsolated,
 } from '../compiler/index.ts'
 import { API_COMPILER_BATCH_CAPACITY } from '../compiler/isolate.ts'
+import {
+  apiCompilerWorkerResourceReport,
+  parseApiCompilerWorkerResourceReport,
+} from '../compiler/isolation-work.optimization.ts'
+import { planDeclarationCompilerUniverses } from '../api/project.ts'
 import { emitJsonSchema } from '../json-schema/index.ts'
 import { apiOutline } from '../viewer/specification/api.tsx'
 
@@ -20,6 +25,17 @@ afterEach(async () => {
 })
 
 describe('native declaration API foundation', () => {
+  it('admits only an exact declaration-worker peak-residency record', () => {
+    expect(
+      parseApiCompilerWorkerResourceReport(Buffer.from(apiCompilerWorkerResourceReport())),
+    ).toBeGreaterThan(0)
+    expect(() =>
+      parseApiCompilerWorkerResourceReport(
+        Buffer.from('{"format":"astrale.codegraph.api-compiler-worker-resource","version":1}'),
+      ),
+    ).toThrow('resource report is invalid')
+  })
+
   it('preserves the authored V2 declaration algebra', async () => {
     const current = await declarationFixture(`
 export type Intrinsics = bigint
@@ -146,6 +162,31 @@ export declare class Client {
       expect.objectContaining({ text: 'load', declaration: `${client?.identity}#load` }),
     )
     expect(result.api?.tokens.some(({ target }) => target?.includes('Identifier'))).toBe(true)
+
+    const semanticOnly = await compileApi({
+      mainFile: current.api,
+      projectRoot: current.root,
+      declarationNavigation: false,
+    })
+    expect(semanticOnly.api?.tokens).toEqual([])
+    expect(semanticOnly.api?.fingerprint).toBe(result.api?.fingerprint)
+    expect(semanticOnly.api?.surface).toEqual(result.api?.surface)
+    expect(semanticOnly.api?.metadata).toEqual(result.api?.metadata)
+    expect(semanticOnly.api?.sources).toEqual(
+      result.api?.sources.map(({ text: _text, ...source }) => source),
+    )
+
+    const diagnosticsOnly = await compileApi({
+      mainFile: current.api,
+      projectRoot: current.root,
+      declarationModel: false,
+      declarationNavigation: false,
+    })
+    expect(diagnosticsOnly).toEqual({
+      ok: true,
+      diagnostics: [],
+      dependencies: result.dependencies,
+    })
   })
 
   it('tracks imported declaration sources and separates semantic from textual revisions', async () => {
@@ -1103,6 +1144,16 @@ export interface Second { readonly shared: Shared }
       ok: false,
       diagnostics: [expect.objectContaining({ code: 'TS2304' })],
     })
+    const diagnosticsOnly = requests.map((request) => ({
+      ...request,
+      declarationModel: false,
+      declarationNavigation: false,
+    }))
+    const diagnosticsIsolated = await Promise.all(
+      diagnosticsOnly.map((request) => compileApi(request)),
+    )
+    expect(await compileApis(diagnosticsOnly)).toEqual(diagnosticsIsolated)
+    expect(await compileApisIsolated(diagnosticsOnly)).toEqual(diagnosticsIsolated)
   })
 
   it('isolates syntax-derived external package projections per entrypoint', async () => {
@@ -1124,6 +1175,34 @@ export interface Second { readonly shared: Shared }
     )
     const requests = [first, second].map((mainFile) => ({ mainFile, projectRoot: root }))
 
+    expect(planDeclarationCompilerUniverses(requests)).toEqual([[0], [1]])
+    expect(await compileApis(requests)).toEqual(
+      await Promise.all(requests.map((request) => compileApi(request))),
+    )
+    const diagnosticsOnly = requests.map((request) => ({
+      ...request,
+      declarationModel: false,
+      declarationNavigation: false,
+    }))
+    const diagnosticsIsolated = await Promise.all(
+      diagnosticsOnly.map((request) => compileApi(request)),
+    )
+    expect(await compileApis(diagnosticsOnly)).toEqual(diagnosticsIsolated)
+    expect(await compileApisIsolated(diagnosticsOnly)).toEqual(diagnosticsIsolated)
+  })
+
+  it('shares disjoint external package projections without arbitrary owner batches', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'astrale-spec-api-compatible-external-'))
+    temporary.push(root)
+    const first = join(root, 'first/api.d.ts')
+    const second = join(root, 'second/api.d.ts')
+    await mkdir(dirname(first), { recursive: true })
+    await mkdir(dirname(second), { recursive: true })
+    await writeFile(first, "import type { A } from 'package-a'\nexport type First = A\n", 'utf8')
+    await writeFile(second, "import type { B } from 'package-b'\nexport type Second = B\n", 'utf8')
+    const requests = [first, second].map((mainFile) => ({ mainFile, projectRoot: root }))
+
+    expect(planDeclarationCompilerUniverses(requests)).toEqual([[0, 1]])
     expect(await compileApis(requests)).toEqual(
       await Promise.all(requests.map((request) => compileApi(request))),
     )

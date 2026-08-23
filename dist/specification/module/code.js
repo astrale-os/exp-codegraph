@@ -1,8 +1,8 @@
 import ts from 'typescript';
-import { AUTHORING_SPECIFIER, authoringHelperBinding, calledObjectLiteral, isAuthoringSpecifier, literalProperty, literalPropertyName, nodeDiagnostic, plainStringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
+import { AUTHORING_SPECIFIER, authoredSourceFile, authoringHelperBinding, calledObjectLiteral, isAuthoringSpecifier, literalProperty, literalPropertyName, nodeDiagnostic, plainStringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
 /** Extract the deliberately small convention-profile code extension without executing it. */
 export function compileCode(source, text) {
-    const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const file = authoredSourceFile(source, text);
     const diagnostics = syntaxDiagnostics(source, text);
     const helper = authoringHelperBinding(file, 'defineCode');
     const assignments = [];

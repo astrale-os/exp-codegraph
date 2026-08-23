@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import type {
   ApplicationAnalysisRefreshOptions,
   ApplicationAnalysisWorkspace,
 } from '../application/analysis/index.ts'
 import type { AnalysisTelemetryEvent } from '../analysis/index.ts'
+import type { RepositorySourceService } from '../repository/index.ts'
 import type {
   ApplicationCheckpointContent,
   ApplicationCheckpointExpectation,
@@ -21,13 +22,14 @@ import {
   materializeApplicationObservations,
 } from '../application/observation/index.ts'
 import {
+  SPECIFICATION_VALIDITY_PROFILE_ID,
   createModuleLayoutConformanceProfile,
   createModuleSchemaConformanceProfile,
   createModuleTestEvidenceConformanceProfile,
   createSpecificationValidityConformanceProfile,
   qualifySpecification,
 } from '../conformance/index.ts'
-import { inventoryRepository } from '../repository/index.ts'
+import { inventoryRepository, refreshRepositoryStatistics } from '../repository/index.ts'
 import {
   compileSpecificationSnapshot,
   compileSpecificationSnapshots,
@@ -90,6 +92,52 @@ describe('headless TypeSpec V2 application', () => {
     }
   })
 
+  it('projects repository statistics and declaration navigation only when requested', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/application-capabilities', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value {}\n',
+    })
+    fixtures.push(current)
+    const compile = vi.fn(compileSpecificationSnapshots)
+    const statistics = vi.fn(refreshRepositoryStatistics)
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [], compile, statistics },
+    )
+    try {
+      const check = await service.refresh({ requestedCapabilities: [] })
+      expect(check.snapshot.capabilities).toEqual([])
+      expect(check.snapshot.statistics).toBeUndefined()
+      expect(check.snapshot.specifications[0]?.module.api?.model).toBeUndefined()
+      expect(check.timing.statisticsMs).toBe(0)
+      expect(statistics).not.toHaveBeenCalled()
+      expect(compile.mock.calls[0]?.[2]).toMatchObject({
+        includeDeclarationModels: false,
+        includeDeclarationNavigation: false,
+      })
+
+      const complete = await service.refresh()
+      expect(complete.snapshot.capabilities).toEqual([
+        'declaration-models',
+        'declaration-navigation',
+        'repository-statistics',
+      ])
+      expect(complete.snapshot.statistics?.summary.files).toBeGreaterThan(0)
+      expect(complete.snapshot.specifications[0]?.module.api?.model?.tokens.length).toBeGreaterThan(0)
+      expect(statistics).toHaveBeenCalledTimes(1)
+      expect(complete.snapshot.id).not.toBe(check.snapshot.id)
+      expect(compile.mock.calls[1]?.[2]).toMatchObject({
+        includeDeclarationModels: true,
+        includeDeclarationNavigation: true,
+      })
+      expect(complete.snapshot.specifications[0]?.diagnostics).toEqual(
+        check.snapshot.specifications[0]?.diagnostics,
+      )
+    } finally {
+      await service.dispose()
+    }
+  })
+
   it('reports diagnostic-only lifecycle phases around the actual headless work', async () => {
     const current = await fixture({
       'package.json': JSON.stringify({ name: '@fixture/application-progress', type: 'module' }),
@@ -117,6 +165,10 @@ describe('headless TypeSpec V2 application', () => {
       ['application.discovery', 'started'],
       ['application.discovery', 'completed'],
       ['application.compile', 'started'],
+      ['application.compile.inventory', 'completed'],
+      ['application.compile.declarations', 'completed'],
+      ['application.compile.typescript', 'completed'],
+      ['application.compile.snapshots', 'completed'],
       ['application.compile', 'completed'],
       ['application.statistics', 'started'],
       ['application.statistics', 'completed'],
@@ -125,7 +177,7 @@ describe('headless TypeSpec V2 application', () => {
       ['application.qualification', 'started'],
       ['application.qualification', 'completed'],
     ])
-    expect(events.filter((event) => event.durationNs !== undefined).length).toBe(6)
+    expect(events.filter((event) => event.durationNs !== undefined).length).toBe(10)
   })
 
   it('reports the exact advisory checkpoint publication failure', async () => {
@@ -238,6 +290,7 @@ describe('headless TypeSpec V2 application', () => {
             load: async () => ({
               ok: true,
               exact,
+              request: true,
               content: {
                 ...published.content,
                 specifications: published.content.specifications.map((specification) => ({
@@ -264,6 +317,104 @@ describe('headless TypeSpec V2 application', () => {
       }
     },
   )
+
+  it('reuses compatible specification-local qualifications across checkpoint request shapes', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-qualification-reuse', type: 'module' }),
+      'base/.spec/api.d.ts': 'export interface Base { readonly id: string }\n',
+      'consumer/.spec/api.d.ts': `import type { Base } from '../../base/.spec/api.js'
+export interface Consumer { readonly base: Base }
+`,
+      'consumer/.spec/layout.ts': `import { defineLayout } from '@astrale-os/codegraph/authoring'
+export default defineLayout([])
+`,
+    })
+    fixtures.push(current)
+    let published:
+      | {
+          readonly expectation: ApplicationCheckpointExpectation
+          readonly content: ApplicationCheckpointContent
+        }
+      | undefined
+    const profiles = [createSpecificationValidityConformanceProfile()]
+    const first = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles,
+        checkpoint: {
+          load: async () => ({ ok: false, reason: 'missing' }),
+          publish: async (expectation, content) => {
+            published = { expectation, content }
+          },
+        },
+      },
+    )
+    await first.refresh({
+      requestedCapabilities: [],
+      qualify: true,
+      compilerAnalysis: false,
+      requestedProfiles: [SPECIFICATION_VALIDITY_PROFILE_ID],
+    })
+    await first.dispose()
+    if (!published) throw new Error('Fixture checkpoint was not published.')
+
+    await current.write(
+      'consumer/.spec/layout.ts',
+      `import { defineLayout } from '@astrale-os/codegraph/authoring'
+// private owner documentation edit
+export default defineLayout([])
+`,
+    )
+    const events: AnalysisTelemetryEvent[] = []
+    const compile = vi.fn(compileSpecificationSnapshots)
+    const second = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root, telemetry: (event) => events.push(event) },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles,
+        compile,
+        checkpoint: {
+          load: async () => ({
+            ok: true,
+            exact: false,
+            request: false,
+            content: published!.content,
+          }),
+          publish: async () => {},
+        },
+      },
+    )
+    try {
+      const refreshed = await second.refresh({
+        requestedCapabilities: [],
+        focused: true,
+        select: ['consumer'],
+        qualify: true,
+        compilerAnalysis: false,
+        requestedProfiles: [SPECIFICATION_VALIDITY_PROFILE_ID],
+      })
+      expect(refreshed.snapshot.specifications.map((value) => value.source)).toEqual([
+        'base/.spec/api.d.ts',
+        'consumer/.spec/api.d.ts',
+      ])
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(
+        compile.mock.calls[0]?.[1].map((directory) =>
+          join(basename(dirname(directory)), basename(directory)),
+        ),
+      ).toEqual(['consumer/.spec'])
+      expect(
+        events.find(
+          (event) =>
+            event.phase === 'application.qualification' &&
+            event.metrics?.status === 'completed',
+        )?.metrics,
+      ).toMatchObject({ specifications: 1, reusedSpecifications: 1 })
+    } finally {
+      await second.dispose()
+    }
+  })
 
   it('rejects ambiguous implementation roots and entrypoints without repository exceptions', () => {
     const common = {
@@ -432,6 +583,43 @@ export interface Alpha { readonly value: Shared; readonly changed: true }
     }
   })
 
+  it('retains a focused request corpus for a non-normative implementation edit', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/focused-corpus-retention', type: 'module' }),
+      'alpha/.spec/api.d.ts': 'export interface Alpha { readonly id: string }\n',
+      'alpha/src/index.ts': 'export const alpha = true\n',
+      'beta/.spec/api.d.ts': 'export interface Beta { readonly id: string }\n',
+      'beta/src/index.ts': 'export const beta = true\n',
+    })
+    fixtures.push(current)
+    const compile = vi.fn(compileSpecificationSnapshots)
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [], compile },
+    )
+    try {
+      const baseline = await service.refresh({ focused: true, select: ['alpha'] })
+      expect(baseline.snapshot.specifications.map((value) => value.source)).toEqual([
+        'alpha/.spec/api.d.ts',
+      ])
+      expect(compile).toHaveBeenCalledTimes(1)
+
+      await current.write('alpha/src/index.ts', 'export const alpha = false\n')
+      const edited = await service.refresh({
+        focused: true,
+        select: ['alpha'],
+        changed: [join(current.root, 'alpha/src/index.ts')],
+      })
+      expect(edited.snapshot.specifications.map((value) => value.source)).toEqual([
+        'alpha/.spec/api.d.ts',
+      ])
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(edited.changes.specifications.refreshed).toEqual(['alpha/.spec/api.d.ts'])
+    } finally {
+      await service.dispose()
+    }
+  })
+
   it('expands focused owners through support and optional dependent closures', async () => {
     const current = await fixture({
       'package.json': JSON.stringify({ name: '@fixture/application-selection', type: 'module' }),
@@ -476,6 +664,109 @@ export interface Consumer { readonly base: Base }
       })
     } finally {
       await service.dispose()
+    }
+  })
+
+  it('plans a cold focused closure before compilation and equals a full-corpus projection', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/application-planned-cold', type: 'module' }),
+      'feature/zbase/.spec/api.d.ts': 'export interface Base { readonly id: string }\n',
+      'feature/consumer/.spec/api.d.ts': `import type { Base } from '../../zbase/.spec/api.js'
+export interface Consumer { readonly base: Base }
+`,
+      'unrelated/.spec/api.d.ts': 'export interface Unrelated { readonly value: number }\n',
+    })
+    fixtures.push(current)
+    const compile = vi.fn(compileSpecificationSnapshots)
+    const planned = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [], compile },
+    )
+    const canonical = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [] },
+    )
+    try {
+      const optimized = await planned.refresh({ focused: true, select: ['feature'] })
+      await canonical.refresh()
+      const projected = await canonical.refresh({ focused: true, select: ['feature'] })
+      expect(optimized.snapshot).toEqual(projected.snapshot)
+      expect(
+        compile.mock.calls
+          .flatMap((call) => call[1])
+          .map((directory) => join(basename(dirname(directory)), basename(directory)))
+          .sort(),
+      ).toEqual(['consumer/.spec', 'zbase/.spec'])
+      expect(compile).toHaveBeenCalledTimes(1)
+      expect(optimized.timing.compileMs).toBeGreaterThan(0)
+      expect(projected.timing.compileMs).toBe(0)
+    } finally {
+      await Promise.all([planned.dispose(), canonical.dispose()])
+    }
+  })
+
+  it('falls back observably to the exact checker frontier when dependency preplanning is unavailable', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/application-plan-fallback', type: 'module' }),
+      'base/.spec/api.d.ts': 'export interface Base { readonly id: string }\n',
+      'consumer/.spec/api.d.ts': `import type { Base } from '../../base/.spec/api.js'
+export interface Consumer { readonly base: Base }
+`,
+      'unrelated/.spec/api.d.ts': 'export interface Unrelated {}\n',
+    })
+    fixtures.push(current)
+    const events: AnalysisTelemetryEvent[] = []
+    const compile = vi.fn(compileSpecificationSnapshots)
+    const optimized = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root, telemetry: (event) => events.push(event) },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        compile,
+        sources: (_root, inventory) => ({
+          inventory: inventory.revision,
+          async read(request) {
+            return {
+              status: 'unavailable',
+              inventory: inventory.revision,
+              ...('source' in request && request.source ? { source: request.source } : {}),
+              ...('path' in request && request.path ? { path: request.path } : {}),
+              reason: 'unreadable',
+              message: 'fixture preplan unavailable',
+            }
+          },
+        }) satisfies RepositorySourceService,
+      },
+    )
+    const canonical = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      { analysis: emptyAnalysisWorkspace(), profiles: [] },
+    )
+    try {
+      const actual = await optimized.refresh({
+        requestedCapabilities: [],
+        focused: true,
+        select: ['consumer'],
+      })
+      await canonical.refresh({ requestedCapabilities: [] })
+      const expected = await canonical.refresh({
+        requestedCapabilities: [],
+        focused: true,
+        select: ['consumer'],
+      })
+      expect(actual.snapshot).toEqual(expected.snapshot)
+      expect(compile).toHaveBeenCalledTimes(2)
+      expect(events.find((event) => event.phase === 'application.compile.plan')?.metrics).toMatchObject({
+        outcome: 'fallback',
+        compilerWaves: 2,
+        fallbackSpecifications: 1,
+        unavailableSources: 1,
+      })
+      expect(
+        events.find((event) => event.phase === 'application.compile.plan')?.durationNs,
+      ).toBeGreaterThan(0)
+    } finally {
+      await Promise.all([optimized.dispose(), canonical.dispose()])
     }
   })
 

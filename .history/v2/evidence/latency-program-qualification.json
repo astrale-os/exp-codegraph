@@ -1,0 +1,588 @@
+{
+  "format": "astrale.codegraph.latency-program-qualification",
+  "version": 1,
+  "status": "partial",
+  "recordedAt": "2026-08-23",
+  "subject": {
+    "codegraphBaseRevision": "16aca70db070aac335d0aa4ef9c07eafea91ee74",
+    "codegraphCandidate": "dirty-worktree",
+    "fullMatrixKernelRevision": "b2221a4e1991187547b38bac9fde7abc05970d69",
+    "node": "v24.18.1",
+    "platform": "darwin",
+    "architecture": "arm64",
+    "producerFingerprint": "@astrale-os/codegraph:codegraph-runtime-tree/1:sha256:856398782d51059890493d6fa38663d7cbefc90abdf1d1ece6d96279ac8e953d",
+    "harnessSha256": "319ce9bfda3f9f142e9da3f639b71e04780e47f8e326b99605c5968be5116cb0",
+    "cleanSourceProof": "source-proof:4e441d38a0668bdab7ac6f462aa4f710b11b66fca30f0a5b888a649fab492e6e"
+  },
+  "oracle": {
+    "contract": "optimized(S, engine, request) === canonicalSlow(S, engine, request)",
+    "implementation": "one isolated declaration Program and one isolated module Program per required owner",
+    "requiredOwners": 169,
+    "declarationPrograms": 169,
+    "modulePrograms": 169,
+    "canonicalC3ReceiptSha256": "b41f2f783daa3809d3f0a73fff35ac3fbc9b47e70725614809e025171fa3b06f",
+    "canonicalC3WallMilliseconds": 176729.325042
+  },
+  "classes": {
+    "C0": {
+      "status": "qualified",
+      "targetMilliseconds": 1000,
+      "actualMilliseconds": 353.161584,
+      "optimizedReceiptSha256": "2e0f44bb6fe4a1542a764675adfe24fce7319c5116cd452e17186f7dd660b922",
+      "verificationSha256": "dde915f2ef8ce5094750810d74dd7f47c00a1f3b64178226d562c7cc7fababc0",
+      "causalEvidence": {
+        "replayOutcome": "hit",
+        "canonicalApplicationWork": false
+      }
+    },
+    "C1": {
+      "status": "qualified",
+      "targetMilliseconds": 3000,
+      "actualMilliseconds": 255.15875,
+      "optimizedReceiptSha256": "bc7c1f779050dc4b2fc31c08eb5a8398b450978beae1970b23f73457184c4947",
+      "verificationSha256": "7455464ca080a3faf056850ac95e4bd1e039942c43f4529959928921a55d05bb",
+      "causalEvidence": {
+        "ci": true,
+        "localCacheFilesAtStart": 0,
+        "semanticPackOutcome": "hit",
+        "semanticPackMutated": false,
+        "canonicalApplicationWork": false
+      }
+    },
+    "C2": {
+      "status": "qualified",
+      "targetMilliseconds": 3000,
+      "actualMilliseconds": 2594.0145,
+      "canonicalMilliseconds": 287105.503292,
+      "speedup": 110.68,
+      "canonicalReceiptSha256": "1109347e9ad3286f21cd6923de806aabf79048c0716ea1465176a6a0f059911f",
+      "optimizedReceiptSha256": "251c39b631df89ca7abe4a29de1b7ff460dad8ca742e6ab2f6c932a1eb6d4321",
+      "verificationSha256": "1eabd21747365eb6ef88339c3a5e095320d26e3cf7473e35135996f8913e7332",
+      "causalEvidence": {
+        "changedPath": "backend/.spec/layout.ts",
+        "compiledOwners": 1,
+        "retainedOwners": 360,
+        "qualifiedOwners": 1,
+        "reusedSelectedOwners": 168,
+        "checkpointReadOutcome": "corpus-hit",
+        "checkpointPublicationOutcome": "published"
+      }
+    },
+    "C3": {
+      "status": "failed",
+      "semanticEquality": true,
+      "targetMilliseconds": 3000,
+      "actualMilliseconds": 5327.531917,
+      "canonicalMilliseconds": 176729.325042,
+      "speedup": 33.173,
+      "optimizedReceiptSha256": "fbc2cf6317284d9b617224225bd4901cd167332e532d7939d69ef96b0a543ce6",
+      "verificationSha256": "fc09eafeac837ee9f0931269afe1af9eeeb54e2b7fbfcfe18acb7aa74f18acb6",
+      "violations": ["wall 5327.53ms is not below 3000ms"],
+      "causalEvidence": {
+        "primaryOwners": 29,
+        "supportOwners": 140,
+        "compiledOwners": 169,
+        "inventoryMilliseconds": 621.877167,
+        "declarationMilliseconds": 2008.56375,
+        "moduleTypeScriptMilliseconds": 906.979583,
+        "snapshotMilliseconds": 951.322666,
+        "compileMilliseconds": 4345.253083,
+        "analysisMilliseconds": 281.94925,
+        "qualificationMilliseconds": 23.680292,
+        "maximumRssMiB": 1023.546875
+      }
+    }
+  },
+  "latestOriginAudit": {
+    "codegraph": {
+      "originMain": "16aca70db070aac335d0aa4ef9c07eafea91ee74",
+      "candidateBaseEqualsOriginMain": true,
+      "strictlyAheadRemoteBranches": [],
+      "divergedRemoteBranches": [
+        "origin/docs/cg-public-api-prd",
+        "origin/experiment/affected-shards-v2",
+        "origin/experiment/compact-body-v1",
+        "origin/feature/demand-driven-analysis",
+        "origin/fix/public-descriptor-compiler"
+      ],
+      "disposition": "Every diverged branch is at least 18 origin/main commits behind; current main already contains the accepted demand-driven lineage."
+    },
+    "kernel": {
+      "originMain": "bfe6be8e7964f3d9d8b0b9d932802bd4d1cd740b",
+      "holdoutEqualsOriginMain": true,
+      "strictlyAheadRemoteBranches": [
+        "origin/refactor/dsl-v1-redesign",
+        "origin/release-please--branches--main"
+      ],
+      "strictlyAheadByCommits": {
+        "origin/refactor/dsl-v1-redesign": 16,
+        "origin/release-please--branches--main": 1
+      },
+      "disposition": "Kernel origin/main and the governed holdout remain identical, but two remote branches contain origin/main plus additional commits. Graduation cannot claim that no Kernel branch is ahead."
+    }
+  },
+  "maintainability": {
+    "status": "verified",
+    "receiptSha256": "69caaa8ee1897932e715e7fbbdd168b2c5712057bce1c6a9899db5886fb72f03",
+    "recomputedPredicates": 12,
+    "files": 390,
+    "directories": 81,
+    "physicalLines": 71213,
+    "baselinePhysicalLines": 65484,
+    "maximumPhysicalLineDelta": 5750,
+    "actualPhysicalLineDelta": 5729,
+    "relativeImportCycles": 0,
+    "filesOver250Lines": 74,
+    "filesOver1000Lines": 8,
+    "optimizationDependencyGate": "Every correctness-to-optimization import is an exact budget allowlist pair and every optimization file has a declared owner; unratified edges fail qualification.",
+    "dependencyInversionDisposition": "No mutable registry or composition-root injection was added for private owner-local optimization helpers because it would increase indirection and startup work without changing semantic authority."
+  },
+  "semanticCatalogPack": {
+    "status": "manifest-v2-plan-qualified",
+    "suite": "__tests__/cli-acceleration.test.ts",
+    "evidence": [
+      "CLI-SEMANTIC-PACK-CATALOG-PROJECTION",
+      "CLI-SEMANTIC-PACK-APPLICATION-FALLBACK",
+      "CLI-SEMANTIC-PACK-PUBLICATION-FAILURE"
+    ],
+    "sourceProofBound": true,
+    "producerBound": true,
+    "repositoryBound": true,
+    "familyConfigurationBound": true,
+    "readOnlySuppliedPack": true,
+    "emptyLocalCache": true,
+    "ciAdmission": true,
+    "applicationConstructionsOnCatalogHit": 0,
+    "terminalAndExitParity": true,
+    "corruptCatalogOutcome": "selected request artifact-corrupt canonical fallback; exact result remains admissible",
+    "corruptResultOutcome": "exact request artifact-corrupt fallback; selected catalog remains admissible",
+    "publicationFailureOutcome": "attributable publication-failed receipt with canonical transcript and exit parity",
+    "atomicManifestStatus": "exact result and catalog share one family-keyed atomic manifest; each request admits and reads only its required artifact closure",
+    "semanticPlan": {
+      "version": 1,
+      "requestedCapabilities": [],
+      "requestedProfiles": [
+        "contract.specification.validity",
+        "contract.module.layout",
+        "contract.module.schema-catalog",
+        "contract.module.test-evidence"
+      ],
+      "compilerAnalysis": false,
+      "schemaRoots": []
+    },
+    "planDriftOutcome": "manifest-incompatible before result, catalog, or application artifact loading",
+    "optionalAnalysisDisposition": "not requested by the bound cg check plan and therefore absent rather than eagerly serialized",
+    "disposition": "The bounded check-pack closure is implemented and focused-qualified; the real 100-process exact-Kernel C1 series remains G9."
+  },
+  "c1SeriesQualificationGate": {
+    "status": "implemented-focused-corpus-execution-pending",
+    "receiptVersion": 3,
+    "constitutionSha256": "d79ee171d3ff66c15f8b2b2bd580439b6709da2cd1423f590a823d4b1fee994c",
+    "repositoryRevision": "bfe6be8e7964f3d9d8b0b9d932802bd4d1cd740b",
+    "verifier": "qualification/v2/performance/verify-series.ts",
+    "suite": "__tests__/performance-series-qualification.test.ts",
+    "evidence": "CHECK-PERFORMANCE-SERIES-ANTI-GAMING",
+    "requiredSamples": 100,
+    "minimumRunnerInstances": 2,
+    "minimumRequestShapes": 4,
+    "requestScheduling": "balanced and interleaved",
+    "requiredWorkloads": {
+      "whole": "no selector, at least 361 canonical owners, exit 1",
+      "leaf": "core/auth/trust, at most 25 canonical owners, exit 0",
+      "dependencyHeavy": "backend, at least 100 canonical owners, exit 1",
+      "multiSelect": "protocol/codecs plus server/lifecycle, at least two canonical owners, exit 0",
+      "valid": "leaf and multi-select canonical exits 0",
+      "diagnostic": "whole and dependency-heavy canonical exits 1"
+    },
+    "everySampleTargetMilliseconds": 3000,
+    "p95TargetMilliseconds": 2500,
+    "canonicalOracle": "one receipt-v3 owner-isolated C3 oracle per exact constituted request",
+    "boundProcessEvidence": [
+      "processId",
+      "startedAt",
+      "runnerInstance",
+      "hardware",
+      "runId",
+      "sampleIndex"
+    ],
+    "focusedNegativeControls": [
+      "dependency-heavy owner count weakened and rejected",
+      "shape-equivalent leaf selector relabeled outside constitution and rejected",
+      "causal shard byte and load counters omitted and rejected",
+      "reused process evidence rejected"
+    ],
+    "disposition": "The gate is qualified synthetically; no 100-process Kernel result is claimed."
+  },
+  "performanceConstitution": {
+    "status": "ratified-execution-pending",
+    "format": "astrale.codegraph.performance-constitution",
+    "version": 1,
+    "lock": "qualification/v2/performance/constitution.lock.json",
+    "sha256": "d79ee171d3ff66c15f8b2b2bd580439b6709da2cd1423f590a823d4b1fee994c",
+    "kernelRevision": "bfe6be8e7964f3d9d8b0b9d932802bd4d1cd740b",
+    "workloads": 4,
+    "mutations": 17,
+    "failures": 9,
+    "requiredCounters": 18,
+    "producerAndVerifierRequireLock": true,
+    "disposition": "Exact visible workloads and matrices are frozen; hidden holdouts and real matrix execution remain G9 requirements."
+  },
+  "workCounterQualification": {
+    "status": "focused-qualified",
+    "receiptVersion": 3,
+    "derivation": "The qualification runner derives a complete counter vector from raw application telemetry and CLI acceleration events; the receipt verifier recomputes it before class predicates.",
+    "counters": [
+      "bytesTraversed",
+      "bytesRead",
+      "bytesHashed",
+      "bytesDecoded",
+      "bytesWritten",
+      "compilerSessions",
+      "compilerPrograms",
+      "compiledOwners",
+      "observedOwners",
+      "qualifiedOwners",
+      "loadedShards",
+      "writtenShards",
+      "fallbacks",
+      "timedPhases"
+    ],
+    "rawEvidence": [
+      "Git clean-tree or canonical-fallback inventory bytes",
+      "actual declaration worker sessions, Programs, retries, and planner fallbacks",
+      "actual module TypeScript Program construction",
+      "application compile, observation, qualification, and checkpoint projection work",
+      "workspace-result, catalog, and semantic-pack codec bytes and shard counts"
+    ],
+    "focusedSuites": [
+      "__tests__/application-node-inventory.test.ts",
+      "__tests__/semantic-pack.test.ts",
+      "__tests__/specification-snapshot.test.ts",
+      "__tests__/performance-series-qualification.test.ts"
+    ],
+    "resourceEvidence": "wall, user CPU, system CPU, parent peak RSS, opt-in native peak RSS, and exact per-declaration-worker Node peak RSS",
+    "processTreeGate": "The verifier requires processTreeUpperBound = parentPeak + maximum reported declaration-operation sum of worker peaks + nativePeak and gates that conservative value. The sum may overestimate non-overlapping maxima but cannot underestimate concurrent residency.",
+    "open": "Real exact-SHA Kernel execution remains G9; no Kernel run was performed for this resource-constrained slice."
+  },
+  "selectivePackStoreFoundation": {
+    "status": "qualified-focused",
+    "owner": "workspace/checkpoint",
+    "suite": "__tests__/workspace-checkpoint.test.ts",
+    "evidence": "CHECKPOINT-SELECTIVE-ARTIFACT-ADMISSION",
+    "manifestOnly": true,
+    "requestedArtifactDigestsVerified": true,
+    "omittedArtifactsRead": 0,
+    "omittedCorruptArtifactOutcome": "selected closure admitted",
+    "selectedCorruptArtifactOutcome": "artifact-corrupt",
+    "missingSelectedArtifactOutcome": "artifact-missing",
+    "eagerCompatibility": true,
+    "disposition": "The generic store supports manifest-first application projection; complete portable optional-analysis closure remains open."
+  },
+  "portableApplicationPack": {
+    "status": "qualified-focused-request-closure-projection",
+    "rootManifest": "semantic check-pack commits the canonical application manifest scope and sha256",
+    "sourceProofBound": true,
+    "producerBound": true,
+    "applicationManifestDigestBound": true,
+    "readOnlyConsumption": true,
+    "callerStoreOwnershipRetained": true,
+    "wrongManifestCommitmentOutcome": "incompatible",
+    "selectedCompactFaultOutcome": "application corpus-hit with canonical terminal and exit parity",
+    "compiledSpecificationsOnPortableFallback": 0,
+    "requestClosureArtifactProjection": true,
+    "omittedOwnerArtifactsRead": 0,
+    "omittedCorruptOwnerOutcome": "selected owner plus support dependency admitted",
+    "forgedSelectedSpecificationIdentityOutcome": "corrupt",
+    "capabilityPlanBound": true,
+    "causalWorkCounters": [
+      "projection",
+      "artifacts",
+      "decodedBytes",
+      "specifications",
+      "apiPayloads"
+    ],
+    "publicationOnReadOnlyConsumption": false,
+    "suites": [
+      {
+        "file": "__tests__/application-checkpoint.test.ts",
+        "tests": 11,
+        "evidence": "APPLICATION-PORTABLE-CHECKPOINT-ADMISSION, APPLICATION-CHECKPOINT-REQUEST-PROJECTION"
+      },
+      {
+        "file": "__tests__/cli-acceleration.test.ts",
+        "tests": 2,
+        "evidence": "CLI-SEMANTIC-PACK-CATALOG-PROJECTION",
+        "law": "CLI-SEMANTIC-PACK-APPLICATION-FALLBACK"
+      }
+    ],
+    "physicalOwners": {
+      "cliCheckpointLines": 649,
+      "semanticPackModelLines": 161,
+      "semanticPackStoreLines": 223,
+      "nodeCheckpointCompositionLines": 98,
+      "applicationCheckpointProjectionOptimizationLines": 60
+    },
+    "remaining": [
+      "portable optional analysis shards",
+      "complete profile configuration and capability admission matrix",
+      "concurrency interruption qualification"
+    ],
+    "disposition": "The application pack is portable, exact, and request-local for focused specification/API-payload hydration; optional analysis and the complete profile/configuration matrix still prevent G6 graduation."
+  },
+  "semanticPackRootFaultMatrix": {
+    "status": "qualified-focused",
+    "suite": "__tests__/semantic-pack.test.ts",
+    "tests": 2,
+    "evidence": "CLI-SEMANTIC-PACK-IDENTITY-ATOMICITY",
+    "identityBindings": [
+      "sourceProof",
+      "producerFingerprint",
+      "repository",
+      "requestFamily",
+      "exactRequest"
+    ],
+    "applicationReferenceValidation": true,
+    "concurrentPublicationOutcome": "one internally consistent result artifact",
+    "interruptedReplacementOutcome": "prior complete root retained",
+    "compactMissRetainsApplicationReference": true,
+    "disposition": "Root admission and publication are fault-qualified; portable optional analysis remains open."
+  },
+  "sourceProofMutationFallback": {
+    "status": "qualified-focused",
+    "suite": "__tests__/source-proof.test.ts",
+    "evidence": "SOURCE-PROOF-MUTATION-FALLBACK",
+    "dirtySourceBytes": 2097152,
+    "admissionAttempts": 2,
+    "mutation": "metadata-only alternating truncation while admission reads",
+    "outcome": "proof-unstable",
+    "retryable": true,
+    "admittedMixedProof": false,
+    "disposition": "The final G5 mutation holdout now fails visibly to the complete-scanner fallback path."
+  },
+  "observabilityBoundaryGate": {
+    "status": "qualified-focused",
+    "suite": "__tests__/observability-boundaries.test.ts",
+    "tests": 2,
+    "governedBoundaries": [
+      "analysis protocol",
+      "SourceProof",
+      "semantic pack",
+      "compiler cache/coalescing/isolation/worker",
+      "workspace checkpoint"
+    ],
+    "emptyCatchRejected": true,
+    "erasedErrorBindingRejected": true,
+    "unexplainedBareCatchRejected": true,
+    "stableFallbackVocabularyPinned": true,
+    "disposition": "New or newly silent catches at performance-critical boundaries fail focused architecture qualification; deliberately advisory catches must retain an explicit reviewable rationale."
+  },
+  "latestKernelCheckAudit": {
+    "revision": "bfe6be8e7964f3d9d8b0b9d932802bd4d1cd740b",
+    "status": "optimized-target-met-canonical-pair-pending",
+    "request": [
+      "check",
+      "<kernel-root>",
+      "--select",
+      "backend",
+      "--require-complete-layout",
+      "--quiet",
+      "--no-cache"
+    ],
+    "targetMilliseconds": 3000,
+    "sourceProof": "source-proof:525b0687f408efd888c7f1afbf7121126f3ee76a5e0fc5c43975637119cd243e",
+    "inventory": "source-manifest:ebfd848d91415a29a7c6b7f054a932338e07a9bb8e845bb2ed87ce75db468c3e",
+    "exitCode": 1,
+    "diagnostics": 36,
+    "stdoutSha256": "4f1903c0cdda62531a06d576ef92e2de42318782d128e1c51d4ebb65aacbaf51",
+    "stderrSha256": "ac5e88130decc589394cf09da6e91f5bf582080a27e2efe149e92eaebbbb8fbc",
+    "samples": [
+      {
+        "receiptSha256": "0e6c52eaf4aacec1bd7f72fc11ffe6b7ed76d4076899d8f4ae6ede2b5f981f87",
+        "wallMilliseconds": 2755.022917,
+        "maximumRssMiB": 616.734375,
+        "inventoryMilliseconds": 248.855917,
+        "compileMilliseconds": 2231.732125,
+        "analysisMilliseconds": 201.155083,
+        "qualificationMilliseconds": 22.517167
+      },
+      {
+        "receiptSha256": "c2a92f4b3b3c58a07f276355ac6091e85722e0af99745a7cd941100e6ef2fccc",
+        "wallMilliseconds": 2727.881584,
+        "maximumRssMiB": 609.640625,
+        "inventoryMilliseconds": 258.755333,
+        "compileMilliseconds": 2220.885792,
+        "analysisMilliseconds": 178.975833,
+        "qualificationMilliseconds": 22.620875
+      }
+    ],
+    "causalEvidence": {
+      "sourceProofOutcome": "clean-git-tree",
+      "ignoredCandidatesBeforeDirectoryBounding": 24581,
+      "ignoredCandidatesAfterDirectoryBounding": 31,
+      "proofIdentityUnchanged": true,
+      "declarationAndModulePrograms": "minimum-compatible-stage-local",
+      "typescriptAndSnapshotPhasesOverlap": true,
+      "compiledOwners": 169,
+      "primaryOwners": 29,
+      "supportOwners": 140,
+      "statisticsRequested": false,
+      "nativeCompilerStarted": false
+    },
+    "disposition": "Both self-hashed optimized receipts pass the wall and runner-memory targets with identical semantic output. Graduation still requires a latest-source owner-isolated canonical receipt; it was not run under the active resource-conservation constraint."
+  },
+  "latestKernelResourceAudit": {
+    "revision": "bfe6be8e7964f3d9d8b0b9d932802bd4d1cd740b",
+    "status": "failed-resource-gate",
+    "failedReceiptSha256": "076cc2a485c4184ff94b9a5c0cd483e897e1f85168f1f47a789b9cd7fcd05872",
+    "failure": "Native analysis process exited signal=SIGKILL",
+    "stoppedAfterMilliseconds": 222447.057167,
+    "serialProjectProbe": {
+      "project": "core/schema/tsconfig.json",
+      "moduleOwners": 16,
+      "operatorStoppedAfterMilliseconds": 161290,
+      "residentKiBBeforeStop": 2466160,
+      "receiptPublished": false
+    },
+    "singleOwnerProbe": {
+      "owner": "core/schema/.spec/api.d.ts",
+      "status": "hard-timeout",
+      "timeoutMilliseconds": 10000,
+      "userCpuSeconds": 35.37
+    },
+    "compilerControl": {
+      "command": "tsgo --listFilesOnly -p core/schema/tsconfig.json",
+      "sourceFiles": 660,
+      "wallMilliseconds": 820
+    },
+    "qualificationWatchdog": {
+      "maximumNativeResidentMiB": 768,
+      "samplingMilliseconds": 100,
+      "focusedTest": "passed"
+    },
+    "normalizedCompositionFollowup": {
+      "candidateNativeSha256": "6d9dcb60a6049444f9baaecb2bf5fe9deb03984ba18e83b2a1ff72e537b43c96",
+      "logicalModuleEquivalence": true,
+      "physicalIdentityEquivalence": true,
+      "fixturePhysicalDigest": "9d3160eb32c34fae943062b7fa64f6986c2b9e02e9c56aee4ae426287a24add9",
+      "latestKernelDirectProbe": {
+        "owner": "core/schema",
+        "status": "hard-timeout",
+        "timeoutMilliseconds": 10000,
+        "goSchedulerThreads": 1,
+        "goMemoryLimitMiB": 640,
+        "programSources": 515,
+        "compilerOpenMilliseconds": 155.235,
+        "sourceInventoryMilliseconds": 2.179,
+        "exportEnumerationMilliseconds": 149.296,
+        "exports": 63,
+        "initialDeclarations": 61,
+        "processedDeclarations": 128,
+        "pendingDeclarations": 123,
+        "failingPhase": "transitive-declaration-normalization"
+      },
+      "disposition": "Repeated schema-v1 closure materialization is removed without changing identities; the remaining latest-Kernel leaf is declaration normalization, not Program construction, export enumeration, or transaction representation."
+    },
+    "disposition": "The one-project lifecycle prevents aggregate residency but does not repair the pathological legacy core/schema surface projection. No V1, canonical, or further unguarded corpus run was launched.",
+    "candidateNativeSha256": "47086c29645751224552f0989d4b8b35207bda753dff6554538d485bdefb3aa5"
+  },
+  "normalizedVerifyFaultMatrix": {
+    "status": "qualified-focused",
+    "reader": {
+      "suite": "__tests__/typescript-normalized-facts.test.ts",
+      "tests": 4,
+      "evidence": [
+        "TYPESCRIPT-MODULE-DECLARATION-HYDRATION",
+        "TYPESCRIPT-MODULE-DECLARATION-MISSING",
+        "TYPESCRIPT-MODULE-DECLARATION-IDENTITY",
+        "TYPESCRIPT-MODULE-DECLARATION-PHYSICAL-FAULTS"
+      ],
+      "covers": ["missing", "reordered", "corrupt", "duplicate", "identity-mismatch"]
+    },
+    "protocol": {
+      "suite": "__tests__/analysis-v2.test.ts",
+      "focusedTests": 5,
+      "evidence": [
+        "CODEGRAPH-PROTOCOL-BOUNDED-FRAMES",
+        "CODEGRAPH-PROTOCOL-SEMANTIC-PAYLOAD-LIMIT",
+        "CODEGRAPH-PROTOCOL-CANCELLATION",
+        "CODEGRAPH-PROTOCOL-COMMIT-LATE",
+        "TYPESCRIPT-ATOMIC-PUBLICATION"
+      ],
+      "covers": [
+        "out-of-order",
+        "incomplete",
+        "oversized-frame",
+        "oversized-physical-transaction",
+        "oversized-semantic-payload",
+        "cancellation",
+        "commit-late"
+      ]
+    },
+    "disposition": "Every fault remains owned by the reader, protocol, or store boundary that can actually lose its proof; no reader-local proxy simulates transport or publication failure."
+  },
+  "decisionBoundary": {
+    "integratedCompilerExperiment": {
+      "evidence": ".history/v2/evidence/compiler-universe-experiment.json",
+      "exactAcrossOneTwoFourPartitions": true,
+      "fastestComponents": 1,
+      "fastestSemanticMilliseconds": 669.469,
+      "coverage": "compiler diagnostics and exact export enumeration",
+      "fullOldSurfaceEquality": "not-yet-proven"
+    },
+    "fullDeclarationUniverseExperiment": {
+      "status": "rejected",
+      "oracleMilliseconds": 2081.861,
+      "integratedMilliseconds": 2178.775,
+      "differingEntrypoints": 12,
+      "differenceConcentration": ["core/schema", "dsl/v1"],
+      "reason": "The integrated full-model Program is slower and changes declaration output under external and identity-sensitive contracts."
+    },
+    "checkOnlyUniverseExperiment": {
+      "declarationDiagnostics": {
+        "exact": true,
+        "isolatedMilliseconds": 934.259,
+        "integratedMilliseconds": 1130.472,
+        "disposition": "retain isolated minimum-compatible declaration Programs"
+      },
+      "moduleDiagnosticsAndReferences": {
+        "exact": true,
+        "stageLocalMilliseconds": 883.531,
+        "integratedMilliseconds": 4750.962,
+        "disposition": "retain the stage-local module Program"
+      }
+    },
+    "explicitBindingExperiment": {
+      "source": "qualification/v2/experiments/explicit-spec-binding.ts",
+      "status": "executed-retain-current-verifier",
+      "diagnosticsEvidence": ".history/v2/evidence/explicit-binding-core-schema-diagnostics.json",
+      "rootOnlyEvidence": ".history/v2/evidence/explicit-binding-core-schema-root-only.json",
+      "rootDiagnosticsEqual": true,
+      "rootOnlyMilliseconds": 2048.759,
+      "rootOnlyMaximumRssMiB": 446.828,
+      "wholeDiagnosticsMilliseconds": 2621.325,
+      "rootDiagnosticsMilliseconds": 10.69,
+      "undeclaredImplementationExports": [
+        "AuthorityOperation",
+        "AuthorityOperationOrder",
+        "AuthorityOperations",
+        "AuthorityRelation",
+        "operationOf"
+      ],
+      "reason": "Root-scoped diagnostics are exact and cheap, but independent assignability does not preserve Kernel branded identities. The implementation also exposes five names absent from the authoritative core/schema specification, so the current verifier remains the oracle while explicit import binding is undecided."
+    },
+    "continue": [
+      "admitted SourceCorpus",
+      "minimum compatible CompilerUniverses",
+      "request-driven selected closure",
+      "Git-backed lazy inventory",
+      "incremental checkpoint and semantic-pack reuse",
+      "exact differential qualification"
+    ],
+    "deferUntilBindingExperiment": [
+      "specialized implementation-surface extraction optimization",
+      "comparator-only normalized representations",
+      "native rewrite of the structural verifier"
+    ],
+    "remainingC3Leaf": "For check, declaration projection, snapshot materialization, and fixed overhead remain above the source-only genesis budget. For verify, the legacy independent core/schema implementation-surface projection fails the 768 MiB resource gate before latency can be qualified."
+  }
+}

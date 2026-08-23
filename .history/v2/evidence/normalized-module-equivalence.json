@@ -1,0 +1,44 @@
+{
+  "format": "astrale.codegraph.normalized-module-equivalence",
+  "version": 1,
+  "logicalModuleEquivalence": true,
+  "capabilitiesEqual": true,
+  "provenance": {
+    "codegraphRevision": "16aca70db070aac335d0aa4ef9c07eafea91ee74",
+    "canonicalSourceDirty": false,
+    "canonicalBinarySha256": "c4926f3280e60d2068aac80b59acc1d84b75c0be19cd5ddb0bc352051fbd03e3",
+    "candidateBinarySha256": "cfd50cef7ef8e79c89e6486c153762edde04311c5f8dee8bd9ac0712abd82647",
+    "ttsc": "0.25.0",
+    "typescriptGo": "v0.0.0-20260429010842-56ab4af42157",
+    "go": "go1.26.5"
+  },
+  "canonical": {
+    "facts": 2,
+    "declarationFacts": 0,
+    "moduleFacts": 2,
+    "moduleSchemaVersions": [1, 1],
+    "payloadBytes": 6924
+  },
+  "candidate": {
+    "facts": 5,
+    "declarationFacts": 3,
+    "moduleFacts": 2,
+    "moduleSchemaVersions": [2, 2],
+    "payloadBytes": 6489
+  },
+  "reduction": {
+    "bytes": 435,
+    "ratio": 0.9372
+  },
+  "identityPreservation": {
+    "mode": "normalized-identity",
+    "canonicalBinarySha256": "47086c29645751224552f0989d4b8b35207bda753dff6554538d485bdefb3aa5",
+    "candidateBinarySha256": "6d9dcb60a6049444f9baaecb2bf5fe9deb03984ba18e83b2a1ff72e537b43c96",
+    "logicalModuleEquivalence": true,
+    "physicalIdentityEquivalence": true,
+    "canonicalFacts": 5,
+    "candidateFacts": 5,
+    "physicalDigest": "9d3160eb32c34fae943062b7fa64f6986c2b9e02e9c56aee4ae426287a24add9",
+    "disposition": "Schema-v2 module composition retains lightweight owner references and streams the unchanged schema-v1 logical identity preimage without reconstructing repeated transitive declaration payloads."
+  }
+}

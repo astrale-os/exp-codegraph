@@ -4,6 +4,7 @@ import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../protocol/index.js';
 import { deriveAnalysisId, portablePath } from '../identity/index.js';
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.js';
 import { materializeNativeDelta, materializeNativeTransaction, } from './universe-transaction.js';
+import { changedModuleSubjects, moduleRouting, orderedNativeSourceChanges, } from './refresh.optimization.js';
 export async function createTypeScriptAnalysisService(options) {
     const session = await options.sessions.open(options.project);
     return new ResidentTypeScriptAnalysisService(options, session);
@@ -17,6 +18,7 @@ class ResidentTypeScriptAnalysisService {
     constructor(options, session) {
         this.#options = options;
         this.#session = session;
+        this.#universe = options.universe;
     }
     get universe() {
         return this.#universe;
@@ -38,6 +40,7 @@ class ResidentTypeScriptAnalysisService {
             ...(current ? { base: current.id } : {}),
             ...(current ? { baseSequence: current.sequence } : {}),
             ...(options.changed ? { changed: [...options.changed].sort() } : {}),
+            ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
             ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
         }, { signal: options.signal });
         this.emit('native.request', request, phaseStarted, { responseKind: response.kind });
@@ -54,6 +57,7 @@ class ResidentTypeScriptAnalysisService {
             return {
                 generation: current,
                 changedSources: [],
+                changedModules: [],
                 invalidatedPasses: [],
                 diagnostics: [],
                 durationMs: performance.now() - started,
@@ -97,10 +101,14 @@ class ResidentTypeScriptAnalysisService {
         const invalidatedPasses = [
             ...new Set(transaction.upserts.flatMap((shard) => shard.facts.map((fact) => fact.provenance.pass))),
         ].sort();
+        const changedModules = changedModuleSubjects(transaction);
+        const routing = moduleRouting(transaction);
         return {
             generation: materialized.generation,
             ...(materialized.transaction ? { transaction: materialized.transaction } : {}),
             changedSources,
+            ...(changedModules !== undefined ? { changedModules } : {}),
+            ...(routing ? { moduleRouting: routing } : {}),
             invalidatedPasses,
             diagnostics: [],
             durationMs: performance.now() - started,

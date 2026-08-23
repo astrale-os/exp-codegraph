@@ -84,6 +84,10 @@ export interface WorkspaceCheckpointOperationOptions {
   readonly signal?: AbortSignal
 }
 
+export interface WorkspaceCheckpointLoadOptions extends WorkspaceCheckpointOperationOptions {
+  readonly artifactKeys?: readonly string[]
+}
+
 export type WorkspaceCheckpointMissReason =
   | 'manifest-missing'
   | 'manifest-unreadable'
@@ -109,7 +113,7 @@ export interface WorkspaceCheckpointMiss {
 export type WorkspaceCheckpointLoadResult = WorkspaceCheckpointHit | WorkspaceCheckpointMiss
 
 export interface FileWorkspaceCheckpointStore {
-  load(scope: string, options?: WorkspaceCheckpointOperationOptions): Promise<WorkspaceCheckpointLoadResult>
+  load(scope: string, options?: WorkspaceCheckpointLoadOptions): Promise<WorkspaceCheckpointLoadResult>
   publish(
     scope: string,
     input: WorkspaceCheckpointPublishInput,

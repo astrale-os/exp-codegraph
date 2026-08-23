@@ -8,6 +8,7 @@ import { createMemoryAnalysisStore } from '../memory/index.js';
 import { planPasses, runPortablePasses } from '../pass/index.js';
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION, } from '../protocol/index.js';
 import { materializeNativeDelta, materializeNativeTransaction } from './universe-transaction.js';
+import { changedModuleSubjects, orderedNativeSourceChanges } from './refresh.optimization.js';
 /**
  * Compose one private resident compiler lineage with portable passes and publish
  * exactly one complete generation to the caller-owned store.
@@ -28,6 +29,7 @@ class ResidentTypeScriptAnalysisPipeline {
     constructor(options, session) {
         this.#options = options;
         this.#session = session;
+        this.#universe = options.universe;
     }
     get universe() {
         return this.#universe;
@@ -46,6 +48,7 @@ class ResidentTypeScriptAnalysisPipeline {
             ...(nativeBase ? { base: nativeBase.id } : {}),
             ...(nativeBase ? { baseSequence: nativeBase.sequence } : {}),
             ...(options.changed ? { changed: [...options.changed].sort() } : {}),
+            ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
             ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
         }, { signal: options.signal });
         if (response.protocolVersion !== NATIVE_ANALYSIS_PROTOCOL_VERSION) {
@@ -132,10 +135,12 @@ class ResidentTypeScriptAnalysisPipeline {
             if (transaction) {
                 await this.#options.store.commit(transaction, { signal: options.signal });
             }
+            const changedModules = changedModuleSubjects(nativeTransaction);
             return {
                 generation: transaction?.next ?? current ?? stagedGeneration,
                 ...(transaction ? { transaction } : {}),
                 changedSources: changedSources(this.#options.project.root, universe, nativeTransaction, options.changed),
+                ...(changedModules !== undefined ? { changedModules } : {}),
                 invalidatedPasses: [
                     ...new Set([
                         ...passesFrom(nativeTransaction),

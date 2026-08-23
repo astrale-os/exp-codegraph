@@ -1,0 +1,96 @@
+{
+  "format": "astrale.codegraph.shared-compiler-universe-experiment",
+  "version": 1,
+  "subject": {
+    "root": "/Users/bryandjafer/Documents/astrale/workspace/kernel-v2/.cache/kernel-codegraph-performance-main",
+    "inventory": "source-manifest:b42975210e33172408a0da0e65a3cee06c17b1068b0281f8be83abc9ecfa7c30",
+    "application": "application:4aebbfbfebeb0815c516e24e1e17a6eb7b205400ba5df1c1d66eea548acd71ea",
+    "selectedOwners": 169,
+    "ambientOwners": [],
+    "uniqueOwnedRoots": 537
+  },
+  "admissionMilliseconds": 672.492,
+  "planningMilliseconds": 123.069,
+  "workerIsolation": "fresh-process-per-variant",
+  "variants": [
+    {
+      "requestedComponents": 1,
+      "actualComponents": 1,
+      "rootCounts": [537],
+      "sourceFileRequests": 609,
+      "sourceFileConstructions": 609,
+      "uniqueSourceFiles": 609,
+      "uniqueSourceBytes": 3503071,
+      "resolutionRequests": 1121,
+      "uniqueResolutions": 722,
+      "programMilliseconds": 254.464,
+      "diagnosticsMilliseconds": 398.971,
+      "projectionMilliseconds": 10.133,
+      "totalMilliseconds": 669.469,
+      "maximumRssMiB": 480.625,
+      "diagnosticCount": 26,
+      "diagnosticDigest": "7f8b13fcb19e426ee8756dbb8c1af8560d334c367c7fc5ea37b4f4aa759db257",
+      "exportCount": 2334,
+      "exportDigest": "ec14e4f48bf90888281a7b7347f4ef6e7a1653cbe5c05444237bd0bcb6009ea3",
+      "missingApis": []
+    },
+    {
+      "requestedComponents": 2,
+      "actualComponents": 2,
+      "rootCounts": [268, 269],
+      "sourceFileRequests": 845,
+      "sourceFileConstructions": 609,
+      "uniqueSourceFiles": 609,
+      "uniqueSourceBytes": 3503071,
+      "resolutionRequests": 1858,
+      "uniqueResolutions": 722,
+      "programMilliseconds": 245.618,
+      "diagnosticsMilliseconds": 717.137,
+      "projectionMilliseconds": 10.119,
+      "totalMilliseconds": 974.909,
+      "maximumRssMiB": 565.969,
+      "diagnosticCount": 26,
+      "diagnosticDigest": "7f8b13fcb19e426ee8756dbb8c1af8560d334c367c7fc5ea37b4f4aa759db257",
+      "exportCount": 2334,
+      "exportDigest": "ec14e4f48bf90888281a7b7347f4ef6e7a1653cbe5c05444237bd0bcb6009ea3",
+      "missingApis": []
+    },
+    {
+      "requestedComponents": 4,
+      "actualComponents": 4,
+      "rootCounts": [134, 135, 135, 133],
+      "sourceFileRequests": 1305,
+      "sourceFileConstructions": 609,
+      "uniqueSourceFiles": 609,
+      "uniqueSourceBytes": 3503071,
+      "resolutionRequests": 3244,
+      "uniqueResolutions": 722,
+      "programMilliseconds": 287.877,
+      "diagnosticsMilliseconds": 1149.785,
+      "projectionMilliseconds": 10.367,
+      "totalMilliseconds": 1449.934,
+      "maximumRssMiB": 619.797,
+      "diagnosticCount": 26,
+      "diagnosticDigest": "7f8b13fcb19e426ee8756dbb8c1af8560d334c367c7fc5ea37b4f4aa759db257",
+      "exportCount": 2334,
+      "exportDigest": "ec14e4f48bf90888281a7b7347f4ef6e7a1653cbe5c05444237bd0bcb6009ea3",
+      "missingApis": []
+    }
+  ],
+  "comparisons": [
+    {
+      "requestedComponents": 2,
+      "exportDigestEqual": true,
+      "diagnosticDigestEqual": true,
+      "missingApisEqual": true
+    },
+    {
+      "requestedComponents": 4,
+      "exportDigestEqual": true,
+      "diagnosticDigestEqual": true,
+      "missingApisEqual": true
+    }
+  ],
+  "exactAcrossPartitions": true,
+  "evidenceSha256": "8f95c2dbeb8656549eb96604bf4e918593b7aa8e98aa0da0193088974c28c62a"
+}

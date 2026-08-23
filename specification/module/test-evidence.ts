@@ -99,7 +99,21 @@ export async function resolveTestEvidence(
       }),
     ),
   )
-  return { laws: resolvedLaws, states: resolvedStates, diagnostics }
+  return {
+    laws: resolvedLaws,
+    states: resolvedStates,
+    diagnostics: diagnostics.sort(compareDiagnostic),
+  }
+}
+
+function compareDiagnostic(left: Diagnostic, right: Diagnostic): number {
+  return (
+    compare(left.file, right.file) ||
+    left.line - right.line ||
+    left.column - right.column ||
+    compare(left.code, right.code) ||
+    compare(left.message, right.message)
+  )
 }
 
 async function resolveReference(
@@ -142,9 +156,7 @@ async function resolveReference(
   const actual = await realpath(absolute).catch((error: unknown) => {
     throw evidenceFailure(
       'TEST_EVIDENCE_FILE_INVALID',
-      error instanceof Error
-        ? `Test evidence file cannot be read: ${error.message}`
-        : String(error),
+      `Test evidence file cannot be read (${fileErrorCode(error)}).`,
     )
   })
   if (!within(rootReal, actual)) {
@@ -194,9 +206,7 @@ async function parseTestFile(absolute: string, source: string): Promise<ParsedTe
   } catch (error) {
     throw evidenceFailure(
       'TEST_EVIDENCE_FILE_INVALID',
-      error instanceof Error
-        ? `Test evidence file cannot be read: ${error.message}`
-        : String(error),
+      `Test evidence file cannot be read (${fileErrorCode(error)}).`,
     )
   }
   const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, scriptKind(source))
@@ -242,6 +252,13 @@ async function parseTestFile(absolute: string, source: string): Promise<ParsedTe
     )
   }
   return { source, text, revision: sourceRevision(text), tests }
+}
+
+function fileErrorCode(error: unknown): string {
+  if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
+    return error.code
+  }
+  return error instanceof Error ? error.name : 'unknown'
 }
 
 function evidenceId(
@@ -321,6 +338,10 @@ function within(parent: string, child: string): boolean {
 
 function portable(value: string): string {
   return value.split(sep).join('/')
+}
+
+function compare(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
 }
 
 function evidenceFailure(code: string, message: string): EvidenceFailure {

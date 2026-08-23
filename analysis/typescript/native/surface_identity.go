@@ -28,7 +28,7 @@ func (x *extractor) publicSymbolIdentity(symbol *shimast.Symbol) string {
 	}
 	coordinates = sortedUnique(coordinates)
 	if len(coordinates) == 0 {
-		return ""
+		return "ts:<synthetic>#" + percentEncode(symbol.Name)
 	}
 	return fmt.Sprintf("ts:%s#%s", strings.Join(coordinates, "|"), publicSymbolPath(symbol))
 }

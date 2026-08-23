@@ -1,8 +1,9 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { isAbsolute } from 'node:path'
 import { createInterface } from 'node:readline'
 import type { Readable } from 'node:stream'
+import { promisify } from 'node:util'
 
 import type {
   Completeness,
@@ -45,11 +46,31 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   /** Maximum encoded physical bytes assembled before semantic decoding. */
   readonly maximumPhysicalTransactionBytes?: number
   readonly maximumErrorBytes?: number
+  /** Optional application-adapter watchdog for the native process resident set. */
+  readonly maximumResidentBytes?: number
+  /** Low-level adapter seam used to qualify resource monitoring without OS-specific test access. */
+  readonly sampleResidentBytes?: (pid: number) => Promise<number>
   /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
   readonly telemetry?: AnalysisTelemetrySink
   /** Explicit physical payload capabilities negotiated with the native producer. */
   readonly payloadCodecs?: readonly FactPayloadCodec[]
 }
+
+export class NativeAnalysisProcessResourceError extends Error {
+  readonly name = 'NativeAnalysisProcessResourceError'
+  readonly code: 'NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED' | 'NATIVE_ANALYSIS_RESIDENT_LIMIT'
+
+  constructor(
+    code: 'NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED' | 'NATIVE_ANALYSIS_RESIDENT_LIMIT',
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.code = code
+  }
+}
+
+const executeFile = promisify(execFile)
 
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS = Object.freeze({
   maximumFrameBytes: 64 * 1_024 * 1_024,
@@ -129,6 +150,7 @@ export function createProcessNativeAnalysisSessionFactory(
     DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumPhysicalTransactionBytes
   const maximumErrorBytes =
     options.maximumErrorBytes ?? DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumErrorBytes
+  const maximumResidentBytes = options.maximumResidentBytes
   validateLimit(maximumFrameBytes, 'maximumFrameBytes')
   validateLimit(transactionChunkFrameBytes, 'transactionChunkFrameBytes')
   if (transactionChunkFrameBytes > maximumFrameBytes) {
@@ -137,6 +159,12 @@ export function createProcessNativeAnalysisSessionFactory(
   validateLimit(maximumTransactionBytes, 'maximumTransactionBytes')
   validateLimit(maximumPhysicalTransactionBytes, 'maximumPhysicalTransactionBytes')
   validateLimit(maximumErrorBytes, 'maximumErrorBytes')
+  if (maximumResidentBytes !== undefined) {
+    validateLimit(maximumResidentBytes, 'maximumResidentBytes')
+    if (process.platform === 'win32') {
+      throw new TypeError('Native resident-memory monitoring is unavailable on win32.')
+    }
+  }
   const payloadCodecs = admitFactPayloadCodecs(options.payloadCodecs)
   return {
     async open(project, openOptions = {}) {
@@ -193,6 +221,8 @@ export function createProcessNativeAnalysisSessionFactory(
         maximumTransactionBytes,
         maximumPhysicalTransactionBytes,
         maximumErrorBytes,
+        maximumResidentBytes,
+        options.sampleResidentBytes ?? sampleProcessResidentBytes,
         telemetry,
         payloadCodecs,
         openOptions.signal,
@@ -212,6 +242,11 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   readonly #maximumPhysicalTransactionBytes: number
   readonly #telemetry: AnalysisTelemetrySink | undefined
   readonly #payloadCodecs: FactPayloadCodecMap
+  readonly #maximumResidentBytes: number | undefined
+  readonly #sampleResidentBytes: (pid: number) => Promise<number>
+  #residentMonitor: NodeJS.Timeout | undefined
+  #residentSamplePending = false
+  #peakResidentBytes = 0
 
   private constructor(
     child: ChildProcessWithoutNullStreams,
@@ -219,6 +254,8 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     maximumTransactionBytes: number,
     maximumPhysicalTransactionBytes: number,
     maximumErrorBytes: number,
+    maximumResidentBytes: number | undefined,
+    sampleResidentBytes: (pid: number) => Promise<number>,
     telemetry: AnalysisTelemetrySink | undefined,
     payloadCodecs: FactPayloadCodecMap,
   ) {
@@ -226,6 +263,8 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     this.#maximumFrameBytes = maximumFrameBytes
     this.#maximumTransactionBytes = maximumTransactionBytes
     this.#maximumPhysicalTransactionBytes = maximumPhysicalTransactionBytes
+    this.#maximumResidentBytes = maximumResidentBytes
+    this.#sampleResidentBytes = sampleResidentBytes
     this.#telemetry = telemetry
     this.#payloadCodecs = payloadCodecs
     child.stderr.setEncoding('utf8')
@@ -249,6 +288,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     })
     child.once('error', (error) => this.fail(error))
     child.once('exit', (code, signal) => {
+      this.stopResidentMonitor()
       if (!this.#disposed || this.#pending.size) {
         this.fail(
           new Error(
@@ -257,6 +297,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
         )
       }
     })
+    this.startResidentMonitor()
   }
 
   static async open(
@@ -265,6 +306,8 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     maximumTransactionBytes: number,
     maximumPhysicalTransactionBytes: number,
     maximumErrorBytes: number,
+    maximumResidentBytes: number | undefined,
+    sampleResidentBytes: (pid: number) => Promise<number>,
     telemetry: AnalysisTelemetrySink | undefined,
     payloadCodecs: FactPayloadCodecMap,
     signal?: AbortSignal,
@@ -275,6 +318,8 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
       maximumTransactionBytes,
       maximumPhysicalTransactionBytes,
       maximumErrorBytes,
+      maximumResidentBytes,
+      sampleResidentBytes,
       telemetry,
       payloadCodecs,
     )
@@ -351,6 +396,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   async dispose(): Promise<void> {
     if (this.#disposed) return
     this.#disposed = true
+    this.stopResidentMonitor()
     const exit = new Promise<void>((resolve) => {
       if (this.#child.exitCode !== null || this.#child.signalCode !== null) resolve()
       else this.#child.once('exit', () => resolve())
@@ -547,6 +593,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     const error = reason instanceof Error ? reason : new Error('Native analysis request aborted.')
     this.#failure = error
     this.#disposed = true
+    this.stopResidentMonitor()
     this.rejectPending(error)
     this.#child.kill('SIGTERM')
   }
@@ -554,6 +601,7 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
   private fail(error: Error): void {
     if (!this.#failure) this.#failure = error
     this.#disposed = true
+    this.stopResidentMonitor()
     this.rejectPending(this.#failure)
     if (this.#child.exitCode === null && this.#child.signalCode === null) this.#child.kill('SIGTERM')
   }
@@ -570,6 +618,91 @@ class ProcessNativeAnalysisSession implements NativeAnalysisSession {
     if (this.#failure) throw this.#failure
     if (this.#disposed) throw new Error('Native analysis session is disposed.')
   }
+
+  private startResidentMonitor(): void {
+    if (this.#maximumResidentBytes === undefined) return
+    this.sampleResidentMemory()
+    this.#residentMonitor = setInterval(() => this.sampleResidentMemory(), 100)
+    this.#residentMonitor.unref()
+  }
+
+  private stopResidentMonitor(): void {
+    if (this.#residentMonitor) clearInterval(this.#residentMonitor)
+    this.#residentMonitor = undefined
+  }
+
+  private sampleResidentMemory(): void {
+    if (
+      this.#maximumResidentBytes === undefined ||
+      this.#residentSamplePending ||
+      this.#child.pid === undefined ||
+      this.#child.exitCode !== null ||
+      this.#child.signalCode !== null
+    ) {
+      return
+    }
+    this.#residentSamplePending = true
+    Promise.resolve()
+      .then(() => this.#sampleResidentBytes(this.#child.pid!))
+      .then((residentBytes) => {
+        this.#residentSamplePending = false
+        if (this.#disposed || this.#child.exitCode !== null || this.#child.signalCode !== null) {
+          return
+        }
+        if (!Number.isSafeInteger(residentBytes) || residentBytes < 1) {
+          this.fail(
+            new NativeAnalysisProcessResourceError(
+              'NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED',
+              'Native analysis resident-memory monitor returned invalid evidence.',
+            ),
+          )
+          return
+        }
+        if (residentBytes > this.#peakResidentBytes) {
+          this.#peakResidentBytes = residentBytes
+          if (this.#telemetry) {
+            dispatchAnalysisTelemetry(this.#telemetry, {
+              component: 'transport',
+              phase: 'process.resources',
+              durationNs: 0,
+              metrics: {
+                residentBytes,
+                peakResidentBytes: residentBytes,
+                maximumResidentBytes: this.#maximumResidentBytes!,
+              },
+            })
+          }
+        }
+        if (residentBytes > this.#maximumResidentBytes!) {
+          this.fail(
+            new NativeAnalysisProcessResourceError(
+              'NATIVE_ANALYSIS_RESIDENT_LIMIT',
+              `Native analysis resident memory exceeded the configured limit: bytes=${residentBytes} limit=${this.#maximumResidentBytes}.`,
+            ),
+          )
+        }
+      })
+      .catch((error: unknown) => {
+        this.#residentSamplePending = false
+        if (this.#disposed || this.#child.exitCode !== null || this.#child.signalCode !== null) {
+          return
+        }
+        this.fail(
+          new NativeAnalysisProcessResourceError(
+            'NATIVE_ANALYSIS_RESOURCE_MONITOR_FAILED',
+            `Native analysis resident-memory monitor failed: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          ),
+        )
+      })
+  }
+}
+
+async function sampleProcessResidentBytes(pid: number): Promise<number> {
+  const { stdout } = await executeFile('ps', ['-o', 'rss=', '-p', String(pid)], {
+    encoding: 'utf8',
+  })
+  return Number.parseInt(stdout.trim(), 10) * 1_024
 }
 
 function encodedPhysicalPayloadBytes(value: FactTransaction | NativeFactDelta): number {

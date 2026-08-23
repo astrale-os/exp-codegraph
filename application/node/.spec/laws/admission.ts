@@ -23,3 +23,39 @@ export const APPLICATION_INVENTORY_DIRECTORY_TOPOLOGY = defineLaw({
     },
   ],
 })
+
+export const APPLICATION_PORTABLE_CHECKPOINT_ADMISSION = defineLaw({
+  id: 'APPLICATION-PORTABLE-CHECKPOINT-ADMISSION',
+  statement:
+    'A caller-owned portable application checkpoint is restorable only through its exact SourceProof-bound manifest commitment; a read-only binding performs no publication, transfers no store ownership, and reconstructs the canonical application snapshot without compilation.',
+  tests: [
+    {
+      file: '../../__tests__/application-checkpoint.test.ts',
+      id: 'APPLICATION-PORTABLE-CHECKPOINT-ADMISSION',
+    },
+  ],
+})
+
+export const APPLICATION_CHECKPOINT_REQUEST_PROJECTION = defineLaw({
+  id: 'APPLICATION-CHECKPOINT-REQUEST-PROJECTION',
+  statement:
+    'A non-exact portable application restore reads only the normalized requested dependency closure, and corruption outside that closure cannot invalidate the admitted result.',
+  tests: [
+    {
+      file: '../../__tests__/application-checkpoint.test.ts',
+      id: 'APPLICATION-CHECKPOINT-REQUEST-PROJECTION',
+    },
+  ],
+})
+
+export const SOURCE_PROOF_MUTATION_FALLBACK = defineLaw({
+  id: 'SOURCE-PROOF-MUTATION-FALLBACK',
+  statement:
+    'A dirty semantic source that changes while either bounded admission attempt is reading it cannot produce a SourceProof; the Node adapter returns an attributable retryable proof-unstable fallback to the complete scanner.',
+  tests: [
+    {
+      file: '../../__tests__/source-proof.test.ts',
+      id: 'SOURCE-PROOF-MUTATION-FALLBACK',
+    },
+  ],
+})

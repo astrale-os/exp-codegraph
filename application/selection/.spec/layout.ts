@@ -2,5 +2,5 @@ import { defineLayout } from '@astrale-os/codegraph/authoring'
 
 export default defineLayout({
   exact: true,
-  entries: ['index.ts', 'model.ts', 'select.ts'],
+  entries: ['closure.ts', 'dependency.optimization.ts', 'index.ts', 'model.ts', 'select.ts'],
 })

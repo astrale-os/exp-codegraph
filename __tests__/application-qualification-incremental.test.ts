@@ -92,6 +92,44 @@ describe('application qualification deltas', () => {
       await service.dispose()
     }
   })
+
+  it('reuses universe-scoped qualifications only with exact changed-module evidence', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/qualification-module-delta', type: 'module' }),
+      'alpha/.spec/api.d.ts': 'export interface Alpha { readonly id: string }\n',
+      'alpha/src/index.ts': 'export const alpha = true\n',
+      'beta/.spec/api.d.ts': 'export interface Beta { readonly id: string }\n',
+    })
+    fixtures.push(current)
+    const evaluated: string[] = []
+    const base = localProfile(evaluated)
+    const profile: ConformanceProfile = {
+      ...base,
+      manifest: { ...base.manifest, evaluationScope: 'universe' },
+    }
+    const service = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: moduleAwareAnalysisWorkspace('alpha/.spec/api.d.ts'),
+        profiles: [profile],
+      },
+    )
+    try {
+      await service.refresh({ qualify: true })
+      await current.write('alpha/src/index.ts', 'export const alpha = false\n')
+      await service.refresh({
+        qualify: true,
+        changed: [join(current.root, 'alpha/src/index.ts')],
+      })
+      expect(evaluated).toEqual([
+        'alpha/.spec/api.d.ts',
+        'beta/.spec/api.d.ts',
+        'alpha/.spec/api.d.ts',
+      ])
+    } finally {
+      await service.dispose()
+    }
+  })
 })
 
 function localProfile(evaluated: string[]): ConformanceProfile {
@@ -133,6 +171,30 @@ function emptyAnalysisWorkspace(): ApplicationAnalysisWorkspace {
         boundaries: [],
         results: [],
         diagnostics: [],
+      }
+    },
+    dispose: () => store.dispose(),
+  }
+}
+
+function moduleAwareAnalysisWorkspace(affectedSource: string): ApplicationAnalysisWorkspace {
+  const store = createMemoryAnalysisStore()
+  let refreshes = 0
+  return {
+    open: (generations, inventory) => store.snapshotSet(generations, inventory),
+    async refresh(options: ApplicationAnalysisRefreshOptions) {
+      const snapshot = await store.snapshotSet(new Map(), options.inventory.revision)
+      const affected = options.specifications.find(
+        (specification) => specification.source === affectedSource,
+      )?.module.id
+      if (!affected) throw new Error(`Fixture module is missing: ${affectedSource}`)
+      return {
+        snapshot,
+        universes: [],
+        boundaries: [],
+        results: [],
+        diagnostics: [],
+        ...(refreshes++ ? { affectedModules: [affected] } : {}),
       }
     },
     dispose: () => store.dispose(),

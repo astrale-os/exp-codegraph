@@ -96,6 +96,12 @@ export const TYPESCRIPT_AFFECTED_MODULE_PROJECTION = defineLaw({
     'A compiler-proven private edit reprojects only its affected semantic module owners while retaining exact cross-owner dependency closure and diagnostic source revisions; public shape, dependency, global diagnostic, topology, configuration, plugin, or uncertain changes conservatively expand to every required module, and every incremental public module fact is identical to a cold projection.',
 })
 
+export const TYPESCRIPT_NORMALIZED_DECLARATION_EQUIVALENCE = defineLaw({
+  id: 'TYPESCRIPT-NORMALIZED-DECLARATION-EQUIVALENCE',
+  statement:
+    'A physical module fact may reference one content-addressed canonical declaration fact plus owner-local export paths, but its logical fact identity and every admitted typed module read remain derived from the same canonically ordered complete declaration closure as the source-semantic module observation; missing, duplicate, mismatched, or malformed declaration support fails explicitly.',
+})
+
 export const TYPESCRIPT_DEMAND_DRIVEN_PROJECTION = defineLaw({
   id: 'TYPESCRIPT-DEMAND-DRIVEN-PROJECTION',
   statement:
@@ -106,4 +112,10 @@ export const TYPESCRIPT_ATOMIC_PUBLICATION = defineLaw({
   id: 'TYPESCRIPT-ATOMIC-PUBLICATION',
   statement:
     'The resident native generation remains a private compiler lineage; native facts and the requested portable pass closure stage together, then exactly one complete validated generation becomes visible to consumers or no generation is published.',
+  tests: [
+    {
+      file: '../../__tests__/analysis-v2.test.ts',
+      id: 'TYPESCRIPT-ATOMIC-PUBLICATION',
+    },
+  ],
 })

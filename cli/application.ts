@@ -1,4 +1,5 @@
 import type { TypeSpecApplicationService } from '../application/index.ts'
+import type { CliPortableCheckpoint } from './run.ts'
 import { createNodeTypeSpecApplicationService } from '../application/node/index.ts'
 import { defaultTypeSpecCacheDirectory } from '../cache/file-store.ts'
 
@@ -6,10 +7,12 @@ import { defaultTypeSpecCacheDirectory } from '../cache/file-store.ts'
 export async function createCliApplicationService(
   root: string,
   cache: boolean,
+  portableCheckpoint?: CliPortableCheckpoint,
 ): Promise<TypeSpecApplicationService> {
   return createNodeTypeSpecApplicationService({
     root,
     cacheDirectory: defaultTypeSpecCacheDirectory(),
     persistence: cache ? 'advisory' : 'memory',
+    ...(portableCheckpoint ? { portableCheckpoint } : {}),
   })
 }

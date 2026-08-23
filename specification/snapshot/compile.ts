@@ -1,9 +1,8 @@
-import { createHash } from 'node:crypto'
 import { basename, dirname, relative } from 'node:path'
 
 import type { Diagnostic } from '../../source/diagnostic.ts'
 import { loadSpecificationDeclarationResource } from '../declaration.ts'
-import { specificationModuleId } from './identity.ts'
+import { specificationModuleId, specificationSnapshotIdentity } from './identity.ts'
 import { duplicatePortNameDiagnostics } from '../port.ts'
 import { inventoryModuleFiles } from '../module/inventory.ts'
 import {
@@ -29,7 +28,6 @@ import type {
   AuthoredLawResource,
   AuthoredStateResource,
   SpecificationSnapshot,
-  SpecificationSnapshotId,
 } from './model.ts'
 import { loadSpecificationPackageAuthority } from './package-authority.ts'
 
@@ -191,34 +189,8 @@ export async function compileSpecificationSnapshot(
     sourceReferences: typeScript.references,
     diagnostics: deduplicateDiagnostics(diagnostics),
   }
-  const id = specificationIdentity(compiled)
+  const id = specificationSnapshotIdentity(compiled)
   return immutable({ ...compiled, id })
-}
-
-function specificationIdentity(
-  snapshot: Omit<SpecificationSnapshot, 'id'>,
-): SpecificationSnapshotId {
-  const digest = createHash('sha256')
-    .update('astrale.typespec.specification\0')
-    .update(stableJson(snapshot))
-    .digest('hex')
-  return `specification:${digest}`
-}
-
-function stableJson(value: unknown): string {
-  return JSON.stringify(canonical(value))
-}
-
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical)
-  if (value === undefined) return { $undefined: true }
-  if (!value || typeof value !== 'object') return value
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
-      .filter(([, entry]) => entry !== undefined)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, entry]) => [key, canonical(entry)]),
-  )
 }
 
 function immutable<Value>(value: Value): Value {

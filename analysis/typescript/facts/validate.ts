@@ -6,6 +6,7 @@ import type { TypeScriptFactKind } from './model.ts'
 export function validateTypeScriptFactPayload(
   kind: TypeScriptFactKind,
   value: unknown,
+  schemaVersion = 1,
 ): readonly string[] {
   const diagnostics: string[] = []
   if (!record(value)) return ['payload:not-object']
@@ -48,7 +49,12 @@ export function validateTypeScriptFactPayload(
       validateBody(value, diagnostics)
       break
     case 'module':
-      validateModule(value, diagnostics)
+      validateModule(value, diagnostics, schemaVersion)
+      break
+    case 'declaration':
+      if (!record(value.declaration) || !observedDeclaration(value.declaration)) {
+        diagnostics.push('declaration:invalid')
+      }
       break
   }
   return [...new Set(diagnostics)].sort()
@@ -63,7 +69,11 @@ function validateBody(value: Record<string, unknown>, diagnostics: string[]): vo
   if (!completeness(value.completeness)) diagnostics.push('completeness:invalid')
 }
 
-function validateModule(value: Record<string, unknown>, diagnostics: string[]): void {
+function validateModule(
+  value: Record<string, unknown>,
+  diagnostics: string[],
+  schemaVersion: number,
+): void {
   if (!record(value.target)) diagnostics.push('target:not-object')
   else {
     for (const key of ['id', 'name', 'project', 'root', 'entrypoint']) {
@@ -74,7 +84,12 @@ function validateModule(value: Record<string, unknown>, diagnostics: string[]): 
     }
   }
   requireArray(value, 'exports', diagnostics, observedExport)
-  requireArray(value, 'declarations', diagnostics, observedDeclaration)
+  requireArray(
+    value,
+    'declarations',
+    diagnostics,
+    schemaVersion === 2 ? moduleDeclarationReference : observedDeclaration,
+  )
   requireArray(value, 'dependencies', diagnostics, dependency)
   requireArray(value, 'inboundDependencies', diagnostics, dependency)
   for (const key of ['declaredPackages', 'developmentPackages', 'workspacePackages', 'files']) {
@@ -84,6 +99,16 @@ function validateModule(value: Record<string, unknown>, diagnostics: string[]): 
   if (!Array.isArray(value.issues) || value.issues.some((issue) => !observationIssue(issue))) {
     diagnostics.push('issues:invalid')
   }
+}
+
+function moduleDeclarationReference(value: unknown): boolean {
+  return (
+    record(value) &&
+    string(value.fact) &&
+    string(value.identity) &&
+    Array.isArray(value.exportPaths) &&
+    value.exportPaths.every(strings)
+  )
 }
 
 function bodyShape(value: unknown): value is FunctionBodyIR {

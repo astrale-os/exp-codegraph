@@ -2,26 +2,45 @@ import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { createTaskLimiter } from '../../compiler/limit.js';
-import { operationSnapshot, operationSnapshotNamespace } from '../../source/operation-snapshot.js';
+import { operationSnapshot, operationSnapshotNamespace, operationSourceText, } from '../../source/operation-snapshot.js';
 import { workspacePackageCoordinate } from '../../typescript/package-coordinate.js';
+import { typeScriptSourceHasAmbientEffects } from '../../typescript/compiler-universe.optimization.js';
 import { sourceCoordinate } from '../../typescript/source.js';
 import { firstDeclaration, resolveAlias, semanticTokenIdentity, } from '../../typescript/surface/symbol.js';
 import { AUTHORING_SPECIFIER, isAuthoringSpecifier, nodeDiagnostic } from './authoring-syntax.js';
-import { captureModuleTypeScriptEvidence, moduleTypeScriptEvidenceCurrent, } from './typescript-evidence.js';
+import { markAuthoringSyntaxSources } from './authoring-syntax.optimization.js';
+import { captureModuleTypeScriptEvidence, moduleTypeScriptResolutionKey, moduleTypeScriptEvidenceCurrent, } from './typescript-evidence.js';
+import { createModuleTypeScriptEvidenceProjection } from './typescript-evidence.optimization.js';
+import { moduleTypeScriptProjectionObserver, observeModuleTypeScriptProgram, observeModuleTypeScriptProjection, } from './typescript-program.optimization.js';
+import { canonicalModuleTypeScriptPath, deduplicateModuleSourceReferences } from './typescript-reference.optimization.js';
 import { visitModuleReferences } from './typescript-reference.js';
 const analysisCache = new Map();
 const analyses = createTaskLimiter(2);
-// Retain one complete kernel catalog wave. A smaller cache deterministically evicts entries just
-// before the next traversal reaches them, while cached values contain evidence rather than Programs.
+// Retain one complete catalog wave; smaller caches deterministically evict before reuse.
 const MAX_ANALYSES = 256;
-// Bound temporary checker state independently from catalog size. Thirty-two modules still share
-// libraries and public dependencies aggressively without retaining one catalog-wide Program.
-const SHARED_PROGRAM_MODULE_CAPACITY = 32;
+const SHARED_PROGRAM_ROOT_CAPACITY = 1_024;
 const operationAnalyses = operationSnapshotNamespace('module-typescript-analyses');
+const canonicalFile = canonicalModuleTypeScriptPath;
+/** Project exact owner analyses from one already-admitted ambient-safe compiler universe. */
+export async function projectModuleTypeScriptCompilerUniverse(catalogRoot, inventories, universe) {
+    const requests = inventories.map((inventory) => {
+        const sources = ownedSources(inventory);
+        return { inventory, sources, key: analysisCacheKey(catalogRoot, sources) };
+    });
+    let started = performance.now();
+    const unsafe = requests.filter((request) => !sharedProgramSafe(universe, request));
+    observeModuleTypeScriptProjection(universe.onProjectionPhase, 'admission', performance.now() - started, requests.length);
+    if (unsafe.length) {
+        throw new Error(`Compiler universe contains ${unsafe.length} ambient-unsafe owners.`);
+    }
+    const projected = await analyzeSharedProgram(catalogRoot, requests, universe);
+    return requests.map((request) => projected.get(request.key).analysis);
+}
 /** Prime one coherent catalog wave with shared TypeScript Programs where semantics permit it. */
-export async function prepareModuleTypeScriptAnalyses(catalogRoot, inventories) {
+export async function prepareModuleTypeScriptAnalyses(catalogRoot, inventories, onProjectionPhase, onScheduled) {
     const snapshot = operationSnapshot(operationAnalyses);
     if (!snapshot) {
+        onScheduled?.();
         await Promise.all(inventories.map((inventory) => analyzeModuleTypeScript(catalogRoot, inventory)));
         return;
     }
@@ -43,21 +62,24 @@ export async function prepareModuleTypeScriptAnalyses(catalogRoot, inventories) 
         analysisCache.delete(request.key);
         misses.push(request);
     }));
-    if (!misses.length)
+    if (!misses.length) {
+        onScheduled?.();
         return;
-    try {
-        const values = await analyzeModuleTypeScriptBatchFresh(catalogRoot, misses);
-        for (const request of misses) {
-            const completed = values.get(request.key);
-            snapshot.set(request.key, Promise.resolve(completed));
-            rememberAnalysis(request.key, completed);
-        }
     }
-    catch {
-        // Preparation is an optimization. Unexpected shared-path failures must retain the normal
-        // per-module diagnostics and bounded two-Program execution contract.
-        await Promise.all(misses.map((request) => analyzeModuleTypeScript(catalogRoot, request.inventory)));
-    }
+    const prepared = analyzeModuleTypeScriptBatchFresh(catalogRoot, misses, onProjectionPhase).catch(async () => {
+        // Preparation is an optimization. Unexpected shared-path failures retain exact independent
+        // owner diagnostics while still publishing one pending result per owner.
+        const values = new Map();
+        await analyzeIndependently(catalogRoot, misses, values, onProjectionPhase);
+        return values;
+    });
+    const completed = misses.map((request) => {
+        const result = prepared.then((values) => values.get(request.key));
+        snapshot.set(request.key, result);
+        return result.then((value) => rememberAnalysis(request.key, value));
+    });
+    onScheduled?.();
+    await Promise.all(completed);
 }
 /** Typecheck all specification TypeScript and enforce local dependency-direction boundaries. */
 export async function analyzeModuleTypeScript(catalogRoot, inventory) {
@@ -118,73 +140,124 @@ async function analyzeModuleTypeScriptFresh(catalogRoot, inventory, sources) {
                 ],
                 references: [],
             },
-            evidence: { dependencies: [], resolutions: [] },
+            evidence: { sources: [] },
             cacheable: false,
         };
     }
 }
-async function analyzeModuleTypeScriptBatchFresh(catalogRoot, requests) {
+async function analyzeModuleTypeScriptBatchFresh(catalogRoot, requests, onProjectionPhase) {
     const values = new Map();
-    for (let index = 0; index < requests.length; index += SHARED_PROGRAM_MODULE_CAPACITY) {
-        const group = requests.slice(index, index + SHARED_PROGRAM_MODULE_CAPACITY);
+    for (const group of sharedProgramGroups(requests)) {
         try {
-            const candidate = await createSharedProgramContext(catalogRoot, group);
+            const candidate = await createSharedProgramContext(catalogRoot, group, onProjectionPhase);
             const safe = group.filter((request) => sharedProgramSafe(candidate, request));
             const unsafe = group.filter((request) => !safe.includes(request));
             if (safe.length) {
                 // The candidate can be reused only when every closure is isolation-safe. Otherwise an
                 // ambient unsafe root may already have changed its diagnostics, so rebuild from safe roots.
                 const context = unsafe.length ? undefined : candidate;
-                for (const [key, value] of await analyzeSharedProgram(catalogRoot, safe, context)) {
+                for (const [key, value] of await analyzeSharedProgram(catalogRoot, safe, context, onProjectionPhase)) {
                     values.set(key, value);
                 }
             }
-            await analyzeIndependently(catalogRoot, unsafe, values);
+            await analyzeIndependently(catalogRoot, unsafe, values, onProjectionPhase);
         }
         catch {
             // Preserve per-module failure attribution and bounded error messages if the shared fast path
             // itself cannot be constructed.
-            await analyzeIndependently(catalogRoot, group, values);
+            await analyzeIndependently(catalogRoot, group, values, onProjectionPhase);
         }
     }
     return values;
 }
-async function analyzeIndependently(catalogRoot, requests, values) {
+function sharedProgramGroups(requests) {
+    const groups = [];
+    let group = [];
+    let roots = 0;
+    for (const request of requests) {
+        if (group.length && roots + request.sources.length > SHARED_PROGRAM_ROOT_CAPACITY) {
+            groups.push(group);
+            group = [];
+            roots = 0;
+        }
+        group.push(request);
+        roots += request.sources.length;
+    }
+    if (group.length)
+        groups.push(group);
+    return groups;
+}
+async function analyzeIndependently(catalogRoot, requests, values, onProjectionPhase) {
     await Promise.all(requests.map(async (request) => {
         values.set(request.key, await analyses.run(() => analyzeModuleTypeScriptFresh(catalogRoot, request.inventory, request.sources)));
+        observeModuleTypeScriptProgram(onProjectionPhase);
     }));
 }
-async function analyzeSharedProgram(catalogRoot, requests, prepared) {
-    const context = prepared ?? (await createSharedProgramContext(catalogRoot, requests));
+async function analyzeSharedProgram(catalogRoot, requests, prepared, onProjectionPhase) {
+    const context = prepared ?? (await createSharedProgramContext(catalogRoot, requests, onProjectionPhase));
     const { options, program } = context;
-    const compilerDiagnostics = ts
-        .getPreEmitDiagnostics(program)
-        .filter((entry) => entry.category === ts.DiagnosticCategory.Error);
+    const observe = moduleTypeScriptProjectionObserver(context.onProjectionPhase);
+    markAuthoringSyntaxSources(requests.flatMap((request) => request.sources.flatMap(({ file }) => {
+        const parsed = program.getSourceFile(resolve(file.absolute));
+        return parsed ? [{ source: file.source, file: parsed }] : [];
+    })));
+    let phase = performance.now();
+    const compilerDiagnostics = (context.compilerDiagnostics ?? ts.getPreEmitDiagnostics(program))
+        .filter((entry) => entry.category === ts.DiagnosticCategory.Error &&
+        (options.skipLibCheck !== false || !entry.file?.isDeclarationFile));
+    observe('diagnostics', performance.now() - phase, compilerDiagnostics.length);
+    phase = performance.now();
+    const projectEvidence = createModuleTypeScriptEvidenceProjection(program, options, context.observedResolutions);
+    observe('evidence-index', performance.now() - phase, program.getSourceFiles().length);
     const output = new Map();
+    let closureMilliseconds = 0;
+    let diagnosticMilliseconds = 0;
+    let boundaryMilliseconds = 0;
+    let referenceMilliseconds = 0;
+    let evidenceMilliseconds = 0;
     for (const request of requests) {
         const sourceByFile = new Map(request.sources.map(({ file }) => [canonicalFile(file.absolute), file.source]));
+        phase = performance.now();
         const closure = requestProgramFiles(context, request);
+        closureMilliseconds += performance.now() - phase;
+        phase = performance.now();
         const diagnostics = compilerDiagnostics
             .filter((entry) => !entry.file || closure.has(canonicalFile(entry.file.fileName)))
             .map((entry) => compilerDiagnostic(catalogRoot, sourceByFile, entry));
+        diagnosticMilliseconds += performance.now() - phase;
+        phase = performance.now();
         diagnostics.push(...moduleBoundaryDiagnostics(catalogRoot, request.inventory, request.sources, program));
+        boundaryMilliseconds += performance.now() - phase;
+        phase = performance.now();
         const sourceFiles = program
             .getSourceFiles()
             .filter((file) => closure.has(canonicalFile(file.fileName)));
+        const references = collectSourceReferences(catalogRoot, program, sourceByFile);
+        referenceMilliseconds += performance.now() - phase;
+        phase = performance.now();
+        const evidence = projectEvidence(sourceFiles);
+        evidenceMilliseconds += performance.now() - phase;
         output.set(request.key, {
             analysis: {
                 diagnostics: deduplicate(diagnostics).slice(0, 200),
-                references: collectSourceReferences(catalogRoot, program, sourceByFile),
+                references,
             },
-            evidence: captureModuleTypeScriptEvidence(program, options, sourceFiles),
+            evidence,
         });
     }
+    observe('owner-closures', closureMilliseconds, requests.length);
+    observe('owner-diagnostics', diagnosticMilliseconds, requests.length);
+    observe('owner-boundaries', boundaryMilliseconds, requests.length);
+    observe('owner-references', referenceMilliseconds, requests.length);
+    observe('owner-evidence', evidenceMilliseconds, requests.length);
     return output;
 }
-async function createSharedProgramContext(catalogRoot, requests) {
+async function createSharedProgramContext(catalogRoot, requests, onProjectionPhase) {
     const options = compilerOptions();
     const resolutionEdges = new Map();
-    const host = compilerHost(options, catalogRoot, (from, target) => {
+    const observedResolutions = new Map();
+    const host = compilerHost(options, catalogRoot, (from, specifier, mode, target) => {
+        observedResolutions.set(moduleTypeScriptResolutionKey('module', canonicalFile(from), specifier, mode), target ? canonicalFile(target) : null);
         if (!target)
             return;
         const values = resolutionEdges.get(canonicalFile(from)) ?? new Set();
@@ -194,12 +267,21 @@ async function createSharedProgramContext(catalogRoot, requests) {
     const roots = [
         ...new Set(requests.flatMap((request) => request.sources.map(({ file }) => canonicalFile(file.absolute)))),
     ];
+    const started = performance.now();
     const program = ts.createProgram({ rootNames: roots, options, host });
+    observeModuleTypeScriptProgram(onProjectionPhase, performance.now() - started);
     const defaults = new Set(program
         .getSourceFiles()
         .filter((file) => program.isSourceFileDefaultLibrary(file))
         .map((file) => canonicalFile(file.fileName)));
-    return { options, resolutionEdges, program, defaults };
+    return {
+        options,
+        resolutionEdges,
+        program,
+        defaults,
+        observedResolutions,
+        ...(onProjectionPhase ? { onProjectionPhase } : {}),
+    };
 }
 function sharedProgramSafe(context, request) {
     const closure = requestProgramFiles(context, request);
@@ -207,29 +289,13 @@ function sharedProgramSafe(context, request) {
         if (context.defaults.has(file))
             continue;
         const parsed = context.program.getSourceFile(file);
-        if (parsed && ambientEffects(parsed))
+        if (parsed && typeScriptSourceHasAmbientEffects(parsed))
             return false;
     }
     return true;
 }
 function requestProgramFiles(context, request) {
     return reachableProgramFiles(context.program, request.sources.map(({ file }) => canonicalFile(file.absolute)), context.resolutionEdges, context.defaults);
-}
-function ambientEffects(parsed) {
-    if (!ts.isExternalModule(parsed) || parsed.libReferenceDirectives.length > 0)
-        return true;
-    let unsafe = false;
-    const visit = (node) => {
-        if (ts.isNamespaceExportDeclaration(node) ||
-            (ts.isModuleDeclaration(node) &&
-                ((node.flags & ts.NodeFlags.GlobalAugmentation) !== 0 || ts.isStringLiteral(node.name)))) {
-            unsafe = true;
-            return;
-        }
-        ts.forEachChild(node, visit);
-    };
-    visit(parsed);
-    return unsafe;
 }
 function reachableProgramFiles(program, roots, edges, defaults) {
     const closure = new Set([...roots, ...defaults]);
@@ -274,6 +340,10 @@ async function analyzeModuleTypeScriptUnchecked(catalogRoot, inventory, sources)
         options,
         host,
     });
+    markAuthoringSyntaxSources(sources.flatMap(({ file }) => {
+        const parsed = program.getSourceFile(resolve(file.absolute));
+        return parsed ? [{ source: file.source, file: parsed }] : [];
+    }));
     const diagnostics = ts
         .getPreEmitDiagnostics(program)
         .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
@@ -415,11 +485,7 @@ function collectSourceReferences(catalogRoot, program, sourceByFile) {
         };
         visit(file);
     }
-    return references
-        .filter((reference, index, values) => values.findIndex((candidate) => candidate.source === reference.source &&
-        candidate.from === reference.from &&
-        candidate.to === reference.to) === index)
-        .sort((left, right) => compare(left.source, right.source) || left.from - right.from || left.to - right.to);
+    return [...deduplicateModuleSourceReferences(references)].sort((left, right) => compare(left.source, right.source) || left.from - right.from || left.to - right.to);
 }
 function declarationName(declaration) {
     return declaration.name;
@@ -466,10 +532,12 @@ function compilerOptions() {
 }
 function compilerHost(options, catalogRoot, onResolution) {
     const host = ts.createCompilerHost(options);
+    const readFile = host.readFile.bind(host);
+    host.readFile = (file) => operationSourceText(file)?.text ?? readFile(file);
     const authoring = ts.resolveModuleName(AUTHORING_SPECIFIER, fileURLToPath(import.meta.url), options, ts.sys).resolvedModule;
     const resolveModule = (specifier, containingFile, mode) => {
         if (isAuthoringSpecifier(specifier) && authoring) {
-            onResolution?.(containingFile, authoring.resolvedFileName);
+            onResolution?.(containingFile, specifier, mode, authoring.resolvedFileName);
             return authoring;
         }
         const resolved = ts.resolveModuleName(specifier, containingFile, options, host, undefined, undefined, mode).resolvedModule;
@@ -478,10 +546,10 @@ function compilerHost(options, catalogRoot, onResolution) {
             relativeSpecifier(specifier) &&
             !withinCatalog(catalogRoot, resolved.resolvedFileName) &&
             !permittedPublicApi(catalogRoot, resolved.resolvedFileName)) {
-            onResolution?.(containingFile);
+            onResolution?.(containingFile, specifier, mode);
             return;
         }
-        onResolution?.(containingFile, resolved?.resolvedFileName);
+        onResolution?.(containingFile, specifier, mode, resolved?.resolvedFileName);
         return resolved;
     };
     host.resolveModuleNameLiterals = (literals, containingFile, _redirectedReference, compilerOptions, containingSourceFile) => literals.map((literal) => ({
@@ -582,10 +650,6 @@ function deduplicate(values) {
 }
 function portable(path) {
     return sep === '/' ? path : path.split(sep).join('/');
-}
-function canonicalFile(path) {
-    const absolute = resolve(path);
-    return ts.sys.realpath ? ts.sys.realpath(absolute) : absolute;
 }
 function compare(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;

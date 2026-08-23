@@ -56,12 +56,18 @@ or commit failure therefore cannot expose a native-only intermediate generation.
 
 Incremental extraction is ownership-driven. The resident compiler proves whether an edit preserved
 its import graph and declaration shape. Private edits replace only source-owned symbol, occurrence,
-and body shards; public-shape changes expand through TypeScript's reverse dependencies. The public
-module observation remains complete and monolithic, while the private projector recomposes only
-affected semantic owners from current owner inputs plus retained canonical outbound dependencies.
-Dependency, global-diagnostic, public-shape, topology, configuration, plugin, or uncertain changes
-conservatively expand the module projection. Native transport sends only the resulting delta, and
-the process advances its private base only after application-store acknowledgement.
+and body shards; public-shape changes expand through TypeScript's reverse dependencies. The logical
+public module observation remains complete. Its physical schema stores each canonical declaration
+once in a content-addressed declaration shard under the existing module capability namespace and
+stores only declaration identity, fact identity, and owner-local export paths in module shards. The
+typed reader distinguishes module and declaration kinds and hydrates that representation back to
+the unchanged complete module contract. Logical module identity streams the canonically ordered
+declaration preimage from that shared support; it never reconstructs a repeated in-memory closure
+behind the normalized physical schema. The private projector recomposes only affected semantic
+owners from current owner inputs plus retained canonical outbound dependencies. Dependency,
+global-diagnostic, public-shape, topology, configuration, plugin, or uncertain changes conservatively
+expand the module projection. Native transport sends only the resulting delta, and the process
+advances its private base only after application-store acknowledgement.
 
 The caller describes requested project inputs but never supplies a universe identifier. After the
 resident compiler loads the complete configuration chain, project-reference roots, compiler and

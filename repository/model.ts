@@ -14,6 +14,10 @@ import type {
   SourceRevisionId,
 } from '../analysis/identity/index.ts'
 import { deriveAnalysisId, portablePath } from '../analysis/identity/index.ts'
+import {
+  simpleDirectoryExclusion,
+  simpleRepositoryPathMatch,
+} from './directory-scope.optimization.ts'
 
 export type RepositoryPurpose =
   | 'implementation'
@@ -74,6 +78,11 @@ export interface RepositoryScanEntry {
 }
 
 export interface RepositoryScanner {
+  /** Optional bounded batch path for scanners that already own an immutable admitted corpus. */
+  scanAll?(
+    root: string,
+    options?: { readonly signal?: AbortSignal; readonly scope?: RepositoryScope },
+  ): Promise<readonly RepositoryScanEntry[]>
   scan(
     root: string,
     options?: { readonly signal?: AbortSignal; readonly scope?: RepositoryScope },
@@ -103,15 +112,16 @@ export async function inventoryRepository(
     (left, right) => right.priority - left.priority || left.id.localeCompare(right.id),
   )
   const files: RepositoryFile[] = []
-  for await (const entry of scanner.scan(options.root, {
+  const scanOptions = {
     signal: options.signal,
     scope: options.scope,
-  })) {
+  }
+  const accept = (entry: RepositoryScanEntry): void => {
     options.signal?.throwIfAborted()
     const path = portablePath(entry.path)
-    if (!pathIncluded(path, options.scope)) continue
+    if (!pathIncluded(path, options.scope)) return
     const classification = classify(entry, classifiers)
-    if (!classificationIncluded(classification, options.scope)) continue
+    if (!classificationIncluded(classification, options.scope)) return
     const source = deriveAnalysisId('source', `repository:${options.repository}`, { path }) as SourceId
     files.push({
       source,
@@ -126,6 +136,11 @@ export async function inventoryRepository(
       ...ownership(path),
       classification,
     })
+  }
+  if (scanner.scanAll) {
+    for (const entry of await scanner.scanAll(options.root, scanOptions)) accept(entry)
+  } else {
+    for await (const entry of scanner.scan(options.root, scanOptions)) accept(entry)
   }
   files.sort((left, right) => left.path.localeCompare(right.path))
   return {
@@ -283,8 +298,9 @@ async function* scanDirectory(
   for (const entry of entries) {
     signal?.throwIfAborted()
     const path = relative ? `${relative}/${entry.name}` : entry.name
+    if (path === '.git' || path.startsWith('.git/')) continue
     if (entry.isDirectory()) {
-      if (path === '.git' || path.startsWith('.git/') || directoryExcluded(path, exclude)) continue
+      if (repositoryDirectoryExcluded(path, exclude)) continue
       yield* scanDirectory(root, path, signal, exclude)
     } else if (entry.isFile()) {
       const absolute = join(root, ...path.split('/'))
@@ -299,13 +315,15 @@ async function* scanDirectory(
   }
 }
 
-function directoryExcluded(path: string, patterns: readonly string[]): boolean {
-  return patterns.some(
-    (pattern) =>
-      matchesGlob(path, pattern) ||
-      matchesGlob(`${path}/__entry__`, pattern) ||
-      (!/[?*\[\]{}]/u.test(pattern) && (path === pattern || path.startsWith(`${pattern}/`))),
-  )
+export function repositoryDirectoryExcluded(path: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => {
+    const normalized = portablePath(pattern)
+    const simple = simpleDirectoryExclusion(path, normalized)
+    return simple ?? (
+      nodeMatchesGlob(path, normalized) ||
+      nodeMatchesGlob(`${path}/__entry__`, normalized)
+    )
+  })
 }
 
 function classify(
@@ -357,7 +375,7 @@ function classificationIncluded(value: RepositoryClassification, scope?: Reposit
 
 function matchesGlob(path: string, pattern: string): boolean {
   const normalized = portablePath(pattern)
-  return nodeMatchesGlob(path, normalized)
+  return simpleRepositoryPathMatch(path, normalized) ?? nodeMatchesGlob(path, normalized)
 }
 
 function language(path: string, content: RepositoryContent): string {

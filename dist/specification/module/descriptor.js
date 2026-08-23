@@ -1,10 +1,10 @@
 import ts from 'typescript';
-import { AUTHORING_SPECIFIER, authoringHelperBinding, calledObjectLiteral as descriptorObject, isAuthoringSpecifier, literalProperty as property, literalPropertyName as propertyName, nodeDiagnostic as diagnostic, plainStringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
+import { AUTHORING_SPECIFIER, authoredSourceFile, authoringHelperBinding, calledObjectLiteral as descriptorObject, isAuthoringSpecifier, literalProperty as property, literalPropertyName as propertyName, nodeDiagnostic as diagnostic, plainStringLiteral, syntaxDiagnostics, } from './authoring-syntax.js';
 const SEMANTIC_ID = /^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$/;
 /** Extract a deliberately small literal descriptor language without importing or executing it. */
 export function compileDescriptor(kind, source, text) {
     const diagnostics = syntaxDiagnostics(source, text);
-    const file = ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const file = authoredSourceFile(source, text);
     const helper = authoringHelperBinding(file, helperName(kind));
     const definitions = [];
     for (const statement of file.statements) {

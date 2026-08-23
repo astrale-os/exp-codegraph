@@ -23,6 +23,30 @@ export interface SelectedApplicationSpecifications {
   readonly diagnostics: readonly Diagnostic[]
 }
 
+export interface ApplicationSpecificationAnchor {
+  readonly directory: string
+  readonly source: string
+  readonly root: string
+  readonly title: string
+}
+
+export interface PlannedApplicationSpecificationAnchors {
+  readonly requested: readonly string[]
+  readonly primary: readonly ApplicationSpecificationAnchor[]
+  readonly diagnostics: readonly Diagnostic[]
+}
+
+export function applicationSpecificationAnchors(
+  root: string,
+  directories: readonly string[],
+): readonly ApplicationSpecificationAnchor[]
+
+export function planApplicationSpecificationAnchors(
+  root: string,
+  anchors: readonly ApplicationSpecificationAnchor[],
+  select: readonly string[],
+): PlannedApplicationSpecificationAnchors
+
 export function selectApplicationSpecifications(
   root: string,
   specifications: readonly SpecificationSnapshot[],
