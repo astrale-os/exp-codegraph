@@ -32,6 +32,7 @@ import {
   deriveCheckPerformanceCounters,
   maximumNativeResidentMiB,
   maximumWorkerResidentUpperBoundMiB,
+  maximumWorkerProcessTreeUpperBoundMiB,
   MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES,
   sha256,
   type DirectoryEvidence,
@@ -188,6 +189,9 @@ async function createCanonicalApplication(applicationRoot: string) {
                     ...(phase.workerResidentUpperBoundBytes === undefined
                       ? {}
                       : { workerResidentUpperBoundBytes: phase.workerResidentUpperBoundBytes }),
+                    ...(phase.parentPeakResidentBytes === undefined
+                      ? {}
+                      : { parentPeakResidentBytes: phase.parentPeakResidentBytes }),
                   },
                 })
               },
@@ -271,6 +275,7 @@ const finish = {
     : {}),
 }
 const maximumWorkerMiB = maximumWorkerResidentUpperBoundMiB(telemetry)
+const maximumWorkerProcessTreeMiB = maximumWorkerProcessTreeUpperBoundMiB(telemetry)
 const maximumNativeMiB = maximumNativeResidentMiB(telemetry)
 const maximumRssMiB = usageAfter.maxRSS / 1_024
 const receipt = createCheckPerformanceReceipt({
@@ -329,8 +334,11 @@ const receipt = createCheckPerformanceReceipt({
     maximumRssMiB,
     maximumNativeResidentMiB: maximumNativeMiB,
     maximumWorkerResidentUpperBoundMiB: maximumWorkerMiB,
-    maximumProcessTreeResidentUpperBoundMiB:
-      maximumRssMiB + maximumWorkerMiB + maximumNativeMiB,
+    maximumProcessTreeResidentUpperBoundMiB: Math.max(
+      maximumRssMiB,
+      maximumWorkerProcessTreeMiB,
+      maximumRssMiB + maximumNativeMiB,
+    ),
   },
   finish,
 })

@@ -125,6 +125,24 @@ export function maximumWorkerResidentUpperBoundMiB(
   return bytes.length ? Math.max(...bytes) / 1_024 / 1_024 : 0
 }
 
+export function maximumWorkerProcessTreeUpperBoundMiB(
+  telemetry: readonly AnalysisTelemetryEvent[],
+): number {
+  const bytes = telemetry.flatMap((event) => {
+    const parent = event.metrics?.parentPeakResidentBytes
+    const workers = event.metrics?.workerResidentUpperBoundBytes
+    return typeof parent === 'number' &&
+      Number.isSafeInteger(parent) &&
+      parent >= 0 &&
+      typeof workers === 'number' &&
+      Number.isSafeInteger(workers) &&
+      workers >= 0
+      ? [parent + workers]
+      : []
+  })
+  return bytes.length ? Math.max(...bytes) / 1_024 / 1_024 : 0
+}
+
 export type CheckPerformanceReceipt = CheckPerformanceReceiptBody & {
   readonly receiptSha256: string
 }
@@ -210,14 +228,11 @@ export function verifyCheckPerformanceReceipt(receipt: CheckPerformanceReceipt):
   }
   if (
     receipt.version === 3 &&
-    Math.abs(
-      receipt.resources.maximumProcessTreeResidentUpperBoundMiB -
-        (
-          receipt.resources.maximumRssMiB +
-          receipt.resources.maximumWorkerResidentUpperBoundMiB +
-          receipt.resources.maximumNativeResidentMiB
-        ),
-    ) > 1e-9
+    Math.abs(receipt.resources.maximumProcessTreeResidentUpperBoundMiB - Math.max(
+      receipt.resources.maximumRssMiB,
+      maximumWorkerProcessTreeUpperBoundMiB(receipt.work.telemetry),
+      receipt.resources.maximumRssMiB + receipt.resources.maximumNativeResidentMiB,
+    )) > 1e-9
   ) {
     throw new Error('Check performance v3 process-tree memory bound is invalid.')
   }

@@ -67,16 +67,18 @@ async function prepareSpecificationCompilation(root, inventories, onPhase, resto
         declarationNavigation: includeDeclarationNavigation,
         declarationModel: includeDeclarationModels,
     })));
+    const isolation = apiCompilerIsolationWork();
     report(onPhase, {
         phase: 'declarations',
         durationMs: performance.now() - started,
         items: declarations.length,
-        programs: apiCompilerIsolationWork().programs,
-        sessions: apiCompilerIsolationWork().sessions,
-        retries: apiCompilerIsolationWork().retries,
-        fallbacks: apiCompilerIsolationWork().plannerFallbacks,
-        workerPeakResidentBytes: apiCompilerIsolationWork().workerPeakResidentBytes,
-        workerResidentUpperBoundBytes: apiCompilerIsolationWork().workerResidentUpperBoundBytes,
+        programs: isolation.programs,
+        sessions: isolation.sessions,
+        retries: isolation.retries,
+        fallbacks: isolation.plannerFallbacks,
+        workerPeakResidentBytes: isolation.workerPeakResidentBytes,
+        workerResidentUpperBoundBytes: isolation.workerResidentUpperBoundBytes,
+        parentPeakResidentBytes: process.resourceUsage().maxRSS * 1_024,
     });
     const typeScriptStarted = performance.now();
     let signalScheduled;

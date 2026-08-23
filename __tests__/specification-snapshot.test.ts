@@ -45,9 +45,13 @@ describe('immutable normative specification snapshots', () => {
       fallbacks: 0,
       workerPeakResidentBytes: expect.any(Number),
       workerResidentUpperBoundBytes: expect.any(Number),
+      parentPeakResidentBytes: expect.any(Number),
     })
     expect(
       phases.find(({ phase }) => phase === 'declarations')?.workerResidentUpperBoundBytes,
+    ).toBeGreaterThan(0)
+    expect(
+      phases.find(({ phase }) => phase === 'declarations')?.parentPeakResidentBytes,
     ).toBeGreaterThan(0)
     expect(
       phases.find(({ phase }) => phase === 'declarations')?.workerResidentUpperBoundBytes,

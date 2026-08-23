@@ -205,6 +205,7 @@ export interface SpecificationCompilationPhase {
   readonly fallbacks?: number
   readonly workerPeakResidentBytes?: number
   readonly workerResidentUpperBoundBytes?: number
+  readonly parentPeakResidentBytes?: number
   readonly overlap?: 'typescript-snapshots'
 }
 

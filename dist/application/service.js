@@ -847,6 +847,9 @@ function observedSpecificationCompiler(compile, telemetry) {
                     ...(phase.workerResidentUpperBoundBytes === undefined
                         ? {}
                         : { workerResidentUpperBoundBytes: phase.workerResidentUpperBoundBytes }),
+                    ...(phase.parentPeakResidentBytes === undefined
+                        ? {}
+                        : { parentPeakResidentBytes: phase.parentPeakResidentBytes }),
                     ...(phase.overlap ? { overlap: phase.overlap } : {}),
                 },
             });
