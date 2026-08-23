@@ -128,7 +128,9 @@ function compileProjectGroup(projectRoot, requests, results) {
     }
     if (!valid.length)
         return;
-    if (valid.every((request) => !request.declarationModel) &&
+    const partitions = partitionDeclarationEntries(valid, entries);
+    if (partitions.length === 1 &&
+        valid.every((request) => !request.declarationModel) &&
         valid.every((request) => !entries.get(request.mainFile).ambientEffects)) {
         try {
             const files = new Set(valid.flatMap(({ mainFile }) => [...entries.get(mainFile).files]));
@@ -143,7 +145,6 @@ function compileProjectGroup(projectRoot, requests, results) {
             // Optimization uncertainty retains the compatibility-partitioned canonical compiler below.
         }
     }
-    const partitions = partitionDeclarationEntries(valid, entries);
     for (const partition of partitions) {
         compileProjectPartition(projectRoot, partition, entries, compilerOptions, results);
     }
@@ -179,12 +180,22 @@ function partitionDeclarationEntries(requests, entries) {
             continue;
         }
         const modules = new Map(renderExternalModules([entry.externalReferences]));
-        const group = compatible.find(({ modules: current }) => [...modules].every(([specifier, source]) => !current.has(specifier) || current.get(specifier) === source));
+        const group = compatible.find(({ modules: current, roots, rootReferences }) => [...modules].every(([specifier, source]) => !current.has(specifier) || current.get(specifier) === source) &&
+            ![...entry.rootReferences].some((reference) => roots.has(reference)) &&
+            !rootReferences.has(request.mainFile));
         if (!group) {
-            compatible.push({ requests: [request], modules });
+            compatible.push({
+                requests: [request],
+                modules,
+                roots: new Set([request.mainFile]),
+                rootReferences: new Set(entry.rootReferences),
+            });
             continue;
         }
         group.requests.push(request);
+        group.roots.add(request.mainFile);
+        for (const reference of entry.rootReferences)
+            group.rootReferences.add(reference);
         for (const [specifier, source] of modules)
             group.modules.set(specifier, source);
     }

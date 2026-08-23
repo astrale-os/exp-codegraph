@@ -15,6 +15,8 @@ export interface DeclarationEntry {
   readonly files: ReadonlySet<string>
   readonly externalReferences: readonly ExternalReference[]
   readonly ambientEffects: boolean
+  /** Resolved module references omitted from this entrypoint's canonical source closure. */
+  readonly rootReferences: ReadonlySet<string>
 }
 
 export interface DeclarationSourceEvidence {
@@ -22,6 +24,7 @@ export interface DeclarationSourceEvidence {
   readonly externalReferences: readonly ExternalReference[]
   readonly ambientEffects: boolean
   readonly dependencies: readonly string[]
+  readonly rootReferences: readonly string[]
 }
 
 const MAX_API_SOURCES = 192
@@ -43,6 +46,7 @@ export function createDeclarationSourceCorpus(
       const externalReferences: ExternalReference[] = []
       const pending = [mainFile]
       const seen = new Set<string>()
+      const rootReferences = new Set<string>()
       let sourceBytes = 0
       let ambientEffects = false
       while (pending.length) {
@@ -59,9 +63,15 @@ export function createDeclarationSourceCorpus(
         sourceBytes += source.bytes
         ambientEffects ||= source.ambientEffects
         externalReferences.push(...source.externalReferences)
+        for (const reference of source.rootReferences) rootReferences.add(reference)
         pending.push(...source.dependencies)
       }
-      return { files: seen, externalReferences, ambientEffects }
+      return {
+        files: seen,
+        externalReferences,
+        ambientEffects,
+        rootReferences: new Set([...rootReferences].filter((file) => !seen.has(file))),
+      }
     },
     evidence(file) {
       return admittedSource(resolve(file))
@@ -78,7 +88,13 @@ export function createDeclarationSourceCorpus(
       options.target ?? ts.ScriptTarget.ES2022,
     )
     if (!parsed) {
-      const unavailable = { bytes, externalReferences: [], ambientEffects: false, dependencies: [] }
+      const unavailable = {
+        bytes,
+        externalReferences: [],
+        ambientEffects: false,
+        dependencies: [],
+        rootReferences: [],
+      }
       sources.set(file, unavailable)
       return unavailable
     }
@@ -112,11 +128,27 @@ export function createDeclarationSourceCorpus(
       const canonical = declarationRealpathSafe(resolved.resolvedFileName)
       if (canonical && permittedDeclarationPath(projectRoot, canonical)) dependencies.push(canonical)
     }
+    const rootReferences = ts.preProcessFile(parsed.text, true, true).importedFiles.flatMap(
+      ({ fileName: specifier }) => {
+        if (isExternalSpecifier(specifier)) return []
+        const resolved = ts.resolveModuleName(specifier, file, options, host).resolvedModule
+        const canonical = resolved?.resolvedFileName.endsWith('.d.ts')
+          ? declarationRealpathSafe(resolved.resolvedFileName)
+          : undefined
+        if (
+          canonical &&
+          permittedDeclarationPath(projectRoot, canonical) &&
+          !dependencies.includes(canonical)
+        ) return [canonical]
+        return []
+      },
+    )
     const source = {
       bytes,
       externalReferences: collectExternalReferences(parsed),
       ambientEffects: typeScriptSourceHasAmbientEffects(parsed),
       dependencies,
+      rootReferences,
     }
     sources.set(file, source)
     return source

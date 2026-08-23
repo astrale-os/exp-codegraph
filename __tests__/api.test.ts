@@ -1156,6 +1156,36 @@ export interface Second { readonly shared: Shared }
     expect(await compileApisIsolated(diagnosticsOnly)).toEqual(diagnosticsIsolated)
   })
 
+  it('isolates inline relative import types from neighboring roots', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'astrale-spec-api-relative-root-'))
+    temporary.push(root)
+    const installation = join(root, 'runtime/schema/installation/.spec/api.d.ts')
+    const authorization = join(root, 'runtime/authorization/.spec/api.d.ts')
+    await mkdir(dirname(installation), { recursive: true })
+    await mkdir(dirname(authorization), { recursive: true })
+    await writeFile(
+      installation,
+      "export type Decision = import('../../../authorization/.spec/api.js').PolicyDecision\n",
+      'utf8',
+    )
+    await writeFile(authorization, 'export interface PolicyDecision { readonly pass: boolean }\n')
+    const requests = [installation, authorization].map((mainFile) => ({
+      mainFile,
+      projectRoot: root,
+      declarationModel: false,
+      declarationNavigation: false,
+    }))
+    const isolated = await Promise.all(requests.map((request) => compileApi(request)))
+
+    expect(planDeclarationCompilerUniverses(requests)).toEqual([[0], [1]])
+    expect(await compileApis(requests)).toEqual(isolated)
+    expect(await compileApisIsolated(requests)).toEqual(isolated)
+    expect(isolated[0]).toMatchObject({
+      ok: false,
+      diagnostics: [expect.objectContaining({ code: 'TS2307' })],
+    })
+  })
+
   it('isolates syntax-derived external package projections per entrypoint', async () => {
     const root = await mkdtemp(join(tmpdir(), 'astrale-spec-api-external-'))
     temporary.push(root)
