@@ -99,6 +99,27 @@ const repositoryRevision = (
 ).stdout.trim()
 assertConstitutedCheckRequest(repositoryRevision, performanceClass, argv)
 const telemetry: AnalysisTelemetryEvent[] = []
+if (sourceProof.ok) {
+  const bytes = sourceProof.proof.overlay.reduce(
+    (total, entry) => total + (entry.kind === 'content' ? entry.bytes : 0),
+    0,
+  )
+  if (bytes) {
+    telemetry.push({
+      format: 'astrale.codegraph.analysis-telemetry',
+      version: 1,
+      component: 'analysis',
+      phase: 'qualification.source-proof',
+      metrics: {
+        status: 'completed',
+        filesTraversed: sourceProof.proof.overlay.length,
+        bytesTraversed: bytes,
+        bytesRead: bytes,
+        bytesHashed: bytes,
+      },
+    })
+  }
+}
 const hardware = {
   cpuModel: cpus()[0]?.model ?? 'unknown',
   logicalCpus: cpus().length,

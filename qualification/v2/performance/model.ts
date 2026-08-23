@@ -254,7 +254,8 @@ export function deriveCheckPerformanceCounters(
   const compilerPhases = completed.filter((event) => event.phase.startsWith('application.compile.'))
   const inventoryPhases = completed.filter((event) =>
     event.phase === 'application.inventory.git' ||
-    event.phase === 'qualification.canonical-inventory',
+    event.phase === 'qualification.canonical-inventory' ||
+    event.phase === 'qualification.source-proof',
   )
   const checkpoints = completed.filter((event) => event.phase === 'application.checkpoint')
   const compile = completed.find((event) => event.phase === 'application.compile')
