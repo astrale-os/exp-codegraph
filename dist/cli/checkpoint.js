@@ -36,7 +36,9 @@ export async function runCliCommand(command, services, output) {
     let canonicalStarted = false;
     const events = [];
     try {
-        const producerFingerprint = await codegraphProducerFingerprint();
+        const producerFingerprint = await codegraphProducerFingerprint({
+            persistence: command.cache ? 'advisory' : 'memory',
+        });
         const repositoryKey = await nodeApplicationRepositoryKey(root);
         const repository = await resolveApplicationRepositoryIdentity(root, repositoryKey);
         const request = checkRequest(command);

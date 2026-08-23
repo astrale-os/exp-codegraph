@@ -119,6 +119,7 @@ describe('CLI acceleration receipts', () => {
     expect((await readdir(semanticDirectory, { recursive: true })).sort()).toEqual(
       semanticFilesBefore,
     )
+    expect(await readdir(portableCache.root, { recursive: true })).toEqual([])
 
     const packManifests = semanticFilesBefore.filter((path) =>
       /(?:^|\/)manifests\/semantic-pack-[a-f0-9]{64}\.json$/u.test(path),
