@@ -8,6 +8,7 @@ import { readBounded } from '../source/file.js';
 import { MAX_VALUE_DEPTH, MAX_VALUE_NODES, valueLimit } from '../source/limits.js';
 import { loadYaml } from '../source/yaml.js';
 import { validateSchemaDocument } from './validate.js';
+import { schemaMetadataIssue } from './load.optimization.js';
 export async function loadSchema(file, source, root, additionalSchemas = [], options = {}) {
     let text = '';
     let schema = null;
@@ -36,11 +37,11 @@ export async function loadSchema(file, source, root, additionalSchemas = [], opt
             validateSchemaDocument(schema, source, diagnostics);
         }
         if (!diagnostics.length && options.compile === false) {
-            const ajv = configuredAjv({ allErrors: true, strict: false, validateFormats: false }, additionalSchemas);
-            if (!ajv.validateSchema(schema)) {
+            const issue = metadataIssue(schema, additionalSchemas);
+            if (issue) {
                 diagnostics.push({
                     code: 'SCHEMA_META_INVALID',
-                    message: ajv.errorsText(ajv.errors, { separator: '; ' }),
+                    message: issue,
                     file: source,
                     line: 1,
                     column: 1,
@@ -68,6 +69,14 @@ export async function loadSchema(file, source, root, additionalSchemas = [], opt
         diagnostics.push(errorDiagnostic('SCHEMA_INVALID', error, source));
     }
     return { text, schema, validate, diagnostics };
+}
+function metadataIssue(schema, additionalSchemas) {
+    if (!additionalSchemas.length)
+        return schemaMetadataIssue(schema);
+    const ajv = configuredAjv({ allErrors: true, strict: false, validateFormats: false }, additionalSchemas);
+    if (ajv.validateSchema(schema))
+        return;
+    return ajv.errorsText(ajv.errors, { separator: '; ' });
 }
 function configuredAjv(options, additionalSchemas) {
     const ajv = new Ajv2020(options);

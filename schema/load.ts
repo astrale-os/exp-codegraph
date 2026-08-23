@@ -9,6 +9,7 @@ import { readBounded } from '../source/file.ts'
 import { MAX_VALUE_DEPTH, MAX_VALUE_NODES, valueLimit } from '../source/limits.ts'
 import { loadYaml } from '../source/yaml.ts'
 import { validateSchemaDocument } from './validate.ts'
+import { schemaMetadataIssue } from './load.optimization.ts'
 
 export interface SchemaSource {
   text: string
@@ -55,14 +56,11 @@ export async function loadSchema(
       validateSchemaDocument(schema, source, diagnostics)
     }
     if (!diagnostics.length && options.compile === false) {
-      const ajv = configuredAjv(
-        { allErrors: true, strict: false, validateFormats: false },
-        additionalSchemas,
-      )
-      if (!ajv.validateSchema(schema as boolean | object)) {
+      const issue = metadataIssue(schema as boolean | object, additionalSchemas)
+      if (issue) {
         diagnostics.push({
           code: 'SCHEMA_META_INVALID',
-          message: ajv.errorsText(ajv.errors, { separator: '; ' }),
+          message: issue,
           file: source,
           line: 1,
           column: 1,
@@ -90,6 +88,19 @@ export async function loadSchema(
     diagnostics.push(errorDiagnostic('SCHEMA_INVALID', error, source))
   }
   return { text, schema, validate, diagnostics }
+}
+
+function metadataIssue(
+  schema: boolean | object,
+  additionalSchemas: readonly object[],
+): string | undefined {
+  if (!additionalSchemas.length) return schemaMetadataIssue(schema)
+  const ajv = configuredAjv(
+    { allErrors: true, strict: false, validateFormats: false },
+    additionalSchemas,
+  )
+  if (ajv.validateSchema(schema)) return
+  return ajv.errorsText(ajv.errors, { separator: '; ' })
 }
 
 function configuredAjv(
