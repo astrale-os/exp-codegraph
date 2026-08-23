@@ -6,6 +6,7 @@ import {
   matchesPackagePattern,
   packageNameFromPath,
 } from '../specification/module/package.ts'
+import { withOperationSnapshot } from '../source/operation-snapshot.ts'
 
 describe('module package declarations', () => {
   it('extracts one exact dependency and requires its canonical package path', () => {
@@ -87,5 +88,27 @@ export default []
     expect(result.diagnostics).toContainEqual(
       expect.objectContaining({ code: 'PACKAGE_PATTERNS_EMPTY' }),
     )
+  })
+
+  it('reuses one exact standalone syntax analysis inside an operation', async () => {
+    const source = 'module/.spec/packages/jose.ts'
+    const invalid = `import { definePackage } from '@astrale-os/codegraph/authoring'
+export default definePackage({ package: 'jose', purpose: })
+`
+    await withOperationSnapshot(async () => {
+      const first = compilePackageDefinition(source, invalid)
+      expect(compilePackageDefinition(source, invalid)).toEqual(first)
+      expect(first.diagnostics).toContainEqual(
+        expect.objectContaining({ code: 'MODULE_TYPESCRIPT_1109' }),
+      )
+      expect(() =>
+        compilePackageDefinition(
+          source,
+          `import { definePackage } from '@astrale-os/codegraph/authoring'
+export default definePackage({ package: 'jose', purpose: 'Signing.' })
+`,
+        ),
+      ).toThrow('Authoring source changed during compilation')
+    })
   })
 })

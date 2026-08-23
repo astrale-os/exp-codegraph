@@ -1,7 +1,10 @@
 import ts from 'typescript'
 
 import type { Diagnostic } from '../../source/diagnostic.ts'
-import { operationAuthoringSyntaxSource } from './authoring-syntax.optimization.ts'
+import {
+  operationAuthoringSyntaxAnalysis,
+  type AuthoringSyntaxAnalysis,
+} from './authoring-syntax.optimization.ts'
 
 export const AUTHORING_SPECIFIER = '@astrale-os/codegraph/authoring'
 /** Temporary source-compatible spelling retained while repositories migrate to Codegraph. */
@@ -72,27 +75,34 @@ export function plainStringLiteral(expression: ts.Expression): string | undefine
 
 /** Reuse an admitted compiler-universe AST or parse the standalone authored source exactly once. */
 export function authoredSourceFile(source: string, text: string): ts.SourceFile {
-  return operationAuthoringSyntaxSource(source, text) ??
-    ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  return operationAuthoringSyntaxAnalysis(source, text, () => standaloneAnalysis(source, text))
+    ?.file ?? ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 }
 
 export function syntaxDiagnostics(source: string, text: string): Diagnostic[] {
-  const admitted = operationAuthoringSyntaxSource(source, text) as
-    | (ts.SourceFile & { readonly parseDiagnostics?: readonly ts.Diagnostic[] })
-    | undefined
-  if (admitted?.parseDiagnostics) {
-    return admitted.parseDiagnostics
-      .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
-      .map((entry) => compilerDiagnostic(source, entry))
+  const entries = operationAuthoringSyntaxAnalysis(
+    source,
+    text,
+    () => standaloneAnalysis(source, text),
+  )?.diagnostics ?? transpileDiagnostics(source, text)
+  return entries
+    .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
+    .map((entry) => compilerDiagnostic(source, entry))
+}
+
+function standaloneAnalysis(source: string, text: string): AuthoringSyntaxAnalysis {
+  return {
+    file: ts.createSourceFile(source, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS),
+    diagnostics: transpileDiagnostics(source, text),
   }
-  const result = ts.transpileModule(text, {
+}
+
+function transpileDiagnostics(source: string, text: string): readonly ts.Diagnostic[] {
+  return ts.transpileModule(text, {
     fileName: source,
     reportDiagnostics: true,
     compilerOptions: { module: ts.ModuleKind.NodeNext, target: ts.ScriptTarget.ES2022 },
-  })
-  return (result.diagnostics ?? [])
-    .filter((entry) => entry.category === ts.DiagnosticCategory.Error)
-    .map((entry) => compilerDiagnostic(source, entry))
+  }).diagnostics ?? []
 }
 
 function compilerDiagnostic(source: string, entry: ts.Diagnostic): Diagnostic {

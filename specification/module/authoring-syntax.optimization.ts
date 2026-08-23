@@ -2,9 +2,13 @@ import ts from 'typescript'
 
 import { operationSnapshot, operationSnapshotNamespace } from '../../source/operation-snapshot.ts'
 
-interface AuthoringSyntaxSource {
-  readonly text: string
+export interface AuthoringSyntaxAnalysis {
   readonly file: ts.SourceFile
+  readonly diagnostics: readonly ts.Diagnostic[]
+}
+
+interface AuthoringSyntaxSource extends AuthoringSyntaxAnalysis {
+  readonly text: string
 }
 
 const authoringSources = operationSnapshotNamespace<AuthoringSyntaxSource>(
@@ -22,15 +26,29 @@ export function markAuthoringSyntaxSources(
     if (current && current.text !== source.file.text) {
       throw new Error(`Authoring source changed during compilation: ${source.source}`)
     }
-    values.set(source.source, { text: source.file.text, file: source.file })
+    const diagnostics = (
+      source.file as ts.SourceFile & { readonly parseDiagnostics?: readonly ts.Diagnostic[] }
+    ).parseDiagnostics ?? []
+    values.set(source.source, { text: source.file.text, file: source.file, diagnostics })
   }
 }
 
-/** Return the exact operation-owned AST only while its admitted text still matches. */
-export function operationAuthoringSyntaxSource(
+/** Reuse or create one exact standalone syntax analysis inside the coherent operation. */
+export function operationAuthoringSyntaxAnalysis(
   source: string,
   text: string,
-): ts.SourceFile | undefined {
-  const current = operationSnapshot(authoringSources)?.get(source)
-  return current?.text === text ? current.file : undefined
+  create: () => AuthoringSyntaxAnalysis,
+): AuthoringSyntaxAnalysis | undefined {
+  const values = operationSnapshot(authoringSources)
+  if (!values) return
+  const current = values.get(source)
+  if (current) {
+    if (current.text !== text) {
+      throw new Error(`Authoring source changed during compilation: ${source}`)
+    }
+    return current
+  }
+  const created = create()
+  values.set(source, { text, ...created })
+  return created
 }
