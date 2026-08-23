@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto'
 import { join, resolve } from 'node:path'
 
-import type { TypeSpecApplicationSnapshot } from '../application/index.ts'
-import type { SpecificationSnapshot } from '../specification/index.ts'
 import type { CliCommand } from './parse.ts'
 import type { CliOutput } from './report.ts'
 import type {
@@ -27,7 +25,6 @@ import {
   nodeApplicationRepositoryKey,
   nodeApplicationWorkspaceCheckpointDirectory,
 } from '../application/node/index.ts'
-import { selectApplicationSpecifications } from '../application/selection/index.ts'
 import { defaultTypeSpecCacheDirectory } from '../cache/file-store.ts'
 import {
   createFileWorkspaceCheckpointStore,
@@ -40,7 +37,7 @@ import {
   createCliAccelerationEvent as accelerationEvent,
   createCliAccelerationReceipt,
 } from './acceleration.ts'
-import { reportProjectedCheckResult, runCommand } from './run.ts'
+import { runCommand } from './run.ts'
 import {
   CHECK_CATALOG_ARTIFACT as CATALOG,
   CHECK_CATALOG_FORMAT as CATALOG_FORMAT,
@@ -50,7 +47,6 @@ import {
   CHECK_RESULT_VERSION as VERSION,
   MAXIMUM_CHECK_CATALOG_BYTES as MAXIMUM_CATALOG_BYTES,
   MAXIMUM_CHECK_RESULT_BYTES as MAXIMUM_RESULT_BYTES,
-  isStoredCheckCatalog,
   isStoredCheckResult,
   type CheckTranscriptEntry as TranscriptEntry,
   type StoredCheckCatalog,
@@ -141,7 +137,7 @@ export async function runCliCommand(
         semanticStore,
         semanticPackScope({ sourceProof, producerFingerprint, repository, family }),
         { producerFingerprint, sourceProof, request, family, repository },
-        command.select.length > 0,
+        false,
       )
       events.push(semantic.event)
       if (semantic.result) {
@@ -154,12 +150,6 @@ export async function runCliCommand(
             snapshot: semantic.result.snapshot,
           },
         }, events)
-      }
-      if (semantic.catalog) {
-        const transcript: TranscriptEntry[] = []
-        const projected = projectCatalogCheck(root, command, semantic.catalog, transcript)
-        replay(output, transcript)
-        return withAcceleration(projected, events)
       }
       if (semanticPackWritable || semantic.application) {
         portableCheckpoint = {
@@ -204,56 +194,6 @@ export async function runCliCommand(
           snapshot: cached.value.snapshot,
         },
       }, events)
-    }
-
-    if (command.select.length) {
-      const catalog = await loadCatalog(store, catalogScope, {
-        producerFingerprint,
-        family,
-        repository,
-        inventory: inventory.revision,
-      })
-      events.push(catalog.event)
-      if (catalog.value) {
-        const transcript: TranscriptEntry[] = []
-        const projected = projectCatalogCheck(root, command, catalog.value, transcript)
-        const stored: StoredCheckResult = {
-          format: FORMAT,
-          version: VERSION,
-          producerFingerprint,
-          ...(sourceProof ? { sourceProof } : {}),
-          request,
-          repository,
-          inventory: inventory.revision,
-          snapshot: projected.check!.snapshot,
-          exitCode: projected.exitCode,
-          transcript,
-          catalogStatus: 'projected',
-        }
-        events.push(await publishResult(store, scope, stored, 'workspace-result-publish'))
-        if (semanticStore && sourceProof && semanticPackWritable) {
-          const application = await portableApplicationReference(
-            semanticStore,
-            producerFingerprint,
-            sourceProof,
-            repository,
-            inventory.revision,
-            command.exclude,
-          )
-          events.push(
-            await publishSemanticPack(
-              semanticStore,
-              semanticPackScope({ sourceProof, producerFingerprint, repository, family }),
-              stored,
-              family,
-              sourceProof,
-              { ...(application ? { application } : {}) },
-            ),
-          )
-        }
-        replay(output, transcript)
-        return withAcceleration(projected, events)
-      }
     }
 
     const transcript: TranscriptEntry[] = []
@@ -510,119 +450,6 @@ async function loadResult(
       event: accelerationEvent(operation, 'failed', 'load-failed', started, error),
     }
   }
-}
-
-async function loadCatalog(
-  store: ReturnType<typeof createFileWorkspaceCheckpointStore>,
-  scope: string,
-  expectation: {
-    readonly producerFingerprint: string
-    readonly sourceProof?: string
-    readonly family: string
-    readonly repository: string
-    readonly inventory?: string
-  },
-  operation: Extract<CliAccelerationOperation, 'catalog-read'> = 'catalog-read',
-): Promise<AccelerationLoad<StoredCheckCatalog>> {
-  const started = performance.now()
-  const miss = (code: string): AccelerationLoad<StoredCheckCatalog> => ({
-    event: accelerationEvent(operation, 'miss', code, started),
-  })
-  try {
-    const loaded = await store.load(scope)
-    if (!loaded.ok) return miss(loaded.reason)
-    if (
-      loaded.manifest.format !== CATALOG_FORMAT ||
-      loaded.manifest.version !== CATALOG_VERSION ||
-      loaded.manifest.producerFingerprint !== expectation.producerFingerprint
-    ) {
-      return miss('manifest-incompatible')
-    }
-    const bytes = loaded.artifacts.get(CATALOG)
-    if (!bytes) return miss('artifact-missing')
-    const artifact = decodeWorkspaceCheckpointJson(bytes, {
-      maximumDecodedBytes: MAXIMUM_CATALOG_BYTES,
-    })
-    const decoded = artifact.value
-    if (!isStoredCheckCatalog(decoded)) return miss('payload-invalid')
-    if (
-      decoded.producerFingerprint !== expectation.producerFingerprint ||
-      (expectation.sourceProof !== undefined && decoded.sourceProof !== expectation.sourceProof) ||
-      decoded.family !== expectation.family ||
-      decoded.repository !== expectation.repository
-    ) {
-      return miss('identity-mismatch')
-    }
-    if (expectation.inventory !== undefined && decoded.inventory !== expectation.inventory) {
-      return miss('identity-mismatch')
-    }
-    return {
-      value: decoded,
-      event: {
-        ...accelerationEvent(operation, 'hit', 'catalog-admitted', started),
-        work: {
-          bytesRead: bytes.byteLength,
-          bytesDecoded: artifact.decodedBytes,
-          loadedShards: 1,
-        },
-      },
-    }
-  } catch (error) {
-    return {
-      event: accelerationEvent(operation, 'failed', 'load-failed', started, error),
-    }
-  }
-}
-
-function projectCatalogCheck(
-  root: string,
-  command: CheckCommand,
-  stored: StoredCheckCatalog,
-  transcript: TranscriptEntry[],
-): CliResult {
-  const specifications = stored.catalog
-    .specifications as unknown as readonly SpecificationSnapshot[]
-  const selected = selectApplicationSpecifications(root, specifications, {
-    select: command.select,
-    focused: true,
-  })
-  const qualified = new Set(selected.qualification.map((value) => value.source))
-  const qualifications = stored.catalog.qualifications.filter((value) =>
-    qualified.has(value.source),
-  )
-  const diagnostics = [
-    ...selected.diagnostics,
-    ...stored.catalog.sharedDiagnostics,
-    ...selected.qualification.flatMap((specification) => specification.diagnostics),
-    ...qualifications.flatMap((qualification) => qualification.diagnostics),
-  ]
-  const identity = sha256(
-    JSON.stringify({
-      format: `${CATALOG_FORMAT}-projection/1`,
-      basis: stored.snapshot,
-      request: checkRequest(command),
-      selection: selected.selection,
-      qualifications: qualifications.map((value) => value.id),
-      diagnostics,
-    }),
-  )
-  const snapshot = {
-    id: `application:${identity}`,
-    repository: stored.repository,
-    inventory: stored.inventory,
-    selection: selected.selection,
-    specifications: selected.included,
-  } as unknown as Pick<
-    TypeSpecApplicationSnapshot,
-    'id' | 'repository' | 'inventory' | 'selection' | 'specifications'
-  >
-  return reportProjectedCheckResult(
-    recordingOutput(undefined, transcript),
-    command,
-    snapshot,
-    diagnostics,
-    qualifications.some((qualification) => qualification.status !== 'pass'),
-  )
 }
 
 function checkRequest(command: CheckCommand): string {

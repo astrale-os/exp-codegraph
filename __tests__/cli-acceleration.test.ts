@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import type { AnalysisTelemetryEvent } from '../analysis/index.ts'
+import type { TypeSpecApplicationSnapshot } from '../application/index.ts'
 import { createNodeTypeSpecApplicationService } from '../application/node/index.ts'
 import { defaultTypeSpecCacheDirectory } from '../cache/file-store.ts'
 import { runCliCommand } from '../cli/checkpoint.ts'
@@ -27,8 +28,8 @@ afterEach(async () => {
 })
 
 describe('CLI acceleration receipts', () => {
-  /** @evidence CLI-SEMANTIC-PACK-CATALOG-PROJECTION */
-  it('atomically publishes exact and catalog shards and falls back without transcript drift', async () => {
+  /** @evidence CLI-SEMANTIC-PACK-REQUEST-IDENTITY */
+  it('uses the exact application checkpoint when a catalog cannot reproduce request identity', async () => {
     const repository = await fixture({
       'package.json': JSON.stringify({ name: '@fixture/cli-acceleration', type: 'module' }),
       'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
@@ -52,9 +53,14 @@ describe('CLI acceleration receipts', () => {
 
     let applications = 0
     const telemetry: AnalysisTelemetryEvent[] = []
-    const services = testServices(() => {
-      applications += 1
-    }, telemetry)
+    const snapshots: TypeSpecApplicationSnapshot[] = []
+    const services = testServices(
+      () => {
+        applications += 1
+      },
+      telemetry,
+      (snapshot) => snapshots.push(snapshot),
+    )
     const command = parseCommand(['check', repository.root, '--quiet'])
     const firstOutput = recordingOutput()
     const first = await runCliCommand(command, services, firstOutput.output)
@@ -89,7 +95,11 @@ describe('CLI acceleration receipts', () => {
       '--no-cache',
     ])
     const selectedCanonicalOutput = recordingOutput()
-    await runCliCommand(selectedCommand, services, selectedCanonicalOutput.output)
+    const selectedCanonical = await runCliCommand(
+      selectedCommand,
+      services,
+      selectedCanonicalOutput.output,
+    )
     expect(applications).toBe(2)
 
     const portableCache = await fixture({})
@@ -109,13 +119,15 @@ describe('CLI acceleration receipts', () => {
       expect.arrayContaining([
         expect.objectContaining({
           operation: 'semantic-pack-read',
-          outcome: 'hit',
-          code: 'catalog-admitted',
+          outcome: 'miss',
+          code: 'request-mismatch',
         }),
       ]),
     )
-    expect(applications).toBe(2)
+    expect(applications).toBe(3)
     expect(selectedPortableOutput.transcript).toEqual(selectedCanonicalOutput.transcript)
+    expect(selectedPortable.check?.snapshot).toBe(selectedCanonical.check?.snapshot)
+    expect(snapshots[2]?.id).toBe(snapshots[1]?.id)
     expect((await readdir(semanticDirectory, { recursive: true })).sort()).toEqual(
       semanticFilesBefore,
     )
@@ -164,11 +176,11 @@ describe('CLI acceleration receipts', () => {
         expect.objectContaining({
           operation: 'semantic-pack-read',
           outcome: 'miss',
-          code: 'artifact-corrupt',
+          code: 'request-mismatch',
         }),
       ]),
     )
-    expect(applications).toBe(3)
+    expect(applications).toBe(4)
     expect(selectedFallbackOutput.transcript).toEqual(selectedCanonicalOutput.transcript)
     const fallbackTelemetry = telemetry.slice(fallbackTelemetryStart)
     expect(fallbackTelemetry).toContainEqual(expect.objectContaining({
@@ -191,7 +203,7 @@ describe('CLI acceleration receipts', () => {
         expect.objectContaining({ operation: 'semantic-pack-read', outcome: 'hit' }),
       ]),
     )
-    expect(applications).toBe(3)
+    expect(applications).toBe(4)
     expect(exactWithCorruptCatalogOutput.transcript).toEqual(firstOutput.transcript)
 
     await writeFile(catalogBlob, catalogBytes)
@@ -209,12 +221,12 @@ describe('CLI acceleration receipts', () => {
       expect.arrayContaining([
         expect.objectContaining({
           operation: 'semantic-pack-read',
-          outcome: 'hit',
-          code: 'catalog-admitted',
+          outcome: 'miss',
+          code: 'request-mismatch',
         }),
       ]),
     )
-    expect(applications).toBe(3)
+    expect(applications).toBe(5)
     expect(selectedWithCorruptResultOutput.transcript).toEqual(selectedCanonicalOutput.transcript)
 
     process.env.ASTRALE_TYPESPEC_CACHE_DIR = cache.root
@@ -229,7 +241,7 @@ describe('CLI acceleration receipts', () => {
         expect.objectContaining({ operation: 'workspace-result-read', outcome: 'hit' }),
       ]),
     )
-    expect(applications).toBe(3)
+    expect(applications).toBe(5)
     expect(fallbackOutput.transcript).toEqual(firstOutput.transcript)
   })
 
@@ -297,6 +309,7 @@ describe('CLI acceleration receipts', () => {
 function testServices(
   onApplication: () => void,
   telemetry: AnalysisTelemetryEvent[] = [],
+  onSnapshot?: (snapshot: TypeSpecApplicationSnapshot) => void,
 ): CliServices {
   return {
     version: async () => 'fixture',
@@ -305,13 +318,24 @@ function testServices(
     },
     async createApplication(root, cache, portableCheckpoint) {
       onApplication()
-      return createNodeTypeSpecApplicationService({
+      const application = await createNodeTypeSpecApplicationService({
         root,
         cacheDirectory: defaultTypeSpecCacheDirectory(),
         persistence: cache ? 'advisory' : 'memory',
         ...(portableCheckpoint ? { portableCheckpoint } : {}),
         telemetry: (event) => telemetry.push(event),
       })
+      return {
+        async refresh(options) {
+          const refreshed = await application.refresh(options)
+          onSnapshot?.(refreshed.snapshot)
+          return refreshed
+        },
+        current: () => application.current(),
+        open: (snapshot) => application.open(snapshot),
+        settle: () => application.settle(),
+        dispose: () => application.dispose(),
+      }
     },
     startDev: async () => {
       throw new Error('unexpected dev')

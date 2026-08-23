@@ -3,12 +3,11 @@ import { join, resolve } from 'node:path';
 import { applicationRepositoryExcludes, resolveApplicationRoot, } from '../application/discovery/index.js';
 import { resolveApplicationRepositoryIdentity } from '../application/index.js';
 import { codegraphProducerFingerprint, createCheckpointedRepositoryInventory, createGitSourceProofProvider, nodeApplicationRepositoryKey, nodeApplicationWorkspaceCheckpointDirectory, } from '../application/node/index.js';
-import { selectApplicationSpecifications } from '../application/selection/index.js';
 import { defaultTypeSpecCacheDirectory } from '../cache/file-store.js';
 import { createFileWorkspaceCheckpointStore, decodeWorkspaceCheckpointJson, encodeWorkspaceCheckpointJson, WORKSPACE_CHECKPOINT_JSON_ENCODING, } from '../workspace/checkpoint/index.js';
 import { cliAccelerationError, createCliAccelerationEvent as accelerationEvent, createCliAccelerationReceipt, } from './acceleration.js';
-import { reportProjectedCheckResult, runCommand } from './run.js';
-import { CHECK_CATALOG_ARTIFACT as CATALOG, CHECK_CATALOG_FORMAT as CATALOG_FORMAT, CHECK_CATALOG_VERSION as CATALOG_VERSION, CHECK_RESULT_ARTIFACT as RESULT, CHECK_RESULT_FORMAT as FORMAT, CHECK_RESULT_VERSION as VERSION, MAXIMUM_CHECK_CATALOG_BYTES as MAXIMUM_CATALOG_BYTES, MAXIMUM_CHECK_RESULT_BYTES as MAXIMUM_RESULT_BYTES, isStoredCheckCatalog, isStoredCheckResult, } from './semantic-pack/model.js';
+import { runCommand } from './run.js';
+import { CHECK_CATALOG_ARTIFACT as CATALOG, CHECK_CATALOG_FORMAT as CATALOG_FORMAT, CHECK_CATALOG_VERSION as CATALOG_VERSION, CHECK_RESULT_ARTIFACT as RESULT, CHECK_RESULT_FORMAT as FORMAT, CHECK_RESULT_VERSION as VERSION, MAXIMUM_CHECK_CATALOG_BYTES as MAXIMUM_CATALOG_BYTES, MAXIMUM_CHECK_RESULT_BYTES as MAXIMUM_RESULT_BYTES, isStoredCheckResult, } from './semantic-pack/model.js';
 import { loadSemanticPack, portableApplicationReference, publishSemanticPack, semanticPackScope, } from './semantic-pack/store.js';
 /**
  * Admit an exact previous check result before constructing the application. Any cache uncertainty
@@ -77,7 +76,7 @@ export async function runCliCommand(command, services, output) {
                 maxArtifacts: 4_096,
                 maximumScopes: 1_024,
             });
-            const semantic = await loadSemanticPack(semanticStore, semanticPackScope({ sourceProof, producerFingerprint, repository, family }), { producerFingerprint, sourceProof, request, family, repository }, command.select.length > 0);
+            const semantic = await loadSemanticPack(semanticStore, semanticPackScope({ sourceProof, producerFingerprint, repository, family }), { producerFingerprint, sourceProof, request, family, repository }, false);
             events.push(semantic.event);
             if (semantic.result) {
                 replay(output, semantic.result.transcript);
@@ -89,12 +88,6 @@ export async function runCliCommand(command, services, output) {
                         snapshot: semantic.result.snapshot,
                     },
                 }, events);
-            }
-            if (semantic.catalog) {
-                const transcript = [];
-                const projected = projectCatalogCheck(root, command, semantic.catalog, transcript);
-                replay(output, transcript);
-                return withAcceleration(projected, events);
             }
             if (semanticPackWritable || semantic.application) {
                 portableCheckpoint = {
@@ -130,39 +123,6 @@ export async function runCliCommand(command, services, output) {
                     snapshot: cached.value.snapshot,
                 },
             }, events);
-        }
-        if (command.select.length) {
-            const catalog = await loadCatalog(store, catalogScope, {
-                producerFingerprint,
-                family,
-                repository,
-                inventory: inventory.revision,
-            });
-            events.push(catalog.event);
-            if (catalog.value) {
-                const transcript = [];
-                const projected = projectCatalogCheck(root, command, catalog.value, transcript);
-                const stored = {
-                    format: FORMAT,
-                    version: VERSION,
-                    producerFingerprint,
-                    ...(sourceProof ? { sourceProof } : {}),
-                    request,
-                    repository,
-                    inventory: inventory.revision,
-                    snapshot: projected.check.snapshot,
-                    exitCode: projected.exitCode,
-                    transcript,
-                    catalogStatus: 'projected',
-                };
-                events.push(await publishResult(store, scope, stored, 'workspace-result-publish'));
-                if (semanticStore && sourceProof && semanticPackWritable) {
-                    const application = await portableApplicationReference(semanticStore, producerFingerprint, sourceProof, repository, inventory.revision, command.exclude);
-                    events.push(await publishSemanticPack(semanticStore, semanticPackScope({ sourceProof, producerFingerprint, repository, family }), stored, family, sourceProof, { ...(application ? { application } : {}) }));
-                }
-                replay(output, transcript);
-                return withAcceleration(projected, events);
-            }
         }
         const transcript = [];
         const recording = recordingOutput(output, transcript);
@@ -369,88 +329,6 @@ async function loadResult(store, scope, expectation, operation) {
             event: accelerationEvent(operation, 'failed', 'load-failed', started, error),
         };
     }
-}
-async function loadCatalog(store, scope, expectation, operation = 'catalog-read') {
-    const started = performance.now();
-    const miss = (code) => ({
-        event: accelerationEvent(operation, 'miss', code, started),
-    });
-    try {
-        const loaded = await store.load(scope);
-        if (!loaded.ok)
-            return miss(loaded.reason);
-        if (loaded.manifest.format !== CATALOG_FORMAT ||
-            loaded.manifest.version !== CATALOG_VERSION ||
-            loaded.manifest.producerFingerprint !== expectation.producerFingerprint) {
-            return miss('manifest-incompatible');
-        }
-        const bytes = loaded.artifacts.get(CATALOG);
-        if (!bytes)
-            return miss('artifact-missing');
-        const artifact = decodeWorkspaceCheckpointJson(bytes, {
-            maximumDecodedBytes: MAXIMUM_CATALOG_BYTES,
-        });
-        const decoded = artifact.value;
-        if (!isStoredCheckCatalog(decoded))
-            return miss('payload-invalid');
-        if (decoded.producerFingerprint !== expectation.producerFingerprint ||
-            (expectation.sourceProof !== undefined && decoded.sourceProof !== expectation.sourceProof) ||
-            decoded.family !== expectation.family ||
-            decoded.repository !== expectation.repository) {
-            return miss('identity-mismatch');
-        }
-        if (expectation.inventory !== undefined && decoded.inventory !== expectation.inventory) {
-            return miss('identity-mismatch');
-        }
-        return {
-            value: decoded,
-            event: {
-                ...accelerationEvent(operation, 'hit', 'catalog-admitted', started),
-                work: {
-                    bytesRead: bytes.byteLength,
-                    bytesDecoded: artifact.decodedBytes,
-                    loadedShards: 1,
-                },
-            },
-        };
-    }
-    catch (error) {
-        return {
-            event: accelerationEvent(operation, 'failed', 'load-failed', started, error),
-        };
-    }
-}
-function projectCatalogCheck(root, command, stored, transcript) {
-    const specifications = stored.catalog
-        .specifications;
-    const selected = selectApplicationSpecifications(root, specifications, {
-        select: command.select,
-        focused: true,
-    });
-    const qualified = new Set(selected.qualification.map((value) => value.source));
-    const qualifications = stored.catalog.qualifications.filter((value) => qualified.has(value.source));
-    const diagnostics = [
-        ...selected.diagnostics,
-        ...stored.catalog.sharedDiagnostics,
-        ...selected.qualification.flatMap((specification) => specification.diagnostics),
-        ...qualifications.flatMap((qualification) => qualification.diagnostics),
-    ];
-    const identity = sha256(JSON.stringify({
-        format: `${CATALOG_FORMAT}-projection/1`,
-        basis: stored.snapshot,
-        request: checkRequest(command),
-        selection: selected.selection,
-        qualifications: qualifications.map((value) => value.id),
-        diagnostics,
-    }));
-    const snapshot = {
-        id: `application:${identity}`,
-        repository: stored.repository,
-        inventory: stored.inventory,
-        selection: selected.selection,
-        specifications: selected.included,
-    };
-    return reportProjectedCheckResult(recordingOutput(undefined, transcript), command, snapshot, diagnostics, qualifications.some((qualification) => qualification.status !== 'pass'));
 }
 function checkRequest(command) {
     return JSON.stringify({
