@@ -28,9 +28,14 @@ const ROOT_FILES = ['cli.ts', 'index.ts', 'native-release.json', 'package.json']
 const SOURCE_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.mjs', '.ts', '.tsx']);
 let retained;
 /** Bind advisory checkpoints to the exact executable package tree, not only a release version. */
-export function codegraphProducerFingerprint(packageRoot) {
-    if (packageRoot)
-        return fingerprint(resolve(packageRoot), 'auto');
+export function codegraphProducerFingerprint(input) {
+    if (typeof input === 'string')
+        return fingerprint(resolve(input), 'auto');
+    const [packageRoot, defaultMode] = defaultPackageCoordinates();
+    const root = input?.packageRoot ? resolve(input.packageRoot) : packageRoot;
+    const mode = input?.mode ?? (input?.packageRoot ? 'auto' : defaultMode);
+    if (input?.persistence === 'memory' || input?.packageRoot)
+        return fingerprint(root, mode);
     retained ??= persistentFingerprint(...defaultPackageCoordinates());
     return retained;
 }

@@ -73,7 +73,7 @@ try {
       node: process.version,
       platform: process.platform,
       architecture: process.arch,
-      producerFingerprint: await codegraphProducerFingerprint(),
+      producerFingerprint: await codegraphProducerFingerprint({ persistence: 'memory' }),
       nativeSha256: digest(await readFile(nativeBinary)),
       harnessSha256: digest(await readFile(import.meta.filename)),
     },

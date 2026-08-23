@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   createCheckPerformanceReceipt,
+  checkPerformanceViolations,
   deriveCheckPerformanceCounters,
   sha256,
   verifyCheckPerformanceReceipt,
@@ -53,6 +54,14 @@ describe('check performance series qualification', () => {
     expect(() => verifyCheckPerformanceReceipt(forgedMemoryBound)).toThrow(
       'process-tree memory bound is invalid',
     )
+
+    const c3 = receipt('canonical', 'leaf', 0)
+    const { receiptSha256: _c3Digest, ...c3Body } = c3
+    const cacheWritingC3 = createCheckPerformanceReceipt({
+      ...c3Body,
+      finish: { ...c3Body.finish, localCache: PACK_DIRECTORY },
+    })
+    expect(checkPerformanceViolations(cacheWritingC3)).toContain('C3 wrote its local cache')
   })
 
   /** @evidence CHECK-PERFORMANCE-SERIES-ANTI-GAMING */

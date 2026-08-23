@@ -86,7 +86,7 @@ const sourceProof = await createGitSourceProofProvider().admit(root, {
   exclude: applicationRepositoryExcludes(root, command.exclude),
   ignored: 'reject-semantic',
 })
-const producerFingerprint = await codegraphProducerFingerprint()
+const producerFingerprint = await codegraphProducerFingerprint({ persistence: 'memory' })
 const harnessSha256 = sha256(await readFile(import.meta.filename))
 const codegraphRevision = (
   await execFile('git', ['-C', resolve(import.meta.dirname, '../../..'), 'rev-parse', 'HEAD'], {

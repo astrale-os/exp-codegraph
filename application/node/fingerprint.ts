@@ -34,9 +34,21 @@ const SOURCE_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.mjs', '.ts', '.tsx'
 
 let retained: Promise<string> | undefined
 
+export interface CodegraphProducerFingerprintOptions {
+  readonly packageRoot?: string
+  readonly mode?: 'source' | 'compiled' | 'auto'
+  readonly persistence?: 'advisory' | 'memory'
+}
+
 /** Bind advisory checkpoints to the exact executable package tree, not only a release version. */
-export function codegraphProducerFingerprint(packageRoot?: string): Promise<string> {
-  if (packageRoot) return fingerprint(resolve(packageRoot), 'auto')
+export function codegraphProducerFingerprint(
+  input?: string | CodegraphProducerFingerprintOptions,
+): Promise<string> {
+  if (typeof input === 'string') return fingerprint(resolve(input), 'auto')
+  const [packageRoot, defaultMode] = defaultPackageCoordinates()
+  const root = input?.packageRoot ? resolve(input.packageRoot) : packageRoot
+  const mode = input?.mode ?? (input?.packageRoot ? 'auto' : defaultMode)
+  if (input?.persistence === 'memory' || input?.packageRoot) return fingerprint(root, mode)
   retained ??= persistentFingerprint(...defaultPackageCoordinates())
   return retained
 }

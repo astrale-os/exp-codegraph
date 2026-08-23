@@ -53,7 +53,7 @@ const cacheDirectory = defaultTypeSpecCacheDirectory()
 const cacheBefore = await fileEvidence(resolve(cacheDirectory, 'analysis-v2.sqlite'))
 if (cacheBefore.exists) throw new Error(`${verifyClass} requires an empty analysis store.`)
 const sourceProofBefore = await sourceProof()
-const producerFingerprint = await codegraphProducerFingerprint()
+const producerFingerprint = await codegraphProducerFingerprint({ persistence: 'memory' })
 const nativeSha256 = digest(await readFile(nativeBinary))
 const harnessSha256 = digest(await readFile(import.meta.filename))
 const codegraphRevision = (

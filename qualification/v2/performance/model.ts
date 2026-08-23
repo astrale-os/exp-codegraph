@@ -388,6 +388,7 @@ export function checkPerformanceViolations(
     }
     case 'C3':
       if (receipt.start.localCache.files !== 0) violations.push('C3 local cache was not empty')
+      if (receipt.finish.localCache.files !== 0) violations.push('C3 wrote its local cache')
       if (events.some((event) => event.outcome === 'hit')) {
         violations.push('C3 used a replay or pack hit')
       }
