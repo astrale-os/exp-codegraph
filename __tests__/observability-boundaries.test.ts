@@ -12,6 +12,7 @@ const boundaryFiles = [
   'compiler/cache.ts',
   'compiler/coalesce.ts',
   'compiler/isolate.ts',
+  'compiler/isolation-process.optimization.ts',
   'compiler/isolation.optimization.ts',
   'compiler/worker.ts',
   'workspace/checkpoint/store.ts',
@@ -61,11 +62,13 @@ describe('performance-boundary observability', () => {
       'cli/semantic-pack/store.ts': ['publication-failed', 'load-failed', 'identity-mismatch'],
       'compiler/cache.ts': ['cache miss'],
       'compiler/coalesce.ts': ['API_BATCH_COMPILE_FAILED'],
-      'compiler/isolate.ts': [
+      'compiler/isolate.ts': [],
+      'compiler/isolation-process.optimization.ts': [
         'isolation/timeout',
         'isolation/output-limit',
         'isolation/protocol-error',
         'isolation/worker-error',
+        'isolation/worker-failed',
       ],
       'compiler/isolation.optimization.ts': ['fallback'],
       'compiler/worker.ts': ['isolation/request-invalid'],

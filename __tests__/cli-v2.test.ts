@@ -268,9 +268,14 @@ describe('headless V2 CLI', { timeout: 30_000 }, () => {
     expect(replayed).toEqual(cold)
     expect(elapsedMilliseconds).toBeLessThan(3_000)
     expect(await readdir(join(cache.root, 'workspaces'))).toEqual(beforeWorkspaces)
-    expect(await readdir(join(cache.root, 'semantic-packs/checks'), { recursive: true })).toEqual(
-      expect.arrayContaining([expect.stringContaining('semantic-check-')]),
-    )
+    const semanticFiles = await readdir(join(cache.root, 'semantic-packs/checks'), {
+      recursive: true,
+    })
+    expect(
+      semanticFiles.filter((path) =>
+        /(?:^|\/)manifests\/semantic-pack-[a-f0-9]{64}\.json$/u.test(path),
+      ),
+    ).toHaveLength(1)
   })
 })
 
