@@ -96,6 +96,24 @@ export function createDeclarationDiagnosticsUniverse(
   }
 }
 
+/** Check only admitted declaration sources, then restore TypeScript's canonical diagnostic order. */
+export function declarationDiagnosticsForFiles(
+  program: ts.Program,
+  declarationFiles: ReadonlySet<string>,
+): readonly ts.Diagnostic[] {
+  const sources = program.getSourceFiles().filter((source) => {
+    const file = declarationRealpathSafe(source.fileName)
+    return file !== undefined && declarationFiles.has(file)
+  })
+  return ts.sortAndDeduplicateDiagnostics([
+    ...program.getConfigFileParsingDiagnostics(),
+    ...sources.flatMap((source) => program.getSyntacticDiagnostics(source)),
+    ...program.getOptionsDiagnostics(),
+    ...program.getGlobalDiagnostics(),
+    ...sources.flatMap((source) => program.getSemanticDiagnostics(source)),
+  ])
+}
+
 function inside(root: string, target: string): boolean {
   const normalizedRoot = resolve(root)
   const normalizedTarget = resolve(target)

@@ -10,7 +10,7 @@ import { compareDeclarationText as compare, declarationDependencyOnce, declarati
 import { isExternalSpecifier, renderExternalModules, } from './external.js';
 import { createDeclarationSourceCorpus, declarationPathInside as inside, declarationRealpathSafe as realpathSafe, permittedDeclarationPath, } from './source-corpus.js';
 import { declarationMetadataIndexOnce, declarationMetadataOnce, } from './metadata.optimization.js';
-import { createDeclarationDiagnosticsUniverse } from './diagnostics-universe.optimization.js';
+import { createDeclarationDiagnosticsUniverse, declarationDiagnosticsForFiles, } from './diagnostics-universe.optimization.js';
 /** Plan minimum semantics-compatible declaration components without performing owner projection. */
 export function planDeclarationCompilerUniverses(options) {
     const groups = new Map();
@@ -133,7 +133,7 @@ function compileProjectGroup(projectRoot, requests, results) {
         try {
             const files = new Set(valid.flatMap(({ mainFile }) => [...entries.get(mainFile).files]));
             const project = createDeclarationDiagnosticsUniverse(projectRoot, valid.map(({ mainFile }) => mainFile), files, (file) => sourceCorpus.evidence(file).externalReferences, compilerOptions);
-            const diagnostics = ts.getPreEmitDiagnostics(project.program);
+            const diagnostics = declarationDiagnosticsForFiles(project.program, files);
             for (const request of valid) {
                 results[request.index] = compilePreparedApi(request, entries.get(request.mainFile).files, project, diagnostics);
             }

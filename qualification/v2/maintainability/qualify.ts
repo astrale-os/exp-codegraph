@@ -6,11 +6,13 @@ import { promisify } from 'node:util'
 
 import { stableJson } from '../../../analysis/identity/model.ts'
 import { measureMaintainability, type MaintainabilityMeasurement } from './measure.ts'
+import { assertMaintainabilityBudgetLock } from './lock.ts'
 
 const execFile = promisify(execFileCallback)
 const root = resolve(argument('--root') ?? '.')
 const budgetPath = resolve(root, argument('--budget') ?? 'qualification/v2/maintainability/budget.json')
 const budgetBytes = await readFile(budgetPath)
+await assertMaintainabilityBudgetLock(budgetPath, budgetBytes)
 const budget = JSON.parse(budgetBytes.toString('utf8')) as Budget
 assertBudget(budget)
 const baselinePath = resolve(root, budget.baselineEvidence)

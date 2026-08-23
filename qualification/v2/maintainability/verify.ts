@@ -7,12 +7,14 @@ import { promisify } from 'node:util'
 
 import { stableJson } from '../../../analysis/identity/model.ts'
 import { measureMaintainability, type MaintainabilityMeasurement } from './measure.ts'
+import { assertMaintainabilityBudgetLock } from './lock.ts'
 
 const execFile = promisify(execFileCallback)
 const root = resolve(argument('--root') ?? '.')
 const receiptPath = resolve(requiredArgument('--receipt'))
 const budgetPath = resolve(root, argument('--budget') ?? 'qualification/v2/maintainability/budget.json')
 const [receiptBytes, budgetBytes] = await Promise.all([readFile(receiptPath), readFile(budgetPath)])
+await assertMaintainabilityBudgetLock(budgetPath, budgetBytes)
 const receipt = JSON.parse(receiptBytes.toString('utf8')) as Receipt
 const budget = JSON.parse(budgetBytes.toString('utf8')) as Budget
 assert.equal(receipt.format, 'astrale.codegraph.maintainability-qualification')

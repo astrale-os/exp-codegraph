@@ -54,7 +54,10 @@ import {
   declarationMetadataOnce,
   type DeclarationMetadataCandidate,
 } from './metadata.optimization.ts'
-import { createDeclarationDiagnosticsUniverse } from './diagnostics-universe.optimization.ts'
+import {
+  createDeclarationDiagnosticsUniverse,
+  declarationDiagnosticsForFiles,
+} from './diagnostics-universe.optimization.ts'
 
 export interface CompileApiOptions {
   readonly mainFile: string
@@ -259,7 +262,7 @@ function compileProjectGroup(
         (file) => sourceCorpus.evidence(file).externalReferences,
         compilerOptions,
       )
-      const diagnostics = ts.getPreEmitDiagnostics(project.program)
+      const diagnostics = declarationDiagnosticsForFiles(project.program, files)
       for (const request of valid) {
         results[request.index] = compilePreparedApi(
           request,
