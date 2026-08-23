@@ -160,16 +160,14 @@ function importedOwner(
   specifier: string,
   owners: SpecificationOwnerIndex,
 ): ApplicationSpecificationAnchor | undefined {
-  const resolved = ts.resolveModuleName(specifier, sourceFile, COMPILER_OPTIONS, ts.sys).resolvedModule?.resolvedFileName
-  const exact = resolved ? ownerForAbsolute(root, resolved, owners) : undefined
-  if (exact) return exact
-  if (!relativeSpecifier(specifier)) return
-  const candidate = resolve(dirname(sourceFile), specifier)
-  for (const path of importCandidates(candidate)) {
-    const owner = ownerForAbsolute(root, path, owners)
-    if (owner) return owner
+  if (relativeSpecifier(specifier)) {
+    for (const path of importCandidates(resolve(dirname(sourceFile), specifier))) {
+      const owner = ownerForAbsolute(root, path, owners, 'exact-anchor')
+      if (owner) return owner
+    }
   }
-  return undefined
+  const resolved = ts.resolveModuleName(specifier, sourceFile, COMPILER_OPTIONS, ts.sys).resolvedModule?.resolvedFileName
+  return resolved ? ownerForAbsolute(root, resolved, owners) : undefined
 }
 
 function referencedOwner(
@@ -200,10 +198,12 @@ function ownerForAbsolute(
   root: string,
   absolute: string,
   owners: SpecificationOwnerIndex,
+  mode: 'containing-owner' | 'exact-anchor' = 'containing-owner',
 ): ApplicationSpecificationAnchor | undefined {
   const path = relative(resolve(root), resolve(absolute))
   if (path === '..' || path.startsWith(`..${sep}`)) return
-  return ownerForPath(portable(path), owners)
+  const source = portable(path)
+  return mode === 'exact-anchor' ? owners.bySource.get(source) : ownerForPath(source, owners)
 }
 
 function importCandidates(path: string): readonly string[] {
