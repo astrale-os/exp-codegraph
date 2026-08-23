@@ -4,7 +4,7 @@ import { validateModuleSchemaCatalog } from '../../schema/catalog.js';
 import { compileLayout, observeLayout } from '../../specification/module/layout.js';
 import { resolveTestEvidence } from '../../specification/module/test-evidence.js';
 import { APPLICATION_LAYOUT_FACT_NAMESPACE, APPLICATION_CONTEXT_FACT_NAMESPACE, APPLICATION_SCHEMA_FACT_NAMESPACE, APPLICATION_TEST_FACT_NAMESPACE, } from './model.js';
-import { indexApplicationObservationInventory, } from './materialize.optimization.js';
+import { indexApplicationObservationInventory, mapApplicationObservationOwners, } from './materialize.optimization.js';
 const OBSERVATION_PASS = deriveAnalysisId('pass', 'astrale.typespec.application-observation', { version: 1 });
 const OBSERVATION_PRODUCER = {
     id: deriveAnalysisId('producer', 'astrale.typespec.application-observation', { version: 1 }),
@@ -52,21 +52,32 @@ export async function materializeApplicationObservations(options) {
         expectedKeys.every((key, index) => currentManifest[index]?.key === key)) {
         return { universe, generation: current, diagnostics: globalDiagnostics };
     }
-    for (const specification of options.specifications) {
+    const ownerWork = await mapApplicationObservationOwners(options.specifications, async (specification) => {
         options.signal?.throwIfAborted();
         const keys = observationKeys(specification);
         const canRetain = requested !== undefined &&
             !requested.has(specification.source) &&
             keys.every((key) => currentByKey.has(key));
         if (canRetain) {
-            retained.push(...keys.map((key) => currentByKey.get(key)));
-            continue;
+            return { retained: keys.map((key) => currentByKey.get(key)), shards: [] };
         }
         const [layout, tests] = await Promise.all([
             observeSpecificationLayout(options.root, specification),
             observeSpecificationTests(options.root, specification),
         ]);
-        shards.push(observationShard(provisional, APPLICATION_LAYOUT_FACT_NAMESPACE, specification, 'layout-observation', layout), observationShard(provisional, APPLICATION_TEST_FACT_NAMESPACE, specification, 'test-evidence', tests), observationShard(provisional, APPLICATION_SCHEMA_FACT_NAMESPACE, specification, 'schema-catalog', observeSpecificationSchemas(specification, schemaDiagnostics)), observationShard(provisional, APPLICATION_CONTEXT_FACT_NAMESPACE, specification, 'module-context', observeSpecificationContext(specification, inventoryIndex)));
+        return {
+            retained: [],
+            shards: [
+                observationShard(provisional, APPLICATION_LAYOUT_FACT_NAMESPACE, specification, 'layout-observation', layout),
+                observationShard(provisional, APPLICATION_TEST_FACT_NAMESPACE, specification, 'test-evidence', tests),
+                observationShard(provisional, APPLICATION_SCHEMA_FACT_NAMESPACE, specification, 'schema-catalog', observeSpecificationSchemas(specification, schemaDiagnostics)),
+                observationShard(provisional, APPLICATION_CONTEXT_FACT_NAMESPACE, specification, 'module-context', observeSpecificationContext(specification, inventoryIndex)),
+            ],
+        };
+    });
+    for (const work of ownerWork) {
+        retained.push(...work.retained);
+        shards.push(...work.shards);
     }
     shards.sort((left, right) => left.key.localeCompare(right.key));
     const manifest = [...retained, ...shards.map(shardReference)].sort((left, right) => left.key.localeCompare(right.key));

@@ -42,6 +42,7 @@ import {
 import type { ApplicationSchemaDependencyResource } from './schema-dependency.ts'
 import {
   indexApplicationObservationInventory,
+  mapApplicationObservationOwners,
   type ApplicationObservationInventoryIndex,
 } from './materialize.optimization.ts'
 
@@ -126,51 +127,60 @@ export async function materializeApplicationObservations(
   ) {
     return { universe, generation: current, diagnostics: globalDiagnostics }
   }
-  for (const specification of options.specifications) {
-    options.signal?.throwIfAborted()
-    const keys = observationKeys(specification)
-    const canRetain =
-      requested !== undefined &&
-      !requested.has(specification.source) &&
-      keys.every((key) => currentByKey.has(key))
-    if (canRetain) {
-      retained.push(...keys.map((key) => currentByKey.get(key)!))
-      continue
-    }
-    const [layout, tests] = await Promise.all([
-      observeSpecificationLayout(options.root, specification),
-      observeSpecificationTests(options.root, specification),
-    ])
-    shards.push(
-      observationShard(
-        provisional,
-        APPLICATION_LAYOUT_FACT_NAMESPACE,
-        specification,
-        'layout-observation',
-        layout,
-      ),
-      observationShard(
-        provisional,
-        APPLICATION_TEST_FACT_NAMESPACE,
-        specification,
-        'test-evidence',
-        tests,
-      ),
-      observationShard(
-        provisional,
-        APPLICATION_SCHEMA_FACT_NAMESPACE,
-        specification,
-        'schema-catalog',
-        observeSpecificationSchemas(specification, schemaDiagnostics),
-      ),
-      observationShard(
-        provisional,
-        APPLICATION_CONTEXT_FACT_NAMESPACE,
-        specification,
-        'module-context',
-        observeSpecificationContext(specification, inventoryIndex),
-      ),
-    )
+  const ownerWork = await mapApplicationObservationOwners(
+    options.specifications,
+    async (specification) => {
+      options.signal?.throwIfAborted()
+      const keys = observationKeys(specification)
+      const canRetain =
+        requested !== undefined &&
+        !requested.has(specification.source) &&
+        keys.every((key) => currentByKey.has(key))
+      if (canRetain) {
+        return { retained: keys.map((key) => currentByKey.get(key)!), shards: [] }
+      }
+      const [layout, tests] = await Promise.all([
+        observeSpecificationLayout(options.root, specification),
+        observeSpecificationTests(options.root, specification),
+      ])
+      return {
+        retained: [],
+        shards: [
+          observationShard(
+            provisional,
+            APPLICATION_LAYOUT_FACT_NAMESPACE,
+            specification,
+            'layout-observation',
+            layout,
+          ),
+          observationShard(
+            provisional,
+            APPLICATION_TEST_FACT_NAMESPACE,
+            specification,
+            'test-evidence',
+            tests,
+          ),
+          observationShard(
+            provisional,
+            APPLICATION_SCHEMA_FACT_NAMESPACE,
+            specification,
+            'schema-catalog',
+            observeSpecificationSchemas(specification, schemaDiagnostics),
+          ),
+          observationShard(
+            provisional,
+            APPLICATION_CONTEXT_FACT_NAMESPACE,
+            specification,
+            'module-context',
+            observeSpecificationContext(specification, inventoryIndex),
+          ),
+        ],
+      }
+    },
+  )
+  for (const work of ownerWork) {
+    retained.push(...work.retained)
+    shards.push(...work.shards)
   }
   shards.sort((left, right) => left.key.localeCompare(right.key))
   const manifest = [...retained, ...shards.map(shardReference)].sort((left, right) =>
