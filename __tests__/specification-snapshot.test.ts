@@ -62,6 +62,11 @@ describe('immutable normative specification snapshots', () => {
       items: 2,
       programs: 1,
       sessions: 1,
+      typeScriptTailAfterSnapshotSchedulingMs: expect.any(Number),
+    })
+    expect(phases.find(({ phase }) => phase === 'snapshots')).toMatchObject({
+      items: 2,
+      typeScriptTailAfterSnapshotSchedulingMs: expect.any(Number),
     })
   })
 

@@ -39,8 +39,8 @@ export interface SpecificationCompilationPhase {
   readonly workerPeakResidentBytes?: number
   readonly workerResidentUpperBoundBytes?: number
   readonly parentPeakResidentBytes?: number
-  /** These phases deliberately overlap over independently owned immutable inputs. */
-  readonly overlap?: 'typescript-snapshots'
+  /** TypeScript wall time remaining after snapshot work was scheduled. */
+  readonly typeScriptTailAfterSnapshotSchedulingMs?: number
 }
 
 /**
@@ -99,20 +99,21 @@ export function compileSpecificationSnapshots(
       (directory) => compileSpecificationSnapshot(root, directory),
     )
     await typeScript.completed
+    const typeScriptTailAfterSnapshotSchedulingMs = performance.now() - snapshotsStarted
     report(options.onPhase, {
       phase: 'typescript',
       durationMs: performance.now() - typeScript.started,
       items: inventories.length,
       programs: typeScript.programs(),
       sessions: 1,
-      overlap: 'typescript-snapshots',
+      typeScriptTailAfterSnapshotSchedulingMs,
     })
     const snapshots = await snapshotsPending
     report(options.onPhase, {
       phase: 'snapshots',
       durationMs: performance.now() - snapshotsStarted,
       items: snapshots.length,
-      overlap: 'typescript-snapshots',
+      typeScriptTailAfterSnapshotSchedulingMs,
     })
     return snapshots.sort((left, right) => compare(left.source, right.source))
   })

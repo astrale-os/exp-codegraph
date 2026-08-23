@@ -36,20 +36,21 @@ export function compileSpecificationSnapshots(root, directories, options = {}) {
         const snapshotsStarted = performance.now();
         const snapshotsPending = mapConcurrent(moduleDirectories, maximum, (directory) => compileSpecificationSnapshot(root, directory));
         await typeScript.completed;
+        const typeScriptTailAfterSnapshotSchedulingMs = performance.now() - snapshotsStarted;
         report(options.onPhase, {
             phase: 'typescript',
             durationMs: performance.now() - typeScript.started,
             items: inventories.length,
             programs: typeScript.programs(),
             sessions: 1,
-            overlap: 'typescript-snapshots',
+            typeScriptTailAfterSnapshotSchedulingMs,
         });
         const snapshots = await snapshotsPending;
         report(options.onPhase, {
             phase: 'snapshots',
             durationMs: performance.now() - snapshotsStarted,
             items: snapshots.length,
-            overlap: 'typescript-snapshots',
+            typeScriptTailAfterSnapshotSchedulingMs,
         });
         return snapshots.sort((left, right) => compare(left.source, right.source));
     });

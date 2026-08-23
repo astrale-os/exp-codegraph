@@ -854,7 +854,11 @@ function observedSpecificationCompiler(compile, telemetry) {
                     ...(phase.parentPeakResidentBytes === undefined
                         ? {}
                         : { parentPeakResidentBytes: phase.parentPeakResidentBytes }),
-                    ...(phase.overlap ? { overlap: phase.overlap } : {}),
+                    ...(phase.typeScriptTailAfterSnapshotSchedulingMs === undefined
+                        ? {}
+                        : {
+                            typeScriptTailAfterSnapshotSchedulingMs: phase.typeScriptTailAfterSnapshotSchedulingMs,
+                        }),
                 },
             });
         },
