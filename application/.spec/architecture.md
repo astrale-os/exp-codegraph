@@ -27,7 +27,9 @@ snapshot or duplicates fact payloads.
 When no compatible complete corpus exists, a focused request resolves physical anchors and its
 authored declaration/support closure before normative compilation. Only that closure is compiled,
 observed, and qualified. Dependent expansion or uncertain closure visibly uses the complete corpus;
-a partial focused corpus is never published as a complete application checkpoint.
+a partial focused corpus is never published as a complete application checkpoint. It may be
+published under an exact request scope that cannot satisfy another request or complete-corpus
+admission.
 
 Advisory checkpoint failure never changes a canonical application result, diagnostic, or exit
 status. Scheduled publication is nevertheless drained through `settle()`, which returns a typed

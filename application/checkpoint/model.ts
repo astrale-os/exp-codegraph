@@ -41,7 +41,8 @@ export type ApplicationCheckpointManifestAdmission =
 
 export interface ApplicationCheckpointContent {
   readonly snapshot: TypeSpecApplicationSnapshot
-  /** Complete discovered corpus; a focused snapshot may contain only a subset. */
+  /** Whether specifications bind the complete discovered corpus rather than one request closure. */
+  readonly complete: boolean
   readonly specifications: readonly SpecificationSnapshot[]
   readonly inventory: RepositoryInventory
   readonly statistics?: RepositoryStatisticsReport
@@ -62,8 +63,6 @@ export type ApplicationCheckpointLoadResult =
       readonly exact: boolean
       /** Same semantic request may reuse unchanged specification-local derived products. */
       readonly request: boolean
-      /** Loaded representation should be republished through the observable lifecycle writer. */
-      readonly migration: boolean
       readonly work: {
         readonly projection: 'complete' | 'request-closure'
         readonly artifacts: number

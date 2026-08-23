@@ -20,6 +20,7 @@ import {
 } from '../application/node/index.ts'
 import { createTypeSpecApplicationServiceWithDependencies } from '../application/service.ts'
 import { createSpecificationValidityConformanceProfile } from '../conformance/index.ts'
+import { compileSpecificationSnapshots } from '../specification/index.ts'
 import {
   createFileWorkspaceCheckpointStore,
   decodeWorkspaceCheckpointJson,
@@ -437,6 +438,100 @@ describe('application workspace checkpoint', () => {
       expect(await second.settle()).toMatchObject({ checkpoint: { outcome: 'published' } })
     } finally {
       await second.dispose()
+      await store.dispose()
+    }
+  })
+
+  it('publishes a focused request checkpoint without shadowing the complete corpus', async () => {
+    const current = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/checkpoint-focused', type: 'module' }),
+      'shared/.spec/api.d.ts': 'export interface Shared { readonly id: string }\n',
+      'left/.spec/api.d.ts': [
+        "import type { Shared } from '../../shared/.spec/api.d.ts'",
+        'export interface Left { readonly shared: Shared }',
+        '',
+      ].join('\n'),
+      'left/.spec/layout.ts': [
+        "import { defineLayout } from '@astrale-os/codegraph/authoring'",
+        'export default defineLayout([])',
+        '',
+      ].join('\n'),
+      'right/.spec/api.d.ts': 'export interface Right { readonly unrelated: true }\n',
+    })
+    fixtures.push(current)
+    const store = createFileWorkspaceCheckpointStore({
+      directory: join(current.root, '.cache', 'checkpoint-focused'),
+    })
+    const producerFingerprint = 'fixture-focused-v1'
+    const request = { focused: true, select: ['left'], requestedCapabilities: [] } as const
+    const first = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint: createApplicationCheckpoint({ store, producerFingerprint }),
+      },
+    )
+    const initial = await first.refresh(request)
+    expect(initial.snapshot.specifications.map(({ source }) => source)).toEqual([
+      'left/.spec/api.d.ts',
+      'shared/.spec/api.d.ts',
+    ])
+    expect(await first.settle()).toMatchObject({ checkpoint: { outcome: 'published' } })
+    await first.dispose()
+    await expect(store.load(applicationCheckpointScope({
+      corpus: applicationCheckpointCorpus([]),
+    }), { artifactKeys: [] })).resolves.toMatchObject({
+      ok: false,
+      reason: 'manifest-missing',
+    })
+
+    await writeFile(
+      join(current.root, 'left/.spec/layout.ts'),
+      [
+        "import { defineLayout } from '@astrale-os/codegraph/authoring'",
+        'export default defineLayout([])',
+        '// private focused-checkpoint edit',
+        '',
+      ].join('\n'),
+    )
+    const compiledDirectories: string[][] = []
+    const second = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint: createApplicationCheckpoint({ store, producerFingerprint }),
+        compile: (root, directories, options) => {
+          compiledDirectories.push([...directories])
+          return compileSpecificationSnapshots(root, directories, options)
+        },
+      },
+    )
+    const edited = await second.refresh(request)
+    expect(compiledDirectories).toHaveLength(1)
+    expect(compiledDirectories[0]).toEqual([
+      expect.stringMatching(/left\/\.spec$/u),
+    ])
+    expect(edited.changes.specifications.refreshed).toEqual(['left/.spec/api.d.ts'])
+    expect(await second.settle()).toMatchObject({ checkpoint: { outcome: 'published' } })
+    await second.dispose()
+
+    const third = await createTypeSpecApplicationServiceWithDependencies(
+      { root: current.root },
+      {
+        analysis: emptyAnalysisWorkspace(),
+        profiles: [],
+        checkpoint: createApplicationCheckpoint({ store, producerFingerprint }),
+        compile: vi.fn(async () => {
+          throw new Error('the exact focused request must reopen without compilation')
+        }),
+      },
+    )
+    try {
+      expect((await third.refresh(request)).snapshot.id).toBe(edited.snapshot.id)
+    } finally {
+      await third.dispose()
       await store.dispose()
     }
   })

@@ -27,6 +27,11 @@ A portable checkpoint binds the same manifest to an opaque SourceProof and may b
 canonical manifest digest from a semantic-pack root. A read-only binding may restore evidence but
 disables publication; it never reports a write that policy prohibited.
 
+A request-planned check may publish its selected and support closure into a request-scoped local
+checkpoint. The manifest records that the corpus is partial and is reusable only for the identical
+normalized request. Complete-corpus manifests retain their corpus scope so other requests may
+project from them; a partial manifest can never replace or be admitted as a complete corpus.
+
 For a non-exact focused request, the reader may first admit the manifest-owned corpus index and
 then load only the selected dependency closure plus its content-addressed API payloads. Omitted
 owner artifacts remain committed by the atomic manifest but are neither read nor represented as

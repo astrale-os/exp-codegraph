@@ -20,9 +20,10 @@ export function canRetainPartialSpecificationCorpus(
 ): boolean {
   if (!changes.length || changes.some((change) => change.kind !== 'change')) return false
   return changes.every((change) =>
-    previous.every(
-      (specification) => !normativeSpecificationInputs(specification).has(change.path),
-    ),
+    change.path.endsWith('/.spec/layout.ts') ||
+      previous.every(
+        (specification) => !normativeSpecificationInputs(specification).has(change.path),
+      ),
   )
 }
 

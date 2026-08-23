@@ -203,12 +203,6 @@ class HeadlessTypeSpecApplicationService {
                         this.#corpus = corpus;
                         restoredCorpus = true;
                         this.#currentRequestKey = requestKey;
-                        if (loaded.migration) {
-                            this.scheduleCheckpoint(checkpointExpectation, {
-                                ...loaded.content,
-                                snapshot: loaded.content.snapshot,
-                            });
-                        }
                         this.phaseCompleted('application.checkpoint', checkpointMs, {
                             outcome: 'hit',
                             specifications: loaded.content.specifications.length,
@@ -558,15 +552,23 @@ class HeadlessTypeSpecApplicationService {
         });
         const snapshot = await this.publish(candidate, sources, analysisSnapshot);
         this.#currentRequestKey = requestKey;
-        if (completeCorpus &&
-            this.#dependencies.checkpoint &&
-            checkpointPublishEligible(options)) {
+        const checkpointProjection = applicationCheckpointProjection(this.#root, options, capabilities);
+        if (this.#dependencies.checkpoint &&
+            checkpointPublishEligible(options) &&
+            (completeCorpus || checkpointProjection)) {
             this.scheduleCheckpoint({
                 repository: this.#repository,
                 inventory: inventory.revision,
                 corpus: discoveryKey,
                 request: requestKey,
-            }, { snapshot, specifications, inventory, ...(statistics ? { statistics } : {}) });
+                ...(checkpointProjection ?? {}),
+            }, {
+                snapshot,
+                specifications,
+                inventory,
+                complete: completeCorpus,
+                ...(statistics ? { statistics } : {}),
+            });
         }
         return {
             snapshot,
@@ -705,6 +707,7 @@ class HeadlessTypeSpecApplicationService {
                     };
                     this.phaseCompleted('application.checkpoint', durationMs, {
                         outcome: 'published',
+                        complete: pending.content.complete,
                     });
                 }
                 catch (error) {
@@ -724,6 +727,7 @@ class HeadlessTypeSpecApplicationService {
                     };
                     this.phaseCompleted('application.checkpoint', durationMs, {
                         outcome: 'unavailable',
+                        complete: pending.content.complete,
                         error: name,
                         reason: message,
                     });

@@ -41,6 +41,7 @@ export type ApplicationCheckpointManifestAdmission =
 
 export interface ApplicationCheckpointContent {
   readonly snapshot: TypeSpecApplicationSnapshot
+  readonly complete: boolean
   readonly specifications: readonly SpecificationSnapshot[]
   readonly inventory: RepositoryInventory
   readonly statistics?: RepositoryStatisticsReport
@@ -57,7 +58,6 @@ export type ApplicationCheckpointLoadResult =
       readonly ok: true
       readonly exact: boolean
       readonly request: boolean
-      readonly migration: boolean
       readonly work: {
         readonly projection: 'complete' | 'request-closure'
         readonly artifacts: number

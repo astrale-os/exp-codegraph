@@ -364,12 +364,6 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
             this.#corpus = corpus
             restoredCorpus = true
             this.#currentRequestKey = requestKey
-            if (loaded.migration) {
-              this.scheduleCheckpoint(checkpointExpectation, {
-                ...loaded.content,
-                snapshot: loaded.content.snapshot,
-              })
-            }
             this.phaseCompleted('application.checkpoint', checkpointMs, {
               outcome: 'hit',
               specifications: loaded.content.specifications.length,
@@ -757,10 +751,11 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
     })
     const snapshot = await this.publish(candidate, sources, analysisSnapshot)
     this.#currentRequestKey = requestKey
+    const checkpointProjection = applicationCheckpointProjection(this.#root, options, capabilities)
     if (
-      completeCorpus &&
       this.#dependencies.checkpoint &&
-      checkpointPublishEligible(options)
+      checkpointPublishEligible(options) &&
+      (completeCorpus || checkpointProjection)
     ) {
       this.scheduleCheckpoint(
         {
@@ -768,8 +763,15 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
           inventory: inventory.revision,
           corpus: discoveryKey,
           request: requestKey,
+          ...(checkpointProjection ?? {}),
         },
-        { snapshot, specifications, inventory, ...(statistics ? { statistics } : {}) },
+        {
+          snapshot,
+          specifications,
+          inventory,
+          complete: completeCorpus,
+          ...(statistics ? { statistics } : {}),
+        },
       )
     }
     return {
@@ -931,6 +933,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
           }
           this.phaseCompleted('application.checkpoint', durationMs, {
             outcome: 'published',
+            complete: pending.content.complete,
           })
         } catch (error) {
           const durationMs = performance.now() - started
@@ -949,6 +952,7 @@ class HeadlessTypeSpecApplicationService implements TypeSpecApplicationService {
           }
           this.phaseCompleted('application.checkpoint', durationMs, {
             outcome: 'unavailable',
+            complete: pending.content.complete,
             error: name,
             reason: message,
           })

@@ -7,7 +7,7 @@ import { applicationCheckpointSpecificationDependencies, projectedApplicationChe
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.js';
 import { packSpecificationSnapshot, unpackSpecificationSnapshot, } from './representation.js';
 const FORMAT = 'astrale.codegraph.application-checkpoint';
-const VERSION = 5;
+const VERSION = 6;
 const MAXIMUM_DECODED_ARTIFACT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointArtifactBytes;
 const MAXIMUM_DECODED_CHECKPOINT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointBytes;
 const SCOPE_PREFIX = 'application-';
@@ -30,18 +30,19 @@ export function createApplicationCheckpoint(options) {
             let loaded;
             try {
                 if (expectation.projection) {
+                    const requestCheckpoint = await options.store.load(applicationCheckpointRequestScope(expectation), signalOptions(expectation));
+                    if (requestCheckpoint.ok)
+                        loaded = requestCheckpoint;
+                }
+                if (!loaded && expectation.projection) {
                     const admitted = await options.store.load(applicationCheckpointScope(expectation), { artifactKeys: [], ...signalOptions(expectation) });
-                    if (!admitted.ok) {
-                        return miss(admitted.reason === 'manifest-missing'
-                            ? 'missing'
-                            : admitted.reason.includes('corrupt')
-                                ? 'corrupt'
-                                : 'unavailable');
-                    }
+                    if (!admitted.ok)
+                        return checkpointStoreMiss(admitted.reason);
                     const payload = compatibleManifestPayload(admitted.manifest, expectation, options.producerFingerprint);
                     if (!payload)
                         return miss('incompatible');
-                    if (payload.request !== expectation.request &&
+                    if (payload.complete === true &&
+                        payload.request !== expectation.request &&
                         payload.inventory === expectation.inventory) {
                         try {
                             return await loadProjectedApplicationCorpus(options.store, admitted.manifest, payload, expectation);
@@ -51,54 +52,43 @@ export function createApplicationCheckpoint(options) {
                         }
                     }
                 }
-                loaded = await options.store.load(applicationCheckpointScope(expectation), signalOptions(expectation));
+                loaded ??= await options.store.load(applicationCheckpointScope(expectation), signalOptions(expectation));
             }
             catch {
                 return miss('unavailable');
             }
-            if (!loaded.ok) {
-                return miss(loaded.reason === 'manifest-missing'
-                    ? 'missing'
-                    : loaded.reason.includes('corrupt')
-                        ? 'corrupt'
-                        : 'unavailable');
-            }
+            if (!loaded.ok)
+                return checkpointStoreMiss(loaded.reason);
             try {
                 const payload = compatibleManifestPayload(loaded.manifest, expectation, options.producerFingerprint);
                 if (!payload)
                     return miss('incompatible');
                 if (payload.encoding !== WORKSPACE_CHECKPOINT_JSON_ENCODING ||
+                    payload.representation !== PACKED_REPRESENTATION ||
                     !Number.isSafeInteger(payload.decodedBytes) ||
                     payload.decodedBytes < 0 ||
                     payload.decodedBytes > MAXIMUM_DECODED_CHECKPOINT_BYTES)
                     return miss('incompatible');
-                const representation = payload.representation;
-                if (representation !== undefined && representation !== PACKED_REPRESENTATION) {
-                    return miss('incompatible');
-                }
-                if (typeof payload.statistics !== 'boolean')
+                if (typeof payload.statistics !== 'boolean' ||
+                    typeof payload.complete !== 'boolean' ||
+                    (payload.complete === false &&
+                        (!expectation.projection || payload.request !== expectation.request)))
                     return miss('incompatible');
                 const hasStatistics = payload.statistics;
                 const decoded = { bytes: 0, artifacts: new Map() };
                 const apiPayloads = new Map();
-                let apiPayloadIndex = [];
-                if (representation === PACKED_REPRESENTATION) {
-                    apiPayloadIndex = artifactIndex(loaded.artifacts, API_PAYLOADS, decoded);
-                    for (const { source: key, key: artifact } of apiPayloadIndex) {
-                        const value = jsonArtifact(loaded.artifacts, artifact, decoded);
-                        if (apiPayloads.has(key))
-                            throw new Error(`Checkpoint API payload is duplicated: ${key}`);
-                        apiPayloads.set(key, value);
-                    }
+                const apiPayloadIndex = artifactIndex(loaded.artifacts, API_PAYLOADS, decoded);
+                for (const { source: key, key: artifact } of apiPayloadIndex) {
+                    const value = jsonArtifact(loaded.artifacts, artifact, decoded);
+                    if (apiPayloads.has(key))
+                        throw new Error(`Checkpoint API payload is duplicated: ${key}`);
+                    apiPayloads.set(key, value);
                 }
                 const corpusIndex = artifactIndex(loaded.artifacts, CORPUS, decoded);
                 const specificationDescriptors = new Map();
                 const specifications = corpusIndex.map(({ source, key }) => {
-                    const stored = jsonArtifact(loaded.artifacts, key, decoded);
-                    const packed = stored;
-                    const specification = representation === PACKED_REPRESENTATION
-                        ? unpackSpecificationSnapshot(packed, apiPayloads)
-                        : stored;
+                    const packed = jsonArtifact(loaded.artifacts, key, decoded);
+                    const specification = unpackSpecificationSnapshot(packed, apiPayloads);
                     if (specification.source !== source)
                         throw new Error('Checkpoint specification index drifted.');
                     if (specificationDescriptors.has(source)) {
@@ -107,9 +97,7 @@ export function createApplicationCheckpoint(options) {
                     specificationDescriptors.set(source, {
                         key,
                         identity: specification.id,
-                        ...(representation === PACKED_REPRESENTATION
-                            ? { payloads: packedSpecificationPayloadKeys(packed) }
-                            : {}),
+                        payloads: packedSpecificationPayloadKeys(packed),
                     });
                     return specification;
                 });
@@ -200,7 +188,7 @@ export function createApplicationCheckpoint(options) {
                     snapshot: candidate,
                     specifications,
                     inventory,
-                    complete: true,
+                    complete: payload.complete,
                     ...(statistics ? { statistics } : {}),
                 };
                 return {
@@ -208,9 +196,9 @@ export function createApplicationCheckpoint(options) {
                     exact: payload.inventory === expectation.inventory &&
                         payload.request === expectation.request,
                     request: payload.request === expectation.request,
-                    migration: representation === undefined,
                     work: {
-                        projection: 'complete', artifacts: loaded.artifacts.size, decodedBytes: decoded.bytes,
+                        projection: payload.complete ? 'complete' : 'request-closure',
+                        artifacts: loaded.artifacts.size, decodedBytes: decoded.bytes,
                         specifications: specifications.length, apiPayloads: apiPayloads.size,
                     },
                     content,
@@ -229,6 +217,8 @@ export function createApplicationCheckpoint(options) {
                         content.statistics.inventory !== expectation.inventory)) ||
                 content.inventory.repository !== expectation.repository ||
                 content.inventory.revision !== expectation.inventory ||
+                typeof content.complete !== 'boolean' ||
+                (!content.complete && !expectation.projection) ||
                 !validCapabilities(snapshot.capabilities) ||
                 snapshot.capabilities.includes('repository-statistics') !==
                     (content.statistics !== undefined)) {
@@ -351,7 +341,9 @@ export function createApplicationCheckpoint(options) {
                 else if (!retain(descriptor.key))
                     throw new Error(`Retained qualification artifact is missing: ${descriptor.source}`);
             }
-            await options.store.publish(applicationCheckpointScope(expectation), {
+            await options.store.publish(content.complete
+                ? applicationCheckpointScope(expectation)
+                : applicationCheckpointRequestScope(expectation), {
                 manifest: {
                     format: FORMAT,
                     version: VERSION,
@@ -367,6 +359,7 @@ export function createApplicationCheckpoint(options) {
                         encoding: WORKSPACE_CHECKPOINT_JSON_ENCODING,
                         representation: PACKED_REPRESENTATION,
                         statistics: content.statistics !== undefined,
+                        complete: content.complete,
                         decodedBytes,
                     },
                 },
@@ -397,6 +390,11 @@ export function applicationCheckpointScope(expectation) {
         : expectation.corpus;
     return `${SCOPE_PREFIX}${createHash('sha256').update(identity).digest('hex').slice(0, 32)}`;
 }
+/** Keep a focused corpus physically unable to shadow the complete corpus or another request. */
+function applicationCheckpointRequestScope(expectation) {
+    const identity = [expectation.corpus, expectation.sourceProof ?? '', expectation.request].join('\0');
+    return `${SCOPE_PREFIX}request-${createHash('sha256').update(identity).digest('hex').slice(0, 32)}`;
+}
 export async function admitApplicationCheckpointManifest(options, expectation) {
     try {
         const loaded = await options.store.load(applicationCheckpointScope(expectation), {
@@ -415,7 +413,8 @@ export async function admitApplicationCheckpointManifest(options, expectation) {
             payload.repository !== expectation.repository ||
             payload.inventory !== expectation.inventory ||
             payload.corpus !== expectation.corpus ||
-            payload.sourceProof !== expectation.sourceProof) {
+            payload.sourceProof !== expectation.sourceProof ||
+            payload.complete !== true) {
             return { ok: false, reason: 'incompatible' };
         }
         return {
@@ -447,7 +446,8 @@ async function loadProjectedApplicationCorpus(store, admittedManifest, payload, 
     const projection = expectation.projection;
     if (!projection)
         return miss('incompatible');
-    if (payload.representation !== PACKED_REPRESENTATION ||
+    if (payload.complete !== true ||
+        payload.representation !== PACKED_REPRESENTATION ||
         payload.encoding !== WORKSPACE_CHECKPOINT_JSON_ENCODING ||
         !Number.isSafeInteger(payload.decodedBytes) ||
         payload.decodedBytes < 0 ||
@@ -538,7 +538,6 @@ async function loadProjectedApplicationCorpus(store, admittedManifest, payload, 
         ok: true,
         exact: false,
         request: false,
-        migration: false,
         work: {
             projection: 'request-closure', artifacts: indexKeys.length + selectedKeys.length,
             decodedBytes: decoded.bytes, specifications: specifications.length,

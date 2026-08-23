@@ -2,7 +2,6 @@ import type { AnalysisGenerationId, ProjectUniverseId } from '../../analysis/ind
 import { createHash } from 'node:crypto'
 import type { QualificationSnapshot } from '../../conformance/index.ts'
 import type { RepositoryStatisticsReport } from '../../repository/index.ts'
-import type { SpecificationSnapshot } from '../../specification/index.ts'
 import { specificationSnapshotIdentity } from '../../specification/snapshot/identity.ts'
 import type {
   FileWorkspaceCheckpointStore,
@@ -38,7 +37,7 @@ import {
 } from './representation.ts'
 
 const FORMAT = 'astrale.codegraph.application-checkpoint'
-const VERSION = 5
+const VERSION = 6
 const MAXIMUM_DECODED_ARTIFACT_BYTES =
   TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointArtifactBytes
 const MAXIMUM_DECODED_CHECKPOINT_BYTES = TYPE_SPEC_APPLICATION_LIMITS.maximumDecodedCheckpointBytes
@@ -89,19 +88,18 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
       let loaded
       try {
         if (expectation.projection) {
+          const requestCheckpoint = await options.store.load(
+            applicationCheckpointRequestScope(expectation),
+            signalOptions(expectation),
+          )
+          if (requestCheckpoint.ok) loaded = requestCheckpoint
+        }
+        if (!loaded && expectation.projection) {
           const admitted = await options.store.load(
             applicationCheckpointScope(expectation),
             { artifactKeys: [], ...signalOptions(expectation) },
           )
-          if (!admitted.ok) {
-            return miss(
-              admitted.reason === 'manifest-missing'
-                ? 'missing'
-                : admitted.reason.includes('corrupt')
-                  ? 'corrupt'
-                  : 'unavailable',
-            )
-          }
+          if (!admitted.ok) return checkpointStoreMiss(admitted.reason)
           const payload = compatibleManifestPayload(
             admitted.manifest,
             expectation,
@@ -109,6 +107,7 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
           )
           if (!payload) return miss('incompatible')
           if (
+            payload.complete === true &&
             payload.request !== expectation.request &&
             payload.inventory === expectation.inventory
           ) {
@@ -124,22 +123,14 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
             }
           }
         }
-        loaded = await options.store.load(
+        loaded ??= await options.store.load(
           applicationCheckpointScope(expectation),
           signalOptions(expectation),
         )
       } catch {
         return miss('unavailable')
       }
-      if (!loaded.ok) {
-        return miss(
-          loaded.reason === 'manifest-missing'
-            ? 'missing'
-            : loaded.reason.includes('corrupt')
-              ? 'corrupt'
-              : 'unavailable',
-        )
-      }
+      if (!loaded.ok) return checkpointStoreMiss(loaded.reason)
       try {
         const payload = compatibleManifestPayload(
           loaded.manifest,
@@ -149,39 +140,35 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
         if (!payload) return miss('incompatible')
         if (
           payload.encoding !== WORKSPACE_CHECKPOINT_JSON_ENCODING ||
+          payload.representation !== PACKED_REPRESENTATION ||
           !Number.isSafeInteger(payload.decodedBytes) ||
           (payload.decodedBytes as number) < 0 ||
           (payload.decodedBytes as number) > MAXIMUM_DECODED_CHECKPOINT_BYTES
         ) return miss('incompatible')
-        const representation = payload.representation
-        if (representation !== undefined && representation !== PACKED_REPRESENTATION) {
-          return miss('incompatible')
-        }
-        if (typeof payload.statistics !== 'boolean') return miss('incompatible')
+        if (
+          typeof payload.statistics !== 'boolean' ||
+          typeof payload.complete !== 'boolean' ||
+          (payload.complete === false &&
+            (!expectation.projection || payload.request !== expectation.request))
+        ) return miss('incompatible')
         const hasStatistics = payload.statistics
         const decoded = { bytes: 0, artifacts: new Map<string, number>() }
         const apiPayloads = new Map<string, PackedApiPayload>()
-        let apiPayloadIndex: readonly { readonly source: string; readonly key: string }[] = []
-        if (representation === PACKED_REPRESENTATION) {
-          apiPayloadIndex = artifactIndex(loaded.artifacts, API_PAYLOADS, decoded)
-          for (const { source: key, key: artifact } of apiPayloadIndex) {
-            const value = jsonArtifact<PackedApiPayload>(loaded.artifacts, artifact, decoded)
-            if (apiPayloads.has(key)) throw new Error(`Checkpoint API payload is duplicated: ${key}`)
-            apiPayloads.set(key, value)
-          }
+        const apiPayloadIndex = artifactIndex(loaded.artifacts, API_PAYLOADS, decoded)
+        for (const { source: key, key: artifact } of apiPayloadIndex) {
+          const value = jsonArtifact<PackedApiPayload>(loaded.artifacts, artifact, decoded)
+          if (apiPayloads.has(key)) throw new Error(`Checkpoint API payload is duplicated: ${key}`)
+          apiPayloads.set(key, value)
         }
         const corpusIndex = artifactIndex(loaded.artifacts, CORPUS, decoded)
         const specificationDescriptors = new Map<string, PersistedDescriptor>()
         const specifications = corpusIndex.map(({ source, key }) => {
-          const stored = jsonArtifact<SpecificationSnapshot | PackedSpecificationSnapshot>(
+          const packed = jsonArtifact<PackedSpecificationSnapshot>(
             loaded.artifacts,
             key,
             decoded,
           )
-          const packed = stored as PackedSpecificationSnapshot
-          const specification = representation === PACKED_REPRESENTATION
-            ? unpackSpecificationSnapshot(packed, apiPayloads)
-            : stored as SpecificationSnapshot
+          const specification = unpackSpecificationSnapshot(packed, apiPayloads)
           if (specification.source !== source) throw new Error('Checkpoint specification index drifted.')
           if (specificationDescriptors.has(source)) {
             throw new Error(`Checkpoint specification source is duplicated: ${source}`)
@@ -189,9 +176,7 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
           specificationDescriptors.set(source, {
             key,
             identity: specification.id,
-            ...(representation === PACKED_REPRESENTATION
-              ? { payloads: packedSpecificationPayloadKeys(packed) }
-              : {}),
+            payloads: packedSpecificationPayloadKeys(packed),
           })
           return specification
         })
@@ -290,7 +275,7 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
           snapshot: candidate,
           specifications,
           inventory,
-          complete: true,
+          complete: payload.complete,
           ...(statistics ? { statistics } : {}),
         }
         return {
@@ -299,9 +284,9 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
             payload.inventory === expectation.inventory &&
             payload.request === expectation.request,
           request: payload.request === expectation.request,
-          migration: representation === undefined,
           work: {
-            projection: 'complete', artifacts: loaded.artifacts.size, decodedBytes: decoded.bytes,
+            projection: payload.complete ? 'complete' : 'request-closure',
+            artifacts: loaded.artifacts.size, decodedBytes: decoded.bytes,
             specifications: specifications.length, apiPayloads: apiPayloads.size,
           },
           content,
@@ -321,6 +306,8 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
             content.statistics.inventory !== expectation.inventory)) ||
         content.inventory.repository !== expectation.repository ||
         content.inventory.revision !== expectation.inventory ||
+        typeof content.complete !== 'boolean' ||
+        (!content.complete && !expectation.projection) ||
         !validCapabilities(snapshot.capabilities) ||
         snapshot.capabilities.includes('repository-statistics') !==
           (content.statistics !== undefined)
@@ -445,7 +432,9 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
         else if (!retain(descriptor.key)) throw new Error(`Retained qualification artifact is missing: ${descriptor.source}`)
       }
       await options.store.publish(
-        applicationCheckpointScope(expectation),
+        content.complete
+          ? applicationCheckpointScope(expectation)
+          : applicationCheckpointRequestScope(expectation),
         {
           manifest: {
             format: FORMAT,
@@ -462,6 +451,7 @@ export function createApplicationCheckpoint(options: ApplicationCheckpointOption
               encoding: WORKSPACE_CHECKPOINT_JSON_ENCODING,
               representation: PACKED_REPRESENTATION,
               statistics: content.statistics !== undefined,
+              complete: content.complete,
               decodedBytes,
             },
           },
@@ -505,6 +495,12 @@ export function applicationCheckpointScope(
   return `${SCOPE_PREFIX}${createHash('sha256').update(identity).digest('hex').slice(0, 32)}`
 }
 
+/** Keep a focused corpus physically unable to shadow the complete corpus or another request. */
+function applicationCheckpointRequestScope(expectation: ApplicationCheckpointExpectation): string {
+  const identity = [expectation.corpus, expectation.sourceProof ?? '', expectation.request].join('\0')
+  return `${SCOPE_PREFIX}request-${createHash('sha256').update(identity).digest('hex').slice(0, 32)}`
+}
+
 export async function admitApplicationCheckpointManifest(
   options: ApplicationCheckpointOptions,
   expectation: ApplicationCheckpointManifestExpectation,
@@ -527,7 +523,8 @@ export async function admitApplicationCheckpointManifest(
       payload.repository !== expectation.repository ||
       payload.inventory !== expectation.inventory ||
       payload.corpus !== expectation.corpus ||
-      payload.sourceProof !== expectation.sourceProof
+      payload.sourceProof !== expectation.sourceProof ||
+      payload.complete !== true
     ) {
       return { ok: false, reason: 'incompatible' }
     }
@@ -571,6 +568,7 @@ async function loadProjectedApplicationCorpus(
   const projection = expectation.projection
   if (!projection) return miss('incompatible')
   if (
+    payload.complete !== true ||
     payload.representation !== PACKED_REPRESENTATION ||
     payload.encoding !== WORKSPACE_CHECKPOINT_JSON_ENCODING ||
     !Number.isSafeInteger(payload.decodedBytes) ||
@@ -672,7 +670,6 @@ async function loadProjectedApplicationCorpus(
     ok: true,
     exact: false,
     request: false,
-    migration: false,
     work: {
       projection: 'request-closure', artifacts: indexKeys.length + selectedKeys.length,
       decodedBytes: decoded.bytes, specifications: specifications.length,
