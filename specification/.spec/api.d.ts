@@ -206,7 +206,8 @@ export interface SpecificationCompilationPhase {
   readonly workerPeakResidentBytes?: number
   readonly workerResidentUpperBoundBytes?: number
   readonly parentPeakResidentBytes?: number
-  readonly overlap?: 'typescript-snapshots'
+  /** TypeScript wall time remaining after snapshot work was scheduled. */
+  readonly typeScriptTailAfterSnapshotSchedulingMs?: number
 }
 
 /** Compile one coherent corpus through bounded shared declaration and TypeScript waves. */

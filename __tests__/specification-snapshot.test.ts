@@ -68,6 +68,10 @@ describe('immutable normative specification snapshots', () => {
       items: 2,
       typeScriptTailAfterSnapshotSchedulingMs: expect.any(Number),
     })
+    expect(
+      phases.find(({ phase }) => phase === 'typescript')
+        ?.typeScriptTailAfterSnapshotSchedulingMs,
+    ).toBeGreaterThanOrEqual(0)
   })
 
   it('compiles normative APIs with the authored V2 declaration surface', async () => {

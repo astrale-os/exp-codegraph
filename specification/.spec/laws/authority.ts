@@ -21,7 +21,7 @@ export const SPECIFICATION_CONTENT_IDENTITY = defineLaw({
 export const SPECIFICATION_COMPILER_WORK_OBSERVABILITY = defineLaw({
   id: 'SPECIFICATION-COMPILER-WORK-OBSERVABILITY',
   statement:
-    'Batch compilation reports actual declaration sessions, compiler Programs, retries, compatibility fallbacks, worker peak-residency bounds, and overlapping phase work; observation failure cannot change a normative snapshot or diagnostic.',
+    'Batch compilation reports actual declaration sessions, compiler Programs, retries, compatibility fallbacks, worker peak-residency bounds, and the measured TypeScript tail after snapshot scheduling; observation failure cannot change a normative snapshot or diagnostic.',
   tests: [
     {
       file: '../__tests__/specification-snapshot.test.ts',
