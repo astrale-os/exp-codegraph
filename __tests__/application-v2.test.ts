@@ -291,6 +291,13 @@ describe('headless TypeSpec V2 application', () => {
               ok: true,
               exact,
               request: true,
+              work: {
+                projection: 'complete',
+                artifacts: 0,
+                decodedBytes: 0,
+                specifications: published.content.specifications.length,
+                apiPayloads: 0,
+              },
               content: {
                 ...published.content,
                 specifications: published.content.specifications.map((specification) => ({
@@ -379,6 +386,13 @@ export default defineLayout([])
             ok: true,
             exact: false,
             request: false,
+            work: {
+              projection: 'complete',
+              artifacts: 0,
+              decodedBytes: 0,
+              specifications: published!.content.specifications.length,
+              apiPayloads: 0,
+            },
             content: published!.content,
           }),
           publish: async () => {},
