@@ -170,7 +170,7 @@ function normalizedModuleFixture(): {
     }),
     generation,
     namespace: 'astrale.typescript.module',
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'declaration',
     subject: identity,
     completeness: { kind: 'complete' } as const,

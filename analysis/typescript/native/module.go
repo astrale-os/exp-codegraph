@@ -109,13 +109,14 @@ func (x *extractor) moduleShardsFor(
 	}
 	sort.Strings(declarationIDs)
 	for _, identity := range declarationIDs {
-		entry := x.newFact(
+		entry := x.newFactVersion(
 			declarationNamespace,
 			"declaration",
 			identity,
 			declarationFactPayload{Declaration: x.moduleDeclarationsByIdentity[identity].declaration},
 			nil,
 			complete(),
+			2,
 		)
 		declarationFacts[identity] = entry
 	}
@@ -170,7 +171,7 @@ func (x *extractor) moduleShardsFor(
 	}
 	for _, identity := range declarationIDs {
 		entry := declarationFacts[identity]
-		shards = append(shards, finishShard(declarationNamespace, entry.ID, complete(), []fact{entry}))
+		shards = append(shards, finishShardVersion(declarationNamespace, entry.ID, complete(), []fact{entry}, 2))
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil

@@ -148,7 +148,17 @@ describe('Git source proof', () => {
     )
     await commit(conflicted.root, 'current')
     await expect(
-      execute('git', ['-C', conflicted.root, 'merge', '--quiet', 'conflicting-branch']),
+      execute('git', [
+        '-C',
+        conflicted.root,
+        '-c',
+        'user.name=Codegraph Fixture',
+        '-c',
+        'user.email=codegraph@example.invalid',
+        'merge',
+        '--quiet',
+        'conflicting-branch',
+      ]),
     ).rejects.toBeDefined()
 
     await expect(

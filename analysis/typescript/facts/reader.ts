@@ -89,7 +89,10 @@ function admit<Kind extends TypeScriptFactKind>(
   }
   if (kind === 'module' && fact.kind !== 'module') diagnostics.push(`kind:${fact.kind}`)
   if (kind === 'declaration' && fact.kind !== 'declaration') diagnostics.push(`kind:${fact.kind}`)
-  if (fact.schemaVersion !== 1 && !(kind === 'module' && fact.schemaVersion === 2)) {
+  if (
+    fact.schemaVersion !== 1 &&
+    !((kind === 'module' || kind === 'declaration') && fact.schemaVersion === 2)
+  ) {
     diagnostics.push(`schema-version:${fact.schemaVersion}`)
   }
   diagnostics.push(...validateTypeScriptFactPayload(kind, fact.payload, fact.schemaVersion))
