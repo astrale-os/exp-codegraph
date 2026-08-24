@@ -148,17 +148,33 @@ export async function materializeApplicationObservations(options) {
         sequence: (current?.sequence ?? 0) + 1,
         ...semanticGeneration,
     };
-    await options.store.commit({
-        protocolVersion: 1,
-        ...(current ? { base: current.id } : {}),
-        next: generation,
-        manifest,
-        upserts: rebound.filter((shard) => currentByKey.get(shard.key)?.digest !== shard.digest),
-        deletes: currentManifest
-            .filter((entry) => !nextKeys.has(entry.key))
-            .map((entry) => entry.key)
-            .sort(),
-    }, { signal: options.signal });
+    try {
+        await options.store.commit({
+            protocolVersion: 1,
+            ...(current ? { base: current.id } : {}),
+            next: generation,
+            manifest,
+            upserts: rebound.filter((shard) => currentByKey.get(shard.key)?.digest !== shard.digest),
+            deletes: currentManifest
+                .filter((entry) => !nextKeys.has(entry.key))
+                .map((entry) => entry.key)
+                .sort(),
+        }, { signal: options.signal });
+    }
+    catch (error) {
+        // Concurrent canonical publishers may race from the same base. The generation identity binds
+        // the complete semantic manifest, so adopting the already-visible identical generation is
+        // exact; a different winner remains a visible conflict.
+        const published = await options.store.current(universe);
+        if (published?.id !== id)
+            throw error;
+        return {
+            universe,
+            generation: published,
+            diagnostics: globalDiagnostics,
+            ...(bindings ? { bindingWork: bindingWork(bindings) } : {}),
+        };
+    }
     return {
         universe,
         generation,

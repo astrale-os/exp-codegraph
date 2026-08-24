@@ -28,7 +28,7 @@ export const CLI_SEMANTIC_PACK_CATALOG_PROJECTION = defineLaw({
   tests: [
     {
       file: '../__tests__/cli-acceleration.test.ts',
-      id: 'CLI-SEMANTIC-PACK-CATALOG-PROJECTION',
+      id: 'CLI-SEMANTIC-PACK-REQUEST-IDENTITY',
     },
   ],
 })
@@ -52,7 +52,7 @@ export const CLI_SEMANTIC_PACK_APPLICATION_FALLBACK = defineLaw({
   tests: [
     {
       file: '../__tests__/cli-acceleration.test.ts',
-      id: 'CLI-SEMANTIC-PACK-CATALOG-PROJECTION',
+      id: 'CLI-SEMANTIC-PACK-REQUEST-IDENTITY',
     },
   ],
 })

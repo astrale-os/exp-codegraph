@@ -5,6 +5,7 @@ export default defineLayout({
   entries: [
     'index.ts',
     'materialize.ts',
+    'materialize.optimization.ts',
     'model.ts',
     'schema-dependency.ts',
   ],

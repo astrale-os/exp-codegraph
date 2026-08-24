@@ -160,7 +160,8 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
     application ??= await applicationPromise
     const refreshed = await application.refresh({
         qualify: true,
-        compilerAnalysis: forceCompiler,
+        compilerAnalysis: false,
+        moduleBindings: forceCompiler,
         ...(forceCompiler
           ? {}
           : {
@@ -463,7 +464,8 @@ export function createLiveSpecsPlugin(options: LiveSpecsOptions): Plugin {
     }
     const refreshed = await verifier.refresh({
       qualify: true,
-      compilerAnalysis: true,
+      compilerAnalysis: false,
+      moduleBindings: true,
       focused: true,
       select: [source],
       ...(changed.length ? { changed } : {}),

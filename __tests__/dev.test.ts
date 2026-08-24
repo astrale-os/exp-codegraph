@@ -316,7 +316,7 @@ describe('universal specification dev server', () => {
       code: 'SNAPSHOT_CHANGED',
     })
 
-    await writeFile(implementation, 'export type Thing = string\n')
+    await writeFile(implementation, "export type { Thing } from './.spec/api.js'\n")
     running.server.watcher.emit('change', implementation)
     await expect
       .poll(
@@ -453,7 +453,7 @@ function moduleVerificationFiles(): Record<string, string> {
       },
       include: ['*.ts'],
     }),
-    'module/index.ts': 'export type Thing = string\n',
+    'module/index.ts': "export type { Thing } from './.spec/api.js'\n",
     'module/.spec/api.d.ts': `${identityValue('Thing')}\n`,
   }
   return files
