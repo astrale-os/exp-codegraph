@@ -7,7 +7,7 @@ import type {
   ModuleTypeScriptIsolationGroupResult,
 } from './typescript-model.ts'
 
-const MAXIMUM_OLD_SPACE_MIB = 512
+const MAXIMUM_OLD_SPACE_MIB = 504
 const MAXIMUM_OUTPUT_BYTES = 64 * 1_024 * 1_024
 const MAXIMUM_STDERR_BYTES = 1 * 1_024 * 1_024
 const TIMEOUT_MS = 60_000
