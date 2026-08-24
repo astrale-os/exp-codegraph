@@ -63,6 +63,8 @@ jobs:
           frozen-lockfile: 'true'
       - name: Build exact native artifact
         run: pnpm native:build -- --target ${{ matrix.target }} --output .native-output/${{ matrix.target }}
+      - name: Build package distribution
+        run: pnpm build
       - name: Qualify native semantics and extension boundary
         run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native
       - name: Upload qualified native artifact
