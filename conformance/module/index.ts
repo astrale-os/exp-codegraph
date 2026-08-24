@@ -1,4 +1,3 @@
-export * from './contract/model.ts'
 export * from './profile.ts'
 export * from './layout.ts'
 export * from './schema.ts'

@@ -16,12 +16,10 @@ import { defaultTypeSpecCacheDirectory } from '../../../cache/file-store.ts'
 import { inspectVerifyApplication } from './verify-inspection.ts'
 import {
   maximumNativeResidentMiB,
-  MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES,
 } from './model.ts'
 
 const root = await resolveApplicationRoot(requiredArgument('--corpus-root'))
 const output = resolve(requiredArgument('--output'))
-const nativeBinary = resolve(requiredArgument('--native-binary'))
 const changedPath = requiredArgument('--changed-path').replaceAll('\\', '/')
 const selected = requiredArgument('--select')
 const cacheDirectory = defaultTypeSpecCacheDirectory()
@@ -33,17 +31,13 @@ const service = await createNodeTypeSpecApplicationService({
   root,
   cacheDirectory,
   persistence: 'advisory',
-  native: {
-    binary: nativeBinary,
-    maximumResidentBytes: MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES,
-    telemetry: (event) => telemetry.push(event),
-  },
   telemetry: (event) => telemetry.push(event),
 })
 const options = {
-  requestedCapabilities: ['declaration-models'] as const,
+  requestedCapabilities: [] as const,
   qualify: true,
-  compilerAnalysis: true,
+  compilerAnalysis: false,
+  moduleBindings: true,
   focused: true,
   select: [selected],
 }
@@ -74,7 +68,6 @@ try {
       platform: process.platform,
       architecture: process.arch,
       producerFingerprint: await codegraphProducerFingerprint({ persistence: 'memory' }),
-      nativeSha256: digest(await readFile(nativeBinary)),
       harnessSha256: digest(await readFile(import.meta.filename)),
     },
     request: { selected, changedPath },

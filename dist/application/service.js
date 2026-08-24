@@ -445,6 +445,9 @@ class HeadlessTypeSpecApplicationService {
                 ...(options.compilerAnalysis !== undefined
                     ? { compilerAnalysis: options.compilerAnalysis }
                     : {}),
+                ...(options.moduleBindings !== undefined
+                    ? { moduleBindings: options.moduleBindings }
+                    : {}),
                 ...(options.changed ? { changed: options.changed } : {}),
                 ...(inventoryChanges.length ? { changes: inventoryChanges } : {}),
                 residentModules: selected.qualification
@@ -879,6 +882,7 @@ function applicationRefreshKey(options) {
         requireExactLayout: options.requireExactLayout === true,
         requestedProfiles: sortedUnique(options.requestedProfiles ?? []),
         compilerAnalysis: options.compilerAnalysis !== false,
+        moduleBindings: options.moduleBindings === true,
         qualify: options.qualify === true,
     });
 }

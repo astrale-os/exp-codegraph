@@ -9,9 +9,14 @@ import type {
   PassId,
   ProducerIdentity,
   ProjectUniverseId,
+  NativeModuleBoundary,
   SourceManifestId,
+  ApplicationModuleBindingCompilation,
+  ApplicationModuleBindingRequest,
+  ApplicationModuleBindingWork,
 } from '../../analysis/index.ts'
 import {
+  APPLICATION_BINDING_FACT_NAMESPACE,
   deriveAnalysisId,
   factShardDigest,
   generationIdentity,
@@ -39,6 +44,7 @@ import {
   type ApplicationSchemaCatalogFact,
   type ApplicationTestEvidenceFact,
 } from './model.ts'
+import { compileApplicationModuleBindingsIsolated } from '../../compiler/application-binding-process.optimization.ts'
 import type { ApplicationSchemaDependencyResource } from './schema-dependency.ts'
 import {
   indexApplicationObservationInventory,
@@ -64,6 +70,8 @@ export interface MaterializeApplicationObservationsOptions {
   readonly store: AnalysisStore
   readonly inventory: RepositoryInventory
   readonly specifications: readonly SpecificationSnapshot[]
+  /** Exact resolved implementation boundaries requested by compiler-backed verification. */
+  readonly bindings?: readonly NativeModuleBoundary[]
   /** Specification sources whose owner-scoped observation shards must be recomputed. */
   readonly refresh?: readonly string[]
   readonly schemaDependencies?: readonly ApplicationSchemaDependencyResource[]
@@ -116,9 +124,13 @@ export async function materializeApplicationObservations(
         resource.source,
         resource.revision,
       ]),
+      bindings: (options.bindings ?? []).map((binding) => binding),
     },
   ) as SourceManifestId
-  const expectedKeys = options.specifications.flatMap(observationKeys).sort()
+  const boundaryByModule = new Map((options.bindings ?? []).map((binding) => [binding.id, binding]))
+  const expectedKeys = options.specifications
+    .flatMap((specification) => observationKeys(specification, boundaryByModule.has(specification.module.id)))
+    .sort()
   if (
     (requested === undefined || requested.size === 0) &&
     current?.sourceManifest === sourceManifest &&
@@ -127,11 +139,43 @@ export async function materializeApplicationObservations(
   ) {
     return { universe, generation: current, diagnostics: globalDiagnostics }
   }
+  const allBindingRequests = options.specifications.flatMap((specification) => {
+    const boundary = boundaryByModule.get(specification.module.id)
+    if (!boundary) return []
+    return [{
+      specification: specification.id,
+      source: specification.module.api?.source ?? specification.source,
+      target: boundary,
+    } satisfies ApplicationModuleBindingRequest]
+  })
+  const bindingRequests = allBindingRequests.filter((request) => {
+    const specification = options.specifications.find(
+      (candidate) => candidate.id === request.specification,
+    )!
+    const key = observationKey(APPLICATION_BINDING_FACT_NAMESPACE, specification)
+    const canRetain =
+      requested !== undefined &&
+      !requested.has(specification.source) &&
+      currentByKey.has(key)
+    return !canRetain
+  })
+  const bindings = bindingRequests.length
+    ? await compileApplicationModuleBindingsIsolated({
+        root: options.root,
+        requests: bindingRequests,
+        ownershipRequests: allBindingRequests,
+        ...(options.signal ? { signal: options.signal } : {}),
+      })
+    : undefined
+  const bindingBySpecification = new Map(
+    (bindings?.facts ?? []).map((fact) => [fact.specification, fact]),
+  )
   const ownerWork = await mapApplicationObservationOwners(
     options.specifications,
     async (specification) => {
       options.signal?.throwIfAborted()
-      const keys = observationKeys(specification)
+      const boundary = boundaryByModule.get(specification.module.id)
+      const keys = observationKeys(specification, boundary !== undefined)
       const canRetain =
         requested !== undefined &&
         !requested.has(specification.source) &&
@@ -143,6 +187,7 @@ export async function materializeApplicationObservations(
         observeSpecificationLayout(options.root, specification),
         observeSpecificationTests(options.root, specification),
       ])
+      const binding = bindingBySpecification.get(specification.id)
       return {
         retained: [],
         shards: [
@@ -174,6 +219,17 @@ export async function materializeApplicationObservations(
             'module-context',
             observeSpecificationContext(specification, inventoryIndex),
           ),
+          ...(binding
+            ? [
+                observationShard(
+                  provisional,
+                  APPLICATION_BINDING_FACT_NAMESPACE,
+                  specification,
+                  'module-binding',
+                  binding,
+                ),
+              ]
+            : []),
         ],
       }
     },
@@ -192,6 +248,7 @@ export async function materializeApplicationObservations(
     sourceManifest,
     capabilities: [
       APPLICATION_LAYOUT_FACT_NAMESPACE,
+      ...(options.bindings?.length ? [APPLICATION_BINDING_FACT_NAMESPACE] : []),
       APPLICATION_CONTEXT_FACT_NAMESPACE,
       APPLICATION_SCHEMA_FACT_NAMESPACE,
       APPLICATION_TEST_FACT_NAMESPACE,
@@ -199,7 +256,12 @@ export async function materializeApplicationObservations(
   }
   const id = generationIdentity(semanticGeneration, manifest)
   if (current?.id === id) {
-    return { universe, generation: current, diagnostics: globalDiagnostics }
+    return {
+      universe,
+      generation: current,
+      diagnostics: globalDiagnostics,
+      ...(bindings ? { bindingWork: bindingWork(bindings) } : {}),
+    }
   }
   const nextKeys = new Set(manifest.map((entry) => entry.key))
   const rebound = shards.map((shard) => bindGeneration(shard, id))
@@ -224,23 +286,44 @@ export async function materializeApplicationObservations(
     },
     { signal: options.signal },
   )
-  return { universe, generation, diagnostics: globalDiagnostics }
+  return {
+    universe,
+    generation,
+    diagnostics: globalDiagnostics,
+    ...(bindings ? { bindingWork: bindingWork(bindings) } : {}),
+  }
 }
 
-function observationKeys(specification: SpecificationSnapshot): readonly FactShard['key'][] {
+function bindingWork(
+  compilation: ApplicationModuleBindingCompilation,
+): ApplicationModuleBindingWork {
+  const { facts: _facts, ...work } = compilation
+  return work
+}
+
+function observationKeys(
+  specification: SpecificationSnapshot,
+  includeBinding: boolean,
+): readonly FactShard['key'][] {
   return [
     APPLICATION_LAYOUT_FACT_NAMESPACE,
+    ...(includeBinding ? [APPLICATION_BINDING_FACT_NAMESPACE] : []),
     APPLICATION_TEST_FACT_NAMESPACE,
     APPLICATION_SCHEMA_FACT_NAMESPACE,
     APPLICATION_CONTEXT_FACT_NAMESPACE,
   ]
-    .map((namespace) =>
-      deriveAnalysisId('fact-shard-key', namespace, {
-        specification: specification.module.id,
-        schemaVersion: 1,
-      }),
-    )
+    .map((namespace) => observationKey(namespace, specification))
     .sort()
+}
+
+function observationKey(
+  namespace: string,
+  specification: SpecificationSnapshot,
+): FactShard['key'] {
+  return deriveAnalysisId('fact-shard-key', namespace, {
+    specification: specification.module.id,
+    schemaVersion: 1,
+  })
 }
 
 function observeSpecificationContext(

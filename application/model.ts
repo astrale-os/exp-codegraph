@@ -78,6 +78,8 @@ export interface TypeSpecApplicationRefreshOptions {
   readonly schemaRoots?: readonly string[]
   /** Skip compiler universes for repository/specification-only profile sets. */
   readonly compilerAnalysis?: boolean
+  /** Compile compact API-to-implementation binding facts for module conformance. */
+  readonly moduleBindings?: boolean
   readonly changed?: readonly string[]
   readonly invalidate?: boolean
   readonly qualify?: boolean

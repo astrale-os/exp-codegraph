@@ -215,6 +215,7 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     const files = await typescriptFiles(analysisRoot)
     const allowed: Record<string, ReadonlySet<string>> = {
       facade: new Set([
+        'binding',
         'facts',
         'generation',
         'identity',
@@ -227,6 +228,7 @@ describe('TypeSpec V2 generic analysis foundation', () => {
         'source',
       ]),
       identity: new Set(),
+      binding: new Set(),
       facts: new Set(['identity']),
       generation: new Set(['facts', 'identity']),
       query: new Set(['facts', 'generation', 'identity']),

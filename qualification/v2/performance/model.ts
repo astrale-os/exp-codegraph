@@ -14,6 +14,7 @@ export type PerformanceMode = 'canonical' | 'optimized'
 
 /** Qualification must fail visibly before one native compiler can pressure ordinary CI hosts. */
 export const MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES = 768 * 1_024 * 1_024
+export const MAXIMUM_QUALIFIED_BINDING_WORKER_RESIDENT_BYTES = 768 * 1_024 * 1_024
 export const MAXIMUM_QUALIFIED_RUNNER_RESIDENT_BYTES = 1_024 * 1_024 * 1_024
 
 export interface DirectoryEvidence {
@@ -112,6 +113,18 @@ export function maximumNativeResidentMiB(
       ? [event.metrics.peakResidentBytes]
       : [],
   )
+  return bytes.length ? Math.max(...bytes) / 1_024 / 1_024 : 0
+}
+
+export function maximumBindingWorkerResidentMiB(
+  telemetry: readonly AnalysisTelemetryEvent[],
+): number {
+  const bytes = telemetry.flatMap((event) => {
+    const value = event.phase === 'application.module-bindings'
+      ? event.metrics?.workerResidentUpperBoundBytes
+      : undefined
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? [value] : []
+  })
   return bytes.length ? Math.max(...bytes) / 1_024 / 1_024 : 0
 }
 

@@ -23,3 +23,9 @@ export const CONFORMANCE_BIDIRECTIONAL_COVERAGE = defineLaw({
   statement:
     'Every rule reports forward authored-obligation coverage separately from inverse observed-surface coverage; neither direction may hide unmatched evidence in the other.',
 })
+
+export const CONFORMANCE_EXPLICIT_BINDING_AUTHORITY = defineLaw({
+  id: 'CONFORMANCE-EXPLICIT-BINDING-AUTHORITY',
+  statement:
+    'Module surface qualification consumes one exact compiler binding from the authoritative specification namespace to the implementation entrypoint; it never substitutes an independently reconstructed implementation declaration graph or a legacy native fallback.',
+})

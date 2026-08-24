@@ -25,6 +25,7 @@ export interface ApplicationAnalysisRefreshOptions {
   readonly inventory: RepositoryInventory
   readonly schemaDependencies?: readonly ApplicationSchemaDependencyResource[]
   readonly compilerAnalysis?: boolean
+  readonly moduleBindings?: boolean
   readonly changed?: readonly string[]
   readonly changes?: readonly NativeSourceChange[]
   /** Focused primary module identities eligible for bounded resident compiler retention. */

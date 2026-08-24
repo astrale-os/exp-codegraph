@@ -1,7 +1,25 @@
-import type { AnalysisGeneration, AnalysisStore } from '../../../analysis/.spec/api.js'
+import type {
+  AnalysisGeneration,
+  AnalysisStore,
+  ApplicationModuleBindingWork,
+  NativeModuleBoundary,
+} from '../../../analysis/.spec/api.js'
 import type { ProjectUniverseId } from '../../../analysis/identity/.spec/api.js'
 import type { RepositoryInventory } from '../../../repository/.spec/api.js'
 import type { SpecificationSnapshot } from '../../../specification/.spec/api.js'
+
+export {
+  APPLICATION_BINDING_FACT_NAMESPACE,
+  type ApplicationModuleBindingCompilation,
+  type ApplicationModuleBindingDependency,
+  type ApplicationModuleBindingDiagnostic,
+  type ApplicationModuleBindingExport,
+  type ApplicationModuleBindingExportFacet,
+  type ApplicationModuleBindingFact,
+  type ApplicationModuleBindingRequest,
+  type ApplicationModuleBindingTarget,
+  type ApplicationModuleBindingWork,
+} from '../../../analysis/binding/.spec/api.js'
 
 interface Diagnostic {
   readonly code: string
@@ -36,6 +54,18 @@ export interface ApplicationLayoutObservationFact {
   readonly diagnostics: readonly Diagnostic[]
 }
 
+export interface ApplicationResolvedTestEvidence {
+  readonly reference: string
+  readonly id: string
+  readonly source: string
+  readonly title: string
+  readonly status: 'active' | 'skipped' | 'todo'
+  readonly line: number
+  readonly column: number
+  readonly code: string
+  readonly revision: string
+}
+
 export interface ApplicationTestEvidenceFact {
   readonly specification: string
   readonly laws: readonly {
@@ -49,18 +79,6 @@ export interface ApplicationTestEvidenceFact {
     readonly evidence: readonly ApplicationResolvedTestEvidence[]
   }[]
   readonly diagnostics: readonly Diagnostic[]
-}
-
-export interface ApplicationResolvedTestEvidence {
-  readonly reference: string
-  readonly id: string
-  readonly source: string
-  readonly title: string
-  readonly status: 'active' | 'skipped' | 'todo'
-  readonly line: number
-  readonly column: number
-  readonly code: string
-  readonly revision: string
 }
 
 export interface ApplicationSchemaCatalogFact {
@@ -89,6 +107,7 @@ export interface ApplicationObservationRefresh {
   readonly universe: ProjectUniverseId
   readonly generation: AnalysisGeneration
   readonly diagnostics: readonly Diagnostic[]
+  readonly bindingWork?: ApplicationModuleBindingWork
 }
 
 export interface ApplicationSchemaDependencyResource {
@@ -112,6 +131,7 @@ export function materializeApplicationObservations(options: {
   readonly store: AnalysisStore
   readonly inventory: RepositoryInventory
   readonly specifications: readonly SpecificationSnapshot[]
+  readonly bindings?: readonly NativeModuleBoundary[]
   readonly refresh?: readonly string[]
   readonly schemaDependencies?: readonly ApplicationSchemaDependencyResource[]
   readonly signal?: AbortSignal

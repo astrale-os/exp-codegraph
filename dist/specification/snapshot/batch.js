@@ -43,6 +43,10 @@ export function compileSpecificationSnapshots(root, directories, options = {}) {
             items: inventories.length,
             programs: typeScript.programs(),
             sessions: 1,
+            fallbacks: typeScript.fallbacks(),
+            workerPeakResidentBytes: typeScript.workerPeakResidentBytes(),
+            workerResidentUpperBoundBytes: typeScript.workerResidentUpperBoundBytes(),
+            parentPeakResidentBytes: process.resourceUsage().maxRSS * 1_024,
             typeScriptTailAfterSnapshotSchedulingMs,
         });
         const snapshots = await snapshotsPending;
@@ -87,11 +91,26 @@ async function prepareSpecificationCompilation(root, inventories, onPhase, resto
         signalScheduled = resolve;
     });
     let programs = 0;
+    let fallbacks = 0;
+    let workerPeakResidentBytes = 0;
+    let workerResidentUpperBoundBytes = 0;
     const completed = prepareModuleTypeScriptAnalyses(root, inventories, (phase) => {
-        if (phase.phase === 'program')
-            programs += phase.items;
+        if (phase.phase !== 'program')
+            return;
+        programs += phase.items;
+        fallbacks += phase.fallbacks ?? 0;
+        workerPeakResidentBytes = Math.max(workerPeakResidentBytes, phase.workerPeakResidentBytes ?? 0);
+        workerResidentUpperBoundBytes = Math.max(workerResidentUpperBoundBytes, phase.workerResidentUpperBoundBytes ?? 0);
     }, signalScheduled);
-    return { started: typeScriptStarted, scheduled, completed, programs: () => programs };
+    return {
+        started: typeScriptStarted,
+        scheduled,
+        completed,
+        programs: () => programs,
+        fallbacks: () => fallbacks,
+        workerPeakResidentBytes: () => workerPeakResidentBytes,
+        workerResidentUpperBoundBytes: () => workerResidentUpperBoundBytes,
+    };
 }
 function report(observer, phase) {
     try {

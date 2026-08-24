@@ -1,104 +1,105 @@
-import { TYPESCRIPT_MODULE_FACT_NAMESPACE, createTypeScriptFactReader, } from '../../analysis/typescript/index.js';
+import { APPLICATION_BINDING_FACT_NAMESPACE } from '../../analysis/index.js';
 import { SPECIFICATION_VALIDITY_PROFILE_ID, createSpecificationValidityConformanceProfile, } from '../specification/index.js';
-import { createComparisonContext, indexComparisonObservation, } from './comparison/context.js';
-import { ModuleEvaluator } from './comparison/evaluator.js';
-import { compileModuleContract } from './contract/compiler.js';
 import { createModuleLayoutConformanceProfile, } from './layout.js';
-import { createModuleTestEvidenceConformanceProfile } from './test-evidence.js';
 import { createModuleSchemaConformanceProfile } from './schema.js';
+import { createModuleTestEvidenceConformanceProfile } from './test-evidence.js';
 export const MODULE_STRUCTURE_PROFILE_ID = 'contract.module.structure';
 export const MODULE_SURFACE_PROFILE_ID = 'contract.module.surface';
 export const MODULE_DEPENDENCIES_PROFILE_ID = 'contract.module.dependencies';
-const structureRules = ['MODULE-TARGET-PRESENT'];
+const structureRule = 'MODULE-TARGET-PRESENT';
 const surfaceRules = ['MODULE-SURFACE-CONFORMS', 'MODULE-SURFACE-OBSERVABLE'];
-const dependencyRules = ['MODULE-DEPENDENCIES-CONFORM'];
-/** Establish one unambiguous implementation target before semantic profiles run. */
+const dependencyRule = 'MODULE-DEPENDENCIES-CONFORM';
+/** Establish one unambiguous explicit implementation binding. */
 export function createModuleStructureConformanceProfile() {
-    return moduleStructureConformanceProfile(new ModuleEvaluationCache());
+    return moduleStructureConformanceProfile(new BindingFactCache());
 }
 function moduleStructureConformanceProfile(cache) {
     return {
         manifest: {
             id: MODULE_STRUCTURE_PROFILE_ID,
-            version: '2.0.0',
+            version: '3.0.0',
             dependsOn: [SPECIFICATION_VALIDITY_PROFILE_ID],
-            requiresCapabilities: [moduleCapability()],
-            rules: structureRules,
+            requiresCapabilities: [bindingCapability()],
+            rules: [structureRule],
             evaluationScope: 'universe',
         },
         async evaluate(context) {
-            const facts = await cache.collect(context);
-            return [targetRule(facts.candidates)];
+            return [structureResult((await cache.collect(context)).candidates)];
         },
     };
 }
-/** Prove the authored API with identity-aware, fine-grained semantic obligations. */
+/** Prove exact exports and compiler assignability through the explicit binding. */
 export function createModuleSurfaceConformanceProfile() {
-    return moduleSurfaceConformanceProfile(new ModuleEvaluationCache());
+    return moduleSurfaceConformanceProfile(new BindingFactCache());
 }
 function moduleSurfaceConformanceProfile(cache) {
     return {
         manifest: {
             id: MODULE_SURFACE_PROFILE_ID,
-            version: '2.0.0',
+            version: '3.0.0',
             dependsOn: [MODULE_STRUCTURE_PROFILE_ID],
-            requiresCapabilities: [moduleCapability()],
+            requiresCapabilities: [bindingCapability()],
             rules: surfaceRules,
             evaluationScope: 'universe',
         },
         async evaluate(context) {
-            const prepared = await cache.prepare(context);
-            if (!prepared)
+            const candidate = one((await cache.collect(context)).candidates);
+            if (!candidate)
                 return surfaceRules.map((rule) => blocked(MODULE_SURFACE_PROFILE_ID, rule));
-            if (prepared.compilation.diagnostics.length) {
-                return [
-                    compilationRule(MODULE_SURFACE_PROFILE_ID, surfaceRules[0], prepared.compilation),
-                    emptyRule(surfaceRules[1]),
-                ];
-            }
-            const rules = prepared.evaluator.rules.filter((rule) => profileOf(rule.id, prepared.obligations) === MODULE_SURFACE_PROFILE_ID);
-            const relevantIssues = observableIssues(prepared).filter((issue) => !dependencyIssue(issue.code));
+            const fact = candidate.payload;
+            const diagnostics = [
+                ...fact.diagnostics.filter((diagnostic) => !dependencyDiagnostic(diagnostic.code) && !structureDiagnostic(diagnostic.code)),
+                ...missingErrorCodes(context, fact),
+            ];
+            const authored = fact.exports.filter((entry) => entry.contract.type || entry.contract.value);
+            const observed = fact.exports.filter((entry) => entry.implementation.type || entry.implementation.value);
             return [
-                aggregateRule(MODULE_SURFACE_PROFILE_ID, surfaceRules[0], rules, prepared),
-                issueRule(MODULE_SURFACE_PROFILE_ID, surfaceRules[1], relevantIssues, prepared),
+                result(surfaceRules[0], diagnostics.length ? statusOf(diagnostics) : 'pass', diagnostics.map((diagnostic) => conformanceDiagnostic(MODULE_SURFACE_PROFILE_ID, surfaceRules[0], diagnostic, candidate)), {
+                    forward: { matched: authored.filter((entry) => entry.status === 'pass').length, total: authored.length },
+                    inverse: { matched: observed.filter((entry) => entry.status === 'pass').length, total: observed.length },
+                }),
+                result(surfaceRules[1], 'pass', [], emptyCoverage()),
             ];
         },
     };
 }
-/** Prove declared package intent and each portable inbound/outbound dependency occurrence. */
+/** Prove package intent and every direct compiler-resolved dependency occurrence. */
 export function createModuleDependenciesConformanceProfile() {
-    return moduleDependenciesConformanceProfile(new ModuleEvaluationCache());
+    return moduleDependenciesConformanceProfile(new BindingFactCache());
 }
 function moduleDependenciesConformanceProfile(cache) {
     return {
         manifest: {
             id: MODULE_DEPENDENCIES_PROFILE_ID,
-            version: '2.0.0',
+            version: '3.0.0',
             dependsOn: [MODULE_STRUCTURE_PROFILE_ID],
-            requiresCapabilities: [moduleCapability()],
-            rules: dependencyRules,
+            requiresCapabilities: [bindingCapability()],
+            rules: [dependencyRule],
             evaluationScope: 'universe',
         },
         async evaluate(context) {
-            const prepared = await cache.prepare(context);
-            if (!prepared) {
-                return dependencyRules.map((rule) => blocked(MODULE_DEPENDENCIES_PROFILE_ID, rule));
-            }
-            if (prepared.compilation.diagnostics.length) {
-                return [
-                    compilationRule(MODULE_DEPENDENCIES_PROFILE_ID, dependencyRules[0], prepared.compilation),
-                ];
-            }
-            const rules = prepared.evaluator.rules.filter((rule) => profileOf(rule.id, prepared.obligations) === MODULE_DEPENDENCIES_PROFILE_ID);
-            const issues = observableIssues(prepared).filter((issue) => dependencyIssue(issue.code));
+            const collected = await cache.collect(context);
+            const candidate = one(collected.candidates);
+            if (!candidate)
+                return [blocked(MODULE_DEPENDENCIES_PROFILE_ID, dependencyRule)];
+            const diagnostics = dependencyDiagnostics(context, candidate.payload, collected.facts);
+            const expectedPackages = context.specification.module.packageAuthority.packages;
+            const packageMatches = expectedPackages.filter((expected) => candidate.payload.declaredPackages.includes(expected.package)).length;
+            const rejectedDependencies = diagnostics.filter((diagnostic) => diagnostic.exportPath?.startsWith('dependency:')).length;
             return [
-                aggregateRule(MODULE_DEPENDENCIES_PROFILE_ID, dependencyRules[0], rules, prepared, issues),
+                result(dependencyRule, diagnostics.length ? statusOf(diagnostics) : 'pass', diagnostics.map((diagnostic) => conformanceDiagnostic(MODULE_DEPENDENCIES_PROFILE_ID, dependencyRule, diagnostic, candidate)), {
+                    forward: { matched: packageMatches, total: expectedPackages.length },
+                    inverse: {
+                        matched: Math.max(0, candidate.payload.dependencies.length - rejectedDependencies),
+                        total: candidate.payload.dependencies.length,
+                    },
+                }),
             ];
         },
     };
 }
 export function createModuleConformanceProfiles() {
-    const cache = new ModuleEvaluationCache();
+    const cache = new BindingFactCache();
     return [
         createSpecificationValidityConformanceProfile(),
         moduleStructureConformanceProfile(cache),
@@ -115,299 +116,187 @@ export function createTypeSpecConformanceProfiles(options = {}) {
         createModuleTestEvidenceConformanceProfile(),
     ];
 }
-async function collectModuleFacts(context) {
-    const facts = new Map();
-    for (const query of context.queries.values()) {
-        for await (const fact of createTypeScriptFactReader(query).export('module', {
-            kinds: ['module'],
-        })) {
-            facts.set(fact.id, fact);
-        }
-    }
-    const values = [...facts.values()].sort((left, right) => compare(left.id, right.id));
-    return values;
-}
-async function prepareEvaluation(context, collected) {
-    if (collected.candidates.length !== 1)
-        return;
-    const compilation = compileModuleContract(context.specification);
-    const observed = normalizeModule(collected.candidates[0].payload);
-    if (!compilation.module) {
-        return {
-            compilation,
-            evaluator: unavailableEvaluator(),
-            observed,
-            obligations: [],
-            evidence: collected.candidates.flatMap((fact) => fact.provenance.evidence),
-            inputs: collected.candidates.map((fact) => fact.id),
-        };
-    }
-    const evaluator = new ModuleEvaluator(createComparisonContext(compilation.module, compilation, collected.catalog, collected.comparison), compilation.module, observed);
-    evaluator.evaluate();
-    return {
-        compilation,
-        evaluator,
-        observed,
-        obligations: compilation.module.obligations,
-        evidence: collected.candidates.flatMap((fact) => fact.provenance.evidence),
-        inputs: collected.candidates.map((fact) => fact.id),
-    };
-}
-class ModuleEvaluationCache {
+class BindingFactCache {
     #facts = new WeakMap();
-    #evaluations = new WeakMap();
     async collect(context) {
-        const current = this.#facts.get(context.analysis);
-        const collected = current ??
-            collectModuleFacts(context).then((facts) => {
-                const catalog = {
-                    knownModuleIds: [...new Set(facts.map((fact) => fact.subject))].sort(compare),
-                    modules: facts.map((fact) => normalizeModule(fact.payload)),
-                };
-                return { facts, catalog, comparison: indexComparisonObservation(catalog) };
-            });
-        if (!current)
-            this.#facts.set(context.analysis, collected);
-        const { facts, catalog, comparison } = await collected;
+        let pending = this.#facts.get(context.analysis);
+        if (!pending) {
+            pending = collectBindingFacts(context);
+            this.#facts.set(context.analysis, pending);
+        }
+        const facts = await pending;
         return {
             facts,
-            catalog,
-            comparison,
             candidates: facts.filter((fact) => fact.subject === context.specification.module.id),
         };
     }
-    prepare(context) {
-        let evaluations = this.#evaluations.get(context.analysis);
-        if (!evaluations) {
-            evaluations = new Map();
-            this.#evaluations.set(context.analysis, evaluations);
+}
+async function collectBindingFacts(context) {
+    const facts = new Map();
+    for (const query of context.queries.values()) {
+        for await (const fact of query.export({ namespaces: [APPLICATION_BINDING_FACT_NAMESPACE] })) {
+            if (fact.namespace !== APPLICATION_BINDING_FACT_NAMESPACE || fact.kind !== 'module-binding')
+                continue;
+            if (!bindingPayload(fact.payload))
+                continue;
+            facts.set(fact.id, fact);
         }
-        const current = evaluations.get(context.specification.id);
-        if (current)
-            return current;
-        const pending = this.collect(context).then((facts) => prepareEvaluation(context, facts));
-        evaluations.set(context.specification.id, pending);
-        return pending;
     }
+    return [...facts.values()].sort((left, right) => compare(left.id, right.id));
 }
-function unavailableEvaluator() {
-    return { rules: [], identityCoveredDeclarations: new Set() };
+function bindingPayload(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return false;
+    const record = value;
+    return Boolean(typeof record.specification === 'string' &&
+        record.target &&
+        typeof record.target.id === 'string' &&
+        Array.isArray(record.exports) &&
+        Array.isArray(record.dependencies) &&
+        Array.isArray(record.declaredPackages) &&
+        Array.isArray(record.developmentPackages) &&
+        Array.isArray(record.errorCodes) &&
+        Array.isArray(record.expectedErrorCodes) &&
+        Array.isArray(record.files) &&
+        Array.isArray(record.diagnostics));
 }
-function normalizeModule(module) {
-    return {
-        id: module.target.id,
-        name: module.target.name,
-        target: module.target,
-        exports: module.exports,
-        declarations: module.declarations,
-        dependencies: normalizeDependencies(module.dependencies),
-        inboundDependencies: normalizeDependencies(module.inboundDependencies),
-        declaredPackages: module.declaredPackages,
-        developmentPackages: module.developmentPackages,
-        workspacePackages: module.workspacePackages,
-        errorCodes: module.errorCodes,
-        issues: module.issues,
-    };
-}
-function normalizeDependencies(dependencies) {
-    return dependencies.flatMap((edge) => {
-        const occurrences = [...edge.occurrences].sort((left, right) => compare(left.id, right.id));
-        return occurrences.length
-            ? [
-                {
-                    id: edge.id,
-                    sourceModule: edge.sourceModule,
-                    targetModule: edge.targetModule,
-                    kind: edge.kind,
-                    sourceFile: edge.sourceFile,
-                    targetFile: edge.targetFile,
-                    occurrences,
-                },
-            ]
-            : [];
-    });
-}
-function observableIssues(prepared) {
-    return prepared.observed.issues.filter((issue) => !issue.declaration || !prepared.evaluator.identityCoveredDeclarations.has(issue.declaration));
-}
-function targetRule(candidates) {
+function structureResult(candidates) {
     const present = candidates.length === 1;
-    const absent = candidates.length === 0;
-    const issues = candidates.flatMap((fact) => fact.payload.issues.filter((issue) => structureIssue(issue.code)));
-    const evidence = candidates.flatMap((fact) => fact.provenance.evidence);
-    const inputs = candidates.map((fact) => fact.id);
-    const diagnostics = [];
+    const diagnostics = candidates.flatMap((candidate) => candidate.payload.diagnostics
+        .filter((diagnostic) => structureDiagnostic(diagnostic.code))
+        .map((diagnostic) => conformanceDiagnostic(MODULE_STRUCTURE_PROFILE_ID, structureRule, diagnostic, candidate)));
     if (!present) {
-        diagnostics.push({
+        diagnostics.unshift({
             code: candidates.length ? 'MODULE_TARGET_AMBIGUOUS' : 'MODULE_TARGET_MISSING',
             severity: 'error',
             message: candidates.length
-                ? `Expected one complete module observation, found ${candidates.length}.`
-                : 'No complete module observation exists for the specification module.',
+                ? `Expected one explicit module binding, found ${candidates.length}.`
+                : 'No explicit implementation binding exists for the specification module.',
             profile: MODULE_STRUCTURE_PROFILE_ID,
-            rule: structureRules[0],
-            evidence,
-            inputs,
+            rule: structureRule,
+            evidence: candidates.flatMap((candidate) => candidate.provenance.evidence),
+            inputs: candidates.map((candidate) => candidate.id),
             expected: 1,
             actual: candidates.length,
         });
     }
-    diagnostics.push(...issues.map((issue) => diagnostic(MODULE_STRUCTURE_PROFILE_ID, structureRules[0], issue.code, issue.message, {
-        evidence,
-        inputs,
-        actual: issue,
-    })));
-    return {
-        rule: structureRules[0],
-        // A complete project capability does not prove that a convention-bound
-        // implementation target exists for every authored semantic module. Private
-        // leaf specifications deliberately have no barrel in some hierarchies, and
-        // absence of a fact must remain epistemically unavailable rather than being
-        // fabricated into a mismatch. Ambiguous positive observations are a real
-        // conformance failure; no observation is indeterminate and may be elevated
-        // by the invoking gate's policy.
-        status: present ? (issues.length ? 'error' : 'pass') : absent ? 'indeterminate' : 'fail',
-        diagnostics,
-        coverage: {
-            forward: { matched: present ? 1 : 0, total: 1 },
-            inverse: { matched: 0, total: Math.max(0, candidates.length - 1) },
-        },
-    };
-}
-function aggregateRule(profile, rule, values, prepared, issues = []) {
-    const forward = values.filter((value) => !value.id.startsWith('observed.') && !value.id.startsWith('typescript.'));
-    const inverse = values.filter((value) => value.id.startsWith('observed.'));
-    const diagnostics = [
-        ...values.flatMap((value) => value.diagnostics.map((entry) => evaluationDiagnostic(profile, rule, value.id, entry, prepared))),
-        ...issues.map((issue) => diagnostic(profile, rule, issue.code, issue.message, {
-            evidence: prepared.evidence,
-            inputs: prepared.inputs,
-            subject: issue.declaration,
-            actual: issue,
-        })),
-    ];
-    const statuses = [...values.map((value) => value.status), ...(issues.length ? ['error'] : [])];
-    return {
-        rule,
-        status: aggregateStatus(statuses),
-        diagnostics,
-        coverage: {
-            forward: { matched: passing(forward), total: forward.length },
-            inverse: { matched: passing(inverse), total: inverse.length },
-        },
-    };
-}
-function issueRule(profile, rule, issues, prepared) {
-    return {
-        rule,
-        status: issues.length ? 'error' : 'pass',
-        diagnostics: issues.map((issue) => diagnostic(profile, rule, issue.code, issue.message, {
-            evidence: prepared.evidence,
-            inputs: prepared.inputs,
-            subject: issue.declaration,
-            actual: issue,
-        })),
-        coverage: { forward: { matched: 0, total: 0 }, inverse: { matched: 0, total: 0 } },
-    };
-}
-function compilationRule(profile, rule, compilation) {
-    return {
-        rule,
-        status: 'error',
-        diagnostics: compilation.diagnostics.map((entry) => diagnostic(profile, rule, entry.code, entry.message, {
-            evidence: [],
-            inputs: [],
-            specificationPointer: entry.pointer,
-            actual: entry,
-        })),
-        coverage: { forward: { matched: 0, total: 0 }, inverse: { matched: 0, total: 0 } },
-    };
-}
-function evaluationDiagnostic(profile, rule, obligation, entry, prepared) {
-    const location = entry.location;
-    return diagnostic(profile, rule, entry.code ?? 'MODULE_CONFORMANCE_FAILED', entry.message, {
-        evidence: prepared.evidence,
-        inputs: prepared.inputs,
-        subject: obligation,
-        specificationPointer: location?.pointer,
-        expected: entry.expected,
-        actual: entry.actual,
-        hint: entry.hint,
+    return result(structureRule, present ? (diagnostics.length ? 'error' : 'pass') : candidates.length ? 'fail' : 'indeterminate', diagnostics, {
+        forward: { matched: present ? 1 : 0, total: 1 },
+        inverse: { matched: 0, total: Math.max(0, candidates.length - 1) },
     });
 }
-function diagnostic(profile, rule, code, message, details) {
-    return { code, severity: 'error', message, profile, rule, ...defined(details) };
+function missingErrorCodes(context, fact) {
+    const expected = fact.expectedErrorCodes;
+    const observed = new Set(fact.errorCodes);
+    return expected.flatMap((code) => observed.has(code)
+        ? []
+        : [{
+                code: 'ERROR_CODE_MISSING',
+                message: `Error code ${code} has no TypeScript declaration.`,
+                file: context.specification.source,
+                line: 1,
+                column: 1,
+                exportPath: `error:${code}`,
+                expected: code,
+            }]);
+}
+function dependencyDiagnostics(context, fact, allFacts) {
+    const diagnostics = fact.diagnostics.filter((diagnostic) => dependencyDiagnostic(diagnostic.code));
+    const expected = new Set(context.specification.module.packageAuthority.packages.map((resource) => resource.package));
+    const patterns = context.specification.module.packageAuthority.packagePatterns.map((resource) => resource.pattern);
+    const knownModules = new Set(allFacts.map((candidate) => candidate.subject));
+    for (const packageName of expected) {
+        if (fact.declaredPackages.includes(packageName))
+            continue;
+        diagnostics.push(dependencyDiagnosticValue(context.specification.source, 'MODULE_PACKAGE_NOT_DECLARED', `Allowlisted package is absent from the code package.json: ${packageName}`, `package:${packageName}`));
+    }
+    for (const dependency of fact.dependencies) {
+        const packageName = dependency.targetModule.startsWith('package:')
+            ? dependency.targetModule.slice('package:'.length)
+            : undefined;
+        const permittedPackage = Boolean(packageName &&
+            (expected.has(packageName) || patterns.some((pattern) => packagePatternMatches(pattern, packageName))));
+        const permittedTestPackage = Boolean(packageName && isTestArtifact(dependency.sourceFile) && fact.developmentPackages.includes(packageName));
+        const permitted = !dependency.deep &&
+            (dependency.targetModule.startsWith('platform:') ||
+                knownModules.has(dependency.targetModule) ||
+                permittedPackage ||
+                permittedTestPackage);
+        if (permitted)
+            continue;
+        diagnostics.push(dependencyDiagnosticValue(dependency.sourceFile, dependency.deep
+            ? 'MODULE_DEEP_IMPORT'
+            : packageName
+                ? 'MODULE_PACKAGE_UNDECLARED'
+                : 'MODULE_DEPENDENCY_UNOWNED', dependency.deep
+            ? `Cross-module import bypasses the target entrypoint: ${dependency.specifier}`
+            : packageName
+                ? `External package is not allowlisted: ${packageName}`
+                : `Dependency does not resolve to a declared module, platform, or package: ${dependency.targetModule}`, `dependency:${dependency.sourceFile}:${dependency.line}:${dependency.column}:${dependency.specifier}`, dependency.line, dependency.column));
+    }
+    return deduplicateDiagnostics(diagnostics);
+}
+function dependencyDiagnosticValue(file, code, message, exportPath, line = 1, column = 1) {
+    return { code, message, file, line, column, exportPath };
+}
+function conformanceDiagnostic(profile, rule, diagnostic, fact) {
+    return {
+        code: diagnostic.code,
+        severity: 'error',
+        message: diagnostic.message,
+        profile,
+        rule,
+        ...(diagnostic.exportPath ? { subject: diagnostic.exportPath } : {}),
+        evidence: fact.provenance.evidence,
+        inputs: [fact.id],
+        ...(diagnostic.expected !== undefined ? { expected: diagnostic.expected } : {}),
+        ...(diagnostic.actual !== undefined ? { actual: diagnostic.actual } : {}),
+    };
 }
 function blocked(profile, rule) {
-    return {
-        rule,
-        status: 'indeterminate',
-        diagnostics: [
-            {
-                code: 'MODULE_TARGET_UNAVAILABLE',
-                severity: 'error',
-                message: 'Module comparison requires one unambiguous observed target.',
-                profile,
-                rule,
-                evidence: [],
-                inputs: [],
-            },
-        ],
-        coverage: { forward: { matched: 0, total: 0 }, inverse: { matched: 0, total: 0 } },
-    };
+    return result(rule, 'indeterminate', [{
+            code: 'MODULE_TARGET_UNAVAILABLE',
+            severity: 'error',
+            message: 'Module conformance requires one unambiguous explicit binding.',
+            profile,
+            rule,
+            evidence: [],
+            inputs: [],
+        }], emptyCoverage());
 }
-function emptyRule(rule) {
-    return {
-        rule,
-        status: 'error',
-        diagnostics: [],
-        coverage: { forward: { matched: 0, total: 0 }, inverse: { matched: 0, total: 0 } },
-    };
+function result(rule, status, diagnostics, coverage) {
+    return { rule, status, diagnostics, coverage };
 }
-function moduleCapability() {
+function one(values) {
+    return values.length === 1 ? values[0] : undefined;
+}
+function bindingCapability() {
     return {
-        capability: TYPESCRIPT_MODULE_FACT_NAMESPACE,
+        capability: APPLICATION_BINDING_FACT_NAMESPACE,
         scope: 'specification-module',
-        minimumCompleteness: 'partial',
-        acceptedPartialReasonCodes: ['TYPESCRIPT_MODULE_TYPE_STRUCTURE_PARTIAL'],
+        minimumCompleteness: 'complete',
     };
 }
-function profileOf(id, obligations) {
-    if (id.startsWith('observed.dependency.') || id.startsWith('observed.import.')) {
-        return MODULE_DEPENDENCIES_PROFILE_ID;
-    }
-    if (id.startsWith('observed.module.'))
-        return MODULE_STRUCTURE_PROFILE_ID;
-    if (id.startsWith('observed.'))
-        return MODULE_SURFACE_PROFILE_ID;
-    const obligation = obligations.find((item) => item.id === id);
-    if (obligation?.kind === 'module')
-        return MODULE_STRUCTURE_PROFILE_ID;
-    if (obligation?.kind === 'package' || obligation?.kind === 'import') {
-        return MODULE_DEPENDENCIES_PROFILE_ID;
-    }
-    return MODULE_SURFACE_PROFILE_ID;
+function statusOf(diagnostics) {
+    return diagnostics.some((diagnostic) => diagnostic.code.startsWith('TYPESCRIPT_')) ? 'error' : 'fail';
 }
-function aggregateStatus(statuses) {
-    if (statuses.includes('error'))
-        return 'error';
-    if (statuses.includes('fail'))
-        return 'fail';
-    if (statuses.includes('idle'))
-        return 'indeterminate';
-    return 'pass';
+function dependencyDiagnostic(code) {
+    return code.includes('IMPORT') || code.includes('REQUIRE') || code.includes('PACKAGE') || code.includes('DEPENDENCY');
 }
-function passing(rules) {
-    return rules.filter((rule) => rule.status === 'pass').length;
-}
-function dependencyIssue(code) {
-    return code.includes('IMPORT') || code.includes('REQUIRE') || code.includes('PACKAGE');
-}
-function structureIssue(code) {
+function structureDiagnostic(code) {
     return code.includes('ENTRYPOINT') || code.includes('PROJECT') || code.includes('TARGET');
 }
-function defined(value) {
-    return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
+function packagePatternMatches(pattern, packageName) {
+    return pattern.endsWith('*') && packageName.startsWith(pattern.slice(0, -1));
+}
+function isTestArtifact(path) {
+    return /(?:^|\/)(?:__tests__|test|tests|fixtures?)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/u.test(path);
+}
+function deduplicateDiagnostics(values) {
+    return [...new Map(values.map((value) => [JSON.stringify(value), value])).values()].sort((left, right) => compare(JSON.stringify(left), JSON.stringify(right)));
+}
+function emptyCoverage() {
+    return { forward: { matched: 0, total: 0 }, inverse: { matched: 0, total: 0 } };
 }
 function compare(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;

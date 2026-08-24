@@ -13,6 +13,7 @@ import { captureModuleTypeScriptEvidence, moduleTypeScriptResolutionKey, moduleT
 import { createModuleTypeScriptEvidenceProjection } from './typescript-evidence.optimization.js';
 import { moduleTypeScriptProjectionObserver, observeModuleTypeScriptProgram, observeModuleTypeScriptProjection, } from './typescript-program.optimization.js';
 import { canonicalModuleTypeScriptPath, deduplicateModuleSourceReferences } from './typescript-reference.optimization.js';
+import { analyzeModuleTypeScriptGroupsIsolated } from './typescript-process.optimization.js';
 import { visitModuleReferences } from './typescript-reference.js';
 const analysisCache = new Map();
 const analyses = createTaskLimiter(2);
@@ -66,9 +67,34 @@ export async function prepareModuleTypeScriptAnalyses(catalogRoot, inventories, 
         onScheduled?.();
         return;
     }
-    const prepared = analyzeModuleTypeScriptBatchFresh(catalogRoot, misses, onProjectionPhase).catch(async () => {
+    const isolated = misses.length > 256;
+    const isolationStarted = performance.now();
+    const prepared = (isolated
+        ? analyzeModuleTypeScriptGroupsIsolated(catalogRoot, sharedProgramGroups(misses).map((group) => group.map((request) => request.inventory))).then((result) => {
+            onProjectionPhase?.({
+                phase: 'program',
+                durationMs: performance.now() - isolationStarted,
+                items: result.programs,
+                fallbacks: 0,
+                workerPeakResidentBytes: result.workerPeakResidentBytes,
+                workerResidentUpperBoundBytes: result.workerResidentUpperBoundBytes,
+            });
+            return new Map(result.entries.map(({ key, analysis }) => [
+                key,
+                { analysis, evidence: { sources: [] }, cacheable: false },
+            ]));
+        })
+        : analyzeModuleTypeScriptBatchFresh(catalogRoot, misses, onProjectionPhase)).catch(async (error) => {
+        if (isolated)
+            throw error;
         // Preparation is an optimization. Unexpected shared-path failures retain exact independent
         // owner diagnostics while still publishing one pending result per owner.
+        onProjectionPhase?.({
+            phase: 'program',
+            durationMs: performance.now() - isolationStarted,
+            items: 0,
+            fallbacks: 1,
+        });
         const values = new Map();
         await analyzeIndependently(catalogRoot, misses, values, onProjectionPhase);
         return values;
@@ -80,6 +106,25 @@ export async function prepareModuleTypeScriptAnalyses(catalogRoot, inventories, 
     });
     onScheduled?.();
     await Promise.all(completed);
+}
+/** Worker entry: project one already-planned exact semantic group. */
+export async function analyzeModuleTypeScriptIsolationGroup(catalogRoot, inventories) {
+    const requests = inventories.map((inventory) => {
+        const sources = ownedSources(inventory);
+        return { inventory, sources, key: analysisCacheKey(catalogRoot, sources) };
+    });
+    let programs = 0;
+    const values = await analyzeModuleTypeScriptBatchFresh(catalogRoot, requests, (phase) => {
+        if (phase.phase === 'program')
+            programs += phase.items;
+    });
+    return {
+        entries: requests.map((request) => ({
+            key: request.key,
+            analysis: values.get(request.key).analysis,
+        })),
+        programs,
+    };
 }
 /** Typecheck all specification TypeScript and enforce local dependency-direction boundaries. */
 export async function analyzeModuleTypeScript(catalogRoot, inventory) {

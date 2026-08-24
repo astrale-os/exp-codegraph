@@ -16,7 +16,16 @@ Rules preserve forward authored-obligation coverage and inverse observed-evidenc
 separate totals. A profile can therefore distinguish missing implementation from undeclared surface
 without reducing either condition to one lossy percentage.
 
-Module qualification is a small profile DAG: structure establishes one target, surface compares
-exports, declarations, error codes, and observation completeness, and dependencies independently
-prove authored package intent plus every observed outbound edge. The logical profile identities are
-stable across the application cut; profile manifests version the V2 implementation.
+Module qualification is a small profile DAG over one compact explicit binding fact. Structure
+establishes one target. Surface requires exact export enumeration, type exports that resolve to the
+authoritative `.spec/api.d.ts` identities, runtime exports proven by an owner-local
+`implementation.contract.ts` namespace `satisfies` binding, expected error codes, and compiler
+diagnostics. Dependencies independently prove authored package intent plus every direct
+compiler-resolved outbound edge.
+
+Conformance does not reconstruct a second normalized public declaration graph from implementation
+sources and compare that graph with a separately normalized specification graph. The TypeScript
+checker owns assignability at the explicit binding, while the fact retains only the stable evidence
+needed for qualification and debugging. No native-analysis fallback or legacy comparator may
+silently answer a missing binding request. The logical profile identities remain stable; profile
+manifest version 3 records the clean authority change.

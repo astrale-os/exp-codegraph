@@ -14,6 +14,7 @@ import {
 } from '../../analysis/typescript/index.ts'
 import { resolveApplicationModuleBoundaries } from './boundary.ts'
 import { observeCompilerProject } from './workspace-observability.ts'
+import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.ts'
 import {
   ApplicationCompilerRoutingIndex,
   groupApplicationCompilerProjects,
@@ -59,13 +60,15 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
   async refresh(options: ApplicationAnalysisRefreshOptions): Promise<ApplicationAnalysisRefresh> {
     this.assertOpen()
     options.signal?.throwIfAborted()
-    const resolution = options.compilerAnalysis === false
+    const resolution = options.compilerAnalysis === false && options.moduleBindings !== true
       ? { boundaries: [], diagnostics: [] }
       : await resolveApplicationModuleBoundaries(
           this.#options.root,
           options.specifications,
         )
-    const byProject = groupApplicationCompilerProjects(resolution.boundaries)
+    const byProject = options.compilerAnalysis === false
+      ? new Map()
+      : groupApplicationCompilerProjects(resolution.boundaries)
     const projects = [...byProject]
     const digest = JSON.stringify([...byProject])
     const boundaryChanged =
@@ -162,24 +165,52 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
     )) {
       generations.set(universe, generation)
     }
+    const bindingAffectedModules = options.moduleBindings === true
+      ? affectedBindingModules(resolution.boundaries, options.changes ?? [])
+      : []
+    const specificationSourceByModule = new Map(
+      (options.observationSpecifications ?? options.specifications)
+        .map((specification) => [specification.module.id, specification.source] as const),
+    )
+    const observationRefresh = [
+      ...new Set([
+        ...(options.refreshSpecifications ?? []),
+        ...bindingAffectedModules.flatMap((module) => {
+          const source = specificationSourceByModule.get(module)
+          return source ? [source] : []
+        }),
+      ]),
+    ].sort()
     const observation = await materializeApplicationObservations({
       root: this.#options.root,
       store: this.#store,
       inventory: options.inventory,
       specifications: options.observationSpecifications ?? options.specifications,
-      ...(options.refreshSpecifications
-        ? { refresh: options.refreshSpecifications }
+      ...(options.moduleBindings === true ? { bindings: resolution.boundaries } : {}),
+      ...(observationRefresh.length
+        ? { refresh: observationRefresh }
         : {}),
       ...(options.schemaDependencies
         ? { schemaDependencies: options.schemaDependencies }
         : {}),
       ...(options.signal ? { signal: options.signal } : {}),
     })
+    if (observation.bindingWork) {
+      dispatchAnalysisTelemetry(this.#options.telemetry, {
+        component: 'analysis',
+        phase: 'application.module-bindings',
+        durationNs: Math.round(observation.bindingWork.durationMs * 1_000_000),
+        metrics: { status: 'completed', ...observation.bindingWork },
+      })
+    }
     generations.set(observation.universe, observation.generation.id)
     const snapshot = await this.#store.snapshotSet(generations, options.inventory.revision)
     const affectedModules = compatibleResidentBoundary &&
       results.every((result) => result.changedModules !== undefined)
-      ? [...new Set(results.flatMap((result) => result.changedModules ?? []))].sort()
+      ? [...new Set([
+          ...results.flatMap((result) => result.changedModules ?? []),
+          ...bindingAffectedModules,
+        ])].sort()
       : undefined
     this.#adoptedGenerations = new Map(generations)
     return {
@@ -231,4 +262,22 @@ class ResidentApplicationAnalysisWorkspace implements ApplicationAnalysisWorkspa
   private assertOpen(): void {
     if (this.#disposed) throw new Error('Application analysis workspace is disposed.')
   }
+}
+
+function affectedBindingModules(
+  boundaries: readonly import('../../analysis/index.ts').NativeModuleBoundary[],
+  changes: readonly import('../../analysis/index.ts').NativeSourceChange[],
+): readonly string[] {
+  if (changes.some((change) => change.kind === 'unknown')) {
+    return boundaries.map((boundary) => boundary.id).sort()
+  }
+  return boundaries
+    .filter((boundary) => changes.some((change) =>
+      change.path === boundary.project ||
+      change.path === boundary.entrypoint ||
+      change.path === boundary.root ||
+      change.path.startsWith(`${boundary.root}/`),
+    ))
+    .map((boundary) => boundary.id)
+    .sort()
 }

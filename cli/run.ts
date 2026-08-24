@@ -343,9 +343,10 @@ function refreshOptions(
     }
   }
   return {
-    requestedCapabilities: ['declaration-models'],
+    requestedCapabilities: [],
     qualify: true,
-    compilerAnalysis: true,
+    compilerAnalysis: false,
+    moduleBindings: true,
     select: command.select,
     focused: command.select.length > 0,
     schemaRoots: command.schemaRoots,

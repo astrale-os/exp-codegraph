@@ -24,6 +24,12 @@ repository-statistics requests also share their exact report. A small checkpoint
 derived artifacts and exact analysis generations; it never embeds one repository-sized application
 snapshot or duplicates fact payloads.
 
+Verification deliberately requests compact module bindings instead of complete implementation
+declaration-model analysis. Exact boundaries are resolved once, binding Programs are partitioned by
+their real TypeScript projects, and each specification receives one independently addressable fact.
+The native module-surface producer is not a verification fallback. Other consumers may still request
+its distinct analysis capability without making that representation part of module conformance.
+
 When no compatible complete corpus exists, a focused request resolves physical anchors and its
 authored declaration/support closure before normative compilation. Only that closure is compiled,
 observed, and qualified. Dependent expansion or uncertain closure visibly uses the complete corpus;

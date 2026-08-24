@@ -86,14 +86,14 @@ describe('module architecture', () => {
     expect(cycle?.map((file) => portable(relative(root, file)))).toBeUndefined()
   })
 
-  it('keeps recursive conformance comparison in bounded hierarchical leaves', async () => {
-    const comparisonRoot = join(root, 'conformance', 'module', 'comparison')
-    const oversized: string[] = []
-    for (const file of await sourceFiles(comparisonRoot)) {
-      const lines = (await readFile(file, 'utf8')).split('\n').length
-      if (lines > 2_000) oversized.push(`${portable(relative(comparisonRoot, file))}: ${lines}`)
-    }
-    expect(oversized).toEqual([])
+  it('does not retain the superseded module graph comparator', async () => {
+    const files = (await sourceFiles(root)).map((file) => portable(relative(root, file)))
+    expect(files).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/^conformance\/module\/(?:comparison|contract)\//u),
+      expect.stringMatching(/^qualification\/v2\/codegraph\//u),
+      'qualification/v2/conformance/checkpoint.ts',
+      'qualification/v2/conformance/corpus.ts',
+    ]))
   })
 
   it('keeps top-level contexts in the declared acyclic knowledge order', async () => {
@@ -104,6 +104,7 @@ describe('module architecture', () => {
         'analysis',
         'api',
         'cache',
+        'compiler',
         'conformance',
         'repository',
         'schema',
@@ -124,7 +125,7 @@ describe('module architecture', () => {
         'viewer-host',
         'workspace',
       ]),
-      compiler: new Set(['api', 'cache', 'source', 'typescript']),
+      compiler: new Set(['analysis', 'api', 'cache', 'source', 'typescript']),
       conformance: new Set(['analysis', 'source', 'specification']),
       'json-schema': new Set(['api']),
       markdown: new Set(['source']),

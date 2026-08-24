@@ -28,13 +28,13 @@ import { initializeModuleSpecification } from '../../../specification/module/ini
 import { inspectVerifyApplication } from './verify-inspection.ts'
 import {
   maximumNativeResidentMiB,
-  MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES,
+  maximumBindingWorkerResidentMiB,
+  maximumWorkerResidentUpperBoundMiB,
 } from './model.ts'
 
 const execFile = promisify(execFileCallback)
 const root = await resolveApplicationRoot(requiredArgument('--corpus-root'))
 const output = resolve(requiredArgument('--output'))
-const nativeBinary = resolve(requiredArgument('--native-binary'))
 const verifyClass = requiredEnum('--class', ['V0', 'V1'])
 const separator = process.argv.indexOf('--')
 if (separator < 0 || separator === process.argv.length - 1) {
@@ -54,7 +54,6 @@ const cacheBefore = await fileEvidence(resolve(cacheDirectory, 'analysis-v2.sqli
 if (cacheBefore.exists) throw new Error(`${verifyClass} requires an empty analysis store.`)
 const sourceProofBefore = await sourceProof()
 const producerFingerprint = await codegraphProducerFingerprint({ persistence: 'memory' })
-const nativeSha256 = digest(await readFile(nativeBinary))
 const harnessSha256 = digest(await readFile(import.meta.filename))
 const codegraphRevision = (
   await execFile('git', ['-C', resolve(import.meta.dirname, '../../..'), 'rev-parse', 'HEAD'], {
@@ -75,11 +74,6 @@ const services: CliServices = {
       root,
       cacheDirectory,
       persistence: 'advisory',
-      native: {
-        binary: nativeBinary,
-        maximumResidentBytes: MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES,
-        telemetry: (event) => telemetry.push(event),
-      },
       telemetry: (event) => telemetry.push(event),
     })
     return borrowed(application, refreshes)
@@ -122,7 +116,7 @@ const sourceProofAfter = await sourceProof()
 const cacheAfter = await fileEvidence(resolve(cacheDirectory, 'analysis-v2.sqlite'))
 const body = {
   format: 'astrale.codegraph.verify-performance-receipt' as const,
-  version: 1 as const,
+  version: 2 as const,
   class: verifyClass,
   request: { argv },
   runner: {
@@ -131,7 +125,6 @@ const body = {
     architecture: process.arch,
     codegraphRevision,
     harnessSha256,
-    nativeSha256,
   },
   subject: {
     producerFingerprint,
@@ -157,6 +150,10 @@ const body = {
     systemCpuMilliseconds: (usageAfter.systemCPUTime - usageBefore.systemCPUTime) / 1_000,
     maximumRssMiB: usageAfter.maxRSS / 1_024,
     maximumNativeResidentMiB: maximumNativeResidentMiB(telemetry),
+    maximumBindingWorkerResidentMiB: maximumBindingWorkerResidentMiB(telemetry),
+    maximumCompilerWorkerResidentMiB: maximumWorkerResidentUpperBoundMiB(telemetry),
+    maximumProcessTreeResidentUpperBoundMiB:
+      usageAfter.maxRSS / 1_024 + maximumWorkerResidentUpperBoundMiB(telemetry),
   },
   finish: { analysisStore: cacheAfter },
 }

@@ -15,6 +15,9 @@ export default defineLayout({
   ignore: [
     'module/typescript-evidence.optimization.ts',
     'module/typescript-program.optimization.ts',
+    'module/typescript-process.optimization.ts',
+    'module/typescript-model.ts',
+    'module/typescript-worker.optimization.ts',
     'module/typescript-reference.optimization.ts',
   ],
 })

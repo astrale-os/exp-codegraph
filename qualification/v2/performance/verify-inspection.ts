@@ -6,9 +6,9 @@ import type {
 } from '../../../application/index.ts'
 
 import { stableJson } from '../../../analysis/identity/model.ts'
-import { createTypeScriptFactReader } from '../../../analysis/typescript/index.ts'
+import { APPLICATION_BINDING_FACT_NAMESPACE } from '../../../analysis/index.ts'
 
-/** Inspect raw normalized shards and their unchanged logical module projection outside timing. */
+/** Inspect compact binding shards outside the timed verification operation. */
 export async function inspectVerifyApplication(
   service: TypeSpecApplicationService,
   refresh: TypeSpecApplicationRefresh,
@@ -22,13 +22,11 @@ export async function inspectVerifyApplication(
       const query = await reader.query(universe)
       try {
         const manifest = await query.manifest()
-        let modules = 0
-        let declarations = 0
-        let legacyModules = 0
-        let maximumModulePayloadBytes = 0
-        let maximumDeclarationPayloadBytes = 0
-        const rawDigest = createHash('sha256')
-        for await (const fact of query.export({ namespaces: ['astrale.typescript.module'] })) {
+        let bindings = 0
+        let maximumBindingPayloadBytes = 0
+        const digest = createHash('sha256')
+        for await (const fact of query.export({ namespaces: [APPLICATION_BINDING_FACT_NAMESPACE] })) {
+          if (fact.kind !== 'module-binding') continue
           const serialized = stableJson({
             id: fact.id,
             schemaVersion: fact.schemaVersion,
@@ -36,34 +34,19 @@ export async function inspectVerifyApplication(
             subject: fact.subject,
             payload: fact.payload,
           })
-          rawDigest.update(serialized).update('\0')
-          const bytes = Buffer.byteLength(serialized)
-          if (fact.kind === 'module') {
-            modules++
-            if (fact.schemaVersion === 1) legacyModules++
-            maximumModulePayloadBytes = Math.max(maximumModulePayloadBytes, bytes)
-          } else if (fact.kind === 'declaration') {
-            declarations++
-            maximumDeclarationPayloadBytes = Math.max(maximumDeclarationPayloadBytes, bytes)
-          }
-        }
-        let logicalModules = 0
-        const logicalDigest = createHash('sha256')
-        for await (const fact of createTypeScriptFactReader(query).export('module')) {
-          logicalModules++
-          logicalDigest.update(stableJson({ subject: fact.subject, payload: fact.payload })).update('\0')
+          bindings++
+          maximumBindingPayloadBytes = Math.max(
+            maximumBindingPayloadBytes,
+            Buffer.byteLength(serialized),
+          )
+          digest.update(serialized).update('\0')
         }
         universes.push({
           universe,
           manifestShards: manifest.length,
-          modules,
-          declarations,
-          legacyModules,
-          logicalModules,
-          maximumModulePayloadBytes,
-          maximumDeclarationPayloadBytes,
-          rawDigest: rawDigest.digest('hex'),
-          logicalDigest: logicalDigest.digest('hex'),
+          bindings,
+          maximumBindingPayloadBytes,
+          bindingDigest: digest.digest('hex'),
         })
       } finally {
         await query.dispose()

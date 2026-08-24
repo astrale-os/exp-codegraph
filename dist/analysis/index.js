@@ -9,4 +9,5 @@ export * from './profiling/index.js';
 export * from './memory/index.js';
 export * from './protocol/index.js';
 export * from './store-selection.js';
+export * from './binding/index.js';
 //# sourceMappingURL=index.js.map

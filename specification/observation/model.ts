@@ -1,5 +1,6 @@
 import type {
   AnalysisGeneration,
+  ApplicationModuleBindingWork,
   ProjectUniverseId,
   SourceId,
   SourceRevisionId,
@@ -87,4 +88,5 @@ export interface ApplicationObservationRefresh {
   readonly generation: AnalysisGeneration
   /** Catalog-wide diagnostics which cannot soundly be attributed to one owned specification. */
   readonly diagnostics: readonly Diagnostic[]
+  readonly bindingWork?: ApplicationModuleBindingWork
 }

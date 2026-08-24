@@ -1,6 +1,19 @@
 import type { AnalysisStore } from '../query/.spec/api.js'
 
 export type {
+  ApplicationModuleBindingCompilation,
+  ApplicationModuleBindingDependency,
+  ApplicationModuleBindingDiagnostic,
+  ApplicationModuleBindingExport,
+  ApplicationModuleBindingExportFacet,
+  ApplicationModuleBindingFact,
+  ApplicationModuleBindingRequest,
+  ApplicationModuleBindingTarget,
+  ApplicationModuleBindingWork,
+} from '../binding/.spec/api.js'
+export { APPLICATION_BINDING_FACT_NAMESPACE } from '../binding/.spec/api.js'
+
+export type {
   AnalysisId,
   AnalysisGenerationId,
   FactId,

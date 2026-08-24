@@ -5,7 +5,6 @@ import { resolve } from 'node:path'
 
 import { stableJson } from '../../../analysis/identity/model.ts'
 import {
-  MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES,
   MAXIMUM_QUALIFIED_RUNNER_RESIDENT_BYTES,
 } from './model.ts'
 
@@ -24,7 +23,7 @@ assert.ok(maximumWallMilliseconds < 5_000, 'V2 resident maximum must remain belo
 assert.ok(medianWallMilliseconds < 3_000, 'V2 resident median must remain below 3 seconds.')
 const body = {
   format: 'astrale.codegraph.verify-incremental-verification' as const,
-  version: 2 as const,
+  version: 3 as const,
   status: 'qualified' as const,
   incrementalReceiptSha256: incrementals.map((value: any) => value.receiptSha256),
   coldReceiptSha256: cold.receiptSha256,
@@ -35,8 +34,7 @@ const body = {
   immediateMaximumMilliseconds: 5_000,
   targetMedianMilliseconds: 3_000,
   upsertShards: samples.map((sample) => sample.upsertShards),
-  maximumDeltaBytes: Math.max(...samples.map((sample) => sample.maximumDeltaBytes)),
-  maximumColdBytes: samples[0]!.maximumColdBytes,
+  bindingPrograms: samples.map((sample) => sample.bindingPrograms),
 }
 const verification = { ...body, verificationSha256: digest(stableJson(body)) }
 const serialized = `${JSON.stringify(verification, null, 2)}\n`
@@ -50,41 +48,35 @@ function verifySample(incremental: any, oracle: any) {
   assert.deepEqual(incremental.subject.dirtyProof, incremental.subject.proofAfter)
   assert.deepEqual(incremental.subject.dirtyProof, oracle.subject.sourceProofBefore)
   assert.deepEqual(oracle.subject.sourceProofBefore, oracle.subject.sourceProofAfter)
-  assert.equal(incremental.runner.nativeSha256, oracle.runner.nativeSha256)
   assert.deepEqual(semanticRefresh(incremental.delta.refresh), semanticRefresh(oracle.result.refresh))
   assert.deepEqual(incremental.delta.inspection, oracle.result.inspection)
   assert.deepEqual(incremental.delta.refresh.analysisDiagnostics, [])
-  assert.ok(!oracle.result.stderr.includes('Invalid module fact'))
-  assert.ok(incremental.delta.resources.maximumNativeResidentMiB > 0)
-  assert.ok(
-    incremental.delta.resources.maximumNativeResidentMiB * 1_024 * 1_024 <=
-      MAXIMUM_QUALIFIED_NATIVE_RESIDENT_BYTES,
-  )
+  assert.equal(incremental.delta.resources.maximumNativeResidentMiB, 0)
   assert.ok(
     incremental.delta.resources.maximumRssMiB * 1_024 * 1_024 <=
       MAXIMUM_QUALIFIED_RUNNER_RESIDENT_BYTES,
   )
-  const deltaTransactions = transactions(incremental.delta.telemetry)
-  const coldTransactions = transactions(oracle.work.telemetry)
-  assert.ok(deltaTransactions.length > 0, 'V2 emitted no affected transaction evidence.')
-  assert.ok(coldTransactions.length > 0, 'V2 cold oracle emitted no transaction evidence.')
-  const maximumDeltaBytes = Math.max(...deltaTransactions.map(({ bytes }) => bytes))
-  const maximumColdBytes = Math.max(...coldTransactions.map(({ bytes }) => bytes))
-  assert.ok(maximumDeltaBytes < maximumColdBytes)
-  assert.ok(maximumDeltaBytes < 384 * 1024 * 1024)
+  const nativeEvents = incremental.delta.telemetry.filter((event: any) =>
+    (event.component === 'transport' && event.phase === 'request.roundtrip') ||
+    (event.component === 'native' && event.phase === 'transport.serialize-and-write'),
+  )
+  assert.deepEqual(nativeEvents, [], 'V2 delta started the legacy native verifier.')
+  const bindingWork = incremental.delta.telemetry.find(
+    (event: any) => event.component === 'analysis' && event.phase === 'application.module-bindings',
+  )
+  assert.ok(bindingWork?.metrics?.programs > 0, 'V2 emitted no affected binding compiler work.')
   const upsertShards = incremental.delta.telemetry
     .filter((event: any) => event.component === 'sqlite-store' && event.phase === 'transaction.commit-total')
     .reduce((total: number, event: any) => total + Number(event.metrics?.upsertShards ?? 0), 0)
-  const coldModules = oracle.result.inspection.universes.reduce(
-    (total: number, value: any) => total + value.modules,
+  const coldBindings = oracle.result.inspection.universes.reduce(
+    (total: number, value: any) => total + value.bindings,
     0,
   )
-  assert.ok(upsertShards > 0 && upsertShards < coldModules)
+  assert.ok(upsertShards > 0 && upsertShards < coldBindings)
   return {
     wallMilliseconds: incremental.delta.wallMilliseconds as number,
     upsertShards,
-    maximumDeltaBytes,
-    maximumColdBytes,
+    bindingPrograms: bindingWork.metrics.programs as number,
   }
 }
 
@@ -98,16 +90,6 @@ async function receipt(path: string): Promise<any> {
 function semanticRefresh(value: any) {
   const { timing: _timing, changes: _changes, ...semantic } = value
   return semantic
-}
-
-function transactions(events: readonly any[]) {
-  return events.flatMap((event) =>
-    event.component === 'native' &&
-    event.phase === 'transport.serialize-and-write' &&
-    typeof event.metrics?.transactionBytes === 'number'
-      ? [{ bytes: event.metrics.transactionBytes, chunks: event.metrics.chunks }]
-      : [],
-  )
 }
 
 function digest(value: string): string {

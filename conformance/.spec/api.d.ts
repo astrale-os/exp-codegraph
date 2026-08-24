@@ -150,13 +150,13 @@ export const MODULE_SCHEMA_PROFILE_ID: 'contract.module.schema-catalog'
 
 export function createSpecificationValidityConformanceProfile(): ConformanceProfile
 
-/** Establish one unambiguous implementation target. */
+/** Establish one unambiguous explicit specification-to-implementation binding. */
 export function createModuleStructureConformanceProfile(): ConformanceProfile
 
-/** Compare authored API meaning with complete portable TypeScript module-surface facts. */
+/** Prove exact exports and TypeScript assignability through the explicit binding. */
 export function createModuleSurfaceConformanceProfile(): ConformanceProfile
 
-/** Prove package intent and every observed outbound dependency. */
+/** Prove package intent and every direct compiler-resolved outbound dependency. */
 export function createModuleDependenciesConformanceProfile(): ConformanceProfile
 
 export interface ModuleLayoutConformanceOptions {
@@ -172,7 +172,7 @@ export function createModuleTestEvidenceConformanceProfile(): ConformanceProfile
 
 export function createModuleSchemaConformanceProfile(): ConformanceProfile
 
-/** Install compiler-backed module profiles used independently of TypeSpec repository observations. */
+/** Install the binding-backed module qualification DAG. */
 export function createModuleConformanceProfiles(): readonly ConformanceProfile[]
 
 /** Install the complete TypeSpec application profile DAG. */

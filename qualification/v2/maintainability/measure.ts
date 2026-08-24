@@ -71,7 +71,11 @@ export async function measureMaintainability(
     }
     const imports = staticImports(path, source)
     graph.set(path, imports.flatMap((specifier) => resolveImport(path, specifier, sources)))
-    for (const specifier of imports.filter((value) => value.includes('.optimization'))) {
+    const optimizationReferences = [
+      ...imports,
+      ...dynamicOptimizationReferences(source),
+    ].filter((value) => value.includes('.optimization'))
+    for (const specifier of optimizationReferences) {
       optimizationImports.push([path, specifier])
     }
   }
@@ -99,6 +103,11 @@ export async function measureMaintainability(
     optimizationFiles: paths.filter((path) => path.endsWith('.optimization.ts')),
     optimizationImports: optimizationImports.sort(([left], [right]) => left.localeCompare(right)),
   }
+}
+
+function dynamicOptimizationReferences(source: string): readonly string[] {
+  return [...source.matchAll(/new URL\(\s*(['"])(\.[^'"]+\.optimization\.ts)\1\s*,\s*import\.meta\.url\s*\)/gu)]
+    .map((match) => match[2]!)
 }
 
 async function mapBounded<Input, Output>(
@@ -137,7 +146,16 @@ async function sourcePaths(root: string, revision: string): Promise<readonly str
     encoding: 'buffer',
     maxBuffer: 64 * 1_024 * 1_024,
   })
-  return Buffer.from(stdout).toString('utf8').split('\0').filter(Boolean)
+  const paths = Buffer.from(stdout).toString('utf8').split('\0').filter(Boolean)
+  if (revision !== 'worktree') return paths
+  const deletedOutput = await execFile('git', ['-C', root, 'ls-files', '--deleted', '-z'], {
+    encoding: 'buffer',
+    maxBuffer: 64 * 1_024 * 1_024,
+  })
+  const deleted = new Set(
+    Buffer.from(deletedOutput.stdout).toString('utf8').split('\0').filter(Boolean),
+  )
+  return paths.filter((path) => !deleted.has(path))
 }
 
 async function sourceText(root: string, revision: string, path: string): Promise<string> {
