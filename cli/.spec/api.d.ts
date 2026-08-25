@@ -4,6 +4,46 @@ export interface CliCheckEvidence {
   readonly snapshot: string
 }
 
+export type CliCheckOutputFormat = 'text' | 'json'
+
+export interface CliDiagnosticGroup {
+  readonly code: string
+  readonly message: string
+  readonly file: string
+  readonly line: number
+  readonly column: number
+  /** Every distinct specification projection that observed this exact source cause. */
+  readonly pointers: readonly (string | null)[]
+}
+
+export type CliCheckScope =
+  | {
+      readonly kind: 'full'
+      readonly specifications: readonly string[]
+    }
+  | {
+      readonly kind: 'focused'
+      readonly requested: readonly string[]
+      readonly selected: readonly string[]
+      readonly support: readonly string[]
+    }
+
+export interface CliCheckReport {
+  readonly format: 'astrale.codegraph.check-report'
+  readonly version: 1
+  readonly command: 'check'
+  readonly status: 'pass' | 'fail'
+  readonly evidence: CliCheckEvidence
+  readonly scope: CliCheckScope
+  readonly qualificationFailed: boolean
+  readonly diagnostics: readonly CliDiagnosticGroup[]
+  readonly summary: {
+    readonly specifications: number
+    readonly diagnosticCauses: number
+    readonly diagnosticOccurrences: number
+  }
+}
+
 export interface CliAccelerationEvent {
   readonly operation:
     | 'source-proof'

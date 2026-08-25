@@ -1,10 +1,13 @@
 import type { Diagnostic } from '../source/diagnostic.ts'
+import type { CliDiagnosticGroup } from './check-report.ts'
 import type {
   ViewerQualification as Verification,
   ViewerQualificationDiagnostic as VerificationDiagnostic,
   ViewerQualificationProfile as VerificationProfile,
   ViewerQualificationRule as VerificationRule,
 } from '../viewer-host/qualification.ts'
+
+import { CLI_CHECK_LIMITS } from './limits.ts'
 
 export interface CliOutput {
   out(message: string): void
@@ -19,6 +22,27 @@ export function printDiagnostic(output: CliOutput, diagnostic: Diagnostic): void
   const pointer = diagnostic.pointer ? ` ${terminalText(diagnostic.pointer)}` : ''
   output.error(
     `${terminalText(diagnostic.file)}:${diagnostic.line}:${diagnostic.column} [${terminalText(diagnostic.code)}]${pointer} ${terminalText(diagnostic.message)}`,
+  )
+}
+
+/** Present one exact source cause and a bounded account of its additional projections. */
+export function printDiagnosticGroup(output: CliOutput, group: CliDiagnosticGroup): void {
+  const [firstPointer, ...additional] = group.pointers
+  printDiagnostic(output, {
+    code: group.code,
+    message: group.message,
+    file: group.file,
+    line: group.line,
+    column: group.column,
+    ...(firstPointer === null || firstPointer === undefined ? {} : { pointer: firstPointer }),
+  })
+  if (!additional.length) return
+  const shown = additional
+    .slice(0, CLI_CHECK_LIMITS.maximumAdditionalTextProjectionPointers)
+    .map((pointer) => terminalText(pointer ?? '<root>'))
+  const remaining = additional.length - shown.length
+  output.error(
+    `  repeated in ${additional.length} additional projection${additional.length === 1 ? '' : 's'}: ${shown.join(', ')}${remaining ? ` (+${remaining} more)` : ''}`,
   )
 }
 

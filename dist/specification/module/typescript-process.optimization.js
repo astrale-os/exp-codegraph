@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { codegraphWorkerProcess } from '../../compiler/worker-process.js';
 const MAXIMUM_OLD_SPACE_MIB = 504;
 const MAXIMUM_OUTPUT_BYTES = 64 * 1_024 * 1_024;
 const MAXIMUM_STDERR_BYTES = 1 * 1_024 * 1_024;
@@ -21,7 +22,8 @@ function runWorker(root, groups) {
     return new Promise((resolvePromise, reject) => {
         const extension = extname(fileURLToPath(import.meta.url));
         const worker = fileURLToPath(new URL(`./typescript-worker.optimization${extension}`, import.meta.url));
-        const child = spawn(process.execPath, [`--max-old-space-size=${MAXIMUM_OLD_SPACE_MIB}`, worker], { stdio: ['pipe', 'pipe', 'pipe'] });
+        const workerProcess = codegraphWorkerProcess('specification-typescript', worker, MAXIMUM_OLD_SPACE_MIB);
+        const child = spawn(workerProcess.executable, workerProcess.arguments, { stdio: ['pipe', 'pipe', 'pipe'] });
         const stdout = [];
         const stderr = [];
         let stdoutBytes = 0;

@@ -1,9 +1,10 @@
 import { MODULE_TEST_EVIDENCE_PROFILE_ID, SPECIFICATION_VALIDITY_PROFILE_ID, } from '../conformance/index.js';
 import { USAGE } from './parse.js';
+import { createCliCheckReport, encodeCliCheckReport, groupDiagnostics, } from './check-report.js';
 import { CHECK_SEMANTIC_PLAN, } from './semantic-pack/model.js';
 import { createDevStartupProgress } from './progress.js';
 import { printQualificationProfile, printQualificationRule, printQualificationSummary, qualificationDiagnostics, } from './qualification-report.js';
-import { printDiagnostic } from './report.js';
+import { printDiagnostic, printDiagnosticGroup } from './report.js';
 const TEST_PROFILES = [SPECIFICATION_VALIDITY_PROFILE_ID, MODULE_TEST_EVIDENCE_PROFILE_ID];
 export async function runCommand(command, services, output, portableCheckpoint) {
     if (command.name === 'help') {
@@ -83,9 +84,13 @@ export async function runCommand(command, services, output, portableCheckpoint) 
                         : {}),
                 });
             }
-            for (const diagnostic of diagnostics)
-                printDiagnostic(output, diagnostic);
-            reportCheck(output, command, changed, snapshot, diagnostics.length);
+            const groups = groupDiagnostics(diagnostics);
+            for (const diagnostic of groups)
+                printDiagnosticGroup(output, diagnostic);
+            reportCheck(output, command, changed, snapshot, {
+                causes: groups.length,
+                occurrences: diagnosticOccurrenceCount(groups),
+            });
             return { exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0 };
         }
         if (command.name === 'test') {
@@ -139,11 +144,10 @@ export async function runCommand(command, services, output, portableCheckpoint) 
 }
 export function reportCheckResult(output, command, snapshot, options = {}) {
     const diagnostics = applicationDiagnostics(snapshot);
-    for (const diagnostic of diagnostics)
-        printDiagnostic(output, diagnostic);
-    reportCheck(output, command, undefined, snapshot, diagnostics.length);
+    const qualificationFailed = snapshot.qualifications.some((value) => value.status !== 'pass');
+    reportCheckOutput(output, command, snapshot, groupDiagnostics(diagnostics), qualificationFailed);
     return {
-        exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0,
+        exitCode: diagnostics.length > 0 || qualificationFailed ? 1 : 0,
         check: {
             repository: snapshot.repository,
             inventory: snapshot.inventory,
@@ -154,9 +158,7 @@ export function reportCheckResult(output, command, snapshot, options = {}) {
 }
 export function reportProjectedCheckResult(output, command, snapshot, diagnostics, qualificationFailed) {
     const exactDiagnostics = deduplicateDiagnostics(diagnostics);
-    for (const diagnostic of exactDiagnostics)
-        printDiagnostic(output, diagnostic);
-    reportCheck(output, command, undefined, snapshot, exactDiagnostics.length);
+    reportCheckOutput(output, command, snapshot, groupDiagnostics(exactDiagnostics), qualificationFailed);
     return {
         exitCode: exactDiagnostics.length || qualificationFailed ? 1 : 0,
         check: {
@@ -165,6 +167,29 @@ export function reportProjectedCheckResult(output, command, snapshot, diagnostic
             snapshot: snapshot.id,
         },
     };
+}
+function reportCheckOutput(output, command, snapshot, diagnostics, qualificationFailed) {
+    if (command.format === 'json') {
+        output.out(encodeCliCheckReport(createCliCheckReport({
+            repository: snapshot.repository,
+            inventory: snapshot.inventory,
+            snapshot: snapshot.id,
+            selection: snapshot.selection,
+            specificationSources: snapshot.specifications.map((value) => value.source),
+            diagnostics,
+            qualificationFailed,
+        })));
+        return;
+    }
+    for (const diagnostic of diagnostics)
+        printDiagnosticGroup(output, diagnostic);
+    reportCheck(output, command, undefined, snapshot, {
+        causes: diagnostics.length,
+        occurrences: diagnosticOccurrenceCount(diagnostics),
+    });
+}
+function diagnosticOccurrenceCount(diagnostics) {
+    return diagnostics.reduce((total, value) => total + value.pointers.length, 0);
 }
 function reportDevTelemetry(output, event) {
     if (event.phase === 'store.selection') {
@@ -241,7 +266,9 @@ function reportCheck(output, command, changed, snapshot, diagnostics) {
     const checked = snapshot.selection.kind === 'focused'
         ? selected.length + support
         : snapshot.specifications.length;
-    const suffix = `${diagnostics} diagnostic${diagnostics === 1 ? '' : 's'}.`;
+    const suffix = diagnostics.causes === diagnostics.occurrences
+        ? `${diagnostics.causes} diagnostic${diagnostics.causes === 1 ? '' : 's'}.`
+        : `${diagnostics.causes} diagnostic cause${diagnostics.causes === 1 ? '' : 's'} (${diagnostics.occurrences} occurrences).`;
     if (command.name === 'changed' && changed?.kind === 'full') {
         output.out(`Checked full catalog: ${checked} specification${checked === 1 ? '' : 's'}, ${suffix}`);
     }

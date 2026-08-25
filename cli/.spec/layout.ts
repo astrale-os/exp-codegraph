@@ -6,6 +6,7 @@ export default defineLayout({
     'acceleration.ts',
     'application.ts',
     'changes.ts',
+    'check-report.ts',
     'checkpoint.ts',
     'evidence.ts',
     'limits.ts',

@@ -28,6 +28,80 @@ afterEach(async () => {
 })
 
 describe('CLI acceleration receipts', () => {
+  it('isolates text and JSON result identities and replays each exact format', async () => {
+    const repository = await fixture({
+      'package.json': JSON.stringify({ name: '@fixture/cli-format-identity', type: 'module' }),
+      'module/.spec/api.d.ts': 'export interface Value { readonly id: string }\n',
+    })
+    const cache = await fixture({})
+    fixtures.push(repository, cache)
+    await git(repository.root, ['init', '--quiet'])
+    await git(repository.root, ['add', '--all'])
+    await git(repository.root, [
+      '-c',
+      'user.name=Codegraph Fixture',
+      '-c',
+      'user.email=codegraph@example.invalid',
+      'commit',
+      '--quiet',
+      '-m',
+      'fixture',
+    ])
+    process.env.ASTRALE_TYPESPEC_CACHE_DIR = cache.root
+    process.env.CI = 'false'
+
+    let applications = 0
+    const services = testServices(() => {
+      applications += 1
+    })
+    const text = parseCommand(['check', repository.root])
+    const json = parseCommand(['check', repository.root, '--format', 'json'])
+
+    const initialText = recordingOutput()
+    await runCliCommand(text, services, initialText.output)
+    expect(applications).toBe(1)
+
+    const initialJson = recordingOutput()
+    const jsonResult = await runCliCommand(json, services, initialJson.output)
+    expect(applications).toBe(2)
+    expect(jsonResult.acceleration?.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'semantic-pack-read',
+          outcome: 'miss',
+          code: 'request-mismatch',
+        }),
+      ]),
+    )
+    expect(initialJson.transcript).toHaveLength(1)
+    expect(initialJson.transcript[0]?.[0]).toBe('stdout')
+    expect(() => JSON.parse(initialJson.transcript[0]![1])).not.toThrow()
+
+    const replayedJson = recordingOutput()
+    const replayedJsonResult = await runCliCommand(json, services, replayedJson.output)
+    expect(applications).toBe(2)
+    expect(replayedJsonResult.acceleration?.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: 'semantic-pack-read',
+          outcome: 'hit',
+          code: 'admitted',
+        }),
+      ]),
+    )
+    expect(replayedJson.transcript).toEqual(initialJson.transcript)
+
+    const replayedText = recordingOutput()
+    const replayedTextResult = await runCliCommand(text, services, replayedText.output)
+    expect(applications).toBe(2)
+    expect(replayedTextResult.acceleration?.events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ operation: 'workspace-result-read', outcome: 'hit' }),
+      ]),
+    )
+    expect(replayedText.transcript).toEqual(initialText.transcript)
+  })
+
   /** @evidence CLI-SEMANTIC-PACK-REQUEST-IDENTITY */
   it('uses the exact application checkpoint when a catalog cannot reproduce request identity', async () => {
     const repository = await fixture({

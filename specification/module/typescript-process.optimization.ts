@@ -8,6 +8,8 @@ import type {
   ModuleTypeScriptIsolationGroupResult,
 } from './typescript-model.ts'
 
+import { codegraphWorkerProcess } from '../../compiler/worker-process.ts'
+
 const MAXIMUM_OLD_SPACE_MIB = 504
 const MAXIMUM_OUTPUT_BYTES = 64 * 1_024 * 1_024
 const MAXIMUM_STDERR_BYTES = 1 * 1_024 * 1_024
@@ -47,9 +49,14 @@ function runWorker(
     const worker = fileURLToPath(
       new URL(`./typescript-worker.optimization${extension}`, import.meta.url),
     )
+    const workerProcess = codegraphWorkerProcess(
+      'specification-typescript',
+      worker,
+      MAXIMUM_OLD_SPACE_MIB,
+    )
     const child = spawn(
-      process.execPath,
-      [`--max-old-space-size=${MAXIMUM_OLD_SPACE_MIB}`, worker],
+      workerProcess.executable,
+      workerProcess.arguments,
       { stdio: ['pipe', 'pipe', 'pipe'] },
     )
     const stdout: Buffer[] = []

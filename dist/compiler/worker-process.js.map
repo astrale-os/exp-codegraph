@@ -1,0 +1,1 @@
+{"version":3,"file":"worker-process.js","sourceRoot":"","sources":["../../compiler/worker-process.ts"],"names":[],"mappings":"AAUA,0FAA0F;AAC1F,MAAM,UAAU,sBAAsB,CACpC,IAAyB,EACzB,MAAc,EACd,oBAA4B,EAC5B,iBAAiB,GAAsB,EAAE;IAEzC,OAAO;QACL,UAAU,EAAE,OAAO,CAAC,QAAQ;QAC5B,SAAS,EAAE;YACT,wBAAwB,oBAAoB,EAAE;YAC9C,MAAM;YACN,sBAAsB,IAAI,EAAE;YAC5B,GAAG,iBAAiB;SACrB;KACF,CAAA;AACH,CAAC"}

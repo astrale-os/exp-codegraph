@@ -4,4 +4,5 @@ export const CLI_CHECK_LIMITS = {
   minimumWarmSamples: 5,
   maximumWarmProcessMilliseconds: 15_000,
   maximumCatalogCheckpointDecodedBytes: 67_108_864,
+  maximumAdditionalTextProjectionPointers: 5,
 } as const
