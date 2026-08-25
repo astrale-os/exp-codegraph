@@ -19,7 +19,7 @@ const analysisCache = new Map();
 const analyses = createTaskLimiter(2);
 // Retain one complete catalog wave; smaller caches deterministically evict before reuse.
 const MAX_ANALYSES = 256;
-const SHARED_PROGRAM_ROOT_CAPACITY = 1_024;
+const SHARED_PROGRAM_ROOT_CAPACITY = 512;
 const operationAnalyses = operationSnapshotNamespace('module-typescript-analyses');
 const canonicalFile = canonicalModuleTypeScriptPath;
 /** Project exact owner analyses from one already-admitted ambient-safe compiler universe. */

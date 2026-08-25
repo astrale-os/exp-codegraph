@@ -132,6 +132,8 @@ describe('published package', () => {
     const current = await fixture({
       'package.json': JSON.stringify({ name: '@fixture/package-consumer', type: 'module' }),
       'alpha/.spec/api.d.ts': 'export interface Alpha {}\n',
+      'alpha/.spec/laws/alpha.ts':
+        "import { defineLaw } from '@astrale-os/codegraph/authoring'\nexport const ALPHA_LAW = defineLaw({ id: 'ALPHA-LAW', statement: 'Alpha remains alpha.' })\n",
     })
     fixtures.push(current)
 

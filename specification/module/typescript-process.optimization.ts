@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { extname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import type { ModuleFileInventory } from './inventory.ts'
@@ -24,12 +25,16 @@ export async function analyzeModuleTypeScriptGroupsIsolated(
   root: string,
   groups: readonly (readonly ModuleFileInventory[])[],
 ): Promise<ModuleTypeScriptIsolationResult> {
-  const result = await runWorker(root, groups)
+  const results: Awaited<ReturnType<typeof runWorker>>[] = []
+  for (const group of groups) results.push(await runWorker(root, [group]))
   return {
-    entries: result.entries,
-    programs: result.programs,
-    workerPeakResidentBytes: result.peakResidentBytes,
-    workerResidentUpperBoundBytes: result.peakResidentBytes,
+    entries: results.flatMap((result) => result.entries),
+    programs: results.reduce((total, result) => total + result.programs, 0),
+    workerPeakResidentBytes: Math.max(0, ...results.map((result) => result.peakResidentBytes)),
+    workerResidentUpperBoundBytes: Math.max(
+      0,
+      ...results.map((result) => result.peakResidentBytes),
+    ),
   }
 }
 
@@ -38,7 +43,10 @@ function runWorker(
   groups: readonly (readonly ModuleFileInventory[])[],
 ): Promise<ModuleTypeScriptIsolationGroupResult & { readonly peakResidentBytes: number }> {
   return new Promise((resolvePromise, reject) => {
-    const worker = fileURLToPath(new URL('./typescript-worker.optimization.ts', import.meta.url))
+    const extension = extname(fileURLToPath(import.meta.url))
+    const worker = fileURLToPath(
+      new URL(`./typescript-worker.optimization${extension}`, import.meta.url),
+    )
     const child = spawn(
       process.execPath,
       [`--max-old-space-size=${MAXIMUM_OLD_SPACE_MIB}`, worker],

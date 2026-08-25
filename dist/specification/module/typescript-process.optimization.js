@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const MAXIMUM_OLD_SPACE_MIB = 504;
 const MAXIMUM_OUTPUT_BYTES = 64 * 1_024 * 1_024;
@@ -6,17 +7,20 @@ const MAXIMUM_STDERR_BYTES = 1 * 1_024 * 1_024;
 const TIMEOUT_MS = 60_000;
 /** Execute exact preplanned whole-corpus groups serially behind bounded compiler heaps. */
 export async function analyzeModuleTypeScriptGroupsIsolated(root, groups) {
-    const result = await runWorker(root, groups);
+    const results = [];
+    for (const group of groups)
+        results.push(await runWorker(root, [group]));
     return {
-        entries: result.entries,
-        programs: result.programs,
-        workerPeakResidentBytes: result.peakResidentBytes,
-        workerResidentUpperBoundBytes: result.peakResidentBytes,
+        entries: results.flatMap((result) => result.entries),
+        programs: results.reduce((total, result) => total + result.programs, 0),
+        workerPeakResidentBytes: Math.max(0, ...results.map((result) => result.peakResidentBytes)),
+        workerResidentUpperBoundBytes: Math.max(0, ...results.map((result) => result.peakResidentBytes)),
     };
 }
 function runWorker(root, groups) {
     return new Promise((resolvePromise, reject) => {
-        const worker = fileURLToPath(new URL('./typescript-worker.optimization.ts', import.meta.url));
+        const extension = extname(fileURLToPath(import.meta.url));
+        const worker = fileURLToPath(new URL(`./typescript-worker.optimization${extension}`, import.meta.url));
         const child = spawn(process.execPath, [`--max-old-space-size=${MAXIMUM_OLD_SPACE_MIB}`, worker], { stdio: ['pipe', 'pipe', 'pipe'] });
         const stdout = [];
         const stderr = [];
