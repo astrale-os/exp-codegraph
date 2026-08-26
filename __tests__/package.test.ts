@@ -38,7 +38,7 @@ afterEach(async () => {
   )
 })
 
-describe('published package', () => {
+describe('packed GitHub artifact', () => {
   it('keeps standalone qualification authoritative in the package scripts and CI', async () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as {
       name: string
@@ -82,10 +82,12 @@ describe('published package', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as {
       dependencies: Record<string, string>
       devDependencies: Record<string, string>
+      files: string[]
       optionalDependencies: Record<string, string>
     }
     expect(manifest.dependencies).not.toHaveProperty('ttsc')
     expect(manifest.devDependencies.ttsc).toBe('0.25.0')
+    expect(manifest.files).toContain('!dist/**/*.map')
     expect(Object.keys(manifest.optionalDependencies).sort()).toEqual([
       '@astrale-os/codegraph-native-darwin-arm64',
       '@astrale-os/codegraph-native-darwin-x64',
@@ -141,7 +143,9 @@ describe('published package', () => {
     try {
       const cli = join(installed, 'dist/cli.js')
       const version = await run(process.execPath, [cli, '--version'])
-      expect(version).toMatchObject({ stdout: '0.1.0\n', stderr: '' })
+      const packageVersion = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
+        .version as string
+      expect(version).toMatchObject({ stdout: `${packageVersion}\n`, stderr: '' })
       const result = await run(process.execPath, [cli, 'check', current.root], {
         env: { ...process.env, CI: 'true' },
       })

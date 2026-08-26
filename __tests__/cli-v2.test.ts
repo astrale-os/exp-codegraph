@@ -9,6 +9,9 @@ import { parseCommand } from '../cli/parse.ts'
 import { fixture, type Fixture } from './fixture.ts'
 
 const cli = join(dirname(fileURLToPath(import.meta.url)), '..', 'cli.ts')
+const packageVersion = JSON.parse(
+  await readFile(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8'),
+).version as string
 const exec = promisify(execFile)
 const fixtures: Fixture[] = []
 
@@ -54,7 +57,7 @@ describe('headless V2 CLI', { timeout: 30_000 }, () => {
 
   it('reports the package version without initializing native analysis', async () => {
     const result = await run(['--version'])
-    expect(result).toEqual({ code: 0, stdout: '0.1.0\n', stderr: '' })
+    expect(result).toEqual({ code: 0, stdout: `${packageVersion}\n`, stderr: '' })
   })
 
   it('checks a convention-only specification through the application service', async () => {

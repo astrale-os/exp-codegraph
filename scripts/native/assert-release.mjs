@@ -18,6 +18,7 @@ import {
 const root = resolve(import.meta.dirname, '../..')
 const packageManifest = await readJson(resolve(root, 'package.json'))
 const packageVersion = packageManifest.version
+const expectedSourceRevision = argument('--source-revision')
 const release = await readJson(resolve(root, 'native-release.json'))
 if (
   release.format !== NATIVE_RELEASE_FORMAT ||
@@ -28,6 +29,18 @@ if (
   !/^[a-f0-9]{40}$/u.test(release.sourceRevision)
 ) {
   throw new Error('Native release manifest is incomplete or does not match the package version.')
+}
+if (expectedSourceRevision && release.sourceRevision !== expectedSourceRevision) {
+  throw new Error(
+    `Native release was assembled from ${release.sourceRevision}, expected ${expectedSourceRevision}.`,
+  )
+}
+if (
+  packageManifest.private !== true ||
+  Object.hasOwn(packageManifest, 'publishConfig') ||
+  packageManifest.repository?.url !== 'git+https://github.com/astrale-os/exp-codegraph.git'
+) {
+  throw new Error('Codegraph must remain a private GitHub artifact package.')
 }
 assertToolchain(release.toolchain)
 
@@ -47,6 +60,9 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   if (
     child.name !== expected.package ||
     child.version !== packageVersion ||
+    child.private !== true ||
+    Object.hasOwn(child, 'publishConfig') ||
+    child.repository?.url !== 'git+https://github.com/astrale-os/exp-codegraph.git' ||
     stableJson(child.os) !== stableJson([expected.os]) ||
     stableJson(child.cpu) !== stableJson([expected.cpu]) ||
     child.main !== undefined ||
@@ -78,3 +94,12 @@ for (const required of ['ttsc', 'TypeScript-Go', 'Go toolchain']) {
   if (!notices.includes(required)) throw new Error(`Third-party notices omit ${required}.`)
 }
 process.stdout.write(stableJson({ packageVersion, sourceRevision: release.sourceRevision, targets }))
+
+function argument(name) {
+  const index = process.argv.indexOf(name)
+  if (index < 0) return undefined
+  const value = process.argv[index + 1]
+  if (!value || value.startsWith('--')) throw new Error(`${name} requires a value.`)
+  if (!/^[a-f0-9]{40}$/u.test(value)) throw new Error(`${name} must be an exact Git revision.`)
+  return value
+}

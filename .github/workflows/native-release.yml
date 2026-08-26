@@ -1,4 +1,4 @@
-name: Native release qualification
+name: Native artifact qualification
 
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ on:
       - 'native-packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'qualification/v2/extension/**'
       - 'qualification/v2/release/**'
       - 'qualification/v2/ttsc/fixtures/**'
@@ -26,6 +27,7 @@ on:
       - 'native-packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - 'qualification/v2/extension/**'
       - 'qualification/v2/release/**'
       - 'qualification/v2/ttsc/fixtures/**'
@@ -55,10 +57,11 @@ jobs:
             runner: macos-15
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
+          persist-credentials: 'false'
+      - uses: astrale-os/config/.github/actions/setup@9bffee57d53b603b556bb545145fdde10f20a4c5
         with:
           frozen-lockfile: 'true'
       - name: Build exact native artifact
@@ -79,10 +82,11 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
+          persist-credentials: 'false'
+      - uses: astrale-os/config/.github/actions/setup@9bffee57d53b603b556bb545145fdde10f20a4c5
         with:
           frozen-lockfile: 'true'
       - name: Download every native target
@@ -91,15 +95,17 @@ jobs:
           pattern: '*-*'
           path: .native-input
       - name: Assemble and validate distributable artifacts
-        run: pnpm native:assemble -- --input .native-input && pnpm native:assert-release && pnpm build
-      - name: Pack consumer and executable artifact packages
+        env:
+          SOURCE_REVISION: ${{ github.sha }}
+        run: pnpm native:assemble -- --input .native-input && pnpm native:assert-release -- --source-revision "$SOURCE_REVISION" && pnpm build
+      - name: Pack GitHub consumer artifact
         run: |
           mkdir -p release
           for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
             npm pack ./native-packages/$target --pack-destination release
           done
           pnpm pack --pack-destination release
-      - name: Upload assembled package set
+      - name: Upload assembled GitHub artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codegraph-release
@@ -123,16 +129,17 @@ jobs:
             runner: macos-15
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: astrale-os/config/.github/actions/setup@d48f4f718c07eb4c43afc71b58003df3d9979313
+          persist-credentials: 'false'
+      - uses: astrale-os/config/.github/actions/setup@9bffee57d53b603b556bb545145fdde10f20a4c5
         with:
           frozen-lockfile: 'true'
-      - name: Download assembled packages
+      - name: Download assembled GitHub artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: codegraph-release
           path: release
-      - name: Prove packed installation and native execution
+      - name: Prove GitHub artifact installation and native execution
         run: node qualification/v2/release/packed-consumer.mjs --release-directory release
