@@ -7,6 +7,7 @@ import type {
 } from '../analysis/binding/index.ts'
 
 import { compileApplicationModuleBindings } from './application-binding.ts'
+import { codegraphWorkerProcess } from './worker-process.ts'
 
 const WORKER_ARGUMENT = '--codegraph-binding-worker'
 const MAXIMUM_OLD_SPACE_MIB = 512
@@ -58,9 +59,15 @@ function runWorker(
 ): Promise<ApplicationModuleBindingCompilation> {
   return new Promise((resolvePromise, reject) => {
     const worker = fileURLToPath(import.meta.url)
+    const workerProcess = codegraphWorkerProcess(
+      'application-binding',
+      worker,
+      MAXIMUM_OLD_SPACE_MIB,
+      [WORKER_ARGUMENT],
+    )
     const child = spawn(
-      process.execPath,
-      [`--max-old-space-size=${MAXIMUM_OLD_SPACE_MIB}`, worker, WORKER_ARGUMENT],
+      workerProcess.executable,
+      workerProcess.arguments,
       { stdio: ['pipe', 'pipe', 'pipe'] },
     )
     const stdout: Buffer[] = []

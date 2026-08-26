@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseApiCompilerWorkerResourceReport, recordApiCompilerIsolationWork, } from './isolation-work.optimization.js';
+import { codegraphWorkerProcess } from './worker-process.js';
 const DEFAULT_TIMEOUT_PER_ENTRYPOINT_MS = 20_000;
 const DEFAULT_MAX_OLD_SPACE_MEGABYTES = 256;
 const DEFAULT_MAX_WORKER_RESULT_BYTES = 16 * 1_024 * 1_024;
@@ -16,8 +17,9 @@ export function compileApisInIsolatedWorker(options, isolation) {
     const maxBatchResultBytes = positiveInteger(isolation.maxBatchResultBytes, DEFAULT_MAX_BATCH_RESULT_BYTES);
     const extension = extname(fileURLToPath(import.meta.url));
     const worker = fileURLToPath(new URL(`./worker${extension}`, import.meta.url));
+    const workerProcess = codegraphWorkerProcess('api-compiler', worker, maxOldSpaceMegabytes);
     return new Promise((resolve) => {
-        const child = spawn(process.execPath, [`--max-old-space-size=${maxOldSpaceMegabytes}`, worker], { stdio: ['pipe', 'pipe', 'pipe'] });
+        const child = spawn(workerProcess.executable, workerProcess.arguments, { stdio: ['pipe', 'pipe', 'pipe'] });
         let pendingStdout = Buffer.alloc(0);
         let stdoutBytes = 0;
         const results = [];

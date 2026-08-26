@@ -337,6 +337,7 @@ function checkRequest(command) {
         select: sortedUnique(command.select),
         requireCompleteLayout: command.requireCompleteLayout,
         requireExactLayout: command.requireExactLayout,
+        outputFormat: command.format,
         quiet: command.quiet,
     });
 }

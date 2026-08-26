@@ -105,6 +105,7 @@ try {
         select: scenario.select,
         requireCompleteLayout: true,
         requireExactLayout: false,
+        format: 'text',
         quiet: true,
         cache: false,
       } satisfies Extract<CliCommand, { readonly name: 'check' }>

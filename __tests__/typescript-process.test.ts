@@ -54,8 +54,16 @@ describe('built TypeScript isolation workers', () => {
 
     expect(workerSpawns).toHaveLength(2)
     expect(workerSpawns.map(([, arguments_]) => arguments_)).toEqual([
-      [expect.stringMatching(/^--max-old-space-size=/u), expect.stringMatching(/\.js$/u)],
-      [expect.stringMatching(/^--max-old-space-size=/u), expect.stringMatching(/\.js$/u)],
+      [
+        expect.stringMatching(/^--max-old-space-size=/u),
+        expect.stringMatching(/\.js$/u),
+        '--codegraph-worker=specification-typescript',
+      ],
+      [
+        expect.stringMatching(/^--max-old-space-size=/u),
+        expect.stringMatching(/\.js$/u),
+        '--codegraph-worker=specification-typescript',
+      ],
     ])
     expect(workerRequests).toEqual(
       [

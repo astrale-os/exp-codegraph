@@ -38,3 +38,18 @@ publication failure is never silently discarded.
 Ordinary `cg check` requests only capabilities that contribute to its canonical diagnostics and
 result. Repository statistics remain an explicit application capability for viewer and reporting
 consumers and are not computed as hidden check work.
+
+Text output reports one source cause once when the only difference between observations is the
+specification projection pointer. It retains a bounded projection summary and counts both unique
+causes and exact occurrences; unrelated codes, messages, or source coordinates never coalesce.
+The default text transcript remains unchanged when every cause has one occurrence.
+
+`cg check --format json` emits one versioned report on stdout and no diagnostic text on stderr. Its
+diagnostic groups retain every distinct projection pointer, scope, qualification outcome, and exact
+check evidence needed to reproduce the command status. Output format participates in exact-result
+checkpoint identity, while the semantic whole-catalog shard remains reusable across formats.
+
+Every isolated compiler child retains a stable `--codegraph-worker=<role>` process argument in
+addition to its bounded heap. Operators can therefore identify API compiler, application binding,
+and specification TypeScript work without relying on transient script paths or platform-specific
+process titles.

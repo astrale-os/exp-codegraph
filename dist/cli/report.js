@@ -1,6 +1,26 @@
+import { CLI_CHECK_LIMITS } from './limits.js';
 export function printDiagnostic(output, diagnostic) {
     const pointer = diagnostic.pointer ? ` ${terminalText(diagnostic.pointer)}` : '';
     output.error(`${terminalText(diagnostic.file)}:${diagnostic.line}:${diagnostic.column} [${terminalText(diagnostic.code)}]${pointer} ${terminalText(diagnostic.message)}`);
+}
+/** Present one exact source cause and a bounded account of its additional projections. */
+export function printDiagnosticGroup(output, group) {
+    const [firstPointer, ...additional] = group.pointers;
+    printDiagnostic(output, {
+        code: group.code,
+        message: group.message,
+        file: group.file,
+        line: group.line,
+        column: group.column,
+        ...(firstPointer === null || firstPointer === undefined ? {} : { pointer: firstPointer }),
+    });
+    if (!additional.length)
+        return;
+    const shown = additional
+        .slice(0, CLI_CHECK_LIMITS.maximumAdditionalTextProjectionPointers)
+        .map((pointer) => terminalText(pointer ?? '<root>'));
+    const remaining = additional.length - shown.length;
+    output.error(`  repeated in ${additional.length} additional projection${additional.length === 1 ? '' : 's'}: ${shown.join(', ')}${remaining ? ` (+${remaining} more)` : ''}`);
 }
 export function printVerificationRule(output, source, rule) {
     if (rule.status === 'pass' && rule.diagnostics.length === 0)

@@ -12,7 +12,7 @@ import {
 import { CLI_CHECK_LIMITS } from '../limits.ts'
 
 export const CHECK_RESULT_FORMAT = 'astrale.codegraph.cli-check-result'
-export const CHECK_RESULT_VERSION = 2
+export const CHECK_RESULT_VERSION = 3
 export const CHECK_RESULT_ARTIFACT = 'cli/check-result.json.br'
 export const CHECK_CATALOG_FORMAT = 'astrale.codegraph.cli-check-catalog'
 export const CHECK_CATALOG_VERSION = 1

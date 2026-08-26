@@ -1,9 +1,11 @@
 import { resolve } from 'node:path'
 
+import type { CliCheckOutputFormat } from './check-report.ts'
+
 export const USAGE = `Usage:
   cg --version
   cg init [module-directory]
-  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--quiet] [--no-cache]
+  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--quiet] [--no-cache]
   cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]
   cg test [module-path]... [--root <directory>] [--quiet] [--no-cache]
   cg test changed [base] [--root <directory>] [--quiet] [--no-cache]
@@ -21,6 +23,7 @@ export type CliCommand =
       select: readonly string[]
       requireCompleteLayout: boolean
       requireExactLayout: boolean
+      format: CliCheckOutputFormat
       quiet: boolean
       cache: boolean
     }
@@ -183,6 +186,7 @@ function parseCheck(
   select: readonly string[]
   requireCompleteLayout: boolean
   requireExactLayout: boolean
+  format: CliCheckOutputFormat
   quiet: boolean
   cache: boolean
 } {
@@ -192,6 +196,8 @@ function parseCheck(
   const select: string[] = []
   let requireCompleteLayout = false
   let requireExactLayout = false
+  let format: CliCheckOutputFormat = 'text'
+  let hasFormat = false
   let quiet = false
   let cache = cacheDefault
   for (let index = 0; index < args.length; index++) {
@@ -208,6 +214,11 @@ function parseCheck(
       requireCompleteLayout = true
     } else if (argument === '--require-exact-layout' && !requireExactLayout) {
       requireExactLayout = true
+    } else if (argument === '--format' && !hasFormat) {
+      const value = args[++index]
+      if (value !== 'text' && value !== 'json') usageError()
+      format = value
+      hasFormat = true
     } else if (argument === '--quiet' && !quiet) {
       quiet = true
     } else if (argument === '--no-cache') {
@@ -224,6 +235,7 @@ function parseCheck(
     select,
     requireCompleteLayout,
     requireExactLayout,
+    format,
     quiet,
     cache,
   }

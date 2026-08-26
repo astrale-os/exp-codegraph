@@ -5,5 +5,6 @@ export const CLI_CHECK_LIMITS = Object.freeze({
     minimumWarmSamples: 5,
     maximumWarmProcessMilliseconds: 15_000,
     maximumCatalogCheckpointDecodedBytes: 64 * 1024 * 1024,
+    maximumAdditionalTextProjectionPointers: 5,
 });
 //# sourceMappingURL=limits.js.map

@@ -22,7 +22,16 @@ describe('headless V2 CLI', { timeout: 30_000 }, () => {
     expect(parseCommand(['check', '.', '--select', 'module'], {})).toMatchObject({
       name: 'check',
       select: ['module'],
+      format: 'text',
     })
+    expect(parseCommand(['check', '.', '--format', 'json'], {})).toMatchObject({
+      name: 'check',
+      format: 'json',
+    })
+    expect(() => parseCommand(['check', '.', '--format', 'yaml'], {})).toThrow('Usage:')
+    expect(() =>
+      parseCommand(['check', '.', '--format', 'json', '--format', 'text'], {}),
+    ).toThrow('Usage:')
     expect(parseCommand(['changed', '.', 'HEAD', '--scope-only'], {})).toMatchObject({
       name: 'changed',
       base: 'HEAD',
@@ -69,6 +78,78 @@ describe('headless V2 CLI', { timeout: 30_000 }, () => {
     expect(result.stderr).toContain('Cannot find name')
   })
 
+  // @evidence CLI-CHECK-JSON-OUTPUT
+  it('emits one replay-stable JSON report with text-equivalent failure semantics', async () => {
+    const current = await repository({
+      'module/.spec/api.d.ts': 'export interface Value { readonly missing: Missing }\n',
+    })
+    const cache = await fixture({})
+    fixtures.push(cache)
+    const environment = { ASTRALE_TYPESPEC_CACHE_DIR: cache.root, CI: 'false' }
+
+    const text = await run(['check', current.root, '--quiet'], environment)
+    const cold = await run(['check', current.root, '--format', 'json'], environment)
+    const warm = await run(['check', current.root, '--format', 'json'], environment)
+    const uncached = await run(
+      ['check', current.root, '--format', 'json', '--no-cache'],
+      environment,
+    )
+
+    expect(cold.code).toBe(text.code)
+    expect(cold.code).toBe(1)
+    expect(cold.stderr).toBe('')
+    expect(warm).toEqual(cold)
+    expect(uncached).toEqual(cold)
+    const report = JSON.parse(cold.stdout) as {
+      readonly format: string
+      readonly version: number
+      readonly command: string
+      readonly status: string
+      readonly evidence: { readonly repository: string; readonly inventory: string; readonly snapshot: string }
+      readonly scope: { readonly kind: string; readonly specifications: readonly string[] }
+      readonly qualificationFailed: boolean
+      readonly diagnostics: readonly {
+        readonly code: string
+        readonly message: string
+        readonly file: string
+        readonly line: number
+        readonly column: number
+        readonly pointers: readonly (string | null)[]
+      }[]
+      readonly summary: {
+        readonly specifications: number
+        readonly diagnosticCauses: number
+        readonly diagnosticOccurrences: number
+      }
+    }
+    expect(report).toMatchObject({
+      format: 'astrale.codegraph.check-report',
+      version: 1,
+      command: 'check',
+      status: 'fail',
+      scope: { kind: 'full', specifications: ['module/.spec/api.d.ts'] },
+      qualificationFailed: true,
+      summary: { specifications: 1 },
+    })
+    expect(report.evidence.repository).toMatch(/^repository:/u)
+    expect(report.evidence.inventory).toMatch(/^source-manifest:/u)
+    expect(report.evidence.snapshot).toMatch(/^application:/u)
+    expect(report.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'API_TYPESCRIPT_TS2304',
+          message: expect.stringContaining('Cannot find name'),
+          file: expect.stringContaining('module/.spec/api.d.ts'),
+          pointers: expect.any(Array),
+        }),
+      ]),
+    )
+    expect(report.summary.diagnosticCauses).toBe(report.diagnostics.length)
+    expect(report.summary.diagnosticOccurrences).toBe(
+      report.diagnostics.reduce((total, diagnostic) => total + diagnostic.pointers.length, 0),
+    )
+  })
+
   it('keeps focused checks advisory and reports only the selected owner closure', async () => {
     const current = await repository({
       'selected/.spec/api.d.ts': 'export interface Selected { readonly id: string }\n',
@@ -78,6 +159,41 @@ describe('headless V2 CLI', { timeout: 30_000 }, () => {
 
     expect(result).toMatchObject({ code: 0, stderr: '' })
     expect(result.stdout).toContain('Checked selected 1 specification: 0 diagnostics.')
+  })
+
+  it('reports the exact selected and support closure in focused JSON output', async () => {
+    const current = await repository({
+      'base/.spec/api.d.ts': 'export interface Base { readonly id: string }\n',
+      'consumer/.spec/api.d.ts':
+        "import type { Base } from '../../base/.spec/api.js'\nexport interface Consumer { readonly base: Base }\n",
+    })
+    const result = await run([
+      'check',
+      current.root,
+      '--select',
+      'consumer',
+      '--format',
+      'json',
+      '--no-cache',
+    ])
+
+    expect(result).toMatchObject({ code: 0, stderr: '' })
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      status: 'pass',
+      qualificationFailed: false,
+      scope: {
+        kind: 'focused',
+        requested: ['consumer'],
+        selected: ['consumer/.spec/api.d.ts'],
+        support: ['base/.spec/api.d.ts'],
+      },
+      diagnostics: [],
+      summary: {
+        specifications: 2,
+        diagnosticCauses: 0,
+        diagnosticOccurrences: 0,
+      },
+    })
   })
 
   it('initializes only the required contract and never overwrites it', async () => {

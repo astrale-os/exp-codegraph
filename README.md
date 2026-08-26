@@ -495,7 +495,7 @@ stays acyclic without giving up compiler-project or content caches.
 
 ```sh
 cg init [module-directory]
-cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--no-cache]
+cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--no-cache]
 cg changed [root] [base] [--scope-only] [--no-cache]
 cg test [module-path]... [--root <directory>] [--no-cache]
 cg test changed [base] [--root <directory>] [--no-cache]
@@ -542,6 +542,12 @@ Checks print line-oriented phase and module progress by default and always end w
 count summary. Focused summaries distinguish selected modules from loaded public-contract support.
 `--quiet` suppresses progress while retaining scope, diagnostics, and the final summary.
 
+Text diagnostics report one exact source cause once and summarize additional specification
+projections when only their pointer differs. The final count distinguishes causes from projection
+occurrences. Use `cg check --format json` for one versioned, machine-readable report on stdout;
+diagnostic groups retain every distinct pointer and stderr remains empty for an ordinary completed
+check. Argument and operational failures still use the normal CLI error channel and exit status.
+
 Verification groups failing obligations by specification, profile, and diagnostic code by default;
 passing profiles and serialized expected/actual type graphs stay out of routine output. Add
 `--details` to the same command when the complete comparison evidence is needed.
@@ -569,6 +575,9 @@ Programs; declaration workers remain capped at four 256 MiB heaps. Kernel check 
 bound the parent Node heap at 1280 MiB so faster batching does not become unbounded memory growth.
 The interactive `pnpm spec` launcher uses a 2048 MiB ceiling because the viewer retains the current
 browser catalog while rebuilding; this remains a ceiling, not a target.
+Every isolated compiler child also carries `--codegraph-worker=<role>` in its process arguments so
+operational sampling can distinguish API compiler, application binding, and specification
+TypeScript workers without guessing from built script paths.
 
 `verify` additionally compares every bound API and implementation. A spec-only module is valid but
 is not counted as a conformance pass; `--require-pass` requires every discovered specification to

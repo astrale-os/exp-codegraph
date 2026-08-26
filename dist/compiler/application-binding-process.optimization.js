@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { compileApplicationModuleBindings } from './application-binding.js';
+import { codegraphWorkerProcess } from './worker-process.js';
 const WORKER_ARGUMENT = '--codegraph-binding-worker';
 const MAXIMUM_OLD_SPACE_MIB = 512;
 const MAXIMUM_OUTPUT_BYTES = 64 * 1_024 * 1_024;
@@ -31,7 +32,8 @@ export async function compileApplicationModuleBindingsIsolated(options) {
 function runWorker(root, requests, ownershipRequests, signal) {
     return new Promise((resolvePromise, reject) => {
         const worker = fileURLToPath(import.meta.url);
-        const child = spawn(process.execPath, [`--max-old-space-size=${MAXIMUM_OLD_SPACE_MIB}`, worker, WORKER_ARGUMENT], { stdio: ['pipe', 'pipe', 'pipe'] });
+        const workerProcess = codegraphWorkerProcess('application-binding', worker, MAXIMUM_OLD_SPACE_MIB, [WORKER_ARGUMENT]);
+        const child = spawn(workerProcess.executable, workerProcess.arguments, { stdio: ['pipe', 'pipe', 'pipe'] });
         const stdout = [];
         const stderr = [];
         let stdoutBytes = 0;

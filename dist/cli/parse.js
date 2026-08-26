@@ -2,7 +2,7 @@ import { resolve } from 'node:path';
 export const USAGE = `Usage:
   cg --version
   cg init [module-directory]
-  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--quiet] [--no-cache]
+  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--quiet] [--no-cache]
   cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]
   cg test [module-path]... [--root <directory>] [--quiet] [--no-cache]
   cg test changed [base] [--root <directory>] [--quiet] [--no-cache]
@@ -131,6 +131,8 @@ function parseCheck(args, cacheDefault) {
     const select = [];
     let requireCompleteLayout = false;
     let requireExactLayout = false;
+    let format = 'text';
+    let hasFormat = false;
     let quiet = false;
     let cache = cacheDefault;
     for (let index = 0; index < args.length; index++) {
@@ -153,6 +155,13 @@ function parseCheck(args, cacheDefault) {
         else if (argument === '--require-exact-layout' && !requireExactLayout) {
             requireExactLayout = true;
         }
+        else if (argument === '--format' && !hasFormat) {
+            const value = args[++index];
+            if (value !== 'text' && value !== 'json')
+                usageError();
+            format = value;
+            hasFormat = true;
+        }
         else if (argument === '--quiet' && !quiet) {
             quiet = true;
         }
@@ -172,6 +181,7 @@ function parseCheck(args, cacheDefault) {
         select,
         requireCompleteLayout,
         requireExactLayout,
+        format,
         quiet,
         cache,
     };

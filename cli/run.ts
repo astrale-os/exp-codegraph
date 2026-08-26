@@ -22,6 +22,12 @@ import {
 } from '../conformance/index.ts'
 import { USAGE } from './parse.ts'
 import {
+  createCliCheckReport,
+  encodeCliCheckReport,
+  groupDiagnostics,
+  type CliDiagnosticGroup,
+} from './check-report.ts'
+import {
   CHECK_SEMANTIC_PLAN,
   type CliCheckCatalog,
 } from './semantic-pack/model.ts'
@@ -32,7 +38,7 @@ import {
   printQualificationSummary,
   qualificationDiagnostics,
 } from './qualification-report.ts'
-import { printDiagnostic } from './report.ts'
+import { printDiagnostic, printDiagnosticGroup } from './report.ts'
 
 const TEST_PROFILES = [SPECIFICATION_VALIDITY_PROFILE_ID, MODULE_TEST_EVIDENCE_PROFILE_ID] as const
 
@@ -168,8 +174,12 @@ export async function runCommand(
             : {}),
         })
       }
-      for (const diagnostic of diagnostics) printDiagnostic(output, diagnostic)
-      reportCheck(output, command, changed, snapshot, diagnostics.length)
+      const groups = groupDiagnostics(diagnostics)
+      for (const diagnostic of groups) printDiagnosticGroup(output, diagnostic)
+      reportCheck(output, command, changed, snapshot, {
+        causes: groups.length,
+        occurrences: diagnosticOccurrenceCount(groups),
+      })
       return { exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0 }
     }
 
@@ -244,10 +254,10 @@ export function reportCheckResult(
   options: { readonly catalog?: CliCheckCatalog } = {},
 ): CliResult {
   const diagnostics = applicationDiagnostics(snapshot)
-  for (const diagnostic of diagnostics) printDiagnostic(output, diagnostic)
-  reportCheck(output, command, undefined, snapshot, diagnostics.length)
+  const qualificationFailed = snapshot.qualifications.some((value) => value.status !== 'pass')
+  reportCheckOutput(output, command, snapshot, groupDiagnostics(diagnostics), qualificationFailed)
   return {
-    exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0,
+    exitCode: diagnostics.length > 0 || qualificationFailed ? 1 : 0,
     check: {
       repository: snapshot.repository,
       inventory: snapshot.inventory,
@@ -268,8 +278,13 @@ export function reportProjectedCheckResult(
   qualificationFailed: boolean,
 ): CliResult {
   const exactDiagnostics = deduplicateDiagnostics(diagnostics)
-  for (const diagnostic of exactDiagnostics) printDiagnostic(output, diagnostic)
-  reportCheck(output, command, undefined, snapshot, exactDiagnostics.length)
+  reportCheckOutput(
+    output,
+    command,
+    snapshot,
+    groupDiagnostics(exactDiagnostics),
+    qualificationFailed,
+  )
   return {
     exitCode: exactDiagnostics.length || qualificationFailed ? 1 : 0,
     check: {
@@ -278,6 +293,43 @@ export function reportProjectedCheckResult(
       snapshot: snapshot.id,
     },
   }
+}
+
+function reportCheckOutput(
+  output: CliOutput,
+  command: Extract<CliCommand, { readonly name: 'check' }>,
+  snapshot: Pick<
+    TypeSpecApplicationSnapshot,
+    'id' | 'repository' | 'inventory' | 'selection' | 'specifications'
+  >,
+  diagnostics: readonly CliDiagnosticGroup[],
+  qualificationFailed: boolean,
+): void {
+  if (command.format === 'json') {
+    output.out(
+      encodeCliCheckReport(
+        createCliCheckReport({
+          repository: snapshot.repository,
+          inventory: snapshot.inventory,
+          snapshot: snapshot.id,
+          selection: snapshot.selection,
+          specificationSources: snapshot.specifications.map((value) => value.source),
+          diagnostics,
+          qualificationFailed,
+        }),
+      ),
+    )
+    return
+  }
+  for (const diagnostic of diagnostics) printDiagnosticGroup(output, diagnostic)
+  reportCheck(output, command, undefined, snapshot, {
+    causes: diagnostics.length,
+    occurrences: diagnosticOccurrenceCount(diagnostics),
+  })
+}
+
+function diagnosticOccurrenceCount(diagnostics: readonly CliDiagnosticGroup[]): number {
+  return diagnostics.reduce((total, value) => total + value.pointers.length, 0)
 }
 
 type DevTelemetryEvent = Parameters<NonNullable<DevOptions['telemetry']>>[0]
@@ -374,7 +426,7 @@ function reportCheck(
   command: Extract<CliCommand, { name: 'check' | 'changed' }>,
   changed: ChangedSpecificationScope | undefined,
   snapshot: Pick<TypeSpecApplicationSnapshot, 'selection' | 'specifications'>,
-  diagnostics: number,
+  diagnostics: { readonly causes: number; readonly occurrences: number },
 ): void {
   const selected = selectedSpecificationSources(snapshot)
   const support = snapshot.selection.kind === 'focused' ? snapshot.selection.support.length : 0
@@ -382,7 +434,10 @@ function reportCheck(
     snapshot.selection.kind === 'focused'
       ? selected.length + support
       : snapshot.specifications.length
-  const suffix = `${diagnostics} diagnostic${diagnostics === 1 ? '' : 's'}.`
+  const suffix =
+    diagnostics.causes === diagnostics.occurrences
+      ? `${diagnostics.causes} diagnostic${diagnostics.causes === 1 ? '' : 's'}.`
+      : `${diagnostics.causes} diagnostic cause${diagnostics.causes === 1 ? '' : 's'} (${diagnostics.occurrences} occurrences).`
   if (command.name === 'changed' && changed?.kind === 'full') {
     output.out(
       `Checked full catalog: ${checked} specification${checked === 1 ? '' : 's'}, ${suffix}`,

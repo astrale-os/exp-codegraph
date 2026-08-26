@@ -9,6 +9,7 @@ import {
   parseApiCompilerWorkerResourceReport,
   recordApiCompilerIsolationWork,
 } from './isolation-work.optimization.ts'
+import { codegraphWorkerProcess } from './worker-process.ts'
 
 export interface ApiCompilerProcessOptions {
   readonly timeoutMs?: number
@@ -44,11 +45,12 @@ export function compileApisInIsolatedWorker(
   )
   const extension = extname(fileURLToPath(import.meta.url))
   const worker = fileURLToPath(new URL(`./worker${extension}`, import.meta.url))
+  const workerProcess = codegraphWorkerProcess('api-compiler', worker, maxOldSpaceMegabytes)
 
   return new Promise((resolve) => {
     const child = spawn(
-      process.execPath,
-      [`--max-old-space-size=${maxOldSpaceMegabytes}`, worker],
+      workerProcess.executable,
+      workerProcess.arguments,
       { stdio: ['pipe', 'pipe', 'pipe'] },
     )
     let pendingStdout: Buffer<ArrayBufferLike> = Buffer.alloc(0)
