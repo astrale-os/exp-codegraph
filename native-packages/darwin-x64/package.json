@@ -18,10 +18,15 @@
   ],
   "license": "Apache-2.0",
   "name": "@astrale-os/codegraph-native-darwin-x64",
+  "private": true,
   "os": [
     "darwin"
   ],
   "preferUnplugged": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/astrale-os/exp-codegraph.git"
+  },
   "type": "module",
   "version": "0.1.0"
 }

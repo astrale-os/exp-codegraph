@@ -1,5 +1,9 @@
 # Astrale Codegraph
 
+Codegraph is distributed from GitHub at an exact source revision. Its root package and four native
+platform packages are private packing units qualified together as one GitHub Actions artifact; no
+workflow publishes them to a package registry. See [GitHub artifact distribution](docs/github-artifacts.md).
+
 `@astrale-os/codegraph` is a headless, extensible TypeScript code graph and specification
 conformance engine. It exposes reusable analysis, persistence, repository, specification, and
 policy modules; the `cg` command is one consumer of those APIs.

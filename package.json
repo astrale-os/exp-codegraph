@@ -1,5 +1,6 @@
 {
   "name": "@astrale-os/codegraph",
+  "private": true,
   "version": "0.1.0",
   "packageManager": "pnpm@11.13.1",
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
@@ -37,6 +38,7 @@
     "viewer",
     "viewer-host",
     "workspace",
+    "!dist/**/*.map",
     "!analysis/typescript/native/**",
     "!analysis/typescript/ttsc/**"
   ],
@@ -84,9 +86,6 @@
     },
     "./package.json": "./package.json"
   },
-  "publishConfig": {
-    "access": "public"
-  },
   "scripts": {
     "prebuild": "node scripts/clean-dist.mjs",
     "build": "tsgo -p tsconfig.build.json",
@@ -94,6 +93,7 @@
     "check": "node scripts/check.ts",
     "dev": "node cli.ts dev .",
     "release:check": "pnpm run native:assert-release && pnpm run typecheck && pnpm run test",
+    "artifact:policy": "vitest run __tests__/github-artifact-policy.test.ts",
     "native:build": "node scripts/native/build.mjs",
     "native:assemble": "node scripts/native/assemble.mjs",
     "native:assert-release": "node scripts/native/assert-release.mjs",

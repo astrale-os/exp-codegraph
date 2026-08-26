@@ -1,2 +1,30 @@
 packages:
   - 'native-packages/*'
+
+# This checkout links the four owned native packaging units for local builds.
+# GitHub artifact qualification installs packed tarballs in an isolated directory.
+linkWorkspacePackages: true
+preferWorkspacePackages: true
+strictPeerDependencies: true
+
+# Block direct and transitive releases younger than seven days. Astrale packages
+# are the reviewed cohort exception; the only non-Astrale exception is immutable.
+minimumReleaseAge: 10080
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+trustLockfile: false
+minimumReleaseAgeExclude:
+  - '@astrale-os/*'
+  - '@astrale-domains/*'
+  - '@astrale/*'
+  - 'create-astrale-domain'
+  - 'bun-types@1.4.0'
+
+# Never install dependencies implicitly before a script executes.
+verifyDepsBeforeRun: false
+
+# Only dependencies whose install-time code is required by this workspace may
+# run lifecycle builds. Keep this list narrower than the shared Config profile.
+allowBuilds:
+  esbuild: true
+  lightningcss: true

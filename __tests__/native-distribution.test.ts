@@ -11,6 +11,8 @@ import {
 } from '../analysis/typescript/distribution/index.ts'
 
 const packageRoot = resolve(import.meta.dirname, '..')
+const packageVersion = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
+  .version as string
 const temporary: string[] = []
 const target = `${process.platform}-${process.arch}` as keyof typeof targets
 const targets = {
@@ -36,7 +38,7 @@ describe('native analysis distribution', () => {
       command: binary,
       origin: 'explicit',
       target,
-      packageVersion: '0.1.0',
+      packageVersion,
       bytes: content.byteLength,
       sha256: createHash('sha256').update(content).digest('hex'),
     })
@@ -56,12 +58,12 @@ describe('native analysis distribution', () => {
       command: fixture.binary,
       origin: 'package',
       target,
-      packageVersion: '0.1.0',
+      packageVersion,
     })
   })
 
   it('rejects platform package version and executable digest drift', async () => {
-    const version = await packagedFixture({ childVersion: '0.1.1' })
+    const version = await packagedFixture({ childVersion: '0.0.0-invalid-fixture' })
     await expect(version.resolve()).rejects.toMatchObject({
       code: 'NATIVE_PACKAGE_VERSION_MISMATCH',
     })
@@ -108,7 +110,7 @@ async function packagedFixture(options: {
   await stripSourceMapComments(join(root, 'dist'))
   await writeFile(
     join(root, 'package.json'),
-    JSON.stringify({ name: '@astrale-os/codegraph', version: '0.1.0', type: 'module' }),
+    JSON.stringify({ name: '@astrale-os/codegraph', version: packageVersion, type: 'module' }),
   )
   const packageName = targets[target]
   if (!packageName) throw new Error(`Unsupported native distribution test target ${target}.`)
@@ -140,7 +142,7 @@ async function packagedFixture(options: {
     JSON.stringify({
       format: 'astrale.codegraph.native-release',
       version: 1,
-      packageVersion: '0.1.0',
+      packageVersion,
       protocolVersion: 1,
       sourceRevision: '1'.repeat(40),
       toolchain: { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture' },
@@ -152,7 +154,7 @@ async function packagedFixture(options: {
       join(packageDirectory, 'package.json'),
       JSON.stringify({
         name: packageName,
-        version: options.childVersion ?? '0.1.0',
+        version: options.childVersion ?? packageVersion,
         type: 'module',
         exports: { './manifest.json': './manifest.json', './package.json': './package.json' },
       }),
@@ -165,7 +167,7 @@ async function packagedFixture(options: {
       JSON.stringify({
         format: 'astrale.codegraph.native-artifact',
         version: 1,
-        packageVersion: '0.1.0',
+        packageVersion,
         protocolVersion: 1,
         artifact: manifestArtifact,
       }),
