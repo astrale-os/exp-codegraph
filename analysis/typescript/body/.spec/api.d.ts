@@ -22,6 +22,12 @@ export interface BodyOccurrence {
   readonly symbol?: SymbolId
   /** Canonical value declaration, never inferred from a compatible static type. */
   readonly symbolOrigin?: TypeScriptSymbolOrigin
+  /** Actual module namespace value; never inferred from a compatible object type. */
+  readonly symbolKind?: 'module-namespace'
+  /** Authored name on a property-access occurrence, independent of canonical export aliases. */
+  readonly propertyName?: string
+  /** Static module expectation; a consumer must join it to the resolved runtime namespace. */
+  readonly propertyNamespace?: SymbolId
   /** Compiler token kind for a binary operator; absent when unavailable. */
   readonly operator?: string
 }

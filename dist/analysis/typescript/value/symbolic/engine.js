@@ -215,17 +215,23 @@ class Evaluator {
                 const body = this.#index.bodies.get(occurrence.symbol);
                 if (body)
                     return { kind: 'function', body, environment };
-                if (occurrence.symbolOrigin)
-                    return { kind: 'external', symbol: occurrence.symbol, symbolOrigin: occurrence.symbolOrigin };
+                if (occurrence.symbolOrigin || occurrence.symbolKind === 'module-namespace')
+                    return { kind: 'external', symbol: occurrence.symbol, symbolOrigin: occurrence.symbolOrigin, moduleNamespace: occurrence.symbolKind === 'module-namespace' };
             }
         }
         if (occurrence.syntax === 'PropertyAccessExpression') {
             const receiver = next(children?.get('receiver') ?? children?.get('child:0'));
             const nameId = children?.get('name') ?? children?.get('child:1');
-            const symbol = nameId && this.#index.occurrences.get(nameId)?.symbol;
+            const member = nameId && this.#index.occurrences.get(nameId);
+            const symbol = member?.symbol;
+            if (nameId)
+                this.depend(state, `occurrence:${nameId}`);
             if (symbol)
                 this.depend(state, `symbol:${symbol}`);
-            const name = symbol && this.#index.symbols.get(symbol)?.payload.name;
+            if (receiver.kind === 'external' && receiver.moduleNamespace && receiver.symbol === occurrence.propertyNamespace && member?.symbol) {
+                return next(nameId || undefined);
+            }
+            const name = occurrence.propertyName;
             return name ? this.property(receiver, name, state, depth + 1) : uncertain('VALUE_PROPERTY_UNRESOLVED', 'The property identity is unavailable.');
         }
         const direct = this.#index.direct.get(id);
@@ -357,7 +363,8 @@ class Evaluator {
                 : { kind: 'unknown', reasons: [{ code: 'VALUE_NOT_LITERAL', message: 'The value is symbolic rather than a materialized literal.', retryable: false }], evidence };
         const projected = value.kind === 'function'
             ? { kind: 'function', symbol: value.body.payload.body.function, execution: value.body.payload.body.execution, parameterCount: value.body.payload.body.parameters.length }
-            : value.kind === 'object' ? { kind: 'object', properties: [...value.properties.keys()].sort(), complete: !value.incomplete } : value;
+            : value.kind === 'object' ? { kind: 'object', properties: [...value.properties.keys()].sort(), complete: !value.incomplete }
+                : value.kind === 'external' ? { kind: 'external', symbol: value.symbol, ...(value.symbolOrigin ? { symbolOrigin: value.symbolOrigin } : {}) } : value;
         return { kind: 'known', value: projected, evidence };
     }
     effect(kind, symbol, state, localOwner) {

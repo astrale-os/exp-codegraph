@@ -13,7 +13,7 @@ type Body = TypeScriptFact<'body'>
 type RuntimeValue<Atom> =
   | { readonly kind: 'literal'; readonly value: unknown }
   | { readonly kind: 'atom'; readonly value: Atom }
-  | { readonly kind: 'external'; readonly symbol: SymbolId; readonly symbolOrigin?: BodyOccurrence['symbolOrigin'] }
+  | { readonly kind: 'external'; readonly symbol: SymbolId; readonly symbolOrigin?: BodyOccurrence['symbolOrigin']; readonly moduleNamespace?: boolean }
   | { readonly kind: 'function'; readonly body: Body; readonly environment: Environment<Atom> }
   | { readonly kind: 'object'; readonly properties: ReadonlyMap<string, Reference<Atom>>; readonly incomplete: boolean }
   | { readonly kind: 'alternatives'; readonly values: readonly RuntimeValue<Atom>[] }
@@ -242,15 +242,20 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         if (initializers?.length) return alternatives(initializers.map((initializer) => next(initializer)), state)
         const body = this.#index.bodies.get(occurrence.symbol)
         if (body) return { kind: 'function', body, environment }
-        if (occurrence.symbolOrigin) return { kind: 'external', symbol: occurrence.symbol, symbolOrigin: occurrence.symbolOrigin }
+        if (occurrence.symbolOrigin || occurrence.symbolKind === 'module-namespace') return { kind: 'external', symbol: occurrence.symbol, symbolOrigin: occurrence.symbolOrigin, moduleNamespace: occurrence.symbolKind === 'module-namespace' }
       }
     }
     if (occurrence.syntax === 'PropertyAccessExpression') {
       const receiver = next(children?.get('receiver') ?? children?.get('child:0'))
       const nameId = children?.get('name') ?? children?.get('child:1')
-      const symbol = nameId && this.#index.occurrences.get(nameId)?.symbol
+      const member = nameId && this.#index.occurrences.get(nameId)
+      const symbol = member?.symbol
+      if (nameId) this.depend(state, `occurrence:${nameId}`)
       if (symbol) this.depend(state, `symbol:${symbol}`)
-      const name = symbol && this.#index.symbols.get(symbol)?.payload.name
+      if (receiver.kind === 'external' && receiver.moduleNamespace && receiver.symbol === occurrence.propertyNamespace && member?.symbol) {
+        return next(nameId || undefined)
+      }
+      const name = occurrence.propertyName
       return name ? this.property(receiver, name, state, depth + 1) : uncertain('VALUE_PROPERTY_UNRESOLVED', 'The property identity is unavailable.')
     }
     const direct = this.#index.direct.get(id)
@@ -361,7 +366,8 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
       : { kind: 'unknown', reasons: [{ code: 'VALUE_NOT_LITERAL', message: 'The value is symbolic rather than a materialized literal.', retryable: false }], evidence }
     const projected: SymbolicValue<Atom> = value.kind === 'function'
       ? { kind: 'function', symbol: value.body.payload.body.function, execution: value.body.payload.body.execution, parameterCount: value.body.payload.body.parameters.length }
-      : value.kind === 'object' ? { kind: 'object', properties: [...value.properties.keys()].sort(), complete: !value.incomplete } : value
+      : value.kind === 'object' ? { kind: 'object', properties: [...value.properties.keys()].sort(), complete: !value.incomplete }
+        : value.kind === 'external' ? { kind: 'external', symbol: value.symbol, ...(value.symbolOrigin ? { symbolOrigin: value.symbolOrigin } : {}) } : value
     return { kind: 'known', value: projected, evidence }
   }
 

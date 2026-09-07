@@ -166,6 +166,8 @@ export function loop(flag: boolean) { let request = 'old'; while (flag) { reques
     expect((previous.decode(occurrence) as TypeScriptBodyFacts).body.occurrences[0]!.symbolOrigin).toBeUndefined()
     const version3 = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((codec) => codec.id === 'typescript.body.packed/3')!
     expect((version3.decode({ ...occurrence, o: [[...occurrence.o[0]!, null]] }) as TypeScriptBodyFacts).body.occurrences[0]!.operator).toBeUndefined()
+    const version4 = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((codec) => codec.id === 'typescript.body.packed/4')!
+    expect((version4.decode({ ...occurrence, o: [[...occurrence.o[0]!, null, -1]] }) as TypeScriptBodyFacts).body.occurrences[0]!.symbolKind).toBeUndefined()
     expect((TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'module', ''] }) as TypeScriptBodyFacts).body.scope).toBe('module')
     expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'invalid', ''] })).toThrow('scope is invalid')
   })
@@ -298,6 +300,45 @@ Query.from(); facade.from();
       expect(origins[0]!.target).toEqual(origins[1]!.target)
       expect(origins[0]!.receiver).toEqual({ package: '@fixture/canonical', file: 'index.d.ts', path: ['Query'] })
       expect(origins[1]!.receiver).toEqual({ package: '@fixture/other', file: 'index.d.ts', path: ['facade'] })
+    } finally { await current.close() }
+  })
+
+  it.each([false, true])('marks only actual module namespace values across reexports (packed=%s)', async (packed) => {
+    const text = `import * as API from '@fixture/reexport'
+import type * as Types from '@fixture/reexport'
+import { facade } from '@fixture/fabricated'
+const local = {} as typeof API
+const alias = API
+API.defineQuery(); alias.defineQuery(); facade.defineQuery(); local.defineQuery(); Types.defineQuery();
+`
+    const current = await fixture(text, packed, undefined, async (root) => {
+      for (const [name, declaration] of [
+        ['canonical', 'export declare function defineQuery(): unknown\n'],
+        ['reexport', "export * from '@fixture/canonical'\n"],
+        ['fabricated', "export declare const facade: typeof import('@fixture/canonical')\n"],
+      ]) {
+        const directory = join(root, 'node_modules/@fixture', name!)
+        await mkdir(directory, { recursive: true })
+        await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, types: 'index.d.ts' }))
+        await writeFile(join(directory, 'index.d.ts'), declaration!)
+      }
+    })
+    try {
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const module = (await current.read()).find((entry) => entry.file === 'index.ts' && entry.body.scope === 'module')!.body
+      const calls = new Map(module.calls.map((call) => {
+        const occurrence = module.occurrences.find((entry) => entry.id === call.occurrence)!
+        return [text.slice(occurrence.span.start, occurrence.span.end), call]
+      }))
+      const receiver = (expression: string) => module.occurrences.find((entry) => entry.id === calls.get(expression)!.receiver)!
+      expect(receiver('API.defineQuery()').symbolKind).toBe('module-namespace')
+      expect(receiver('facade.defineQuery()').symbolKind).toBeUndefined()
+      expect(receiver('local.defineQuery()').symbolKind).toBeUndefined()
+      expect(receiver('alias.defineQuery()').symbolKind).toBeUndefined()
+      expect(receiver('Types.defineQuery()').symbolKind).toBeUndefined()
+      expect(receiver('Types.defineQuery()').symbolOrigin).toBeUndefined()
+      // The member's type-level call target alone cannot distinguish these cases.
+      expect(calls.get('facade.defineQuery()')!.targetOrigin).toEqual(calls.get('API.defineQuery()')!.targetOrigin)
     } finally { await current.close() }
   })
 

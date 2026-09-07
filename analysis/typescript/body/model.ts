@@ -23,6 +23,12 @@ export interface BodyOccurrence {
   readonly symbol?: SymbolId
   /** Canonical value declaration, never inferred from a compatible static type. */
   readonly symbolOrigin?: TypeScriptSymbolOrigin
+  /** Actual module namespace value; never inferred from a compatible object type. */
+  readonly symbolKind?: 'module-namespace'
+  /** Authored name on a property-access occurrence, independent of canonical export aliases. */
+  readonly propertyName?: string
+  /** Static module expectation; a consumer must join it to the resolved runtime namespace. */
+  readonly propertyNamespace?: SymbolId
   /** Compiler token kind for a binary operator; absent when unavailable. */
   readonly operator?: string
 }
@@ -157,6 +163,9 @@ export function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[] 
     if (!BODY_OCCURRENCE_KINDS.has(occurrence.kind)) diagnostics.push('BODY_OCCURRENCE_KIND_INVALID')
     if (occurrence.owner !== body.function) diagnostics.push('BODY_OCCURRENCE_OWNER_MISMATCH')
     if (!occurrence.syntax) diagnostics.push('BODY_OCCURRENCE_SYNTAX_REQUIRED')
+    if (occurrence.propertyNamespace !== undefined && (occurrence.syntax !== 'PropertyAccessExpression' || typeof occurrence.propertyNamespace !== 'string' || !occurrence.propertyNamespace)) diagnostics.push('BODY_PROPERTY_NAMESPACE_INVALID')
+    if (occurrence.propertyName !== undefined && (occurrence.syntax !== 'PropertyAccessExpression' || typeof occurrence.propertyName !== 'string' || !occurrence.propertyName)) diagnostics.push('BODY_PROPERTY_NAME_INVALID')
+    if (occurrence.symbolKind !== undefined && (!occurrence.symbol || occurrence.symbolKind !== 'module-namespace')) diagnostics.push('BODY_SYMBOL_KIND_INVALID')
     if (occurrence.operator !== undefined && (typeof occurrence.operator !== 'string' || !occurrence.operator))
       diagnostics.push('BODY_OCCURRENCE_OPERATOR_INVALID')
     if (occurrence.symbolOrigin !== undefined && (!occurrence.symbol || !validSymbolOrigin(occurrence.symbolOrigin))) {

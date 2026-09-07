@@ -15,15 +15,19 @@ import type {
 import type { ValueResult } from '../value/model.ts'
 import { validateFunctionBodyIR, type FunctionBodyIR } from '../body/model.ts'
 
-export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/4'
+export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/5'
 
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC: FactPayloadCodec = Object.freeze({
   id: TYPESCRIPT_BODY_PAYLOAD_CODEC_ID,
-  decode: (input: unknown) => decodePackedTypeScriptBody(input, 4),
+  decode: (input: unknown) => decodePackedTypeScriptBody(input, 5),
 })
 
 export const TYPESCRIPT_FACT_PAYLOAD_CODECS: readonly FactPayloadCodec[] = Object.freeze([
   TYPESCRIPT_BODY_PAYLOAD_CODEC,
+  Object.freeze({
+    id: 'typescript.body.packed/4',
+    decode: (input: unknown) => decodePackedTypeScriptBody(input, 4),
+  }),
   Object.freeze({
     id: 'typescript.body.packed/3',
     decode: (input: unknown) => decodePackedTypeScriptBody(input, 3),
@@ -54,7 +58,7 @@ interface PackedBodyData {
   readonly q: unknown
 }
 
-function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4): unknown {
+function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4 | 5): unknown {
   const packed = exactRecord(input, ['c', 's', 't', 'p', 'o', 'r', 'b', 'e', 'd', 'a', 'u', 'v', 'q'], 'body payload') as unknown as PackedBodyData
   const constants = exactTuple(packed.c, version === 1 ? 3 : 5, 'constants')
   const scope = version === 1 ? undefined : constants[3]
@@ -78,9 +82,12 @@ function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4): unk
     texts[ordinal(value, texts.length, path)]!
 
   const occurrences = Array.from(array(packed.o, 'occurrences'), (value, index) => {
-    const row = exactTuple(value, version >= 4 ? 8 : version >= 3 ? 7 : 6, `occurrences[${index}]`)
+    const row = exactTuple(value, version >= 5 ? 11 : version >= 4 ? 8 : version >= 3 ? 7 : 6, `occurrences[${index}]`)
     const symbolIndex = optionalOrdinal(row[5], symbols.length, `occurrences[${index}].symbol`)
     const operatorIndex = version < 4 ? undefined : optionalOrdinal(row[7], texts.length, `occurrences[${index}].operator`)
+    const symbolKindIndex = version < 5 ? undefined : optionalOrdinal(row[8], texts.length, `occurrences[${index}].symbolKind`)
+    const propertyNameIndex = version < 5 ? undefined : optionalOrdinal(row[9], texts.length, `occurrences[${index}].propertyName`)
+    const propertyNamespaceIndex = version < 5 ? undefined : optionalOrdinal(row[10], symbols.length, `occurrences[${index}].propertyNamespace`)
     return {
       id: expandId(row[0], 'occurrence') as OccurrenceId,
       kind: text(row[1], `occurrences[${index}].kind`),
@@ -95,6 +102,9 @@ function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4): unk
       ...(symbolIndex === undefined ? {} : { symbol: symbols[symbolIndex]! }),
       ...(version < 3 || row[6] === null ? {} : { symbolOrigin: admitSymbolOrigin(row[6]) }),
       ...(operatorIndex === undefined ? {} : { operator: texts[operatorIndex]! }),
+      ...(symbolKindIndex === undefined ? {} : { symbolKind: texts[symbolKindIndex]! }),
+      ...(propertyNameIndex === undefined ? {} : { propertyName: texts[propertyNameIndex]! }),
+      ...(propertyNamespaceIndex === undefined ? {} : { propertyNamespace: symbols[propertyNamespaceIndex]! }),
     }
   }) as FunctionBodyIR['occurrences']
   unique(occurrences.map((entry) => entry.id), 'occurrence identities')

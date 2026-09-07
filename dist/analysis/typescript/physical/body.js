@@ -1,12 +1,16 @@
 import { ownFactPayloadCodec } from '../../facts/representation/index.js';
 import { validateFunctionBodyIR } from '../body/model.js';
-export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/4';
+export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/5';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC = Object.freeze({
     id: TYPESCRIPT_BODY_PAYLOAD_CODEC_ID,
-    decode: (input) => decodePackedTypeScriptBody(input, 4),
+    decode: (input) => decodePackedTypeScriptBody(input, 5),
 });
 export const TYPESCRIPT_FACT_PAYLOAD_CODECS = Object.freeze([
     TYPESCRIPT_BODY_PAYLOAD_CODEC,
+    Object.freeze({
+        id: 'typescript.body.packed/4',
+        decode: (input) => decodePackedTypeScriptBody(input, 4),
+    }),
     Object.freeze({
         id: 'typescript.body.packed/3',
         decode: (input) => decodePackedTypeScriptBody(input, 3),
@@ -39,9 +43,12 @@ function decodePackedTypeScriptBody(input, version) {
     const symbol = (value, path) => symbols[ordinal(value, symbols.length, path)];
     const text = (value, path) => texts[ordinal(value, texts.length, path)];
     const occurrences = Array.from(array(packed.o, 'occurrences'), (value, index) => {
-        const row = exactTuple(value, version >= 4 ? 8 : version >= 3 ? 7 : 6, `occurrences[${index}]`);
+        const row = exactTuple(value, version >= 5 ? 11 : version >= 4 ? 8 : version >= 3 ? 7 : 6, `occurrences[${index}]`);
         const symbolIndex = optionalOrdinal(row[5], symbols.length, `occurrences[${index}].symbol`);
         const operatorIndex = version < 4 ? undefined : optionalOrdinal(row[7], texts.length, `occurrences[${index}].operator`);
+        const symbolKindIndex = version < 5 ? undefined : optionalOrdinal(row[8], texts.length, `occurrences[${index}].symbolKind`);
+        const propertyNameIndex = version < 5 ? undefined : optionalOrdinal(row[9], texts.length, `occurrences[${index}].propertyName`);
+        const propertyNamespaceIndex = version < 5 ? undefined : optionalOrdinal(row[10], symbols.length, `occurrences[${index}].propertyNamespace`);
         return {
             id: expandId(row[0], 'occurrence'),
             kind: text(row[1], `occurrences[${index}].kind`),
@@ -56,6 +63,9 @@ function decodePackedTypeScriptBody(input, version) {
             ...(symbolIndex === undefined ? {} : { symbol: symbols[symbolIndex] }),
             ...(version < 3 || row[6] === null ? {} : { symbolOrigin: admitSymbolOrigin(row[6]) }),
             ...(operatorIndex === undefined ? {} : { operator: texts[operatorIndex] }),
+            ...(symbolKindIndex === undefined ? {} : { symbolKind: texts[symbolKindIndex] }),
+            ...(propertyNameIndex === undefined ? {} : { propertyName: texts[propertyNameIndex] }),
+            ...(propertyNamespaceIndex === undefined ? {} : { propertyNamespace: symbols[propertyNamespaceIndex] }),
         };
     });
     unique(occurrences.map((entry) => entry.id), 'occurrence identities');

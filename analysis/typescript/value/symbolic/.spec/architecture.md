@@ -48,3 +48,10 @@ It never constructs per-symbol transitive provenance sets. A demanded proof trav
 those edges under its step budget, records present and absent adjacency/effect keys,
 and memoizes within that proof. Fan-out in unrelated functions does not consume a
 value proof's budget or force a project-wide effect closure.
+
+Property occurrences on a proven module namespace may resolve their actual exported
+member origin, including reexports. The module-namespace witness is retained only
+in the private runtime value, preserving local aliases without adding a public
+value kind. A structurally compatible external object or local cast is not a module
+namespace. Synthetic property plans without a member occurrence remain explicit
+unknown when no exported-member relation is available.

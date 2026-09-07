@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,10 @@ const effectFanout = Array.from({ length: 128 }, (_, index) =>
 const source = `
 ${effectFanout}
 import { helper, shared } from './helper'
+import * as supplied from './helper'
+import * as Library from '@fixture/reexport'
+import type * as Types from '@fixture/reexport'
+import { facade } from '@fixture/fabricated'
 declare function marker(value: string): unknown
 declare const opaque: object
 declare const flag: boolean
@@ -23,6 +27,21 @@ function mutate(value: any) { value.build = () => 'changed' }
 function forwardMutation(value: any) { mutate(value) }
 const base = { build: capture(marker('closed')), project: () => 'view' }
 export const definition = () => ({ ...base })
+const libraryAlias = Library
+const castNamespace = supplied as unknown as typeof Library
+const fabricatedNamespace = { marker: () => 'local' } as typeof Library
+const nestedFabricated = { Alias: { build: () => 'fabricated' } } as typeof Library
+export const namespaceMember = Library.marker
+export const namespaceCastMember = castNamespace.marker
+export const namespaceCastCall = castNamespace.marker('fake-module')
+export const fabricatedNestedMember = nestedFabricated.Alias.build
+export const typeOnlyNamespaceMember = Types.marker
+export const aliasedNamespaceMember = libraryAlias.marker
+export const fabricatedNamespaceMember = fabricatedNamespace.marker
+export const fabricatedExternalMember = facade.marker
+export const namespaceMemberCall = Library.marker('namespace')
+export const fabricatedNamespaceCall = fabricatedNamespace.marker('fake')
+export const fabricatedExternalCall = facade.marker('fake-external')
 export const laterExplicit = () => ({ ...opaque, build: () => marker('explicit') })
 export const laterOpaque = () => ({ build: () => marker('hidden'), ...opaque })
 export const asyncDefinition = async () => ({ build: () => marker('async') })
@@ -108,6 +127,16 @@ describe('symbolic values through the public project API', () => {
       writeFile(join(root, 'helper.ts'), "export function helper() { return 'old' }\nexport const shared = { build: () => 'stable' }\nexport function mutateShared(value: any) { value.build = () => 'changed' }\n"),
       writeFile(join(root, 'mutator.ts'), 'export {}\n'),
     ])
+    for (const [name, declaration] of [
+      ['canonical', 'export declare function marker(value: string): unknown\n'],
+      ['reexport', "export * from '@fixture/canonical'\nexport { marker as Alias } from '@fixture/canonical'\n"],
+      ['fabricated', "export declare const facade: typeof import('@fixture/canonical')\n"],
+    ]) {
+      const directory = join(root, 'node_modules/@fixture', name!)
+      await mkdir(directory, { recursive: true })
+      await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, types: 'index.d.ts' }))
+      await writeFile(join(directory, 'index.d.ts'), declaration!)
+    }
     project = await openTypeScriptProject({ root, ...(process.env.CODEGRAPH_TEST_NATIVE_BINARY ? { binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY } : {}) })
     await project.refresh()
     snapshot = await project.open()
@@ -143,6 +172,32 @@ describe('symbolic values through the public project API', () => {
     expect(await definition.property('project').invoke().resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'view' } })
     expect(await definition.property('absent').resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: undefined } })
     expect(await values.evaluate(declaration('nestedIdentity'))).toMatchObject({ kind: 'known', value: 'nested' })
+  })
+
+  it('resolves real module namespace members through aliases without trusting a compatible object type', async () => {
+    const values = await snapshot.values()
+    for (const name of ['namespaceMember', 'aliasedNamespaceMember']) {
+      expect(await values.value(declaration(name)).resolve()).toMatchObject({ kind: 'known', value: {
+        kind: 'external', symbolOrigin: { package: '@fixture/canonical', file: 'index.d.ts', path: ['marker'] },
+      } })
+    }
+    for (const name of ['fabricatedNamespaceMember', 'fabricatedExternalMember', 'typeOnlyNamespaceMember', 'namespaceCastMember']) {
+      const result = await values.value(declaration(name)).resolve()
+      expect(result.kind !== 'known' || result.value.kind !== 'external').toBe(true)
+    }
+    const modeled = await snapshot.values({ call: (context) => {
+      const callee = context.callee()
+      if (callee.kind === 'known' && callee.value.kind === 'external' && callee.value.symbolOrigin?.package === '@fixture/canonical') {
+        return { kind: 'atom', value: 'actual-module-export' }
+      }
+    } })
+    expect(await values.value(declaration('fabricatedNestedMember')).invoke().resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'fabricated' } })
+    expect(await values.value(declaration('fabricatedNamespaceMember')).invoke().resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'local' } })
+    expect(await modeled.value(declaration('namespaceMemberCall')).resolve()).toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'actual-module-export' } })
+    for (const name of ['fabricatedNamespaceCall', 'fabricatedExternalCall', 'namespaceCastCall']) {
+      const result = await modeled.value(declaration(name)).resolve()
+      expect(result.kind !== 'known' || result.value.kind !== 'atom').toBe(true)
+    }
   })
 
   it('keeps object spread overwrite order conservative', async () => {
