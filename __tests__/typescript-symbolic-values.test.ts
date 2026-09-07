@@ -140,9 +140,16 @@ describe('symbolic values through the public project API', () => {
     project = await openTypeScriptProject({ root, ...(process.env.CODEGRAPH_TEST_NATIVE_BINARY ? { binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY } : {}) })
     await project.refresh()
     snapshot = await project.open()
-    let marker: SymbolId | undefined
-    for await (const fact of snapshot.facts.export('symbol')) if (fact.payload.name === 'marker') marker = fact.payload.symbol
-    expect(marker).toBeDefined()
+    const localSources = (await snapshot.facts.facts('source')).facts.filter((fact) => fact.payload.logicalPath === 'index.ts')
+    expect(localSources).toHaveLength(1)
+    const localSource = localSources[0]!.payload.source
+    const markerDeclaration = source.indexOf('declare function marker(')
+    const markers: SymbolId[] = []
+    for await (const fact of snapshot.facts.export('symbol')) {
+      if (fact.payload.name === 'marker' && fact.payload.declarations.some((span) => span.source === localSource && span.start <= markerDeclaration && span.end > markerDeclaration)) markers.push(fact.payload.symbol)
+    }
+    expect(markers).toHaveLength(1)
+    const marker = markers[0]!
     model = (context) => {
       if (context.call.target !== marker) return
       const value = context.argument(0)
