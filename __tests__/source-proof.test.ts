@@ -1,13 +1,18 @@
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, rm, symlink, truncate, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, open, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { createGitSourceProofProvider } from '../application/node/source-proof.ts'
 import { applicationRepositoryExcludes } from '../application/discovery/scope.ts'
 import type { SourceScope } from '../repository/index.ts'
 import { fixture, type Fixture } from './fixture.ts'
+
+vi.mock('node:fs/promises', async (original) => {
+  const actual = await original<typeof import('node:fs/promises')>()
+  return { ...actual, open: vi.fn(actual.open) }
+})
 
 const execute = promisify(execFile)
 const fixtures: Fixture[] = []
@@ -235,26 +240,28 @@ describe('Git source proof', () => {
       'package.json': JSON.stringify({ name: '@fixture/source-proof-mutation' }),
       'module/.spec/api.d.ts': 'export interface Value {}\n',
     })
-    const source = join(current.root, 'module/.spec/api.d.ts')
+    const source = await realpath(join(current.root, 'module/.spec/api.d.ts'))
     await writeFile(source, Buffer.alloc(2 * 1_024 * 1_024, 0x61))
-    let active = true
-    const mutation = (async () => {
-      let large = false
-      while (active) {
-        await truncate(source, (large ? 2 : 1) * 1_024 * 1_024)
-        large = !large
-        await new Promise<void>((resolve) => setImmediate(resolve))
+    const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let mutations = 0
+    // Save after path metadata was captured and before the handle is admitted.
+    // A free-running truncation loop can legitimately pause across both captures.
+    vi.mocked(open).mockImplementation(async (...arguments_) => {
+      if (arguments_[0] === source) {
+        mutations++
+        await truncate(source, (mutations % 2 ? 1 : 2) * 1_024 * 1_024)
       }
-    })()
+      return actual.open(...arguments_)
+    })
     try {
       await expect(createGitSourceProofProvider().admit(current.root, scope)).resolves.toMatchObject({
         ok: false,
         code: 'proof-unstable',
         retryable: true,
       })
+      expect(mutations).toBe(2)
     } finally {
-      active = false
-      await mutation
+      vi.mocked(open).mockImplementation(actual.open)
     }
   })
 })
