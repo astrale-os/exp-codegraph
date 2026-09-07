@@ -181,6 +181,45 @@ describe('resident TypeScript project public API', () => {
     } finally { await project.dispose() }
   })
 
+  it('bounds owned universe retention through repeated topology edits and keeps the current and explicit readers pinned', async () => {
+    const root = await fixture()
+    const project = await openTypeScriptProject({ root })
+    try {
+      const initial = await project.refresh()
+      const pinned = await project.open(initial.generation)
+      const generations = [initial.generation]
+      for (let index = 0; index < 5; index++) {
+        await writeFile(join(root, `added${index}.ts`), `export const added${index} = ${index}\n`)
+        generations.push((await project.refresh({ changed: [`added${index}.ts`] })).generation)
+      }
+      expect(new Set(generations.map((generation) => generation.universe)).size).toBe(6)
+      expect((await pinned.facts.facts('source')).facts).toHaveLength(1)
+      await expect(project.open(generations[1]!)).rejects.toThrow('universe')
+      const current = await project.open()
+      expect(current.generation).toEqual(generations.at(-1))
+      await current.dispose()
+      await pinned.dispose()
+      await writeFile(join(root, 'another.ts'), 'export const another = true\n')
+      const next = await project.refresh({ changed: ['another.ts'] })
+      await expect(project.open(initial.generation)).rejects.toThrow('universe')
+      const retained = await project.open(next.generation)
+      expect((await retained.facts.facts('source')).facts).toHaveLength(7)
+      await retained.dispose()
+      // Reverting to an evicted universe recovers from a complete native snapshot.
+      for (let index = 0; index < 5; index++) await rm(join(root, `added${index}.ts`))
+      await rm(join(root, 'another.ts'))
+      const restored = await project.refresh({ changed: [...Array.from({ length: 5 }, (_, index) => `added${index}.ts`), 'another.ts'] })
+      expect(restored.generation.universe).toBe(initial.generation.universe)
+      const rebuilt = await project.open()
+      expect((await rebuilt.facts.facts('source')).facts).toHaveLength(1)
+      await rebuilt.dispose()
+      const cold = await openTypeScriptProject({ root })
+      try { expect(restored.generation.id).toBe((await cold.refresh()).generation.id) }
+      finally { await cold.dispose() }
+      expect((await project.refresh()).transactions).toEqual([])
+    } finally { await project.dispose() }
+  })
+
   it('releases a delayed reader instead of returning it after disposal', async () => {
     const backing = createMemoryAnalysisStore()
     const opened = Promise.withResolvers<void>()

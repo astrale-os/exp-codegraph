@@ -3,8 +3,8 @@ import { createMemoryAnalysisStore } from '../../memory/index.ts'
 import { createProcessNativeAnalysisSessionFactory } from '../../protocol/index.ts'
 import type { AnalysisGeneration } from '../../generation/index.ts'
 import type { FactTransaction } from '../../generation/index.ts'
-import type { FactShardKey, SourceId } from '../../identity/index.ts'
-import type { AnalysisStore } from '../../query/index.ts'
+import type { FactShardKey, ProjectUniverseId, SourceId } from '../../identity/index.ts'
+import type { AnalysisQuery, AnalysisStore } from '../../query/index.ts'
 import type { NativeAnalysisSessionFactory, NativeProjectDescriptor } from '../../protocol/index.ts'
 import { resolvePackagedNativeAnalysis } from '../distribution/index.ts'
 import { createTypeScriptAnalysisService } from '../service.ts'
@@ -33,12 +33,13 @@ export async function openTypeScriptProject(options: TypeScriptProjectOptions): 
       ...module, facades: [...module.facades], aliases: [...module.aliases], internals: [...module.internals],
     })) } : {}),
   }
-  return new ResidentProject(descriptor, sessions, options.store ?? createMemoryAnalysisStore(), !options.store)
+  return new ResidentProject(descriptor, sessions, options.store ?? createMemoryAnalysisStore({ maximumRetainedUniverses: 2 }), !options.store)
 }
 
 class ResidentProject implements TypeScriptProject {
   #service: TypeScriptAnalysisService | undefined
   #universe: AnalysisGeneration['universe'] | undefined
+  #currentReader: AnalysisQuery | undefined
   #tail: Promise<void> = Promise.resolve()
   #closed = false
   #closing: Promise<void> | undefined
@@ -51,7 +52,7 @@ class ResidentProject implements TypeScriptProject {
   readonly #writer: AnalysisStore
   readonly #pending: FactTransaction[] = []
   readonly #pendingSources = new Set<SourceId>()
-  readonly #sourceShards = new Map<FactShardKey, readonly SourceId[]>()
+  readonly #sourceShards = new Map<ProjectUniverseId, Map<FactShardKey, readonly SourceId[]>>()
 
   constructor(
     descriptor: NativeProjectDescriptor,
@@ -71,14 +72,16 @@ class ResidentProject implements TypeScriptProject {
       commit: async (transaction, options) => {
         await store.commit(transaction, options)
         this.#pending.push(transaction)
+        let sourcesByShard = this.#sourceShards.get(transaction.next.universe)
+        if (!sourcesByShard) this.#sourceShards.set(transaction.next.universe, (sourcesByShard = new Map()))
         for (const key of transaction.deletes) {
-          for (const source of this.#sourceShards.get(key) ?? []) this.#pendingSources.add(source)
-          this.#sourceShards.delete(key)
+          for (const source of sourcesByShard.get(key) ?? []) this.#pendingSources.add(source)
+          sourcesByShard.delete(key)
         }
         for (const shard of transaction.upserts) {
           if (shard.namespace !== 'typescript.source') continue
           const sources = shard.facts.map((fact) => (fact.payload as TypeScriptSourceFact).source)
-          this.#sourceShards.set(shard.key, sources)
+          sourcesByShard.set(shard.key, sources)
           for (const source of sources) this.#pendingSources.add(source)
         }
       },
@@ -104,6 +107,13 @@ class ResidentProject implements TypeScriptProject {
         request.signal.throwIfAborted()
         const result = await this.#service.refresh(request)
         this.#universe = result.generation.universe
+        if (this.#currentReader?.generation.id !== result.generation.id) {
+          const next = await this.#store.open(result.generation.universe, result.generation.id)
+          if (this.#closed) { await next.dispose(); throw new Error('TypeScript project is disposed.') }
+          const previous = this.#currentReader
+          this.#currentReader = next
+          await previous?.dispose()
+        }
         const transactions = Object.freeze(this.#pending.splice(0))
         const changedSources = Object.freeze([...new Set([...this.#pendingSources, ...result.changedSources])].sort())
         this.#pendingSources.clear()
@@ -117,6 +127,8 @@ class ResidentProject implements TypeScriptProject {
         this.#service = undefined
         await failed?.dispose().catch(() => {})
         throw error
+      } finally {
+        await this.collectSourceShards()
       }
     })
   }
@@ -159,6 +171,7 @@ class ResidentProject implements TypeScriptProject {
           this.#readers.delete(snapshot)
           evaluators.clear()
           await query.dispose()
+          await this.collectSourceShards()
         },
         async [Symbol.asyncDispose]() { await snapshot.dispose() },
       })
@@ -177,8 +190,11 @@ class ResidentProject implements TypeScriptProject {
       await this.#tail
       const cleanup = [...await stopping, ...await Promise.allSettled([
         this.#service?.dispose(),
+        this.#currentReader?.dispose(),
         ...[...this.#readers].map((reader) => reader.dispose()),
       ])]
+      this.#currentReader = undefined
+      this.#service = undefined
       if (this.#ownsStore) await this.#store.dispose()
       this.#pending.length = 0
       this.#pendingSources.clear()
@@ -190,6 +206,13 @@ class ResidentProject implements TypeScriptProject {
   }
 
   async [Symbol.asyncDispose](): Promise<void> { await this.dispose() }
+
+  private async collectSourceShards(): Promise<void> {
+    if (!this.#ownsStore) return
+    const universes = [...this.#sourceShards.keys()]
+    const retained = await Promise.all(universes.map((universe) => this.#store.current(universe)))
+    universes.forEach((universe, index) => { if (!retained[index]) this.#sourceShards.delete(universe) })
+  }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {
     if (this.#closed) return Promise.reject(new Error('TypeScript project is disposed.'))

@@ -3,6 +3,8 @@ import type { AnalysisTelemetrySink } from '../../profiling/.spec/api.js'
 
 export interface MemoryAnalysisStoreOptions {
   readonly maximumRetainedGenerations?: number
+  /** Opt-in bound across universes; leased universes and the most recently used universe remain retained. */
+  readonly maximumRetainedUniverses?: number
   readonly telemetry?: AnalysisTelemetrySink
 }
 

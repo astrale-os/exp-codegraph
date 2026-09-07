@@ -94,6 +94,39 @@ describe('memory generation query ownership', () => {
     } finally { await store.dispose() }
   })
 
+  it('evicts old universes only when opted in and preserves query and snapshot-set leases', async () => {
+    const [first, second, third, fourth] = ['first', 'second', 'third', 'fourth'].map((name) => corpus(20, undefined, name))
+    const store = createMemoryAnalysisStore({ maximumRetainedUniverses: 2 })
+    const shared = createMemoryAnalysisStore()
+    try {
+      for (const transaction of [first!, second!, third!, fourth!]) await shared.commit(transaction)
+      for (const transaction of [first!, second!, third!, fourth!]) expect(await shared.current(transaction.next.universe)).toEqual(transaction.next)
+      await store.commit(first!)
+      const pinned = await store.open(first!.next.universe)
+      await store.commit(second!)
+      const set = await store.snapshotSet(new Map([[second!.next.universe, second!.next.id]]), second!.next.sourceManifest)
+      const child = await set.query(second!.next.universe)
+      await store.commit(third!)
+      expect(await store.current(first!.next.universe)).toEqual(first!.next)
+      expect((await pinned.facts()).facts).toHaveLength(20)
+      await pinned.dispose()
+      expect(await store.current(first!.next.universe)).toBeUndefined()
+      await set.dispose()
+      await store.commit(fourth!)
+      expect((await child.facts()).facts).toHaveLength(20)
+      expect(await store.current(second!.next.universe)).toEqual(second!.next)
+      await child.dispose()
+      await store.commit(corpus(20, undefined, 'fifth'))
+      // The current() observations above did not promote the historical universe.
+      expect(await store.current(second!.next.universe)).toBeUndefined()
+      expect(await store.current(fourth!.next.universe)).toEqual(fourth!.next)
+      await expect(store.open(first!.next.universe, first!.next.id)).rejects.toThrow()
+    } finally { await store.dispose(); await shared.dispose() }
+    for (const maximumRetainedUniverses of [0, -1, 1.5, Infinity]) {
+      expect(() => createMemoryAnalysisStore({ maximumRetainedUniverses })).toThrow('maximumRetainedUniverses')
+    }
+  })
+
   it('keeps generation bindings and leases isolated when unchanged fact identities are reused', async () => {
     const first = corpus(80)
     const second = corpus(80, first)
@@ -126,13 +159,13 @@ describe('memory generation query ownership', () => {
 function source(name: string) { return deriveAnalysisId('source', 'memory-query-test', { name }) }
 function subject(index: number) { return deriveAnalysisId('symbol', 'memory-query-test', { index }) }
 
-function corpus(size: number, previous?: FactTransaction): FactTransaction {
+function corpus(size: number, previous?: FactTransaction, universeName = 'default'): FactTransaction {
   const partial = {
     kind: 'partial' as const,
     reasons: [{ code: 'FIXTURE_PARTIAL', message: 'Selected fixture evidence is partial.', effective: {} }],
   }
   const sequence = previous ? previous.next.sequence + 1 : 1
-  const universe = deriveAnalysisId('project-universe', 'memory-query-test', {})
+  const universe = deriveAnalysisId('project-universe', 'memory-query-test', { universeName })
   const producer = {
     id: deriveAnalysisId('producer', 'memory-query-test', {}),
     name: 'memory-query-test', version: '1', protocolVersion: 1,

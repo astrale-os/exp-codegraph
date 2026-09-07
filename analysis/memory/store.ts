@@ -20,6 +20,8 @@ import {
 
 export interface MemoryAnalysisStoreOptions {
   readonly maximumRetainedGenerations?: number
+  /** Opt-in bound across universes; leased universes and the most recently used universe remain retained. */
+  readonly maximumRetainedUniverses?: number
   readonly telemetry?: AnalysisTelemetrySink
 }
 
@@ -34,6 +36,8 @@ export function createMemoryAnalysisStore(options: MemoryAnalysisStoreOptions = 
 
 class MemoryAnalysisStore implements AnalysisStore {
   readonly #maximumRetained: number
+  readonly #maximumUniverses: number | undefined
+  #mostRecentUniverse: ProjectUniverseId | undefined
   readonly #telemetry: AnalysisTelemetrySink | undefined
   readonly #universes = new Map<ProjectUniverseId, Map<number, RetainedGeneration>>()
   readonly #current = new Map<ProjectUniverseId, number>()
@@ -42,6 +46,10 @@ class MemoryAnalysisStore implements AnalysisStore {
   constructor(options: MemoryAnalysisStoreOptions) {
     this.#maximumRetained = options.maximumRetainedGenerations ?? 4
     this.#telemetry = options.telemetry
+    this.#maximumUniverses = options.maximumRetainedUniverses
+    if (this.#maximumUniverses !== undefined && (!Number.isSafeInteger(this.#maximumUniverses) || this.#maximumUniverses < 1)) {
+      throw new RangeError('maximumRetainedUniverses must be a positive integer.')
+    }
     if (!Number.isSafeInteger(this.#maximumRetained) || this.#maximumRetained < 1) {
       throw new RangeError('maximumRetainedGenerations must be a positive integer.')
     }
@@ -69,6 +77,7 @@ class MemoryAnalysisStore implements AnalysisStore {
     }
     retained.set(next.generation.sequence, { value: next, leases: 0 })
     this.#current.set(universe, next.generation.sequence)
+    this.activate(universe)
     this.collect(universe)
     if (this.#telemetry) {
       dispatchAnalysisTelemetry(this.#telemetry, {
@@ -92,6 +101,7 @@ class MemoryAnalysisStore implements AnalysisStore {
     this.assertOpen()
     const retained = this.retained(universe, generation)
     retained.leases++
+    this.activate(universe)
     return createQuery(retained.value, () => {
       retained.leases--
       this.collect(universe)
@@ -163,7 +173,7 @@ class MemoryAnalysisStore implements AnalysisStore {
 
   private collect(universe: ProjectUniverseId): void {
     const values = this.#universes.get(universe)
-    if (!values || values.size <= this.#maximumRetained) return
+    if (!values) return
     const current = this.#current.get(universe)
     const candidates = [...values]
       .filter(([sequence, retained]) => sequence !== current && retained.leases === 0)
@@ -171,6 +181,20 @@ class MemoryAnalysisStore implements AnalysisStore {
     while (values.size > this.#maximumRetained && candidates.length) {
       values.delete(candidates.shift()![0])
     }
+    if (this.#maximumUniverses === undefined) return
+    for (const [candidate, generations] of this.#universes) {
+      if (this.#universes.size <= this.#maximumUniverses) break
+      if (candidate === this.#mostRecentUniverse || [...generations.values()].some((entry) => entry.leases > 0)) continue
+      this.#universes.delete(candidate)
+      this.#current.delete(candidate)
+    }
+  }
+
+  private activate(universe: ProjectUniverseId): void {
+    this.#mostRecentUniverse = universe
+    const retained = this.#universes.get(universe)!
+    this.#universes.delete(universe)
+    this.#universes.set(universe, retained)
   }
 
   private assertOpen(): void {

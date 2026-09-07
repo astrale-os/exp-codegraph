@@ -25,11 +25,12 @@ export async function openTypeScriptProject(options) {
                 ...module, facades: [...module.facades], aliases: [...module.aliases], internals: [...module.internals],
             })) } : {}),
     };
-    return new ResidentProject(descriptor, sessions, options.store ?? createMemoryAnalysisStore(), !options.store);
+    return new ResidentProject(descriptor, sessions, options.store ?? createMemoryAnalysisStore({ maximumRetainedUniverses: 2 }), !options.store);
 }
 class ResidentProject {
     #service;
     #universe;
+    #currentReader;
     #tail = Promise.resolve();
     #closed = false;
     #closing;
@@ -56,16 +57,19 @@ class ResidentProject {
             commit: async (transaction, options) => {
                 await store.commit(transaction, options);
                 this.#pending.push(transaction);
+                let sourcesByShard = this.#sourceShards.get(transaction.next.universe);
+                if (!sourcesByShard)
+                    this.#sourceShards.set(transaction.next.universe, (sourcesByShard = new Map()));
                 for (const key of transaction.deletes) {
-                    for (const source of this.#sourceShards.get(key) ?? [])
+                    for (const source of sourcesByShard.get(key) ?? [])
                         this.#pendingSources.add(source);
-                    this.#sourceShards.delete(key);
+                    sourcesByShard.delete(key);
                 }
                 for (const shard of transaction.upserts) {
                     if (shard.namespace !== 'typescript.source')
                         continue;
                     const sources = shard.facts.map((fact) => fact.payload.source);
-                    this.#sourceShards.set(shard.key, sources);
+                    sourcesByShard.set(shard.key, sources);
                     for (const source of sources)
                         this.#pendingSources.add(source);
                 }
@@ -91,6 +95,16 @@ class ResidentProject {
                 request.signal.throwIfAborted();
                 const result = await this.#service.refresh(request);
                 this.#universe = result.generation.universe;
+                if (this.#currentReader?.generation.id !== result.generation.id) {
+                    const next = await this.#store.open(result.generation.universe, result.generation.id);
+                    if (this.#closed) {
+                        await next.dispose();
+                        throw new Error('TypeScript project is disposed.');
+                    }
+                    const previous = this.#currentReader;
+                    this.#currentReader = next;
+                    await previous?.dispose();
+                }
                 const transactions = Object.freeze(this.#pending.splice(0));
                 const changedSources = Object.freeze([...new Set([...this.#pendingSources, ...result.changedSources])].sort());
                 this.#pendingSources.clear();
@@ -105,6 +119,9 @@ class ResidentProject {
                 this.#service = undefined;
                 await failed?.dispose().catch(() => { });
                 throw error;
+            }
+            finally {
+                await this.collectSourceShards();
             }
         });
     }
@@ -150,6 +167,7 @@ class ResidentProject {
                     this.#readers.delete(snapshot);
                     evaluators.clear();
                     await query.dispose();
+                    await this.collectSourceShards();
                 },
                 async [Symbol.asyncDispose]() { await snapshot.dispose(); },
             });
@@ -168,8 +186,11 @@ class ResidentProject {
             await this.#tail;
             const cleanup = [...await stopping, ...await Promise.allSettled([
                     this.#service?.dispose(),
+                    this.#currentReader?.dispose(),
                     ...[...this.#readers].map((reader) => reader.dispose()),
                 ])];
+            this.#currentReader = undefined;
+            this.#service = undefined;
             if (this.#ownsStore)
                 await this.#store.dispose();
             this.#pending.length = 0;
@@ -182,6 +203,14 @@ class ResidentProject {
         return this.#closing;
     }
     async [Symbol.asyncDispose]() { await this.dispose(); }
+    async collectSourceShards() {
+        if (!this.#ownsStore)
+            return;
+        const universes = [...this.#sourceShards.keys()];
+        const retained = await Promise.all(universes.map((universe) => this.#store.current(universe)));
+        universes.forEach((universe, index) => { if (!retained[index])
+            this.#sourceShards.delete(universe); });
+    }
     enqueue(work) {
         if (this.#closed)
             return Promise.reject(new Error('TypeScript project is disposed.'));
