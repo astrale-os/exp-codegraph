@@ -157,12 +157,17 @@ jobs:
       - uses: astrale-os/config/.github/actions/setup@9bffee57d53b603b556bb545145fdde10f20a4c5
         with:
           frozen-lockfile: 'true'
-          node-version: ${{ matrix.node-version }}
+          node-version: '26'
       - name: Download assembled GitHub artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: codegraph-release
           path: release
+      - name: Select the packed consumer runtime
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7, same pin as Config setup
+        with:
+          node-version: ${{ matrix.node-version }}
+          package-manager-cache: false
       - name: Prove GitHub artifact installation and native execution
         run: node qualification/v2/release/packed-consumer.mjs --release-directory release
       - name: Qualify SQLite on the minimum supported Node release

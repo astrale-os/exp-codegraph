@@ -29,7 +29,8 @@ On a pull request, a push to `main`, or a manual dispatch it:
 6. downloads that artifact on every target, installs the complete six-tarball cohort in an
    isolated temporary project, and executes a real analysis with the matching native package.
    Packed Linux x64 consumers additionally run on Node 22.13.0, the current Node 22, and Node 24;
-   every target runs on Node 26. The resident project regression reads facts and bounded values,
+   every target runs on Node 26. Build dependencies install on Node 26 before switching the
+   isolated consumer runtime, keeping the compiler toolchain independent of the library minimum. The resident project regression reads facts and bounded values,
    refreshes an edited source, proves no-op behavior and retains its old immutable reader.
 
 The isolated consumer disables workspace links and strips registry and GitHub credentials from its
