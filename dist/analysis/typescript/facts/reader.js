@@ -1,5 +1,9 @@
+import { hasImmutableFactPayload } from '../../facts/representation/index.js';
 import { TYPESCRIPT_FACT_NAMESPACES, TypeScriptFactContractError, } from './model.js';
 import { validateTypeScriptFactPayload } from './validate.js';
+// Payloads of unchanged shards retain their identity across pinned generations.
+// Only roots decoded and frozen by an owned codec retain successful admission.
+const admittedPayloads = new WeakMap();
 export function createTypeScriptFactReader(query) {
     let declarationIndex;
     const allDeclarations = () => (declarationIndex ??= loadDeclarationIndex(query));
@@ -69,7 +73,21 @@ function admit(kind, fact) {
         !((kind === 'module' || kind === 'declaration') && fact.schemaVersion === 2)) {
         diagnostics.push(`schema-version:${fact.schemaVersion}`);
     }
-    diagnostics.push(...validateTypeScriptFactPayload(kind, fact.payload, fact.schemaVersion));
+    const payload = fact.payload;
+    const key = `${kind}/${fact.schemaVersion}`;
+    const cached = payload !== null && typeof payload === 'object'
+        ? admittedPayloads.get(payload)?.has(key)
+        : false;
+    if (!cached) {
+        const payloadDiagnostics = validateTypeScriptFactPayload(kind, payload, fact.schemaVersion);
+        diagnostics.push(...payloadDiagnostics);
+        if (!payloadDiagnostics.length && payload !== null && typeof payload === 'object' && hasImmutableFactPayload(payload)) {
+            let admissions = admittedPayloads.get(payload);
+            if (!admissions)
+                admittedPayloads.set(payload, (admissions = new Set()));
+            admissions.add(key);
+        }
+    }
     if (diagnostics.length)
         throw new TypeScriptFactContractError(kind, fact.id, diagnostics);
     return fact;
