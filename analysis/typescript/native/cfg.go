@@ -90,6 +90,8 @@ func (b *controlFlowBuilder) statement(node *shimast.Node, context flowContext) 
 		return flowFragment{}
 	}
 	switch node.Kind {
+	case shimast.KindSourceFile:
+		return b.sequence(b.body.file.Statements.Nodes, context)
 	case shimast.KindBlock:
 		block := node.AsBlock()
 		if block.Statements == nil {
@@ -317,8 +319,20 @@ func (b *controlFlowBuilder) findExpressionLimitations(node *shimast.Node) {
 	if shimast.IsFunctionLike(node) {
 		return
 	}
+	switch node.Kind {
+	case shimast.KindClassDeclaration, shimast.KindClassExpression, shimast.KindModuleDeclaration:
+		b.limitations["CFG_NESTED_SCOPE_UNSUPPORTED"] = true
+		return
+	}
 	if node.Kind == shimast.KindConditionalExpression {
 		b.limitations["CFG_EXPRESSION_BRANCH_PARTIAL"] = true
+	}
+	if node.Kind == shimast.KindBinaryExpression {
+		switch node.AsBinaryExpression().OperatorToken.Kind {
+		case shimast.KindAmpersandAmpersandToken, shimast.KindBarBarToken, shimast.KindQuestionQuestionToken,
+			shimast.KindAmpersandAmpersandEqualsToken, shimast.KindBarBarEqualsToken, shimast.KindQuestionQuestionEqualsToken:
+			b.limitations["CFG_EXPRESSION_BRANCH_PARTIAL"] = true
+		}
 	}
 	node.ForEachChild(func(child *shimast.Node) bool {
 		b.findExpressionLimitations(child)
@@ -328,6 +342,8 @@ func (b *controlFlowBuilder) findExpressionLimitations(node *shimast.Node) {
 
 func cfgLimitMessage(code string) string {
 	switch code {
+	case "CFG_NESTED_SCOPE_UNSUPPORTED":
+		return "Class initialization and namespace execution are not represented in the enclosing body."
 	case "CFG_EXPRESSION_BRANCH_PARTIAL":
 		return "Conditional and short-circuit expression branches remain occurrence relations but are not separate control-flow blocks."
 	case "CFG_SWITCH_PARTIAL":

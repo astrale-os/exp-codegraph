@@ -8,7 +8,9 @@ import (
 
 func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayloadEnvelope, error) {
 	body := payload.Body
-	constants := make([]string, 3)
+	constants := make([]string, 5)
+	constants[3] = body.Scope
+	constants[4] = body.Execution
 	var err error
 	if constants[0], err = compactAnalysisID(evidence.Source, "source"); err != nil {
 		return physicalPayloadEnvelope{}, err
@@ -222,7 +224,7 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		}
 		calls = append(calls, []any{
 			occurrence, target, signature, receiver, textRefs(call.TypeArguments), arguments,
-			bindings, callbacks, dynamic,
+			bindings, callbacks, dynamic, call.TargetOrigin,
 		})
 	}
 	returns, err := occurrenceRefs(body.Summary.Returns)

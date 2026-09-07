@@ -33,6 +33,12 @@ export type EvaluatedValueResult<Value> = ValueResult<Value> & {
 }
 
 export interface BoundedValueEvaluator {
+  /**
+   * Resolve literal values and supported transfers in the calling context.
+   * Both explicit returns and concise arrow returns retain their expression.
+   * Operand relations alone never prove a binary, property, or spread value;
+   * unsupported argument bindings and exhausted budgets remain unknown.
+   */
   evaluate<Value = unknown>(
     occurrence: OccurrenceId,
     options?: { readonly signal?: AbortSignal },

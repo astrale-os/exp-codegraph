@@ -3525,7 +3525,7 @@ function bodyFixture(): FunctionBodyIR {
 function packedBodyFixture() {
   const compact = (byte: number) => Buffer.alloc(32, byte).toString('base64url')
   return {
-    c: [compact(1), compact(2), compact(3)],
+    c: [compact(1), compact(2), compact(3), 'function', 'sync'],
     s: [] as string[],
     t: ['statement', 'ExpressionStatement', 'entry'],
     p: [] as number[],
