@@ -5,14 +5,22 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { openTypeScriptProject, type SymbolicCallModel, type TypeScriptProject, type TypeScriptProjectSnapshot } from '../analysis/typescript/index.ts'
 import type { OccurrenceId, SymbolId } from '../analysis/identity/index.ts'
 
+const effectFanout = Array.from({ length: 128 }, (_, index) =>
+  `function effect${index}(value: any) { ${index === 127 ? "value.build = () => 'changed'" : `effect${index + 1}(value); effect${Math.min(index + 2, 127)}(value)`} }`).join('\n')
+
 const source = `
+${effectFanout}
 import { helper, shared } from './helper'
 declare function marker(value: string): unknown
 declare const opaque: object
 declare const flag: boolean
+declare function unknownFactory(): unknown
+declare function externalMutate(value: unknown): void
 function capture(value: unknown) { return () => value }
 function rest(...values: unknown[]) { return values }
 function first(value: unknown) { return value }
+function mutate(value: any) { value.build = () => 'changed' }
+function forwardMutation(value: any) { mutate(value) }
 const base = { build: capture(marker('closed')), project: () => 'view' }
 export const definition = () => ({ ...base })
 export const laterExplicit = () => ({ ...opaque, build: () => marker('explicit') })
@@ -27,11 +35,14 @@ export const generatorDefinition = () => ({ build: generatorRequest })
 export const restDefinition = () => ({ build: () => rest(marker('rest')) })
 export const spreadDefinition = () => ({ build: () => first(...[marker('spread')]) })
 export const branch = () => flag ? marker('left') : marker('right')
+export const uncertainBranch = () => flag ? marker('possible') : unknownFactory()
 export const dependent = () => ({ build: helper })
 export const crossMutation = () => shared
 export const direct = marker('direct')
 export const nestedIdentity = first(first('nested'))
 export const compound = () => { let value: any = ''; value += marker('compound'); return value }
+export const reassigned = () => { let value: any = 'old'; value = 'new'; return value }
+export const reassignedCall = reassigned()
 export const mutatedObject = () => {
   const object = { build: () => marker('obsolete') }
   object.build = () => 'changed'
@@ -42,6 +53,43 @@ export const mutatedAlias = () => {
   const alias = object
   alias.build = () => 'changed'
   return object
+}
+export const localEffect = () => {
+  const options = { build: () => marker('obsolete-local') }
+  mutate(options)
+  return options
+}
+export const forwardedEffect = () => {
+  const options = { build: () => marker('obsolete-forwarded') }
+  forwardMutation(options)
+  return options
+}
+export const externalEffect = () => {
+  const options = { build: () => marker('obsolete-external') }
+  externalMutate(options)
+  return options
+}
+export const capturedWrite = () => {
+  let value: unknown = marker('obsolete-capture')
+  const read = () => value
+  value = 'changed'
+  return { build: read }
+}
+export const interproceduralWrite = () => {
+  let value: unknown = 'old'
+  const mutate = () => { value = 'changed' }
+  value = marker('obsolete-interprocedural')
+  mutate()
+  return value
+}
+let selected: unknown = marker('observed-factory')
+function choose() { return selected }
+selected = 'reassigned'
+export const mutableFactory = choose()
+export const boundedEffect = () => {
+  const options = { build: () => marker('obsolete-budgeted') }
+  effect0(options)
+  return options
 }
 `
 
@@ -57,7 +105,7 @@ describe('symbolic values through the public project API', () => {
     await Promise.all([
       writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, noEmit: true }, files: ['index.ts', 'helper.ts', 'mutator.ts'] })),
       writeFile(join(root, 'index.ts'), source),
-      writeFile(join(root, 'helper.ts'), "export function helper() { return 'old' }\nexport const shared = { build: () => 'stable' }\n"),
+      writeFile(join(root, 'helper.ts'), "export function helper() { return 'old' }\nexport const shared = { build: () => 'stable' }\nexport function mutateShared(value: any) { value.build = () => 'changed' }\n"),
       writeFile(join(root, 'mutator.ts'), 'export {}\n'),
     ])
     project = await openTypeScriptProject({ root, ...(process.env.CODEGRAPH_TEST_NATIVE_BINARY ? { binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY } : {}) })
@@ -128,6 +176,15 @@ describe('symbolic values through the public project API', () => {
     expect(await plan.resolve()).toMatchObject({ kind: 'ambiguous' })
   })
 
+  it('preserves observed candidates without turning an incomplete branch into known evidence', async () => {
+    const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
+    const result = await values.value(declaration('uncertainBranch')).invoke().resolve()
+    expect(result).toMatchObject({ kind: 'unknown', candidates: [{ kind: 'atom', value: 'possible' }] })
+    expect(result.evidence.length).toBeGreaterThan(0)
+    expect(values.canReuse(result)).toBe(true)
+    expect(await values.value(declaration('mutableFactory')).resolve()).toMatchObject({ kind: 'unknown', candidates: [{ kind: 'atom', value: 'observed-factory' }] })
+  })
+
   it('shares one immutable index across models without mixing hooks or budgets', async () => {
     const reader = await project.open()
     const reads = vi.spyOn(reader.query, 'export')
@@ -154,12 +211,34 @@ describe('symbolic values through the public project API', () => {
     expect(await values.value(declaration('direct')).resolve()).toMatchObject({ kind: 'unknown', reasons: [expect.objectContaining({ code: 'VALUE_STEP_LIMIT' })] })
   })
 
+  it('charges transitive effects to the demanded proof budget on a shared branching call graph', async () => {
+    const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
+    const plan = values.value(declaration('boundedEffect')).invoke().property('build').invoke()
+    expect(await plan.resolve({ limits: { maximumSteps: 16 } })).toMatchObject({
+      kind: 'unknown', reasons: expect.arrayContaining([expect.objectContaining({ code: 'VALUE_STEP_LIMIT' })]),
+    })
+    expect(await plan.resolve()).toMatchObject({ kind: 'unknown', reasons: [expect.objectContaining({ code: 'VALUE_MUTATION_UNSUPPORTED' })] })
+    expect(await values.value(declaration('direct')).resolve({ limits: { maximumSteps: 8 } })).toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'direct' } })
+  })
+
   it('does not mistake a compound assignment operand for the assigned value', async () => {
     const values = await snapshot.values({ call: model })
     expect(await values.value(declaration('compound')).invoke().resolve()).toMatchObject({ kind: 'unknown' })
   })
 
+  it('preserves an exact dominating simple assignment without trusting interprocedural writes', async () => {
+    const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
+    expect(await values.value(declaration('reassigned')).invoke().resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'new' } })
+    expect(await values.evaluate(declaration('reassignedCall'))).toMatchObject({ kind: 'known', value: 'new' })
+    expect(await values.value(declaration('interproceduralWrite')).invoke().resolve()).toMatchObject({ kind: 'unknown' })
+  })
+
   it.each(['mutatedObject', 'mutatedAlias'])('does not claim the initializer is still effective for %s', async (name) => {
+    const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
+    expect(await values.value(declaration(name)).invoke().property('build').invoke().resolve()).toMatchObject({ kind: 'unknown' })
+  })
+
+  it.each(['localEffect', 'forwardedEffect', 'externalEffect', 'capturedWrite'])('does not preserve stale object or closure state through %s', async (name) => {
     const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
     expect(await values.value(declaration(name)).invoke().property('build').invoke().resolve()).toMatchObject({ kind: 'unknown' })
   })
@@ -168,13 +247,18 @@ describe('symbolic values through the public project API', () => {
     const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
     const before = await values.value(declaration('crossMutation')).invoke().property('build').invoke().resolve()
     expect(before).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'stable' } })
-    await writeFile(join(root, 'mutator.ts'), "import { shared } from './helper'; shared.build = () => 'changed'\n")
+    await writeFile(join(root, 'mutator.ts'), "import { shared, mutateShared } from './helper'; mutateShared(shared)\n")
     await project.refresh({ changed: ['mutator.ts'] })
     const mutated = await project.open()
     const next = await mutated.values({ call: model, limits: { maximumDepth: 64 } })
     expect(next.canReuse(before)).toBe(false)
     const proof = await next.value(declaration('crossMutation')).invoke().property('build').invoke().resolve()
     expect(proof).toMatchObject({ kind: 'unknown', reasons: [expect.objectContaining({ code: 'VALUE_MUTATION_UNSUPPORTED' })] })
+    let mutationSource: string | undefined
+    for await (const fact of mutated.facts.export('source')) if (fact.payload.logicalPath === 'mutator.ts') mutationSource = fact.payload.source
+    const linkingFacts: string[] = []
+    for await (const fact of mutated.facts.export('body')) if (fact.provenance.evidence.some((span) => span.source === mutationSource)) linkingFacts.push(fact.id)
+    expect(proof.evidence.some((id) => linkingFacts.includes(id)), 'The proof must include the call that forwards the object to the mutating helper.').toBe(true)
     await writeFile(join(root, 'mutator.ts'), 'export {}\n')
     await project.refresh({ changed: ['mutator.ts'] })
     const repaired = await project.open()

@@ -39,10 +39,19 @@ class Evaluator {
     }
     resolve(plan, options, scalar) {
         const state = { limits: options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits,
-            signal: options.signal, dependencies: new Set(), evidence: new Set(), active: new Map(), steps: 0 };
+            signal: options.signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 };
         state.signal?.throwIfAborted();
         const value = this.evaluatePlan(plan, state);
-        const result = { ...this.result(state.exhausted ?? value, state, scalar), limits: state.limits };
+        const evaluated = this.result(value, state, scalar);
+        const bounded = state.exhausted ? {
+            ...this.result(state.exhausted, state, scalar),
+            ...(evaluated.kind === 'unknown' ? {
+                reasons: [...new Map([...evaluated.reasons, { code: state.exhausted.code, message: state.exhausted.reason, retryable: false }]
+                        .map((reason) => [`${reason.code}\0${reason.message}`, reason])).values()],
+                ...(evaluated.candidates ? { candidates: evaluated.candidates } : {}),
+            } : {}),
+        } : evaluated;
+        const result = { ...bounded, limits: state.limits };
         Object.defineProperty(result, PROOF, { value: {
                 model: this.#model,
                 limits: JSON.stringify(state.limits),
@@ -74,7 +83,12 @@ class Evaluator {
         frames.add(environment);
         state.active.set(id, frames);
         try {
-            return this.expression(occurrence, environment, state, depth);
+            const value = this.expression(occurrence, environment, state, depth);
+            if (occurrence.symbol) {
+                if (this.effect('escape', occurrence.symbol, state) !== 'none')
+                    return escaped(value, state);
+            }
+            return value;
         }
         finally {
             frames.delete(environment);
@@ -161,15 +175,28 @@ class Evaluator {
         if (occurrence.syntax === 'VariableDeclaration' || occurrence.syntax === 'PropertyAssignment')
             return next(children?.get('initializer'));
         if (occurrence.syntax === 'Identifier' || occurrence.syntax === 'Parameter') {
+            const assigned = this.assignmentValue(id);
+            if (assigned)
+                return next(assigned);
+            const definitions = this.#index.definitions.get(id);
             if (occurrence.symbol) {
-                this.depend(state, `mutation:${occurrence.symbol}`);
-                if (this.#index.mutations.has(occurrence.symbol))
-                    return uncertain('VALUE_MUTATION_UNSUPPORTED', 'Writes to this binding or an object alias prevent an initializer-only value proof.');
+                const localAssignment = definitions?.length === 1 && this.#index.definiteDefinitions.has(id) && this.assignmentValue(definitions[0]);
+                const effect = this.effect('mutation', occurrence.symbol, state, localAssignment ? occurrence.owner : undefined);
+                if (effect !== 'none') {
+                    if (localAssignment && effect === 'local')
+                        return next(localAssignment);
+                    this.depend(state, `initializers:${occurrence.symbol}`);
+                    const observed = (this.#index.initializers.get(occurrence.symbol) ?? []).map((initializer) => next(initializer));
+                    const bound = environment.get(occurrence.symbol);
+                    if (bound)
+                        observed.push(next(bound.occurrence, bound.environment));
+                    return { kind: 'unknown', code: 'VALUE_MUTATION_UNSUPPORTED',
+                        reason: 'Writes to this binding or an object alias prevent an initializer-only value proof.', candidates: observed };
+                }
             }
             const bound = occurrence.symbol && environment.get(occurrence.symbol);
             if (bound)
                 return next(bound.occurrence, bound.environment);
-            const definitions = this.#index.definitions.get(id);
             if (definitions?.length)
                 return alternatives(definitions.map((definition) => next(definition)), state);
             for (const parent of this.#index.parents.get(id) ?? []) {
@@ -227,6 +254,8 @@ class Evaluator {
             receiver: () => call.receiver ? operand(call.receiver) : undefined,
             argument: (index) => call.arguments[index] ? operand(call.arguments[index]) : undefined,
         });
+        if (state.exhausted)
+            return state.exhausted;
         if (modeled)
             return modeled.kind === 'atom' ? modeled : uncertain('VALUE_MODEL_UNKNOWN', modeled.reason);
         if (call.bindings.some((binding) => binding.rest) || call.arguments.some((id) => this.#index.occurrences.get(id)?.syntax === 'SpreadElement')) {
@@ -243,6 +272,13 @@ class Evaluator {
                 : call.target ? { kind: 'unsupported', construct: 'external-or-bodyless-call' }
                     : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.');
         return this.invoke(target, state, depth + 1, call, environment);
+    }
+    assignmentValue(id) {
+        for (const parent of this.#index.parents.get(id) ?? []) {
+            if (parent.role === 'left' && this.#index.occurrences.get(parent.parent)?.operator === 'EqualsToken')
+                return this.#index.children.get(parent.parent)?.get('right');
+        }
+        return;
     }
     invoke(value, state, depth, call, caller = new Map()) {
         state.signal?.throwIfAborted();
@@ -290,15 +326,26 @@ class Evaluator {
     }
     result(value, state, scalar) {
         const evidence = [...state.evidence].sort();
-        if (value.kind === 'unknown')
-            return { kind: 'unknown', reasons: [{ code: value.code, message: value.reason, retryable: false }], evidence };
+        if (value.kind === 'unknown') {
+            const candidates = (value.candidates ?? []).flatMap((candidate) => {
+                const result = this.result(candidate, state, scalar);
+                return result.kind === 'known' ? [result.value] : result.kind === 'ambiguous' ? result.values : result.kind === 'unknown' ? result.candidates ?? [] : [];
+            });
+            return { kind: 'unknown', reasons: [{ code: value.code, message: value.reason, retryable: false }], ...(candidates.length ? { candidates } : {}), evidence };
+        }
         if (value.kind === 'unsupported')
             return { kind: 'unsupported', construct: value.construct, evidence };
         if (value.kind === 'alternatives') {
             const results = value.values.map((item) => this.result(item, state, scalar));
-            const incomplete = results.find((item) => item.kind === 'unknown' || item.kind === 'unsupported');
-            if (incomplete)
-                return { ...incomplete, evidence };
+            const incomplete = results.filter((item) => item.kind === 'unknown' || item.kind === 'unsupported');
+            if (incomplete.length) {
+                const candidates = [...new Map(results.flatMap((item) => item.kind === 'known' ? [item.value]
+                        : item.kind === 'ambiguous' ? item.values : item.kind === 'unknown' ? item.candidates ?? [] : [])
+                        .map((item) => [JSON.stringify(item), item])).values()];
+                return { kind: 'unknown', reasons: incomplete.flatMap((item) => item.kind === 'unknown' ? item.reasons
+                        : [{ code: 'VALUE_PATH_UNSUPPORTED', message: `A possible value path uses ${item.construct}.`, retryable: false }]),
+                    ...(candidates.length ? { candidates } : {}), evidence };
+            }
             const values = [...new Map(results.flatMap((item) => item.kind === 'known' ? [item.value] : item.kind === 'ambiguous' ? item.values : [])
                     .map((item) => [JSON.stringify(item), item])).values()];
             if (values.length === 1)
@@ -312,6 +359,40 @@ class Evaluator {
             ? { kind: 'function', symbol: value.body.payload.body.function, execution: value.body.payload.body.execution, parameterCount: value.body.payload.body.parameters.length }
             : value.kind === 'object' ? { kind: 'object', properties: [...value.properties.keys()].sort(), complete: !value.incomplete } : value;
         return { kind: 'known', value: projected, evidence };
+    }
+    effect(kind, symbol, state, localOwner) {
+        const cacheKey = `${kind}:${symbol}:${localOwner ?? ''}`;
+        const cached = state.effects.get(cacheKey);
+        if (cached)
+            return cached;
+        const pending = [symbol];
+        const seen = new Set();
+        let result = 'none';
+        while (pending.length) {
+            state.signal?.throwIfAborted();
+            const current = pending.pop();
+            if (seen.has(current))
+                continue;
+            seen.add(current);
+            this.depend(state, `${kind}:${current}`, `aliases:${current}`);
+            const owners = kind === 'mutation' ? this.#index.mutations.get(current) : undefined;
+            if (kind === 'escape' ? this.#index.escapes.has(current) : owners?.length) {
+                if (current !== symbol || !localOwner || owners?.some((owner) => owner !== localOwner)) {
+                    result = 'other';
+                    break;
+                }
+                result = 'local';
+            }
+            for (const alias of this.#index.aliases.get(current) ?? []) {
+                if (++state.steps > state.limits.maximumSteps) {
+                    exhaust(state, 'VALUE_STEP_LIMIT', 'Bounded value evaluation exceeded its step limit.');
+                    return 'other';
+                }
+                pending.push(alias);
+            }
+        }
+        state.effects.set(cacheKey, result);
+        return result;
     }
     depend(state, ...keys) {
         for (const key of keys) {
@@ -344,6 +425,7 @@ async function indexFacts(query) {
     const children = new Map();
     const parents = new Map();
     const definitions = new Map();
+    const definiteDefinitions = new Set();
     const initializers = new Map();
     const calls = new Map();
     const direct = new Map();
@@ -372,8 +454,11 @@ async function indexFacts(query) {
             map.set(relation.role, relation.child);
             append(parents, relation.child, { parent: relation.parent, role: relation.role });
         }
-        for (const definition of body.definitions)
+        for (const definition of body.definitions) {
             append(definitions, definition.use, definition.definition);
+            if (definition.reaching === 'definite')
+                definiteDefinitions.add(definition.use);
+        }
         for (const call of body.calls)
             calls.set(call.occurrence, call);
         for (const [id, value] of Object.entries(fact.payload.values))
@@ -396,7 +481,17 @@ async function indexFacts(query) {
     // Initializer provenance cannot prove an object's later shape after an observed
     // write. Follow direct aliases conservatively; do not invent heap execution.
     const mutations = new Map();
+    const escapes = new Map();
     const aliases = new Map();
+    const alias = (from, to, evidence) => {
+        let targets = aliases.get(from);
+        if (!targets)
+            aliases.set(from, (targets = new Map()));
+        let links = targets.get(to);
+        if (!links)
+            targets.set(to, (links = new Set()));
+        links.add(evidence);
+    };
     const rootSymbol = (id) => {
         const seen = new Set();
         while (id && !seen.has(id)) {
@@ -419,12 +514,26 @@ async function indexFacts(query) {
     for (const [symbol, values] of initializers) {
         for (const value of values) {
             const target = rootSymbol(value);
-            if (target && target !== symbol) {
-                let targets = aliases.get(symbol);
-                if (!targets)
-                    aliases.set(symbol, (targets = new Set()));
-                targets.add(target);
-            }
+            if (target && target !== symbol)
+                alias(symbol, target, `occurrence:${value}`);
+        }
+    }
+    for (const call of calls.values()) {
+        for (const binding of call.bindings) {
+            const argument = rootSymbol(binding.argument);
+            if (binding.parameter && argument && binding.parameter !== argument)
+                alias(binding.parameter, argument, `occurrence:${call.occurrence}`);
+        }
+        if (call.target && bodies.has(call.target) && !call.dynamic)
+            continue;
+        for (const argument of call.arguments) {
+            const symbol = rootSymbol(argument);
+            if (!symbol)
+                continue;
+            let inputs = escapes.get(symbol);
+            if (!inputs)
+                escapes.set(symbol, (inputs = new Set()));
+            inputs.add(`occurrence:${call.occurrence}`);
         }
     }
     for (const occurrence of occurrences.values()) {
@@ -439,29 +548,39 @@ async function indexFacts(query) {
             writes.add(`occurrence:${occurrence.id}`);
         }
     }
-    const pending = [...mutations.keys()];
-    for (let position = 0; position < pending.length; position += 1) {
-        const symbol = pending[position];
-        for (const target of aliases.get(symbol) ?? []) {
-            const writes = mutations.get(target) ?? new Set();
-            const before = writes.size;
-            for (const write of mutations.get(symbol))
-                writes.add(write);
-            if (writes.size !== before) {
-                mutations.set(target, writes);
-                pending.push(target);
-            }
+    // Store direct effects and reverse alias edges only. Expanding the transitive
+    // proof sets here is quadratic on real projects; each demanded traversal is
+    // instead bounded by its caller's value budget and records negative lookups.
+    const incoming = new Map();
+    const aliasEvidence = new Map();
+    for (const [from, targets] of aliases)
+        for (const [to, links] of targets) {
+            append(incoming, to, from);
+            let keys = aliasEvidence.get(to);
+            if (!keys)
+                aliasEvidence.set(to, (keys = new Set()));
+            for (const link of links)
+                keys.add(link);
         }
-    }
-    for (const [symbol, writes] of mutations) {
-        const keys = [...writes].sort();
-        fingerprints.set(`mutation:${symbol}`, JSON.stringify(keys.map((key) => [key, fingerprints.get(key)])));
-        evidence.set(`mutation:${symbol}`, [...new Set(keys.flatMap((key) => evidence.get(key) ?? []))]);
+    for (const [kind, entries] of [['mutation', mutations], ['escape', escapes], ['aliases', aliasEvidence]]) {
+        for (const [symbol, writes] of entries) {
+            const keys = [...writes].sort();
+            fingerprints.set(`${kind}:${symbol}`, JSON.stringify(keys.map((key) => [key, fingerprints.get(key)])));
+            evidence.set(`${kind}:${symbol}`, [...new Set(keys.flatMap((key) => evidence.get(key) ?? []))]);
+        }
     }
     for (const fact of symbolFacts)
         bind(`symbol:${fact.payload.symbol}`, fact, hashFact(fact));
-    return { bodies, occurrences, children, parents, definitions, initializers, calls, direct,
-        symbols: new Map(symbolFacts.map((fact) => [fact.payload.symbol, fact])), mutations: new Set(mutations.keys()), fingerprints, evidence };
+    return { bodies, occurrences, children, parents, definitions, definiteDefinitions, initializers, calls, direct,
+        symbols: new Map(symbolFacts.map((fact) => [fact.payload.symbol, fact])),
+        mutations: new Map([...mutations].map(([symbol, writes]) => [symbol, [...new Set([...writes].map((key) => occurrences.get(key.slice('occurrence:'.length)).owner))]])),
+        escapes: new Set(escapes.keys()), aliases: incoming, fingerprints, evidence };
+}
+function escaped(value, state) {
+    if (value.kind === 'alternatives')
+        return alternatives(value.values.map((item) => escaped(item, state)), state);
+    return value.kind === 'object' || value.kind === 'atom' || value.kind === 'external'
+        ? { kind: 'unknown', code: 'VALUE_ESCAPE_UNSUPPORTED', reason: 'This value was passed to an unmodeled call that may mutate it.', candidates: [value] } : value;
 }
 function hashFact(fact) {
     return createHash('sha256').update(JSON.stringify({ id: fact.id, payload: fact.payload, completeness: fact.completeness })).digest('hex');

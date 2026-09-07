@@ -8,6 +8,8 @@ export type ValueResult<Value> =
   | { readonly kind: 'known'; readonly value: Value; readonly evidence: readonly FactId[] }
   | {
       readonly kind: 'unknown'
+      /** Observed possibilities, never an exhaustive set or a known conclusion. */
+      readonly candidates?: readonly Value[]
       readonly reasons: readonly AnalysisFailure[]
       readonly evidence: readonly FactId[]
     }

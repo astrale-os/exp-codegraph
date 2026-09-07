@@ -12,6 +12,17 @@ Observed binding and property writes invalidate initializer-only proofs. Direct 
 that uncertainty to their underlying object; this is conservative mutation detection, not heap
 execution. Both the presence and absence of writes enter proof dependencies, so a newly added
 mutation in another module invalidates a previously reusable proof and removal permits recovery.
+Native parameter bindings propagate helper writes to callers, retaining the alias and call facts
+that establish each effect path. Objects and opaque values passed as arguments to bodyless or
+dynamic calls remain uncertain. Receivers are not globally marked as escaped. A definite local
+reaching assignment can transfer its right-hand value only when the native operator is exactly
+`EqualsToken` and no other execution owner can write that binding. Captured and interprocedural
+writes remain uncertain.
+
+An unknown result may carry non-exhaustive `candidates` from observed branches or earlier
+initializers. These preserve discovery evidence when one possible factory is recognized but the
+complete value is unknown. They never upgrade a rule's evidence to known or complete, including
+after mutation or budget exhaustion.
 
 `value(occurrence).invoke().property('build').invoke().resolve()` is an immutable demand plan.
 Each resolve owns an independent depth, step and alternative budget. A model cannot erase a
@@ -31,3 +42,9 @@ positive and negative lookup. `canReuse` compares fact identity, payload, comple
 membership, model identity and effective budget against the new evaluator. Fact IDs alone do not
 prove unchanged content. Proofs can survive disposal of their original reader without retaining
 that reader, its query, or its index. Serialized or caller-constructed results are not reusable.
+
+Effect indexing retains direct writes, escapes, and reverse alias/call-binding edges only.
+It never constructs per-symbol transitive provenance sets. A demanded proof traverses
+those edges under its step budget, records present and absent adjacency/effect keys,
+and memoizes within that proof. Fan-out in unrelated functions does not consume a
+value proof's budget or force a project-wide effect closure.
