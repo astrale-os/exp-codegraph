@@ -18,7 +18,6 @@ on:
       - 'qualification/v2/ttsc/fixtures/**'
       - 'scripts/native/**'
   pull_request:
-    branches: [main]
     paths:
       - '.github/workflows/native-release.yml'
       - 'analysis/typescript/distribution/**'
@@ -70,6 +69,10 @@ jobs:
         run: pnpm build
       - name: Qualify native semantics and extension boundary
         run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native
+      - name: Verify executable-scope and bounded-value regressions
+        env:
+          CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native
+        run: pnpm exec vitest run __tests__/native-semantic-body.test.ts __tests__/typescript-value-semantics.test.ts --maxWorkers 1
       - name: Upload qualified native artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
