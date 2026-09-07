@@ -10,6 +10,7 @@ import {
   rm,
   stat,
   symlink,
+  writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -39,6 +40,41 @@ afterEach(async () => {
 })
 
 describe('packed GitHub artifact', () => {
+  it('lets ordinary NodeNext consumers emit declarations without compiling package TypeScript', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-typed-consumer-'))
+    temporary.push(root)
+    const consumer = join(root, 'consumer')
+    const installed = join(consumer, 'node_modules/@astrale-os/codegraph')
+    await stagePublishedFiles(installed)
+    await linkDependencies(consumer)
+    await mkdir(join(consumer, 'node_modules/@types'), { recursive: true })
+    await symlink(await realpath(join(packageRoot, 'node_modules/@types/node')), join(consumer, 'node_modules/@types/node'))
+    await writeFile(join(consumer, 'package.json'), '{"type":"module"}')
+    await writeFile(join(consumer, 'tsconfig.json'), JSON.stringify({
+      compilerOptions: {
+        target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true,
+        declaration: true, outDir: 'output', types: ['node'], skipLibCheck: false,
+      },
+      include: ['consumer.ts'],
+    }))
+    await writeFile(join(consumer, 'consumer.ts'), [
+      "import { createMemoryAnalysisStore, runAnalysisPolicies } from '@astrale-os/codegraph/analysis'",
+      "import { createTypeScriptAnalysisService, createBoundedValueEvaluator } from '@astrale-os/codegraph/analysis/typescript'",
+      "import { createSQLiteAnalysisStore } from '@astrale-os/codegraph/analysis/sqlite'",
+      'export const api = { createMemoryAnalysisStore, runAnalysisPolicies, createTypeScriptAnalysisService, createBoundedValueEvaluator, createSQLiteAnalysisStore }',
+    ].join('\n'))
+    const compiler = join(packageRoot, 'node_modules/.bin/tsgo')
+    const result = await run(compiler, ['-p', join(consumer, 'tsconfig.json')], { cwd: consumer })
+    expect(result.stderr).toBe('')
+    expect(await readFile(join(consumer, 'output/consumer.d.ts'), 'utf8')).toContain('createTypeScriptAnalysisService')
+    const manifest = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'))
+    for (const entry of Object.values(manifest.exports) as Array<string | { types: string }>) {
+      if (typeof entry === 'string') continue
+      expect(entry.types).toMatch(/^\.\/dist\/.*\.d\.ts$/)
+      expect(await isFile(join(installed, entry.types))).toBe(true)
+    }
+  })
+
   it('keeps standalone qualification authoritative in the package scripts and CI', async () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as {
       name: string
