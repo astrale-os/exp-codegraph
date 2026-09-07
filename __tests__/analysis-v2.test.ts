@@ -2411,6 +2411,95 @@ process.exit(0)
     expect(disposed).toBe(true)
   })
 
+  /** @evidence TYPESCRIPT-PORTABLE-RETRY */
+  it.each(['pass', 'publication'] as const)(
+    'retains changed semantic inputs after a failed %s until publication succeeds',
+    async (failure) => {
+      const first = buildTransaction({ sequence: 1, values: ['before'] })
+      const edited = buildTransaction({ sequence: 2, base: first.next.id, values: ['after'], sourceRevision: 2 })
+      let requestCount = 0
+      let failNext = false
+      let runs = 0
+      const backing = createMemoryAnalysisStore()
+      const store: AnalysisStore = {
+        dispose: () => backing.dispose(),
+        current: (universe) => backing.current(universe),
+        open: (universe, generation) => backing.open(universe, generation),
+        snapshotSet: (generations, inventory) => backing.snapshotSet(generations, inventory),
+        async commit(transaction, options) {
+          if (failure === 'publication' && failNext) {
+            failNext = false
+            throw new Error('publication temporarily unavailable')
+          }
+          await backing.commit(transaction, options)
+        },
+      }
+      const manifest = pass(
+        'retry-derived', ['fixture.derived'], ['fixture.values'],
+        [{ namespace: 'fixture.values', minimumVersion: 1, maximumVersion: 1 }],
+        [{ namespace: 'fixture.derived', version: 1 }],
+      ) as PortablePass['manifest']
+      const derived: PortablePass = {
+        manifest,
+        async run(context) {
+          runs++
+          if (failure === 'pass' && failNext) {
+            failNext = false
+            throw new Error('derivation temporarily unavailable')
+          }
+          const inputs = await context.query.facts({ namespaces: ['fixture.values'] })
+          return {
+            completion: { kind: 'complete' },
+            shards: [passShard(manifest, context.generation.id, inputs.facts)],
+            diagnostics: [],
+          }
+        },
+      }
+      const pipeline = await createTypeScriptAnalysisPipeline({
+        project: { root: '/tmp/codegraph-retry', config: 'tsconfig.json', capabilities: ['fixture.values'] },
+        sessions: {
+          async open() {
+            return {
+              async request(request) {
+                requestCount++
+                return requestCount <= 2
+                  ? { id: request.id, protocolVersion: 1, kind: 'transaction', transaction: requestCount === 1 ? first : edited }
+                  : { id: request.id, protocolVersion: 1, kind: 'unchanged', generation: edited.next.id }
+              },
+              async dispose() {},
+            }
+          },
+        },
+        store,
+        passes: [derived],
+        requestedCapabilities: ['fixture.derived'],
+        producer: first.next.producer,
+      })
+      try {
+        const original = await pipeline.refresh()
+        failNext = true
+        await expect(pipeline.refresh({ changed: ['index.ts'] })).rejects.toThrow()
+        expect((await store.current(first.next.universe))?.id).toBe(original.generation.id)
+        const retried = await pipeline.refresh()
+        expect(retried.invalidatedPasses).toContain(manifest.id)
+        expect(runs).toBe(3)
+        const query = await store.open(retried.generation.universe, retried.generation.id)
+        try {
+          const input = (await query.facts({ namespaces: ['fixture.values'] })).facts
+          const output = (await query.facts({ namespaces: ['fixture.derived'] })).facts
+          expect(input.map((fact) => fact.payload)).toEqual(['after'])
+          expect(output[0]!.provenance.inputs).toEqual(input.map((fact) => fact.id))
+        } finally { await query.dispose() }
+        const unchanged = await pipeline.refresh()
+        expect(unchanged.transaction).toBeUndefined()
+        expect(runs).toBe(3)
+      } finally {
+        await pipeline.dispose()
+        await store.dispose()
+      }
+    },
+  )
+
   it('runs policies read-only and makes unavailable evidence indeterminate', async () => {
     const store = createMemoryAnalysisStore()
     const base = buildTransaction({ sequence: 1, values: ['input'] })

@@ -41,6 +41,8 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
   readonly #nativeStore = createMemoryAnalysisStore({ maximumRetainedGenerations: 2 })
   readonly #nativeShards = new Map<FactShardKey, FactShard>()
   readonly #portableShards = new Map<FactShardKey, FactShard>()
+  /** Native inputs remain dirty until the consumer-visible generation commits. */
+  readonly #pendingNamespaces = new Set<string>()
   #request = 0
   #disposed = false
   readonly #options: TypeScriptAnalysisPipelineOptions
@@ -96,7 +98,6 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
     }
 
     let nativeTransaction: FactTransaction | undefined
-    let changedNamespaces = new Set<string>()
     if (response.kind === 'transaction' || response.kind === 'delta') {
       const materialized = response.kind === 'delta'
         ? await materializeNativeDelta(
@@ -115,7 +116,8 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
       const admitted = materialized.transaction
         ?? (response.kind === 'transaction' ? response.transaction : undefined)
       if (!admitted) throw new Error('Native delta materialization omitted its transaction.')
-      changedNamespaces = transactionNamespaces(this.#nativeShards, admitted)
+      const changedNamespaces = transactionNamespaces(this.#nativeShards, admitted)
+      for (const namespace of changedNamespaces) this.#pendingNamespaces.add(namespace)
       if (materialized.rollover) {
         this.#nativeShards.clear()
         this.#portableShards.clear()
@@ -159,7 +161,7 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
       const invalidated = invalidatedPortablePasses(
         plan.ordered,
         this.#portableShards,
-        changedNamespaces,
+        this.#pendingNamespaces,
         options.invalidate === true,
       )
       const selectedPlan = {
@@ -189,12 +191,6 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
       const stagedShards = new Map([...this.#nativeShards, ...this.#portableShards])
       if (portable.transaction) applyShards(stagedShards, portable.transaction)
       assertCompleteShards(stagedShards, stagedManifest, 'staged')
-      replacePortableShards(
-        this.#portableShards,
-        stagedShards,
-        this.#options.passes.flatMap((pass) => pass.manifest.outputs.map((output) => output.namespace)),
-      )
-
       const current = await this.#options.store.current(universe)
       const currentManifest = current
         ? await withQuery(this.#options.store.open(universe, current.id), (query) =>
@@ -211,6 +207,12 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
       if (transaction) {
         await this.#options.store.commit(transaction, { signal: options.signal })
       }
+      replacePortableShards(
+        this.#portableShards,
+        stagedShards,
+        this.#options.passes.flatMap((pass) => pass.manifest.outputs.map((output) => output.namespace)),
+      )
+      this.#pendingNamespaces.clear()
 
       const changedModules = changedModuleSubjects(nativeTransaction)
       return {
