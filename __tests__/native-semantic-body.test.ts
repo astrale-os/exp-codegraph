@@ -77,6 +77,36 @@ export const local = localHelper()
 `
 
 describe('native executable scope facts', () => {
+  it('keeps signature identities stable across generic instantiations, body edits and cold compilers', async () => {
+    const text = `export function identity<T>(value: T): T { return value }
+export function overloaded(value: string): string
+export function overloaded(value: number): number
+export function overloaded(value: string | number) { return value }
+export function probe() { identity<string>('a'); identity<number>(1); overloaded('a'); overloaded(1) }
+`
+    const current = await fixture(text, true)
+    let cold: Awaited<ReturnType<typeof fixture>> | undefined
+    try {
+      const signatures = async (project: typeof current) => {
+        const bodies = await project.read()
+        return bodies.filter((entry) => entry.file === 'index.ts').flatMap((entry) => entry.body.calls).map((call) => call.signature).sort()
+      }
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const initial = await signatures(current)
+      expect(initial).toHaveLength(4)
+      expect(initial.every((signature) => /^signature:[a-f0-9]{64}$/.test(signature!))).toBe(true)
+      expect(new Set(initial).size).toBe(3)
+      await writeFile(join(current.root, 'index.ts'), text.replace('{ return value }', '{ const result = value; return result }'))
+      await current.service.refresh({ changed: ['index.ts'], signal: AbortSignal.timeout(20_000) })
+      expect(await signatures(current)).toEqual(initial)
+      await current.service.refresh({ invalidate: true, signal: AbortSignal.timeout(20_000) })
+      expect(await signatures(current)).toEqual(initial)
+      cold = await fixture(text, true)
+      await cold.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      expect(await signatures(cold)).toEqual(initial)
+    } finally { await cold?.close(); await current.close() }
+  })
+
   it('uses the last completed straight-line definition and remains conservative across branches', async () => {
     const text = `export function overwrite() { let request: unknown = { canonical: true }; request = { kind: 'invented-request' }; return request }
 export function selfRead() { let request = 'old'; request = request; return request }

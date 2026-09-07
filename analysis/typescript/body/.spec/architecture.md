@@ -25,6 +25,22 @@ package, file, or lexical scope have different origins. Package manifests and
 origins are cached within one compiler projection, so dependency updates cannot
 reuse stale origins across generations.
 
+`ResolvedCall.signature` is a bounded portable identity of the signature
+declaration selected by the compiler. It includes the declaring owner, portable
+source coordinate, overload ordinal, and authored signature header, excluding
+the executable body. Different instantiations of the same declaration share this
+identity; authored type arguments and parameter bindings are separate call facts.
+An unavailable synthetic declaration leaves signature absent. Header formatting
+may invalidate this identity; it is not a structural type-equivalence oracle.
+
+Rendered types are presentation, not semantic identity. The earlier producer's
+signature strings required expensive SDK generic union expansion, changed with
+compiler allocation/cache order, and destabilized unrelated body digests. Native
+pass 1.3 replaces that display with the declaration identity and never formats a
+type to extract a call. Old stored strings remain readable as versioned historical
+facts; consumers must not parse a signature string as TypeScript syntax. Display
+queries can be designed separately when a consumer needs them.
+
 Class initialization and namespace execution remain explicit incomplete control
 flow in enclosing scopes. Conditional and short-circuit expressions are also
 marked partial until expression-level branching is represented by the CFG.

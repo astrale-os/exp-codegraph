@@ -1,7 +1,6 @@
 package main
 
 import (
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -9,8 +8,6 @@ import (
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimchecker "github.com/microsoft/typescript-go/shim/checker"
 )
-
-var signatureImportPattern = regexp.MustCompile(`import\("([^"]+)"\)`)
 
 type bodyBuilder struct {
 	x               *extractor
@@ -374,7 +371,7 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	signature := b.x.checker.GetResolvedSignature(node)
 	if signature != nil {
-		result.Signature = b.canonicalSignature(signature, node)
+		result.Signature = b.x.signatureIdentity(signature)
 	}
 	parameters := shimchecker.Signature_parameters(signature)
 	rest := shimchecker.Signature_hasRestParameter(signature)
@@ -399,103 +396,6 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	result.Callbacks = sortedUnique(result.Callbacks)
 	return result
-}
-
-// canonicalSignature avoids checker-display cache state entering portable body
-// facts. SignatureToStringEx may choose authored aliases, expanded types, or
-// truncation according to unrelated earlier checker walks. Formatting each
-// resolved parameter and return type with ttsc's stable fully-qualified type
-// renderer preserves the useful call shape while making projection plans
-// byte-semantically equivalent.
-func (b *bodyBuilder) canonicalSignature(signature *shimchecker.Signature, node *shimast.Node) string {
-	parameters := []string{}
-	for _, parameter := range shimchecker.Signature_parameters(signature) {
-		declaration := firstDeclaration(parameter)
-		if declaration == nil {
-			declaration = node
-		}
-		parameterType := shimchecker.Checker_getTypeOfSymbolAtLocation(
-			b.x.checker, parameter, declaration,
-		)
-		typeDisplay := shimchecker.Checker_typeToStringFullyQualified(
-			b.x.checker, parameterType, declaration,
-		)
-		if typeDisplay == "" {
-			typeDisplay = "unknown"
-		}
-		name := stableSymbolName(parameter)
-		if name == "" {
-			name = "<anonymous>"
-		}
-		optional := parameter.Flags&shimast.SymbolFlagsOptional != 0
-		rest := false
-		if declaration.Kind == shimast.KindParameter {
-			value := declaration.AsParameterDeclaration()
-			optional = optional || value.QuestionToken != nil || value.Initializer != nil
-			rest = value.DotDotDotToken != nil
-		}
-		prefix := ""
-		if rest {
-			prefix = "..."
-		}
-		suffix := ""
-		if optional {
-			suffix = "?"
-		}
-		parameters = append(parameters, prefix+name+suffix+": "+portableSignature(typeDisplay))
-	}
-	returnType := shimchecker.Checker_getReturnTypeOfSignature(b.x.checker, signature)
-	returnDisplay := shimchecker.Checker_typeToStringFullyQualified(b.x.checker, returnType, node)
-	if returnDisplay == "" {
-		returnDisplay = "unknown"
-	}
-	return "(" + strings.Join(parameters, ", ") + "): " + portableSignature(returnDisplay)
-}
-
-// portableSignature removes package-manager and checkout coordinates that the
-// checker may spell inside import types. Those paths describe the same public
-// package type but otherwise make body facts depend on whether node_modules is
-// physical, symlinked, or relocated with the repository.
-func portableSignature(display string) string {
-	return signatureImportPattern.ReplaceAllStringFunc(display, func(input string) string {
-		matches := signatureImportPattern.FindStringSubmatch(input)
-		if len(matches) != 2 {
-			return input
-		}
-		if specifier, ok := installedPackageSpecifier(matches[1]); ok {
-			return `import("` + specifier + `")`
-		}
-		return input
-	})
-}
-
-func installedPackageSpecifier(input string) (string, bool) {
-	value := strings.ReplaceAll(input, `\`, "/")
-	marker := "node_modules/"
-	index := strings.LastIndex(value, "/"+marker)
-	if index >= 0 {
-		value = value[index+len(marker)+1:]
-	} else if index = strings.LastIndex(value, marker); index >= 0 {
-		value = value[index+len(marker):]
-	} else {
-		return "", false
-	}
-	parts := strings.Split(value, "/")
-	packageParts := 1
-	if len(parts) != 0 && strings.HasPrefix(parts[0], "@") {
-		packageParts = 2
-	}
-	if len(parts) < packageParts || strings.Join(parts[:packageParts], "/") == "" {
-		return "", false
-	}
-	remainder := parts[packageParts:]
-	if len(remainder) != 0 {
-		last := remainder[len(remainder)-1]
-		if last == "index.js" || last == "index.ts" || last == "index.d.ts" {
-			remainder = remainder[:len(remainder)-1]
-		}
-	}
-	return strings.Join(append(parts[:packageParts], remainder...), "/"), true
 }
 
 func (b *bodyBuilder) callbackTarget(node *shimast.Node) string {

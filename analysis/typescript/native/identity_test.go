@@ -86,14 +86,3 @@ func TestOwnedPathExcludesEveryTypeScriptDeclarationExtension(t *testing.T) {
 		}
 	}
 }
-
-func TestPortableSignatureNormalizesPackageManagerAndRelocatedImports(t *testing.T) {
-	physical := `(value: import("micromark-util-types").Value): import(".pnpm/@types+mdast@4.0.4/node_modules/@types/mdast").Root`
-	relocated := `(value: import("micromark-util-types").Value): import("../../checkout/node_modules/.pnpm/@types+mdast@4.0.4/node_modules/@types/mdast/index.js").Root`
-	expected := `(value: import("micromark-util-types").Value): import("@types/mdast").Root`
-	for name, input := range map[string]string{"physical": physical, "relocated": relocated} {
-		if actual := portableSignature(input); actual != expected {
-			t.Fatalf("%s signature is not portable:\nactual:   %s\nexpected: %s", name, actual, expected)
-		}
-	}
-}
