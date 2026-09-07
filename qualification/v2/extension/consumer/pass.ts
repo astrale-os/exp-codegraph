@@ -213,9 +213,11 @@ export function createSDKBuilderAnalysisPass(selector: SDKBuilderSelector): Port
           corpusCompleteness,
           builderFact.provenance.evidence,
           unique([
-            builderFact.id,
-            ...candidates.flatMap((candidate) => candidate.inputs.map((fact) => fact.id)),
-            ...rejectedCollisionCalls.map(({ body }) => body.fact.id),
+            // This is an exact corpus inventory, including negative discovery.
+            // Bodies with no selected calls still determine counts and completeness.
+            ...sources.map((fact) => fact.id),
+            ...symbols.map((fact) => fact.id),
+            ...bodies.map((fact) => fact.id),
           ]),
         ),
       )

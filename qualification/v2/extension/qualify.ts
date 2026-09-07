@@ -26,6 +26,7 @@ import type * as Consumer from './consumer/index.ts'
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
 const specificationPackageRoot = repositoryRoot
 const fixtureSource = resolve(import.meta.dirname, '../ttsc/fixtures/adversarial')
+const supportedSDKSource = resolve(import.meta.dirname, 'fixtures/supported-sdk')
 const consumerSource = resolve(import.meta.dirname, 'consumer')
 const evidencePath = resolve(
   repositoryRoot,
@@ -91,9 +92,38 @@ async function main(): Promise<void> {
     const rootB = join(temporary, 'root-b')
     const rootCold = join(temporary, 'root-cold')
     await Promise.all([
-      cp(fixtureSource, rootA, { recursive: true }),
-      cp(fixtureSource, rootB, { recursive: true }),
+      createSupportedCorpus(rootA),
+      createSupportedCorpus(rootB),
     ])
+
+    // Exact project-wide call counts require every executable scope to be represented.
+    // Keep the broad native fixture as a negative qualification: class initialization
+    // and namespaces must never be silently removed from the evidence boundary.
+    const adversarialRoot = join(temporary, 'adversarial')
+    await cp(fixtureSource, adversarialRoot, { recursive: true })
+    const adversarial = await createFixture(adversarialRoot, createMemoryAnalysisStore(), consumer)
+    try {
+      const refreshed = await adversarial.service.refresh()
+      const proof = await inspect(adversarial.store, refreshed.generation, consumer)
+      assert.equal(proof.policyStatus, 'indeterminate')
+      assert.equal(proof.capabilityCompleteness, 'partial')
+      assert(proof.capabilityReasons.includes('CFG_NESTED_SCOPE_UNSUPPORTED'))
+      assert(proof.policyRules.every((rule) => rule.status === 'indeterminate'))
+      const summary = proof.extensionFacts.find((fact) => fact.kind === 'sdk-builder-summary')!
+      for (const body of proof.allFacts.filter((fact) => fact.namespace === 'typescript.body')) {
+        assert(summary.provenance.inputs.includes(body.id), 'Corpus discovery evidence must include every inspected body.')
+      }
+      const casesPath = join(adversarialRoot, 'src/cases.ts')
+      await writeFile(casesPath, `${await readFile(casesPath, 'utf8')}\nclass HiddenRegistration {\n  static value = mutation({ name: 'class-initializer' })\n}\n`)
+      const hidden = await adversarial.service.refresh({ changed: ['src/cases.ts'] })
+      const hiddenProof = await inspect(adversarial.store, hidden.generation, consumer)
+      assert.equal(hiddenProof.policyStatus, 'indeterminate')
+      assert(hiddenProof.capabilityReasons.includes('CFG_NESTED_SCOPE_UNSUPPORTED'))
+      assert(!hiddenProof.knownValues.includes('class-initializer'), 'An omitted call cannot support a complete corpus count.')
+    } finally {
+      await adversarial.service.dispose()
+      await adversarial.store.dispose()
+    }
 
     const timings: Record<string, number> = {}
     const memoryA = await createFixture(rootA, createMemoryAnalysisStore({ maximumRetainedGenerations: 8 }), consumer)
@@ -205,6 +235,7 @@ async function main(): Promise<void> {
           valueStates: initialProof.valueStates,
           callbackKinds: initialProof.callbackKinds,
           partialNativeBodyScopedToCompleteSDKFacts: true,
+          unsupportedExecutableScopesRemainIndeterminate: true,
         },
         materialization: {
           twoRootPortableIdentity: true,
@@ -230,6 +261,14 @@ async function main(): Promise<void> {
   } finally {
     await rm(temporary, { recursive: true, force: true })
   }
+}
+
+async function createSupportedCorpus(root: string): Promise<void> {
+  // Reuse the same semantic cases and project reference, with an SDK whose entire
+  // executable surface is supported. The unmodified SDK is qualified separately.
+  await cp(fixtureSource, root, { recursive: true })
+  await rm(join(root, 'src/sdk'), { recursive: true })
+  await cp(supportedSDKSource, join(root, 'src/sdk'), { recursive: true })
 }
 
 async function loadExternalConsumer(temporary: string): Promise<ConsumerModule> {
@@ -292,9 +331,10 @@ async function inspect(
   readonly callDetails: readonly unknown[]
   readonly bodySummaries: readonly unknown[]
   readonly capabilityCompleteness: string
+  readonly capabilityReasons: readonly string[]
   readonly bodyCompleteness: string
   readonly policyStatus: string
-  readonly policyRules: readonly unknown[]
+  readonly policyRules: readonly { readonly status: string }[]
 }> {
   const query = await store.open(generation.universe, generation.id)
   try {
@@ -372,6 +412,9 @@ async function inspect(
           }
         }),
       capabilityCompleteness: capability?.completeness.kind ?? 'missing',
+      capabilityReasons: capability?.completeness.kind === 'partial' || capability?.completeness.kind === 'unavailable'
+        ? capability.completeness.reasons.map((reason) => reason.code)
+        : [],
       bodyCompleteness: bodyCompleteness.kind,
       policyStatus: policy.policies[0]?.status ?? 'missing',
       policyRules: policy.policies[0]?.rules ?? [],
