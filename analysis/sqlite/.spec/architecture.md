@@ -43,3 +43,7 @@ lock and only their rows plus the next immutable generation membership are writt
 An advisory caller may explicitly fall back to memory after an attributable open/recovery failure.
 A caller requiring durability fails instead. SQLite-specific connection and schema types do not
 escape the constructor.
+
+The runtime floor is Node 22.13, where `node:sqlite` loads without a command-line flag.
+Writer waiting uses SQLite's `busy_timeout` pragma before opening the schema, rather than the
+newer `DatabaseSync` constructor option that Node 22.13 silently ignores.
