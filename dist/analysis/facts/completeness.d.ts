@@ -1,4 +1,4 @@
-import type { Completeness } from '../facts/index.ts';
+import type { Completeness } from './types.ts';
 /**
  * Combine epistemic results without making producer or materializer traversal
  * order observable through the query contract.

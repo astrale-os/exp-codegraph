@@ -22,7 +22,7 @@ import { factHeader, shardReference } from '../facts/index.ts'
 import { TransactionError, validateFactTransaction } from '../generation/index.ts'
 import { deriveAnalysisId } from '../identity/index.ts'
 import { stableJson } from '../identity/model.ts'
-import { combineCompleteness } from './completeness.ts'
+import { combineCompleteness } from '../facts/index.ts'
 import { bindPhysicalFact, immutableFact } from '../facts/representation/index.ts'
 
 export interface MaterializedGeneration {

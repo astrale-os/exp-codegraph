@@ -1,5 +1,26 @@
-import type { SourceSpan } from '../../../facts/.spec/api.js'
-import type { OccurrenceId, SymbolId } from '../../../identity/.spec/api.js'
+import type { Completeness, SourceSpan } from '../../../facts/.spec/api.js'
+import type { OccurrenceId, SourceId, SymbolId } from '../../../identity/.spec/api.js'
+export interface TypeScriptCallSite {
+  readonly call: ResolvedCall
+  readonly occurrence: BodyOccurrence
+  readonly callee?: OccurrenceId
+  readonly path?: string
+}
+
+export interface TypeScriptCallQuery {
+  /** Exact portable logical paths. Combined with sources by intersection. */
+  readonly paths?: readonly string[]
+  readonly sources?: readonly SourceId[]
+  readonly signal?: AbortSignal
+}
+
+export interface TypeScriptCallInventory {
+  readonly sites: readonly TypeScriptCallSite[]
+  /** Structural call coverage, independent of bounded value/discovery proofs. */
+  readonly completeness: Completeness
+}
+
+
 export type BodyOccurrenceKind =
   | 'statement'
   | 'expression'

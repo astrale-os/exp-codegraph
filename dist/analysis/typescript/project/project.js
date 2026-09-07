@@ -142,6 +142,9 @@ class ResidentProject {
                 generation: query.generation,
                 query,
                 facts: createTypeScriptFactReader(query),
+                calls: (options = {}) => disposed
+                    ? Promise.reject(new Error('TypeScript project snapshot is disposed.'))
+                    : makeEvaluator.calls(options),
                 values: (input = {}) => {
                     if (disposed)
                         return Promise.reject(new Error('TypeScript project snapshot is disposed.'));

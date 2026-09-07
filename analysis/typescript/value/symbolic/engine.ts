@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto'
 import type { FactId, OccurrenceId, SymbolId } from '../../../identity/index.ts'
 import type { AnalysisQuery } from '../../../query/index.ts'
-import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts'
+import type { BodyOccurrence, ResolvedCall, TypeScriptCallInventory, TypeScriptCallQuery } from '../../body/index.ts'
 import { createTypeScriptFactReader, type TypeScriptFact } from '../../facts/index.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions, BoundedValueLimits, EvaluatedValueResult, ValueResult } from '../model.ts'
 import { resolveBoundedValueLimits } from '../limits.ts'
 import type { SymbolicCallModel, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from './model.ts'
+import { createCallProjection } from './calls.ts'
 
 type Environment<Atom> = ReadonlyMap<SymbolId, Reference<Atom>>
 interface Reference<Atom> { readonly occurrence: OccurrenceId; readonly environment: Environment<Atom> }
@@ -64,12 +65,20 @@ type Proof = { readonly [PROOF]?: ProofMetadata }
 const UNDEFINED = Object.freeze({ kind: 'literal' as const, value: undefined })
 
 /** Instance-local index owner, shared by every model attached to one pinned snapshot. */
-export function createValueEvaluatorFactory(query: AnalysisQuery): <Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>) => Promise<BoundedValueEvaluator<Atom>> {
+interface ValueEvaluatorFactory {
+  <Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>): Promise<BoundedValueEvaluator<Atom>>
+  calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
+}
+
+export function createValueEvaluatorFactory(query: AnalysisQuery): ValueEvaluatorFactory {
   let pending: Promise<Index> | undefined
-  return async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) => {
+  const index = () => {
     pending ??= indexFacts(query).catch((error) => { pending = undefined; throw error })
-    return new Evaluator(await pending, options.call, resolveBoundedValueLimits(options.limits))
+    return pending
   }
+  return Object.assign(async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) =>
+    new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits)),
+  { calls: createCallProjection(query, index) })
 }
 
 class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {

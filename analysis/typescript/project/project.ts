@@ -149,6 +149,9 @@ class ResidentProject implements TypeScriptProject {
         generation: query.generation,
         query,
         facts: createTypeScriptFactReader(query),
+        calls: (options = {}) => disposed
+          ? Promise.reject(new Error('TypeScript project snapshot is disposed.'))
+          : makeEvaluator.calls(options),
         values: <Atom = never>(input: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}): Promise<BoundedValueEvaluator<Atom>> => {
           if (disposed) return Promise.reject(new Error('TypeScript project snapshot is disposed.'))
           const limits = resolveBoundedValueLimits(input.limits)

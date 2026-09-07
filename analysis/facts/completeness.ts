@@ -1,4 +1,4 @@
-import type { AnalysisFailure, AnalysisLimit, Completeness } from '../facts/index.ts'
+import type { AnalysisFailure, AnalysisLimit, Completeness } from './types.ts'
 
 /**
  * Combine epistemic results without making producer or materializer traversal

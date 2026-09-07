@@ -8,7 +8,6 @@ export default defineLayout({
     'identity/',
     'index.ts',
     'internal/',
-    'internal/completeness.ts',
     'internal/state.ts',
     'memory/',
     'pass/',

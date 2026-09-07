@@ -4,6 +4,7 @@ import type { AnalysisQuery, AnalysisStore } from '../../query/index.ts'
 import type { NativeAnalysisSessionFactory, NativeProjectDescriptor, NativeSourceChange } from '../../protocol/index.ts'
 import type { SourceId } from '../../identity/index.ts'
 import type { TypeScriptFactReader } from '../facts/index.ts'
+import type { TypeScriptCallInventory, TypeScriptCallQuery } from '../body/index.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions } from '../value/index.ts'
 
 export interface TypeScriptProjectOptions {
@@ -25,6 +26,8 @@ export interface TypeScriptProjectSnapshot {
   readonly facts: TypeScriptFactReader
   /** Generic extensions consume the same pinned evidence as the typed reader. */
   readonly query: AnalysisQuery
+  /** Indexed call inventory. Selection precedes site projection, including unresolved calls. */
+  calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
   /** Shares one index; evaluator reuse requires the same call model and effective budget. */
   values<Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>): Promise<BoundedValueEvaluator<Atom>>
   dispose(): Promise<void>
