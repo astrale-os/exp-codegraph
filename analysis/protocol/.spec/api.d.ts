@@ -115,6 +115,7 @@ export interface NativeAnalysisSession {
 }
 
 export interface NativeAnalysisSessionFactory {
+  /** The signal cancels opening only; subsequent requests own their cancellation. */
   open(
     project: NativeProjectDescriptor,
     options?: { readonly signal?: AbortSignal },

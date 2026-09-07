@@ -11,6 +11,7 @@ export default defineLayout({
     'native/',
     'pipeline.ts',
     'physical/',
+    'project/',
     'refresh.optimization.ts',
     'service.ts',
     'surface/',
