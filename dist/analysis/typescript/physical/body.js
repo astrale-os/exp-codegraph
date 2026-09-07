@@ -1,11 +1,15 @@
 import { validateFunctionBodyIR } from '../body/model.js';
-export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/2';
+export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/3';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC = Object.freeze({
     id: TYPESCRIPT_BODY_PAYLOAD_CODEC_ID,
-    decode: (input) => decodePackedTypeScriptBody(input, 2),
+    decode: (input) => decodePackedTypeScriptBody(input, 3),
 });
 export const TYPESCRIPT_FACT_PAYLOAD_CODECS = Object.freeze([
     TYPESCRIPT_BODY_PAYLOAD_CODEC,
+    Object.freeze({
+        id: 'typescript.body.packed/2',
+        decode: (input) => decodePackedTypeScriptBody(input, 2),
+    }),
     Object.freeze({
         id: 'typescript.body.packed/1',
         decode: (input) => decodePackedTypeScriptBody(input, 1),
@@ -15,7 +19,7 @@ function decodePackedTypeScriptBody(input, version) {
     const packed = exactRecord(input, ['c', 's', 't', 'p', 'o', 'r', 'b', 'e', 'd', 'a', 'u', 'v', 'q'], 'body payload');
     const constants = exactTuple(packed.c, version === 1 ? 3 : 5, 'constants');
     const scope = version === 1 ? undefined : constants[3];
-    if (version === 2 && scope !== 'function' && scope !== 'module') {
+    if (version >= 2 && scope !== 'function' && scope !== 'module') {
         throw new TypeError('Packed TypeScript body scope is invalid.');
     }
     const execution = version === 1 || constants[4] === '' ? undefined : constants[4];
@@ -30,7 +34,7 @@ function decodePackedTypeScriptBody(input, version) {
     const symbol = (value, path) => symbols[ordinal(value, symbols.length, path)];
     const text = (value, path) => texts[ordinal(value, texts.length, path)];
     const occurrences = packed.o.map((value, index) => {
-        const row = exactTuple(value, 6, `occurrences[${index}]`);
+        const row = exactTuple(value, version >= 3 ? 7 : 6, `occurrences[${index}]`);
         const symbolIndex = optionalOrdinal(row[5], symbols.length, `occurrences[${index}].symbol`);
         return {
             id: expandId(row[0], 'occurrence'),
@@ -44,6 +48,7 @@ function decodePackedTypeScriptBody(input, version) {
             owner,
             syntax: text(row[4], `occurrences[${index}].syntax`),
             ...(symbolIndex === undefined ? {} : { symbol: symbols[symbolIndex] }),
+            ...(version < 3 || row[6] === null ? {} : { symbolOrigin: admitSymbolOrigin(row[6]) }),
         };
     });
     unique(occurrences.map((entry) => entry.id), 'occurrence identities');
@@ -94,7 +99,7 @@ function decodePackedTypeScriptBody(input, version) {
         return {
             occurrence: occurrence(row[0], `calls[${index}].occurrence`),
             ...(target === undefined ? {} : { target: symbols[target] }),
-            ...(version === 1 || row[9] === null ? {} : { targetOrigin: admitTargetOrigin(row[9]) }),
+            ...(version === 1 || row[9] === null ? {} : { targetOrigin: admitSymbolOrigin(row[9]) }),
             ...(signature === undefined ? {} : { signature: texts[signature] }),
             ...(receiver === undefined ? {} : { receiver: occurrences[receiver].id }),
             typeArguments: array(row[4], `calls[${index}].typeArguments`).map((entry, valueIndex) => text(entry, `calls[${index}].typeArguments[${valueIndex}]`)),
@@ -151,11 +156,11 @@ function decodePackedTypeScriptBody(input, version) {
     }
     return { body, values, completeness: admitCompleteness(packed.q, 'completeness') };
 }
-function admitTargetOrigin(input) {
-    const value = exactRecord(input, ['package', 'file', 'path'], 'call target origin');
+function admitSymbolOrigin(input) {
+    const value = exactRecord(input, ['package', 'file', 'path'], 'symbol origin');
     if (typeof value.package !== 'string' || !value.package || typeof value.file !== 'string' || !value.file ||
         !Array.isArray(value.path) || !value.path.length || value.path.some((part) => typeof part !== 'string' || !part)) {
-        throw new TypeError('Packed TypeScript call target origin is invalid.');
+        throw new TypeError('Packed TypeScript symbol origin is invalid.');
     }
     return { package: value.package, file: value.file, path: value.path };
 }

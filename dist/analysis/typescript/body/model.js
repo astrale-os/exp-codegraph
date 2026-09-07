@@ -46,6 +46,9 @@ export function validateFunctionBodyIR(body) {
             diagnostics.push('BODY_OCCURRENCE_OWNER_MISMATCH');
         if (!occurrence.syntax)
             diagnostics.push('BODY_OCCURRENCE_SYNTAX_REQUIRED');
+        if (occurrence.symbolOrigin !== undefined && (!occurrence.symbol || !validSymbolOrigin(occurrence.symbolOrigin))) {
+            diagnostics.push('BODY_OCCURRENCE_SYMBOL_ORIGIN_INVALID');
+        }
         if (!occurrence.span.source ||
             !occurrence.span.revision ||
             !Number.isSafeInteger(occurrence.span.start) ||
@@ -101,8 +104,7 @@ export function validateFunctionBodyIR(body) {
         }
     }
     for (const call of body.calls) {
-        if (call.targetOrigin !== undefined && (!call.target || !call.targetOrigin || typeof call.targetOrigin.package !== 'string' || !call.targetOrigin.package || typeof call.targetOrigin.file !== 'string' || !call.targetOrigin.file ||
-            !Array.isArray(call.targetOrigin.path) || !call.targetOrigin.path.length || call.targetOrigin.path.some((part) => typeof part !== 'string' || !part))) {
+        if (call.targetOrigin !== undefined && (!call.target || !validSymbolOrigin(call.targetOrigin))) {
             diagnostics.push('BODY_CALL_TARGET_ORIGIN_INVALID');
         }
         if (!occurrences.has(call.occurrence))
@@ -142,5 +144,10 @@ export function validateFunctionBodyIR(body) {
     if (typeof body.summary.recursion !== 'boolean')
         diagnostics.push('BODY_SUMMARY_RECURSION_INVALID');
     return [...new Set(diagnostics)].sort();
+}
+function validSymbolOrigin(origin) {
+    return Boolean(origin && typeof origin.package === 'string' && origin.package &&
+        typeof origin.file === 'string' && origin.file && Array.isArray(origin.path) &&
+        origin.path.length && origin.path.every((part) => typeof part === 'string' && part));
 }
 //# sourceMappingURL=model.js.map
