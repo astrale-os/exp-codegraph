@@ -74,7 +74,7 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		occurrenceIndex[occurrence.ID] = index
 		occurrences = append(occurrences, []any{
 			compact, internText(occurrence.Kind), occurrence.Span.Start, occurrence.Span.End,
-			internText(occurrence.Syntax), symbol,
+			internText(occurrence.Syntax), symbol, occurrence.SymbolOrigin,
 		})
 	}
 	occurrenceRef := func(value string) (int, error) {

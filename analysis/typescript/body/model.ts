@@ -21,6 +21,14 @@ export interface BodyOccurrence {
   readonly owner: SymbolId
   readonly syntax: string
   readonly symbol?: SymbolId
+  /** Canonical value declaration, never inferred from a compatible static type. */
+  readonly symbolOrigin?: TypeScriptSymbolOrigin
+}
+
+export interface TypeScriptSymbolOrigin {
+  readonly package: string
+  readonly file: string
+  readonly path: readonly string[]
 }
 
 export interface BodyRelation {
@@ -67,11 +75,7 @@ export interface ResolvedCall {
   readonly occurrence: OccurrenceId
   readonly target?: SymbolId
   /** Canonical declaration origin; absent when package/declaration identity cannot be proved. */
-  readonly targetOrigin?: {
-    readonly package: string
-    readonly file: string
-    readonly path: readonly string[]
-  }
+  readonly targetOrigin?: TypeScriptSymbolOrigin
   /** Portable identity of the selected signature declaration, not rendered or instantiated type text. */
   readonly signature?: string
   readonly receiver?: OccurrenceId
@@ -151,6 +155,9 @@ export function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[] 
     if (!BODY_OCCURRENCE_KINDS.has(occurrence.kind)) diagnostics.push('BODY_OCCURRENCE_KIND_INVALID')
     if (occurrence.owner !== body.function) diagnostics.push('BODY_OCCURRENCE_OWNER_MISMATCH')
     if (!occurrence.syntax) diagnostics.push('BODY_OCCURRENCE_SYNTAX_REQUIRED')
+    if (occurrence.symbolOrigin !== undefined && (!occurrence.symbol || !validSymbolOrigin(occurrence.symbolOrigin))) {
+      diagnostics.push('BODY_OCCURRENCE_SYMBOL_ORIGIN_INVALID')
+    }
     if (
       !occurrence.span.source ||
       !occurrence.span.revision ||
@@ -198,8 +205,7 @@ export function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[] 
     }
   }
   for (const call of body.calls) {
-    if (call.targetOrigin !== undefined && (!call.target || !call.targetOrigin || typeof call.targetOrigin.package !== 'string' || !call.targetOrigin.package || typeof call.targetOrigin.file !== 'string' || !call.targetOrigin.file ||
-      !Array.isArray(call.targetOrigin.path) || !call.targetOrigin.path.length || call.targetOrigin.path.some((part) => typeof part !== 'string' || !part))) {
+    if (call.targetOrigin !== undefined && (!call.target || !validSymbolOrigin(call.targetOrigin))) {
       diagnostics.push('BODY_CALL_TARGET_ORIGIN_INVALID')
     }
     if (!occurrences.has(call.occurrence)) diagnostics.push('BODY_CALL_OCCURRENCE_UNKNOWN')
@@ -230,4 +236,10 @@ export function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[] 
   }
   if (typeof body.summary.recursion !== 'boolean') diagnostics.push('BODY_SUMMARY_RECURSION_INVALID')
   return [...new Set(diagnostics)].sort()
+}
+
+function validSymbolOrigin(origin: TypeScriptSymbolOrigin): boolean {
+  return Boolean(origin && typeof origin.package === 'string' && origin.package &&
+    typeof origin.file === 'string' && origin.file && Array.isArray(origin.path) &&
+    origin.path.length && origin.path.every((part) => typeof part === 'string' && part))
 }
