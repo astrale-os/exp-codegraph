@@ -1,6 +1,6 @@
 {
   "name": "@astrale-os/codegraph",
-  "private": true,
+  "private": false,
   "version": "0.1.0",
   "packageManager": "pnpm@11.13.1",
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
@@ -93,7 +93,7 @@
     "check": "node scripts/check.ts",
     "dev": "node cli.ts dev .",
     "release:check": "pnpm run native:assert-release && pnpm run typecheck && pnpm run test",
-    "artifact:policy": "vitest run __tests__/github-artifact-policy.test.ts",
+    "artifact:policy": "vitest run __tests__/npm-distribution-policy.test.ts",
     "native:build": "node scripts/native/build.mjs",
     "native:assemble": "node scripts/native/assemble.mjs",
     "native:assert-release": "node scripts/native/assert-release.mjs",
@@ -101,7 +101,8 @@
     "test": "pnpm run build && vitest run --testTimeout 60000 --maxWorkers 1",
     "test:file": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
     "test:watch": "vitest --testTimeout 15000 --maxWorkers 2",
-    "qualify:cli-restart": "node qualification/v2/application/cli-restart.ts"
+    "qualify:cli-restart": "node qualification/v2/application/cli-restart.ts",
+    "native:admit-packages": "node scripts/native/admit-packages.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
@@ -140,5 +141,9 @@
   },
   "engines": {
     "node": ">=22.13 <23 || >=24 <25 || >=26 <27"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

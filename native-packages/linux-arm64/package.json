@@ -18,7 +18,7 @@
   ],
   "license": "Apache-2.0",
   "name": "@astrale-os/codegraph-native-linux-arm64",
-  "private": true,
+  "private": false,
   "os": [
     "linux"
   ],
@@ -28,5 +28,9 @@
     "url": "git+https://github.com/astrale-os/exp-codegraph.git"
   },
   "type": "module",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
 }

@@ -36,11 +36,12 @@ if (expectedSourceRevision && release.sourceRevision !== expectedSourceRevision)
   )
 }
 if (
-  packageManifest.private !== true ||
-  Object.hasOwn(packageManifest, 'publishConfig') ||
+  packageManifest.private === true ||
+  packageManifest.publishConfig?.access !== 'public' ||
+  packageManifest.publishConfig?.registry !== 'https://registry.npmjs.org/' ||
   packageManifest.repository?.url !== 'git+https://github.com/astrale-os/exp-codegraph.git'
 ) {
-  throw new Error('Codegraph must remain a private GitHub artifact package.')
+  throw new Error('Codegraph must select public npm distribution.')
 }
 assertToolchain(release.toolchain)
 
@@ -60,8 +61,9 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   if (
     child.name !== expected.package ||
     child.version !== packageVersion ||
-    child.private !== true ||
-    Object.hasOwn(child, 'publishConfig') ||
+    child.private === true ||
+    child.publishConfig?.access !== 'public' ||
+    child.publishConfig?.registry !== 'https://registry.npmjs.org/' ||
     child.repository?.url !== 'git+https://github.com/astrale-os/exp-codegraph.git' ||
     stableJson(child.os) !== stableJson([expected.os]) ||
     stableJson(child.cpu) !== stableJson([expected.cpu]) ||
