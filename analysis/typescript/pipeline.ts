@@ -24,6 +24,7 @@ import type {
 } from './model.ts'
 import { materializeNativeDelta, materializeNativeTransaction } from './universe-transaction.ts'
 import { changedModuleSubjects, orderedNativeSourceChanges } from './refresh.optimization.ts'
+import { TYPESCRIPT_MODULE_FACT_NAMESPACE } from './model.ts'
 
 /**
  * Compose one private resident compiler lineage with portable passes and publish
@@ -43,6 +44,9 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
   readonly #portableShards = new Map<FactShardKey, FactShard>()
   /** Native inputs remain dirty until the consumer-visible generation commits. */
   readonly #pendingNamespaces = new Set<string>()
+  readonly #pendingSources = new Set<SourceId>()
+  readonly #pendingModules = new Set<string>()
+  #pendingModuleScopeUnknown = false
   #request = 0
   #disposed = false
   readonly #options: TypeScriptAnalysisPipelineOptions
@@ -118,6 +122,26 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
       if (!admitted) throw new Error('Native delta materialization omitted its transaction.')
       const changedNamespaces = transactionNamespaces(this.#nativeShards, admitted)
       for (const namespace of changedNamespaces) this.#pendingNamespaces.add(namespace)
+      const modules = changedModuleSubjects(admitted)
+      if (modules === undefined) this.#pendingModuleScopeUnknown = true
+      else for (const module of modules) this.#pendingModules.add(module)
+      // Deletion metadata disappears when the private snapshot advances. Retain
+      // its owners until consumers observe the corresponding public generation.
+      for (const key of admitted.deletes) {
+        const shard = this.#nativeShards.get(key)
+        if (shard?.namespace === 'typescript.source') {
+          for (const fact of shard.facts) {
+            this.#pendingSources.add((fact.payload as { readonly source: SourceId }).source)
+          }
+        } else if (shard?.namespace === TYPESCRIPT_MODULE_FACT_NAMESPACE) {
+          for (const fact of shard.facts) {
+            if (fact.kind === 'module') this.#pendingModules.add(fact.subject)
+          }
+        }
+      }
+      for (const source of changedSources(this.#options.project.root, admitted.next.universe, admitted)) {
+        this.#pendingSources.add(source)
+      }
       if (materialized.rollover) {
         this.#nativeShards.clear()
         this.#portableShards.clear()
@@ -143,6 +167,10 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
 
     const universe = this.#universe
     if (!universe) throw new Error('Native analysis did not establish a project universe.')
+    for (const source of changedSources(this.#options.project.root, universe, undefined, [
+      ...(options.changed ?? []),
+      ...(options.changes?.map((change) => change.path) ?? []),
+    ])) this.#pendingSources.add(source)
     const nativeGeneration = await this.#nativeStore.current(universe)
     if (!nativeGeneration) throw new Error('Native analysis did not establish a generation.')
     const nativeQuery = await this.#nativeStore.open(universe, nativeGeneration.id)
@@ -212,18 +240,16 @@ class ResidentTypeScriptAnalysisPipeline implements TypeScriptAnalysisService {
         stagedShards,
         this.#options.passes.flatMap((pass) => pass.manifest.outputs.map((output) => output.namespace)),
       )
+      const sources = [...this.#pendingSources].sort()
+      const changedModules = this.#pendingModuleScopeUnknown ? undefined : [...this.#pendingModules].sort()
       this.#pendingNamespaces.clear()
-
-      const changedModules = changedModuleSubjects(nativeTransaction)
+      this.#pendingSources.clear()
+      this.#pendingModules.clear()
+      this.#pendingModuleScopeUnknown = false
       return {
         generation: transaction?.next ?? current ?? stagedGeneration,
         ...(transaction ? { transaction } : {}),
-        changedSources: changedSources(
-          this.#options.project.root,
-          universe,
-          nativeTransaction,
-          options.changed,
-        ),
+        changedSources: sources,
         ...(changedModules !== undefined ? { changedModules } : {}),
         invalidatedPasses: [
           ...new Set([
@@ -427,7 +453,7 @@ function changedSources(
   root: string,
   universe: ProjectUniverseId,
   transaction: FactTransaction | undefined,
-  changed: readonly string[] | undefined,
+  changed?: readonly string[],
 ): readonly SourceId[] {
   return [
     ...new Set([
