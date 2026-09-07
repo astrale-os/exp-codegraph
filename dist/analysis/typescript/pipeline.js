@@ -9,6 +9,7 @@ import { planPasses, runPortablePasses } from '../pass/index.js';
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION, } from '../protocol/index.js';
 import { materializeNativeDelta, materializeNativeTransaction } from './universe-transaction.js';
 import { changedModuleSubjects, orderedNativeSourceChanges } from './refresh.optimization.js';
+import { TYPESCRIPT_MODULE_FACT_NAMESPACE } from './model.js';
 /**
  * Compose one private resident compiler lineage with portable passes and publish
  * exactly one complete generation to the caller-owned store.
@@ -22,6 +23,11 @@ class ResidentTypeScriptAnalysisPipeline {
     #nativeStore = createMemoryAnalysisStore({ maximumRetainedGenerations: 2 });
     #nativeShards = new Map();
     #portableShards = new Map();
+    /** Native inputs remain dirty until the consumer-visible generation commits. */
+    #pendingNamespaces = new Set();
+    #pendingSources = new Set();
+    #pendingModules = new Set();
+    #pendingModuleScopeUnknown = false;
     #request = 0;
     #disposed = false;
     #options;
@@ -58,7 +64,6 @@ class ResidentTypeScriptAnalysisPipeline {
             throw new Error(`Native analysis ${response.code}: ${response.message}`);
         }
         let nativeTransaction;
-        let changedNamespaces = new Set();
         if (response.kind === 'transaction' || response.kind === 'delta') {
             const materialized = response.kind === 'delta'
                 ? await materializeNativeDelta(this.#nativeStore, nativeBase, response.delta, { signal: options.signal })
@@ -67,7 +72,34 @@ class ResidentTypeScriptAnalysisPipeline {
                 ?? (response.kind === 'transaction' ? response.transaction : undefined);
             if (!admitted)
                 throw new Error('Native delta materialization omitted its transaction.');
-            changedNamespaces = transactionNamespaces(this.#nativeShards, admitted);
+            const changedNamespaces = transactionNamespaces(this.#nativeShards, admitted);
+            for (const namespace of changedNamespaces)
+                this.#pendingNamespaces.add(namespace);
+            const modules = changedModuleSubjects(admitted);
+            if (modules === undefined)
+                this.#pendingModuleScopeUnknown = true;
+            else
+                for (const module of modules)
+                    this.#pendingModules.add(module);
+            // Deletion metadata disappears when the private snapshot advances. Retain
+            // its owners until consumers observe the corresponding public generation.
+            for (const key of admitted.deletes) {
+                const shard = this.#nativeShards.get(key);
+                if (shard?.namespace === 'typescript.source') {
+                    for (const fact of shard.facts) {
+                        this.#pendingSources.add(fact.payload.source);
+                    }
+                }
+                else if (shard?.namespace === TYPESCRIPT_MODULE_FACT_NAMESPACE) {
+                    for (const fact of shard.facts) {
+                        if (fact.kind === 'module')
+                            this.#pendingModules.add(fact.subject);
+                    }
+                }
+            }
+            for (const source of changedSources(this.#options.project.root, admitted.next.universe, admitted)) {
+                this.#pendingSources.add(source);
+            }
             if (materialized.rollover) {
                 this.#nativeShards.clear();
                 this.#portableShards.clear();
@@ -92,6 +124,11 @@ class ResidentTypeScriptAnalysisPipeline {
         const universe = this.#universe;
         if (!universe)
             throw new Error('Native analysis did not establish a project universe.');
+        for (const source of changedSources(this.#options.project.root, universe, undefined, [
+            ...(options.changed ?? []),
+            ...(options.changes?.map((change) => change.path) ?? []),
+        ]))
+            this.#pendingSources.add(source);
         const nativeGeneration = await this.#nativeStore.current(universe);
         if (!nativeGeneration)
             throw new Error('Native analysis did not establish a generation.');
@@ -104,7 +141,7 @@ class ResidentTypeScriptAnalysisPipeline {
                 availableCapabilities: nativeGeneration.capabilities,
                 availableSchemas: schemas,
             });
-            const invalidated = invalidatedPortablePasses(plan.ordered, this.#portableShards, changedNamespaces, options.invalidate === true);
+            const invalidated = invalidatedPortablePasses(plan.ordered, this.#portableShards, this.#pendingNamespaces, options.invalidate === true);
             const selectedPlan = {
                 ...plan,
                 ordered: plan.ordered.filter((manifest) => invalidated.has(manifest.id)),
@@ -126,7 +163,6 @@ class ResidentTypeScriptAnalysisPipeline {
             if (portable.transaction)
                 applyShards(stagedShards, portable.transaction);
             assertCompleteShards(stagedShards, stagedManifest, 'staged');
-            replacePortableShards(this.#portableShards, stagedShards, this.#options.passes.flatMap((pass) => pass.manifest.outputs.map((output) => output.namespace)));
             const current = await this.#options.store.current(universe);
             const currentManifest = current
                 ? await withQuery(this.#options.store.open(universe, current.id), (query) => query.manifest())
@@ -135,11 +171,17 @@ class ResidentTypeScriptAnalysisPipeline {
             if (transaction) {
                 await this.#options.store.commit(transaction, { signal: options.signal });
             }
-            const changedModules = changedModuleSubjects(nativeTransaction);
+            replacePortableShards(this.#portableShards, stagedShards, this.#options.passes.flatMap((pass) => pass.manifest.outputs.map((output) => output.namespace)));
+            const sources = [...this.#pendingSources].sort();
+            const changedModules = this.#pendingModuleScopeUnknown ? undefined : [...this.#pendingModules].sort();
+            this.#pendingNamespaces.clear();
+            this.#pendingSources.clear();
+            this.#pendingModules.clear();
+            this.#pendingModuleScopeUnknown = false;
             return {
                 generation: transaction?.next ?? current ?? stagedGeneration,
                 ...(transaction ? { transaction } : {}),
-                changedSources: changedSources(this.#options.project.root, universe, nativeTransaction, options.changed),
+                changedSources: sources,
                 ...(changedModules !== undefined ? { changedModules } : {}),
                 invalidatedPasses: [
                     ...new Set([
