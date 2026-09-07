@@ -40,6 +40,12 @@ export interface ParameterBinding {
 export interface ResolvedCall {
     readonly occurrence: OccurrenceId;
     readonly target?: SymbolId;
+    /** Canonical declaration origin; absent when package/declaration identity cannot be proved. */
+    readonly targetOrigin?: {
+        readonly package: string;
+        readonly file: string;
+        readonly path: readonly string[];
+    };
     readonly signature?: string;
     readonly receiver?: OccurrenceId;
     readonly typeArguments: readonly string[];
@@ -58,6 +64,11 @@ export interface FunctionSummary {
     readonly recursion: boolean;
 }
 export interface FunctionBodyIR {
+    /** Lexical execution owner. Older body facts omit this and describe a function. */
+    readonly scope?: 'function' | 'module';
+    /** Function execution form; absence in older facts does not prove synchronous execution. */
+    readonly execution?: 'sync' | 'async' | 'generator' | 'async-generator';
+    /** Stable owner identity, also used for a module's evaluation scope. */
     readonly function: SymbolId;
     readonly parameters: readonly SymbolId[];
     readonly occurrences: readonly BodyOccurrence[];
