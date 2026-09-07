@@ -275,16 +275,17 @@ defineQuery(); secondAlias(); other(); Lookalike.defineQuery(); mutable();
 import { facade } from '@fixture/other'
 Query.from(); facade.from();
 `
-    const current = await fixture(text, packed)
-    try {
+    const current = await fixture(text, packed, undefined, async (root) => {
       for (const name of ['canonical', 'other']) {
-        const directory = join(current.root, 'node_modules/@fixture', name)
+        const directory = join(root, 'node_modules/@fixture', name)
         await mkdir(directory, { recursive: true })
         await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, types: 'index.d.ts' }))
         await writeFile(join(directory, 'index.d.ts'), name === 'canonical'
           ? 'export declare const Query: { from(): unknown }\n'
           : "import { Query } from '@fixture/canonical'\nexport declare const facade: typeof Query\n")
       }
+    })
+    try {
       await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
       const module = (await current.read()).find((entry) => entry.file === 'index.ts' && entry.body.scope === 'module')!.body
       expect(module.calls).toHaveLength(2)
