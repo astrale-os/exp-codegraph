@@ -14,6 +14,8 @@ export interface MaterializedNativeTransaction {
  * snapshot. If that portable universe existed before (for example after a
  * tsconfig edit is reverted), this function safely rebases the complete
  * snapshot onto the caller's retained current generation for that universe.
+ * A restarted process can also produce a complete base-less snapshot in the
+ * same universe; it follows the same admission/rebase path without a rollover.
  */
 export declare function materializeNativeTransaction(store: AnalysisStore, activeUniverse: ProjectUniverseId | undefined, activeGeneration: AnalysisGeneration | undefined, transaction: FactTransaction, options?: {
     readonly signal?: AbortSignal;
