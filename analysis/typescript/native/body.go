@@ -165,7 +165,7 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	}
 	controlFlow := buildControlFlow(b)
 	b.buildRelations(b.body)
-	b.finishDefinitionUses()
+	b.finishDefinitionUses(controlFlow)
 	sort.Slice(b.occurrences, func(i, j int) bool {
 		if b.occurrences[i].Span.Start == b.occurrences[j].Span.Start {
 			return b.occurrences[i].ID < b.occurrences[j].ID
@@ -336,23 +336,6 @@ func (b *bodyBuilder) identifier(node *shimast.Node) {
 		return
 	}
 	b.uses[symbolID] = append(b.uses[symbolID], id)
-}
-
-func (b *bodyBuilder) finishDefinitionUses() {
-	for symbol, uses := range b.uses {
-		definitions := b.defs[symbol]
-		if len(definitions) == 0 {
-			b.captures[symbol] = true
-			continue
-		}
-		for _, use := range uses {
-			for _, definition := range definitions {
-				b.definitions = append(b.definitions, definitionUse{
-					Definition: definition, Use: use, Symbol: symbol, Reaching: "possible",
-				})
-			}
-		}
-	}
 }
 
 func (b *bodyBuilder) setOccurrenceSymbol(id, symbol string) {
