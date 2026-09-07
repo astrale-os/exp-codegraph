@@ -4,7 +4,7 @@ import type { AnalysisQuery, AnalysisStore } from '../../query/index.ts';
 import type { NativeAnalysisSessionFactory, NativeProjectDescriptor, NativeSourceChange } from '../../protocol/index.ts';
 import type { SourceId } from '../../identity/index.ts';
 import type { TypeScriptFactReader } from '../facts/index.ts';
-import type { BoundedValueEvaluator, BoundedValueLimits } from '../value/index.ts';
+import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions } from '../value/index.ts';
 export interface TypeScriptProjectOptions {
     readonly root: string;
     readonly config?: string;
@@ -23,8 +23,8 @@ export interface TypeScriptProjectSnapshot {
     readonly facts: TypeScriptFactReader;
     /** Generic extensions consume the same pinned evidence as the typed reader. */
     readonly query: AnalysisQuery;
-    /** Reuses one evaluator for each effective budget within this immutable snapshot. */
-    values(limits?: BoundedValueLimits): Promise<BoundedValueEvaluator>;
+    /** Shares one index; evaluator reuse requires the same call model and effective budget. */
+    values<Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>): Promise<BoundedValueEvaluator<Atom>>;
     dispose(): Promise<void>;
     [Symbol.asyncDispose](): Promise<void>;
 }
