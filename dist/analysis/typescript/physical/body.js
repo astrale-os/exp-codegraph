@@ -1,15 +1,27 @@
 import { validateFunctionBodyIR } from '../body/model.js';
-export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/1';
+export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/2';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC = Object.freeze({
     id: TYPESCRIPT_BODY_PAYLOAD_CODEC_ID,
-    decode: decodePackedTypeScriptBody,
+    decode: (input) => decodePackedTypeScriptBody(input, 2),
 });
 export const TYPESCRIPT_FACT_PAYLOAD_CODECS = Object.freeze([
     TYPESCRIPT_BODY_PAYLOAD_CODEC,
+    Object.freeze({
+        id: 'typescript.body.packed/1',
+        decode: (input) => decodePackedTypeScriptBody(input, 1),
+    }),
 ]);
-function decodePackedTypeScriptBody(input) {
+function decodePackedTypeScriptBody(input, version) {
     const packed = exactRecord(input, ['c', 's', 't', 'p', 'o', 'r', 'b', 'e', 'd', 'a', 'u', 'v', 'q'], 'body payload');
-    const constants = exactTuple(packed.c, 3, 'constants');
+    const constants = exactTuple(packed.c, version === 1 ? 3 : 5, 'constants');
+    const scope = version === 1 ? undefined : constants[3];
+    if (version === 2 && scope !== 'function' && scope !== 'module') {
+        throw new TypeError('Packed TypeScript body scope is invalid.');
+    }
+    const execution = version === 1 || constants[4] === '' ? undefined : constants[4];
+    if (execution !== undefined && execution !== 'sync' && execution !== 'async' && execution !== 'generator' && execution !== 'async-generator') {
+        throw new TypeError('Packed TypeScript body execution is invalid.');
+    }
     const source = expandId(constants[0], 'source');
     const revision = expandId(constants[1], 'source-revision');
     const owner = expandId(constants[2], 'symbol');
@@ -75,13 +87,14 @@ function decodePackedTypeScriptBody(input) {
         };
     });
     const calls = packed.a.map((value, index) => {
-        const row = exactTuple(value, 9, `calls[${index}]`);
+        const row = exactTuple(value, version === 1 ? 9 : 10, `calls[${index}]`);
         const target = optionalOrdinal(row[1], symbols.length, `calls[${index}].target`);
         const signature = optionalOrdinal(row[2], texts.length, `calls[${index}].signature`);
         const receiver = optionalOrdinal(row[3], occurrences.length, `calls[${index}].receiver`);
         return {
             occurrence: occurrence(row[0], `calls[${index}].occurrence`),
             ...(target === undefined ? {} : { target: symbols[target] }),
+            ...(version === 1 || row[9] === null ? {} : { targetOrigin: admitTargetOrigin(row[9]) }),
             ...(signature === undefined ? {} : { signature: texts[signature] }),
             ...(receiver === undefined ? {} : { receiver: occurrences[receiver].id }),
             typeArguments: array(row[4], `calls[${index}].typeArguments`).map((entry, valueIndex) => text(entry, `calls[${index}].typeArguments[${valueIndex}]`)),
@@ -102,6 +115,8 @@ function decodePackedTypeScriptBody(input) {
     });
     const summary = exactTuple(packed.u, 6, 'summary');
     const body = {
+        ...(scope === undefined ? {} : { scope: scope }),
+        ...(execution === undefined ? {} : { execution: execution }),
         function: owner,
         parameters,
         occurrences,
@@ -135,6 +150,14 @@ function decodePackedTypeScriptBody(input) {
         values[occurrences[key].id] = admitValueResult(row[1], `values[${index}].value`);
     }
     return { body, values, completeness: admitCompleteness(packed.q, 'completeness') };
+}
+function admitTargetOrigin(input) {
+    const value = exactRecord(input, ['package', 'file', 'path'], 'call target origin');
+    if (typeof value.package !== 'string' || !value.package || typeof value.file !== 'string' || !value.file ||
+        !Array.isArray(value.path) || !value.path.length || value.path.some((part) => typeof part !== 'string' || !part)) {
+        throw new TypeError('Packed TypeScript call target origin is invalid.');
+    }
+    return { package: value.package, file: value.file, path: value.path };
 }
 function admitCompleteness(value, path) {
     const input = record(value, path);

@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 import { createMemoryAnalysisStore } from '../analysis/memory/index.ts'
@@ -9,9 +9,9 @@ import {
   createBoundedValueEvaluator,
   createTypeScriptAnalysisService,
   createTypeScriptFactReader,
-  resolvePackagedNativeAnalysis,
   type BoundedValueEvaluator,
 } from '../analysis/typescript/index.ts'
+import { resolveTtscNativeAnalysis } from '../analysis/typescript/ttsc/index.ts'
 import type { OccurrenceId } from '../analysis/identity/index.ts'
 
 const source = `
@@ -47,7 +47,10 @@ describe('bounded values from real TypeScript bodies', () => {
       })),
       writeFile(join(root, 'values.ts'), source),
     ])
-    const native = await resolvePackagedNativeAnalysis({
+    const native = await resolveTtscNativeAnalysis({
+      root: resolve(import.meta.dirname, '..'),
+      config: 'tsconfig.json',
+      cacheDirectory: join(tmpdir(), 'codegraph-test-ttsc'),
       ...(process.env.CODEGRAPH_TEST_NATIVE_BINARY ? { binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY } : {}),
     })
     const store = createMemoryAnalysisStore()
@@ -83,7 +86,7 @@ describe('bounded values from real TypeScript bodies', () => {
       await store.dispose()
       throw error
     }
-  })
+  }, 120_000)
 
   afterAll(async () => {
     try {
