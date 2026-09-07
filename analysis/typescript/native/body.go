@@ -309,6 +309,11 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 	b.occurrences = append(b.occurrences, bodyOccurrence{
 		ID: id, Kind: kind, Span: span, Owner: b.owner, Syntax: strings.TrimPrefix(node.KindString(), "Kind"),
 	})
+	if node.Kind == shimast.KindBinaryExpression {
+		if operator := node.AsBinaryExpression().OperatorToken; operator != nil {
+			b.occurrences[len(b.occurrences)-1].Operator = strings.TrimPrefix(operator.KindString(), "Kind")
+		}
+	}
 	return id
 }
 

@@ -3594,7 +3594,7 @@ function packedBodyFixture() {
     s: [] as string[],
     t: ['statement', 'ExpressionStatement', 'entry'],
     p: [] as number[],
-    o: [[compact(4), 0, 0, 1, 1, -1, null]],
+    o: [[compact(4), 0, 0, 1, 1, -1, null, -1]],
     r: [] as unknown[],
     b: [[2, [0]]],
     e: [] as unknown[],
