@@ -26,8 +26,8 @@ describe('resident TypeScript project public API', () => {
       const before = await project.open(initial.generation)
       const original = await before.facts.facts('source')
       const evaluator = await before.values()
-      expect(await before.values({ maximumSteps: 2_000 })).toBe(evaluator)
-      expect(await before.values({ maximumSteps: 10 })).not.toBe(evaluator)
+      expect(await before.values({ limits: { maximumSteps: 2_000 } })).toBe(evaluator)
+      expect(await before.values({ limits: { maximumSteps: 10 } })).not.toBe(evaluator)
       await writeFile(join(root, 'index.ts'), "export function value() { return 'second' }\n")
       const [edited, unchanged] = await Promise.all([
         project.refresh({ changed: ['index.ts'] }), project.refresh(),

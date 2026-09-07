@@ -1,3 +1,4 @@
+import type { SymbolicCallModel, SymbolicValuePlan } from './symbolic/index.ts'
 import type { AnalysisFailure, AnalysisLimit } from '../../facts/index.ts'
 import type { FactId } from '../../identity/index.ts'
 import type { OccurrenceId } from '../../identity/index.ts'
@@ -33,7 +34,11 @@ export type EvaluatedValueResult<Value> = ValueResult<Value> & {
   readonly limits: Readonly<Required<BoundedValueLimits>>
 }
 
-export interface BoundedValueEvaluator {
+export interface BoundedValueEvaluator<Atom = never> {
+  /** Build a lazy symbolic proof, preserving closures and effective object properties. */
+  value(occurrence: OccurrenceId): SymbolicValuePlan<Atom>
+  /** Reuse only proofs whose model, budget and positive/negative dependencies still match. */
+  canReuse(proof: EvaluatedValueResult<unknown>): boolean
   /**
    * Resolve literal values and supported transfers in the calling context.
    * Both explicit returns and concise arrow returns retain their expression.
@@ -46,7 +51,8 @@ export interface BoundedValueEvaluator {
   ): Promise<EvaluatedValueResult<Value>>
 }
 
-export interface BoundedValueEvaluatorOptions {
+export interface BoundedValueEvaluatorOptions<Atom = never> {
+  readonly call?: SymbolicCallModel<Atom>
   readonly query: AnalysisQuery
   readonly limits?: BoundedValueLimits
 }

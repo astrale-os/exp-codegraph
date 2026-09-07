@@ -1,3 +1,4 @@
+import type { SymbolicCallModel, SymbolicValuePlan } from '../symbolic/.spec/api.js'
 import type { AnalysisLimit, AnalysisFailure } from '../../../facts/.spec/api.js'
 import type { FactId } from '../../../identity/.spec/api.js'
 import type { OccurrenceId } from '../../../identity/.spec/api.js'
@@ -32,7 +33,11 @@ export type EvaluatedValueResult<Value> = ValueResult<Value> & {
   readonly limits: Readonly<Required<BoundedValueLimits>>
 }
 
-export interface BoundedValueEvaluator {
+export interface BoundedValueEvaluator<Atom = never> {
+  /** Build a lazy symbolic proof, preserving closures and effective object properties. */
+  value(occurrence: OccurrenceId): SymbolicValuePlan<Atom>
+  /** Reuse only proofs whose model, budget and positive/negative dependencies still match. */
+  canReuse(proof: EvaluatedValueResult<unknown>): boolean
   /**
    * Resolve literal values and supported transfers in the calling context.
    * Both explicit returns and concise arrow returns retain their expression.
@@ -45,7 +50,8 @@ export interface BoundedValueEvaluator {
   ): Promise<EvaluatedValueResult<Value>>
 }
 
-export interface BoundedValueEvaluatorOptions {
+export interface BoundedValueEvaluatorOptions<Atom = never> {
+  readonly call?: SymbolicCallModel<Atom>
   readonly query: AnalysisQuery
   readonly limits?: BoundedValueLimits
 }
@@ -56,6 +62,8 @@ export function resolveBoundedValueLimits(
   input?: BoundedValueLimits,
 ): Readonly<Required<BoundedValueLimits>>
 
-export function createBoundedValueEvaluator(
-  options: BoundedValueEvaluatorOptions,
-): Promise<BoundedValueEvaluator>
+export function createBoundedValueEvaluator<Atom = never>(
+  options: BoundedValueEvaluatorOptions<Atom>,
+): Promise<BoundedValueEvaluator<Atom>>
+
+export type { SymbolicCallContext, SymbolicCallModel, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from '../symbolic/.spec/api.js'

@@ -2848,6 +2848,21 @@ process.exit(0)
     }
   })
 
+  it('does not infer synchronous values from older bodies without execution metadata', async () => {
+    const { transaction, calls } = bodyEvaluationTransaction({})
+    const store = createMemoryAnalysisStore()
+    try {
+      await store.commit(transaction)
+      const query = await store.open(transaction.next.universe)
+      try {
+        const evaluator = await createBoundedValueEvaluator({ query })
+        await expect(evaluator.evaluate(calls.first)).resolves.toMatchObject({
+          kind: 'unknown', reasons: [expect.objectContaining({ code: 'VALUE_EXECUTION_UNSUPPORTED' })],
+        })
+      } finally { await query.dispose() }
+    } finally { await store.dispose() }
+  })
+
   it('admits typed TypeScript facts and rejects malformed payloads at the reader boundary', async () => {
     const { transaction } = bodyEvaluationTransaction()
     const store = createMemoryAnalysisStore()
@@ -3304,7 +3319,7 @@ function pass(
   }
 }
 
-function bodyEvaluationTransaction(): {
+function bodyEvaluationTransaction(options: { readonly execution?: FunctionBodyIR['execution'] } = { execution: 'sync' }): {
   readonly transaction: FactTransaction
   readonly calls: {
     readonly first: FunctionBodyIR['calls'][number]['occurrence']
@@ -3327,6 +3342,7 @@ function bodyEvaluationTransaction(): {
   const secondArgument = occurrence('second-argument')
   const secondCall = occurrence('second-call')
   const helperBody: FunctionBodyIR = {
+    ...(options.execution ? { execution: options.execution } : {}),
     function: helper,
     parameters: [parameter],
     occurrences: [
