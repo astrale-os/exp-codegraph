@@ -156,13 +156,15 @@ func admittedSourceChanges(input request) ([]sourceChange, error) {
 }
 
 func affectedSourceClosure(program *driver.Program, changed, public []string) []string {
+	// Projection shards use the compiler's FileName identity. filepath.Clean
+	// would change its forward slashes on Windows and select absent shard keys.
 	reverse := map[string][]string{}
 	physicalByCanonical := map[string]string{}
 	for _, source := range program.SourceFiles() {
-		physicalByCanonical[string(source.Path())] = filepath.Clean(source.FileName())
+		physicalByCanonical[string(source.Path())] = source.FileName()
 	}
 	for _, source := range program.SourceFiles() {
-		owner := filepath.Clean(source.FileName())
+		owner := source.FileName()
 		for _, referenced := range shimcompiler.GetReferencedFilePaths(program.TSProgram, source) {
 			if target := physicalByCanonical[referenced]; target != "" {
 				reverse[target] = append(reverse[target], owner)
@@ -171,11 +173,11 @@ func affectedSourceClosure(program *driver.Program, changed, public []string) []
 	}
 	selected := map[string]bool{}
 	for _, path := range changed {
-		selected[filepath.Clean(path)] = true
+		selected[path] = true
 	}
 	queue := sortedUnique(append([]string{}, public...))
 	for len(queue) != 0 {
-		path := filepath.Clean(queue[0])
+		path := queue[0]
 		queue = queue[1:]
 		selected[path] = true
 		for _, dependent := range reverse[path] {
