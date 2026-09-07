@@ -54,6 +54,8 @@ jobs:
             runner: macos-15-intel
           - target: darwin-arm64
             runner: macos-15
+          - target: win32-x64
+            runner: windows-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -68,11 +70,11 @@ jobs:
       - name: Build package distribution
         run: pnpm build
       - name: Qualify native semantics and extension boundary
-        run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native
-      - name: Verify executable-scope and bounded-value regressions
+        run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
+      - name: Qualify native regression and diagnostic transport
+        run: pnpm exec vitest run __tests__/native-semantic-body.test.ts __tests__/typescript-value-semantics.test.ts __tests__/native-distribution.test.ts --maxWorkers 1
         env:
-          CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native
-        run: pnpm exec vitest run __tests__/native-semantic-body.test.ts __tests__/typescript-value-semantics.test.ts --maxWorkers 1
+          CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Upload qualified native artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -104,7 +106,7 @@ jobs:
       - name: Pack GitHub consumer artifact
         run: |
           mkdir -p release
-          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
             npm pack ./native-packages/$target --pack-destination release
           done
           pnpm pack --pack-destination release
@@ -116,7 +118,7 @@ jobs:
           if-no-files-found: error
 
   packed-consumer:
-    name: Install and execute ${{ matrix.target }} packages
+    name: Install and execute ${{ matrix.target }} packages (Node ${{ matrix.node-version }})
     needs: assemble
     strategy:
       fail-fast: false
@@ -124,12 +126,28 @@ jobs:
         include:
           - target: linux-x64
             runner: ubuntu-24.04
+            node-version: '26'
           - target: linux-arm64
             runner: ubuntu-24.04-arm
+            node-version: '26'
           - target: darwin-x64
             runner: macos-15-intel
+            node-version: '26'
           - target: darwin-arm64
             runner: macos-15
+            node-version: '26'
+          - target: win32-x64
+            runner: windows-latest
+            node-version: '26'
+          - target: linux-x64
+            runner: ubuntu-24.04
+            node-version: '22.13.0'
+          - target: linux-x64
+            runner: ubuntu-24.04
+            node-version: '22'
+          - target: linux-x64
+            runner: ubuntu-24.04
+            node-version: '24'
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -139,6 +157,7 @@ jobs:
       - uses: astrale-os/config/.github/actions/setup@9bffee57d53b603b556bb545145fdde10f20a4c5
         with:
           frozen-lockfile: 'true'
+          node-version: ${{ matrix.node-version }}
       - name: Download assembled GitHub artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -146,3 +165,6 @@ jobs:
           path: release
       - name: Prove GitHub artifact installation and native execution
         run: node qualification/v2/release/packed-consumer.mjs --release-directory release
+      - name: Qualify SQLite on the minimum supported Node release
+        if: matrix.node-version == '22.13.0'
+        run: node node_modules/vitest/vitest.mjs run __tests__/analysis-v2.test.ts -t 'SQLite|memory and SQLite|telemetry' --maxWorkers 1

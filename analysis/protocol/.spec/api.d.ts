@@ -139,7 +139,7 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly maximumResidentBytes?: number
   /** Qualification seam for a receiver-bound resident-set evidence provider. */
   readonly sampleResidentBytes?: (pid: number) => Promise<number>
-  /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
+  /** Opt-in diagnostic attribution, with a marked stderr stream on Windows. */
   readonly telemetry?: AnalysisTelemetrySink
   /** Explicit physical payload capabilities negotiated with the native producer. */
   readonly payloadCodecs?: readonly FactPayloadCodec[]

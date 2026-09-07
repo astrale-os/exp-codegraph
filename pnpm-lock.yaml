@@ -94,6 +94,9 @@ importers:
       '@astrale-os/codegraph-native-linux-x64':
         specifier: workspace:*
         version: link:native-packages/linux-x64
+      '@astrale-os/codegraph-native-win32-x64':
+        specifier: workspace:*
+        version: link:native-packages/win32-x64
 
   native-packages/darwin-arm64: {}
 
@@ -102,6 +105,8 @@ importers:
   native-packages/linux-arm64: {}
 
   native-packages/linux-x64: {}
+
+  native-packages/win32-x64: {}
 
 packages:
 

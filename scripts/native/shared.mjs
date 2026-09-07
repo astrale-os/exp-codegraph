@@ -32,6 +32,12 @@ export const NATIVE_TARGETS = Object.freeze({
     cpu: 'x64',
     executable: 'bin/codegraph-native',
   }),
+  'win32-x64': Object.freeze({
+    package: '@astrale-os/codegraph-native-win32-x64',
+    os: 'win32',
+    cpu: 'x64',
+    executable: 'bin/codegraph-native.exe',
+  }),
 })
 
 export async function readJson(path) {
@@ -49,7 +55,7 @@ export async function digestFile(path) {
 export async function assertRegularExecutable(path, target) {
   const metadata = await stat(path)
   if (!metadata.isFile()) throw new Error(`${target} artifact is not a regular file: ${path}`)
-  if ((metadata.mode & 0o111) === 0) {
+  if (NATIVE_TARGETS[target]?.os !== 'win32' && (metadata.mode & 0o111) === 0) {
     throw new Error(`${target} artifact is not executable: ${path}`)
   }
 }

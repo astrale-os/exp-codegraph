@@ -79,7 +79,7 @@ async function readToolchain() {
   const match = /^github\.com\/microsoft\/typescript-go (v\S+) /mu.exec(goSum)
   if (!match) throw new Error('Cannot determine the TypeScript-Go module revision from ttsc.')
   const platformManifest = ttscRequire.resolve(`@ttsc/${target}/package.json`)
-  const goBinary = resolve(dirname(platformManifest), 'bin/go/bin/go')
+  const goBinary = resolve(dirname(platformManifest), 'bin/go/bin', process.platform === 'win32' ? 'go.exe' : 'go')
   const { stdout } = await execFile(goBinary, ['version'], { encoding: 'utf8' })
   const goMatch = /\b(go\d+\.\d+(?:\.\d+)?)\b/u.exec(stdout)
   if (!goMatch) throw new Error(`Cannot determine bundled Go version from: ${stdout.trim()}`)

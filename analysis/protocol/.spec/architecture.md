@@ -31,3 +31,11 @@ publishing a response.
 Native publication is commit-late. The process retains one replayable candidate until the
 application store commits the reconstructed transaction and acknowledges its exact generation and
 sequence. A failed validation, cancellation, or store commit cannot advance the resident generation.
+
+Diagnostic telemetry is opt-in and never enters semantic stdout. Unix hosts retain descriptor 3;
+Windows hosts request `--telemetry-stderr`, because Go's Windows file handles are not CRT descriptor
+numbers. Each stderr telemetry line begins with `@astrale/codegraph/telemetry ` and must also carry
+the native telemetry format/version. The adapter bounds candidate lines by the diagnostic limit,
+retains ordinary or malformed diagnostics, and resumes framing after oversized lines. Observer
+failure cannot change semantic results. This transport is qualified with the exact release binary;
+an older binary that rejects the option fails visibly rather than silently disabling telemetry.

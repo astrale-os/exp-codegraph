@@ -278,7 +278,7 @@ async function loadExternalConsumer(temporary: string): Promise<ConsumerModule> 
     cp(consumerSource, join(installed, 'src'), { recursive: true }),
     mkdir(dirname(packageDirectory), { recursive: true }),
   ])
-  await symlink(specificationPackageRoot, packageDirectory, 'dir')
+  await symlink(specificationPackageRoot, packageDirectory, process.platform === 'win32' ? 'junction' : 'dir')
   const imported = (await import(pathToFileURL(join(installed, 'src/index.ts')).href)) as ConsumerModule
   assert.equal(typeof imported.createSDKBuilderAnalysisPass, 'function')
   assert.equal(typeof imported.createSDKBuilderQualificationPolicy, 'function')

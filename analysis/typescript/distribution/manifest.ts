@@ -16,6 +16,7 @@ export const NATIVE_ARTIFACT_PACKAGES: Readonly<Record<NativeAnalysisTarget, str
   'darwin-x64': '@astrale-os/codegraph-native-darwin-x64',
   'linux-arm64': '@astrale-os/codegraph-native-linux-arm64',
   'linux-x64': '@astrale-os/codegraph-native-linux-x64',
+  'win32-x64': '@astrale-os/codegraph-native-win32-x64',
 })
 
 export interface NativeArtifactPackageManifest {

@@ -1,7 +1,7 @@
 packages:
   - 'native-packages/*'
 
-# This checkout links the four owned native packaging units for local builds.
+# This checkout links the owned native packaging units for local builds.
 # GitHub artifact qualification installs packed tarballs in an isolated directory.
 linkWorkspacePackages: true
 preferWorkspacePackages: true

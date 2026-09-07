@@ -417,7 +417,7 @@ lines.on('line', (line) => {
     await malformed.dispose()
   })
 
-  it('keeps diagnostic telemetry on a separate descriptor and semantics unchanged', async () => {
+  it('keeps diagnostic telemetry separate from semantic frames on every platform', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-telemetry-session-'))
     temporary.push(root)
     const sidecar = join(root, 'sidecar.mjs')
@@ -427,12 +427,13 @@ lines.on('line', (line) => {
       `
 import { writeSync } from 'node:fs'
 import { createInterface } from 'node:readline'
-const profiled = process.argv.includes('--telemetry-fd')
+const stderrTelemetry = process.argv.includes('--telemetry-stderr')
+const profiled = process.argv.includes('--telemetry-fd') || stderrTelemetry
 const lines = createInterface({ input: process.stdin })
 lines.on('line', (line) => {
   const request = JSON.parse(line)
   if (request.kind === 'dispose') process.exit(0)
-  if (profiled) writeSync(3, JSON.stringify({
+  if (profiled) writeSync(stderrTelemetry ? 2 : 3, (stderrTelemetry ? '@astrale/codegraph/telemetry ' : '') + JSON.stringify({
     format: 'astrale.codegraph.analysis-telemetry',
     version: 1,
     component: 'native',
@@ -479,6 +480,54 @@ lines.on('line', (line) => {
       ]),
     )
     await Promise.all([plain.dispose(), profiled.dispose()])
+  })
+
+  it('routes fragmented marked stderr telemetry while retaining bounded compiler diagnostics', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-stderr-telemetry-'))
+    temporary.push(root)
+    const sidecar = join(root, 'sidecar.mjs')
+    const generation = deriveAnalysisId('generation', 'stderr-telemetry', {})
+    await writeFile(sidecar, `
+import { writeSync } from 'node:fs'
+import { createInterface } from 'node:readline'
+createInterface({ input: process.stdin }).on('line', (line) => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+  if (request.id === 2) process.exit(1)
+  writeSync(2, 'compiler warning\\n@astrale/codegraph/telemetry {broken}\\n' + 'x'.repeat(2000) + '\\n')
+  const frame = '@astrale/codegraph/telemetry ' + JSON.stringify({
+    format: 'astrale.codegraph.analysis-telemetry', version: 1, component: 'native',
+    phase: 'fixture.stderr', request: request.id, metrics: { facts: 0 }
+  }) + '\\n'
+  writeSync(2, frame.slice(0, 9))
+  writeSync(2, frame.slice(9, 47))
+  writeSync(2, frame.slice(47))
+  process.stdout.write(JSON.stringify({
+    id: request.id, protocolVersion: 1, kind: 'unchanged', generation: ${JSON.stringify(generation)}
+  }) + '\\n')
+})
+`)
+    const events: import('../analysis/index.ts').AnalysisTelemetryEvent[] = []
+    const session = await createProcessNativeAnalysisSessionFactory({
+      command: process.execPath,
+      arguments: [sidecar],
+      maximumErrorBytes: 1024,
+      telemetry: (event) => {
+        events.push(event)
+        if (event.phase === 'fixture.stderr') throw new Error('observer is diagnostic-only')
+      },
+    }).open({ root, config: 'tsconfig.json', capabilities: ['fixture'] })
+    try {
+      expect((await session.request({ id: 1, kind: 'refresh' })).kind).toBe('unchanged')
+      await expect.poll(() => events.some((event) => event.phase === 'fixture.stderr')).toBe(true)
+      const failure = await session.request({ id: 2, kind: 'refresh' }).catch((error: Error) => error)
+      expect(failure).toBeInstanceOf(Error)
+      const message = (failure as Error).message
+      expect(message).toContain('compiler warning')
+      expect(message).toContain('@astrale/codegraph/telemetry {broken}')
+      expect(message).not.toContain('fixture.stderr')
+      expect(message.length).toBeLessThan(1124)
+    } finally { await session.dispose() }
   })
 
   it('terminates a native session with visible evidence when its resident budget is exceeded', async () => {

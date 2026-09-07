@@ -42,6 +42,7 @@ type commandOptions struct {
 	maximumFrameBytes, transactionChunkFrameBytes                           int
 	maximumTransactionBytes, maximumPhysicalTransactionBytes                int
 	telemetryFD                                                             int
+	telemetryStderr                                                         bool
 }
 
 func parseOptions(command string, arguments []string) (commandOptions, error) {
@@ -58,6 +59,7 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", 384*1024*1024, "maximum decoded semantic fact payload bytes")
 	maximumPhysicalTransactionBytes := flags.Int("maximum-physical-transaction-bytes", 512*1024*1024, "maximum assembled physical transaction bytes")
 	telemetryFD := flags.Int("telemetry-fd", -1, "optional diagnostic NDJSON descriptor")
+	telemetryStderr := flags.Bool("telemetry-stderr", false, "marked diagnostic NDJSON on stderr")
 	_ = flags.String("plugins-json", "", "ttsc compatibility")
 	_ = flags.Bool("emit", false, "ttsc compatibility")
 	_ = flags.Bool("noEmit", false, "ttsc compatibility")
@@ -90,6 +92,7 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 		maximumTransactionBytes:         *maximumTransactionBytes,
 		maximumPhysicalTransactionBytes: *maximumPhysicalTransactionBytes,
 		telemetryFD:                     *telemetryFD,
+		telemetryStderr:                 *telemetryStderr,
 	}, nil
 }
 
@@ -157,7 +160,7 @@ func runCheck(arguments []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	telemetry, err := openNativeTelemetry(options.telemetryFD)
+	telemetry, err := openNativeTelemetry(options.telemetryFD, options.telemetryStderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -196,7 +199,7 @@ func runServe(arguments []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	telemetry, err := openNativeTelemetry(options.telemetryFD)
+	telemetry, err := openNativeTelemetry(options.telemetryFD, options.telemetryStderr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2

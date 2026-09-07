@@ -8,7 +8,6 @@ import type { TypeSpecApplicationService } from '../index.ts'
 
 import { selectAnalysisStore } from '../../analysis/index.ts'
 import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.ts'
-import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.ts'
 import {
   createFileWorkspaceCheckpointStore,
   type FileWorkspaceCheckpointStore,
@@ -48,14 +47,16 @@ export async function createNodeTypeSpecApplicationService(
     persistence: 'advisory',
     ...((options.persistence ?? 'advisory') === 'advisory'
       ? {
-          openDurable: () =>
-            createSQLiteAnalysisStore({
+          openDurable: async () => {
+            const { createSQLiteAnalysisStore } = await import('../../analysis/sqlite/index.ts')
+            return createSQLiteAnalysisStore({
               file: join(options.cacheDirectory, 'analysis-v2.sqlite'),
               // Physical isolation belongs to the store namespace, never semantic identities.
               namespace: `worktree:${createHash('sha256').update(root).digest('hex')}`,
               maximumRetainedGenerations,
               ...(options.telemetry ? { telemetry: options.telemetry } : {}),
-            }),
+            })
+          },
         }
       : {}),
   })
