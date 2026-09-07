@@ -8,6 +8,11 @@ results for unsupported transfers. Asynchronous functions, generators, rest/spre
 compound assignments and incomplete control flow never become synchronous known values by
 following an operand or return relation alone.
 
+Observed binding and property writes invalidate initializer-only proofs. Direct aliases propagate
+that uncertainty to their underlying object; this is conservative mutation detection, not heap
+execution. Both the presence and absence of writes enter proof dependencies, so a newly added
+mutation in another module invalidates a previously reusable proof and removal permits recovery.
+
 `value(occurrence).invoke().property('build').invoke().resolve()` is an immutable demand plan.
 Each resolve owns an independent depth, step and alternative budget. A model cannot erase a
 budget failure by ignoring an exhausted operand. Inspection exposes shape and execution metadata;

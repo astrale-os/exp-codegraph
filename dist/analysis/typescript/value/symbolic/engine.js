@@ -161,6 +161,11 @@ class Evaluator {
         if (occurrence.syntax === 'VariableDeclaration' || occurrence.syntax === 'PropertyAssignment')
             return next(children?.get('initializer'));
         if (occurrence.syntax === 'Identifier' || occurrence.syntax === 'Parameter') {
+            if (occurrence.symbol) {
+                this.depend(state, `mutation:${occurrence.symbol}`);
+                if (this.#index.mutations.has(occurrence.symbol))
+                    return uncertain('VALUE_MUTATION_UNSUPPORTED', 'Writes to this binding or an object alias prevent an initializer-only value proof.');
+            }
             const bound = occurrence.symbol && environment.get(occurrence.symbol);
             if (bound)
                 return next(bound.occurrence, bound.environment);
@@ -388,10 +393,75 @@ async function indexFacts(query) {
         fingerprints.set(`initializers:${symbol}`, JSON.stringify([...values].sort()));
         evidence.set(`initializers:${symbol}`, [...new Set(values.flatMap((id) => evidence.get(`occurrence:${id}`) ?? []))]);
     }
+    // Initializer provenance cannot prove an object's later shape after an observed
+    // write. Follow direct aliases conservatively; do not invent heap execution.
+    const mutations = new Map();
+    const aliases = new Map();
+    const rootSymbol = (id) => {
+        const seen = new Set();
+        while (id && !seen.has(id)) {
+            seen.add(id);
+            const node = occurrences.get(id);
+            if (!node)
+                return;
+            if (node.syntax === 'Identifier')
+                return node.symbol;
+            const links = children.get(id);
+            if (node.syntax === 'PropertyAccessExpression' || node.syntax === 'ElementAccessExpression')
+                id = links?.get('receiver') ?? links?.get('child:0');
+            else if (TRANSPARENT_SYNTAX.has(node.syntax))
+                id = links?.get('expression');
+            else
+                return;
+        }
+        return;
+    };
+    for (const [symbol, values] of initializers) {
+        for (const value of values) {
+            const target = rootSymbol(value);
+            if (target && target !== symbol) {
+                let targets = aliases.get(symbol);
+                if (!targets)
+                    aliases.set(symbol, (targets = new Set()));
+                targets.add(target);
+            }
+        }
+    }
+    for (const occurrence of occurrences.values()) {
+        const links = children.get(occurrence.id);
+        const target = occurrence.kind === 'assignment' ? links?.get('left')
+            : occurrence.syntax === 'DeleteExpression' ? links?.get('expression') : undefined;
+        const symbol = rootSymbol(target);
+        if (symbol) {
+            let writes = mutations.get(symbol);
+            if (!writes)
+                mutations.set(symbol, (writes = new Set()));
+            writes.add(`occurrence:${occurrence.id}`);
+        }
+    }
+    const pending = [...mutations.keys()];
+    for (let position = 0; position < pending.length; position += 1) {
+        const symbol = pending[position];
+        for (const target of aliases.get(symbol) ?? []) {
+            const writes = mutations.get(target) ?? new Set();
+            const before = writes.size;
+            for (const write of mutations.get(symbol))
+                writes.add(write);
+            if (writes.size !== before) {
+                mutations.set(target, writes);
+                pending.push(target);
+            }
+        }
+    }
+    for (const [symbol, writes] of mutations) {
+        const keys = [...writes].sort();
+        fingerprints.set(`mutation:${symbol}`, JSON.stringify(keys.map((key) => [key, fingerprints.get(key)])));
+        evidence.set(`mutation:${symbol}`, [...new Set(keys.flatMap((key) => evidence.get(key) ?? []))]);
+    }
     for (const fact of symbolFacts)
         bind(`symbol:${fact.payload.symbol}`, fact, hashFact(fact));
     return { bodies, occurrences, children, parents, definitions, initializers, calls, direct,
-        symbols: new Map(symbolFacts.map((fact) => [fact.payload.symbol, fact])), fingerprints, evidence };
+        symbols: new Map(symbolFacts.map((fact) => [fact.payload.symbol, fact])), mutations: new Set(mutations.keys()), fingerprints, evidence };
 }
 function hashFact(fact) {
     return createHash('sha256').update(JSON.stringify({ id: fact.id, payload: fact.payload, completeness: fact.completeness })).digest('hex');

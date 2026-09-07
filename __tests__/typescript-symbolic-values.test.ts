@@ -6,7 +6,7 @@ import { openTypeScriptProject, type SymbolicCallModel, type TypeScriptProject, 
 import type { OccurrenceId, SymbolId } from '../analysis/identity/index.ts'
 
 const source = `
-import { helper } from './helper'
+import { helper, shared } from './helper'
 declare function marker(value: string): unknown
 declare const opaque: object
 declare const flag: boolean
@@ -28,9 +28,21 @@ export const restDefinition = () => ({ build: () => rest(marker('rest')) })
 export const spreadDefinition = () => ({ build: () => first(...[marker('spread')]) })
 export const branch = () => flag ? marker('left') : marker('right')
 export const dependent = () => ({ build: helper })
+export const crossMutation = () => shared
 export const direct = marker('direct')
 export const nestedIdentity = first(first('nested'))
 export const compound = () => { let value: any = ''; value += marker('compound'); return value }
+export const mutatedObject = () => {
+  const object = { build: () => marker('obsolete') }
+  object.build = () => 'changed'
+  return object
+}
+export const mutatedAlias = () => {
+  const object = { build: () => marker('obsolete-alias') }
+  const alias = object
+  alias.build = () => 'changed'
+  return object
+}
 `
 
 describe('symbolic values through the public project API', () => {
@@ -43,9 +55,10 @@ describe('symbolic values through the public project API', () => {
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'codegraph-symbolic-'))
     await Promise.all([
-      writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, noEmit: true }, files: ['index.ts', 'helper.ts'] })),
+      writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, noEmit: true }, files: ['index.ts', 'helper.ts', 'mutator.ts'] })),
       writeFile(join(root, 'index.ts'), source),
-      writeFile(join(root, 'helper.ts'), "export function helper() { return 'old' }\n"),
+      writeFile(join(root, 'helper.ts'), "export function helper() { return 'old' }\nexport const shared = { build: () => 'stable' }\n"),
+      writeFile(join(root, 'mutator.ts'), 'export {}\n'),
     ])
     project = await openTypeScriptProject({ root, ...(process.env.CODEGRAPH_TEST_NATIVE_BINARY ? { binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY } : {}) })
     await project.refresh()
@@ -144,6 +157,32 @@ describe('symbolic values through the public project API', () => {
   it('does not mistake a compound assignment operand for the assigned value', async () => {
     const values = await snapshot.values({ call: model })
     expect(await values.value(declaration('compound')).invoke().resolve()).toMatchObject({ kind: 'unknown' })
+  })
+
+  it.each(['mutatedObject', 'mutatedAlias'])('does not claim the initializer is still effective for %s', async (name) => {
+    const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
+    expect(await values.value(declaration(name)).invoke().property('build').invoke().resolve()).toMatchObject({ kind: 'unknown' })
+  })
+
+  it('invalidates a previously absent write in an independent module and recovers after removal', async () => {
+    const values = await snapshot.values({ call: model, limits: { maximumDepth: 64 } })
+    const before = await values.value(declaration('crossMutation')).invoke().property('build').invoke().resolve()
+    expect(before).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'stable' } })
+    await writeFile(join(root, 'mutator.ts'), "import { shared } from './helper'; shared.build = () => 'changed'\n")
+    await project.refresh({ changed: ['mutator.ts'] })
+    const mutated = await project.open()
+    const next = await mutated.values({ call: model, limits: { maximumDepth: 64 } })
+    expect(next.canReuse(before)).toBe(false)
+    const proof = await next.value(declaration('crossMutation')).invoke().property('build').invoke().resolve()
+    expect(proof).toMatchObject({ kind: 'unknown', reasons: [expect.objectContaining({ code: 'VALUE_MUTATION_UNSUPPORTED' })] })
+    await writeFile(join(root, 'mutator.ts'), 'export {}\n')
+    await project.refresh({ changed: ['mutator.ts'] })
+    const repaired = await project.open()
+    const recovered = await repaired.values({ call: model, limits: { maximumDepth: 64 } })
+    expect(recovered.canReuse(proof)).toBe(false)
+    expect(recovered.canReuse(before)).toBe(true)
+    await mutated.dispose()
+    await repaired.dispose()
   })
 
   it('invalidates semantic payload changes and newly available bodies while reusing unrelated evidence', async () => {
