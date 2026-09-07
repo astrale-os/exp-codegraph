@@ -129,6 +129,7 @@ describe('packed GitHub artifact', () => {
       '@astrale-os/codegraph-native-darwin-x64',
       '@astrale-os/codegraph-native-linux-arm64',
       '@astrale-os/codegraph-native-linux-x64',
+      '@astrale-os/codegraph-native-win32-x64',
     ])
 
     const root = await mkdtemp(join(tmpdir(), 'codegraph-production-files-'))
