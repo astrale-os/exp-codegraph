@@ -24,7 +24,7 @@ beforeAll(async () => {
   })).command
 }, 120_000)
 
-async function fixture(source: string, packed: boolean) {
+async function fixture(source: string, packed: boolean, prepare?: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), 'codegraph-module-body-'))
   await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
     compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true },
@@ -36,6 +36,7 @@ export function defineQuery<T>() { return (options: (domain: T) => unknown) => o
 export function from(input: unknown) { return { select: (selection: unknown) => ({ input, selection }) } }
 `)
   await writeFile(join(root, 'index.ts'), source)
+  await prepare?.(root)
   const store = createMemoryAnalysisStore()
   const service = await createTypeScriptAnalysisService({
     project: { root, config: 'tsconfig.json', capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body'] },
@@ -160,15 +161,16 @@ const secondAlias = alias
 let mutable = defineQuery
 defineQuery(); secondAlias(); other(); Lookalike.defineQuery(); mutable();
 `
-    const current = await fixture(text, packed)
-    try {
+    const current = await fixture(text, packed, async (root) => {
       for (const name of ['canonical', 'other']) {
-        const directory = join(current.root, 'node_modules/@fixture', name)
+        const directory = join(root, 'node_modules/@fixture', name)
         await mkdir(directory, { recursive: true })
         await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, types: 'index.d.ts' }))
         await writeFile(join(directory, 'index.d.ts'), "export { defineQuery, Lookalike } from './Builders.js'\n")
         await writeFile(join(directory, 'Builders.d.ts'), 'export declare function defineQuery(): unknown\nexport declare namespace Lookalike { function defineQuery(): unknown }\n')
       }
+    })
+    try {
       await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
       const module = (await current.read()).find((entry) => entry.file === 'index.ts' && entry.body.scope === 'module')!.body
       const calls = new Map(module.calls.map((call) => {
