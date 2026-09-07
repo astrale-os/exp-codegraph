@@ -43,8 +43,10 @@ type extractor struct {
 	sources                      map[string]sourceRecord
 	symbolIDs                    map[*shimast.Symbol]string
 	symbolSeen                   map[string]symbolFactPayload
+	symbolsBySource              map[string][]symbolFactPayload
 	callOrigins                  map[*shimast.Symbol]*callTargetOrigin
 	packageCoordinates           map[string]string
+	symbolIdentityCounts         map[*shimast.SourceFile]map[string]int
 	moduleDeclarations           map[*shimast.Symbol]moduleDeclarationObservation
 	moduleDeclarationsByIdentity map[string]moduleDeclarationObservation
 	moduleDeclarationCacheHits   int
@@ -211,7 +213,9 @@ func (x *extractor) sourceShards(
 				x.discoverSymbols(file)
 			}
 		}
-		telemetry.record(requestID, "projection.symbol-discovery", phase, map[string]any{"sources": selectedCount})
+		telemetry.record(requestID, "projection.symbol-discovery", phase, map[string]any{
+			"sources": selectedCount, "identityInventories": len(x.symbolIdentityCounts),
+		})
 		phase = time.Now()
 		for _, file := range files {
 			if selected != nil && !selected[file.FileName()] {
@@ -345,13 +349,19 @@ func (x *extractor) discoverSymbols(file *shimast.SourceFile) {
 }
 
 func (x *extractor) symbolShard(file *shimast.SourceFile, record sourceRecord) factShard {
-	var facts []fact
-	for id, payload := range x.symbolSeen {
-		if len(payload.Declarations) == 0 || payload.Declarations[0].Source != record.Source {
-			continue
+	if x.symbolsBySource == nil {
+		x.symbolsBySource = map[string][]symbolFactPayload{}
+		for _, payload := range x.symbolSeen {
+			if len(payload.Declarations) != 0 {
+				source := payload.Declarations[0].Source
+				x.symbolsBySource[source] = append(x.symbolsBySource[source], payload)
+			}
 		}
+	}
+	var facts []fact
+	for _, payload := range x.symbolsBySource[record.Source] {
 		facts = append(facts, x.newFact(
-			symbolNamespace, "symbol", id, payload, payload.Declarations, complete(),
+			symbolNamespace, "symbol", payload.Symbol, payload, payload.Declarations, complete(),
 		))
 	}
 	return finishShard(symbolNamespace, record.Source, complete(), facts)
@@ -534,7 +544,16 @@ func (x *extractor) symbolSourceCoordinate(path string) (string, bool) {
 }
 
 func (x *extractor) identityCollisions(file *shimast.SourceFile, identityKey string) int {
-	count := 0
+	if counts, exists := x.symbolIdentityCounts[file]; exists {
+		return counts[identityKey]
+	}
+	if x.symbolIdentityCounts == nil {
+		x.symbolIdentityCounts = map[*shimast.SourceFile]map[string]int{}
+	}
+	// Symbol binding is complete before projection. Inventory the declaration
+	// identities once per source instead of scanning its AST for every symbol.
+	counts := map[string]int{}
+	x.symbolIdentityCounts[file] = counts
 	seen := map[*shimast.Symbol]bool{}
 	walkFile(file, func(node *shimast.Node) bool {
 		symbol := unalias(x.checker, node.Symbol())
@@ -554,12 +573,10 @@ func (x *extractor) identityCollisions(file *shimast.SourceFile, identityKey str
 			"name": name, "syntax": declaration.KindString(),
 			"lexical": lexicalNames(declaration, symbol),
 		})
-		if candidate == identityKey {
-			count++
-		}
+		counts[candidate]++
 		return true
 	})
-	return count
+	return counts[identityKey]
 }
 
 func lexicalNames(declaration *shimast.Node, own *shimast.Symbol) []string {
