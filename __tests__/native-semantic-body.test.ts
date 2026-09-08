@@ -161,6 +161,9 @@ export function loop(flag: boolean) { let request = 'old'; while (flag) { reques
     const packed = { c: constants, s: [], t: [], p: [], o: [], r: [], b: [], e: [], d: [], a: [], u: [[], [], [], [], [], 0], v: [], q: { kind: 'complete' } }
     const legacy = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((codec) => codec.id === 'typescript.body.packed/1')!
     expect((legacy.decode(packed) as TypeScriptBodyFacts).body.scope).toBeUndefined()
+    const previous = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((codec) => codec.id === 'typescript.body.packed/2')!
+    const occurrence = { ...packed, c: [...constants, 'module', ''], t: ['expression', 'Identifier', 'entry'], o: [[constants[0], 0, 0, 1, 1, -1]], b: [[2, [0]]] }
+    expect((previous.decode(occurrence) as TypeScriptBodyFacts).body.occurrences[0]!.symbolOrigin).toBeUndefined()
     expect((TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'module', ''] }) as TypeScriptBodyFacts).body.scope).toBe('module')
     expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'invalid', ''] })).toThrow('scope is invalid')
   })
@@ -264,6 +267,35 @@ defineQuery(); secondAlias(); other(); Lookalike.defineQuery(); mutable();
       expect(calls.get('other()')!.targetOrigin).toEqual({ package: '@fixture/other', file: 'Builders.d.ts', path: ['defineQuery'] })
       expect(calls.get('Lookalike.defineQuery()')!.targetOrigin).toEqual({ package: '@fixture/canonical', file: 'Builders.d.ts', path: ['Lookalike', 'defineQuery'] })
       expect(calls.get('mutable()')!.targetOrigin).toBeUndefined()
+    } finally { await current.close() }
+  })
+
+  it.each([false, true])('separates canonical receiver identity from a third-party compatible type (packed=%s)', async (packed) => {
+    const text = `import { Query } from '@fixture/canonical'
+import { facade } from '@fixture/other'
+Query.from(); facade.from();
+`
+    const current = await fixture(text, packed, undefined, async (root) => {
+      for (const name of ['canonical', 'other']) {
+        const directory = join(root, 'node_modules/@fixture', name)
+        await mkdir(directory, { recursive: true })
+        await writeFile(join(directory, 'package.json'), JSON.stringify({ name: `@fixture/${name}`, types: 'index.d.ts' }))
+        await writeFile(join(directory, 'index.d.ts'), name === 'canonical'
+          ? 'export declare const Query: { from(): unknown }\n'
+          : "import { Query } from '@fixture/canonical'\nexport declare const facade: typeof Query\n")
+      }
+    })
+    try {
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const module = (await current.read()).find((entry) => entry.file === 'index.ts' && entry.body.scope === 'module')!.body
+      expect(module.calls).toHaveLength(2)
+      const origins = [...module.calls].sort((left, right) => module.occurrences.find((entry) => entry.id === left.occurrence)!.span.start - module.occurrences.find((entry) => entry.id === right.occurrence)!.span.start).map((call) => ({
+        target: call.targetOrigin,
+        receiver: module.occurrences.find((entry) => entry.id === call.receiver)!.symbolOrigin,
+      }))
+      expect(origins[0]!.target).toEqual(origins[1]!.target)
+      expect(origins[0]!.receiver).toEqual({ package: '@fixture/canonical', file: 'index.d.ts', path: ['Query'] })
+      expect(origins[1]!.receiver).toEqual({ package: '@fixture/other', file: 'index.d.ts', path: ['facade'] })
     } finally { await current.close() }
   })
 

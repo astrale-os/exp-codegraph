@@ -8,6 +8,13 @@ export interface BodyOccurrence {
     readonly owner: SymbolId;
     readonly syntax: string;
     readonly symbol?: SymbolId;
+    /** Canonical value declaration, never inferred from a compatible static type. */
+    readonly symbolOrigin?: TypeScriptSymbolOrigin;
+}
+export interface TypeScriptSymbolOrigin {
+    readonly package: string;
+    readonly file: string;
+    readonly path: readonly string[];
 }
 export interface BodyRelation {
     readonly parent: OccurrenceId;
@@ -41,11 +48,7 @@ export interface ResolvedCall {
     readonly occurrence: OccurrenceId;
     readonly target?: SymbolId;
     /** Canonical declaration origin; absent when package/declaration identity cannot be proved. */
-    readonly targetOrigin?: {
-        readonly package: string;
-        readonly file: string;
-        readonly path: readonly string[];
-    };
+    readonly targetOrigin?: TypeScriptSymbolOrigin;
     /** Portable identity of the selected signature declaration, not rendered or instantiated type text. */
     readonly signature?: string;
     readonly receiver?: OccurrenceId;

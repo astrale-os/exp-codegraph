@@ -328,6 +328,7 @@ func (b *bodyBuilder) identifier(node *shimast.Node) {
 	}
 	id := b.addOccurrence(node, kind)
 	b.setOccurrenceSymbol(id, symbolID)
+	b.occurrences[b.occurrenceIndex[id]].SymbolOrigin = b.x.callTargetOrigin(symbol)
 	if declaration {
 		b.defs[symbolID] = append(b.defs[symbolID], id)
 		return

@@ -2,12 +2,12 @@ package main
 
 const (
 	protocolVersion = 1
-	producerVersion = "0.3.0"
+	producerVersion = "0.4.0"
 	ttscVersion     = "0.25.0"
-	passVersion     = "1.3.0"
+	passVersion     = "1.4.0"
 )
 
-const typescriptBodyPayloadCodec = "typescript.body.packed/2"
+const typescriptBodyPayloadCodec = "typescript.body.packed/3"
 
 type request struct {
 	ID           int            `json:"id"`
@@ -303,12 +303,13 @@ type occurrenceFactPayload struct {
 }
 
 type bodyOccurrence struct {
-	ID     string     `json:"id"`
-	Kind   string     `json:"kind"`
-	Span   sourceSpan `json:"span"`
-	Owner  string     `json:"owner"`
-	Syntax string     `json:"syntax"`
-	Symbol string     `json:"symbol,omitempty"`
+	ID           string            `json:"id"`
+	Kind         string            `json:"kind"`
+	Span         sourceSpan        `json:"span"`
+	Owner        string            `json:"owner"`
+	Syntax       string            `json:"syntax"`
+	Symbol       string            `json:"symbol,omitempty"`
+	SymbolOrigin *callTargetOrigin `json:"symbolOrigin,omitempty"`
 }
 
 type bodyRelation struct {
