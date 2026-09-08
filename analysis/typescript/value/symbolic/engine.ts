@@ -1,8 +1,8 @@
-import { createHash } from 'node:crypto'
 import type { FactId, OccurrenceId, SymbolId } from '../../../identity/index.ts'
 import type { AnalysisQuery } from '../../../query/index.ts'
 import type { BodyOccurrence, ResolvedCall, TypeScriptCallInventory, TypeScriptCallQuery } from '../../body/index.ts'
-import { createTypeScriptFactReader, type TypeScriptFact } from '../../facts/index.ts'
+import type { TypeScriptFact } from '../../facts/index.ts'
+import { loadValueIndex, type ValueIndex as Index } from './facts.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions, BoundedValueLimits, EvaluatedValueResult, ValueResult } from '../model.ts'
 import { resolveBoundedValueLimits } from '../limits.ts'
 import type { SymbolicCallModel, SymbolicOperandPlan, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from './model.ts'
@@ -22,23 +22,6 @@ type RuntimeValue<Atom> =
   | { readonly kind: 'unknown'; readonly code: string; readonly reason: string; readonly candidates?: readonly RuntimeValue<Atom>[] }
   | { readonly kind: 'unsupported'; readonly construct: string }
 
-interface Index {
-  readonly bodies: ReadonlyMap<SymbolId, Body>
-  readonly occurrences: ReadonlyMap<OccurrenceId, BodyOccurrence>
-  readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>
-  readonly parents: ReadonlyMap<OccurrenceId, readonly { parent: OccurrenceId; role: string }[]>
-  readonly definitions: ReadonlyMap<OccurrenceId, readonly OccurrenceId[]>
-  readonly definiteDefinitions: ReadonlySet<OccurrenceId>
-  readonly initializers: ReadonlyMap<SymbolId, readonly OccurrenceId[]>
-  readonly calls: ReadonlyMap<OccurrenceId, ResolvedCall>
-  readonly direct: ReadonlyMap<OccurrenceId, ValueResult<unknown>>
-  readonly symbols: ReadonlyMap<SymbolId, TypeScriptFact<'symbol'>>
-  readonly mutations: ReadonlyMap<SymbolId, readonly SymbolId[]>
-  readonly escapes: ReadonlySet<SymbolId>
-  readonly aliases: ReadonlyMap<SymbolId, readonly SymbolId[]>
-  readonly fingerprints: ReadonlyMap<string, string>
-  readonly evidence: ReadonlyMap<string, readonly FactId[]>
-}
 
 interface State {
   readonly limits: Readonly<Required<BoundedValueLimits>>
@@ -70,17 +53,19 @@ const UNDEFINED = Object.freeze({ kind: 'literal' as const, value: undefined })
 interface ValueEvaluatorFactory {
   <Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>): Promise<BoundedValueEvaluator<Atom>>
   calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
+  dispose(): void
 }
 
-export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueResolutionCache): ValueEvaluatorFactory {
+export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueResolutionCache, load?: () => Promise<Index>): ValueEvaluatorFactory {
   let pending: Promise<Index> | undefined
-  const index = () => {
-    pending ??= indexFacts(query).catch((error) => { pending = undefined; throw error })
+  const index = load ?? (() => {
+    pending ??= loadValueIndex(query).catch((error) => { pending = undefined; throw error })
     return pending
-  }
+  })
+  const calls = createCallProjection(query, index)
   return Object.assign(async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) =>
     new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache),
-  { calls: createCallProjection(query, index) })
+  { calls, dispose() { pending = undefined; calls.dispose() } })
 }
 
 class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
@@ -485,162 +470,10 @@ function alternatives<Atom>(values: readonly RuntimeValue<Atom>[], state: State)
   return flattened.length === 1 ? flattened[0]! : { kind: 'alternatives', values: flattened }
 }
 
-async function indexFacts(query: AnalysisQuery): Promise<Index> {
-  const reader = createTypeScriptFactReader(query)
-  const [bodyFacts, symbolFacts] = await Promise.all([collect(reader.export('body')), collect(reader.export('symbol'))])
-  const bodies = new Map<SymbolId, Body>()
-  const occurrences = new Map<OccurrenceId, BodyOccurrence>()
-  const children = new Map<OccurrenceId, Map<string, OccurrenceId>>()
-  const parents = new Map<OccurrenceId, { parent: OccurrenceId; role: string }[]>()
-  const definitions = new Map<OccurrenceId, OccurrenceId[]>()
-  const definiteDefinitions = new Set<OccurrenceId>()
-  const initializers = new Map<SymbolId, OccurrenceId[]>()
-  const calls = new Map<OccurrenceId, ResolvedCall>()
-  const direct = new Map<OccurrenceId, ValueResult<unknown>>()
-  const fingerprints = new Map<string, string>()
-  const evidence = new Map<string, readonly FactId[]>()
-  const bind = (key: string, fact: TypeScriptFact<'body'> | TypeScriptFact<'symbol'>, fingerprint: string) => {
-    fingerprints.set(key, fingerprint)
-    evidence.set(key, [fact.id])
-  }
-  for (const fact of bodyFacts) {
-    const body = fact.payload.body
-    const fingerprint = hashFact(fact)
-    bodies.set(body.function, fact)
-    bind(`function:${body.function}`, fact, fingerprint)
-    for (const occurrence of body.occurrences) {
-      const previous = occurrences.get(occurrence.id)
-      if (previous && previous.owner !== occurrence.owner) throw new Error(`Occurrence ${occurrence.id} has multiple function owners.`)
-      occurrences.set(occurrence.id, occurrence)
-      bind(`occurrence:${occurrence.id}`, fact, fingerprint)
-    }
-    for (const relation of body.relations) {
-      let map = children.get(relation.parent)
-      if (!map) children.set(relation.parent, (map = new Map()))
-      map.set(relation.role, relation.child)
-      append(parents, relation.child, { parent: relation.parent, role: relation.role })
-    }
-    for (const definition of body.definitions) {
-      append(definitions, definition.use, definition.definition)
-      if (definition.reaching === 'definite') definiteDefinitions.add(definition.use)
-    }
-    for (const call of body.calls) calls.set(call.occurrence, call)
-    for (const [id, value] of Object.entries(fact.payload.values)) direct.set(id as OccurrenceId, value)
-  }
-  for (const occurrence of occurrences.values()) {
-    if (occurrence.syntax !== 'VariableDeclaration') continue
-    const links = children.get(occurrence.id)
-    const name = links?.get('name')
-    const initializer = links?.get('initializer')
-    const symbol = name && occurrences.get(name)?.symbol
-    if (symbol && initializer) append(initializers, symbol, initializer)
-  }
-  for (const [symbol, values] of initializers) {
-    fingerprints.set(`initializers:${symbol}`, JSON.stringify([...values].sort()))
-    evidence.set(`initializers:${symbol}`, [...new Set(values.flatMap((id) => evidence.get(`occurrence:${id}`) ?? []))])
-  }
-  // Initializer provenance cannot prove an object's later shape after an observed
-  // write. Follow direct aliases conservatively; do not invent heap execution.
-  const mutations = new Map<SymbolId, Set<string>>()
-  const escapes = new Map<SymbolId, Set<string>>()
-  const aliases = new Map<SymbolId, Map<SymbolId, Set<string>>>()
-  const alias = (from: SymbolId, to: SymbolId, evidence: string) => {
-    let targets = aliases.get(from)
-    if (!targets) aliases.set(from, (targets = new Map()))
-    let links = targets.get(to)
-    if (!links) targets.set(to, (links = new Set()))
-    links.add(evidence)
-  }
-  const rootSymbol = (id: OccurrenceId | undefined): SymbolId | undefined => {
-    const seen = new Set<OccurrenceId>()
-    while (id && !seen.has(id)) {
-      seen.add(id)
-      const node = occurrences.get(id)
-      if (!node) return
-      if (node.syntax === 'Identifier') return node.symbol
-      const links = children.get(id)
-      if (node.syntax === 'PropertyAccessExpression' || node.syntax === 'ElementAccessExpression') id = links?.get('receiver') ?? links?.get('child:0')
-      else if (TRANSPARENT_SYNTAX.has(node.syntax)) id = links?.get('expression')
-      else return
-    }
-    return
-  }
-  for (const [symbol, values] of initializers) {
-    for (const value of values) {
-      const target = rootSymbol(value)
-      if (target && target !== symbol) alias(symbol, target, `occurrence:${value}`)
-    }
-  }
-  for (const call of calls.values()) {
-    for (const binding of call.bindings) {
-      const argument = rootSymbol(binding.argument)
-      if (binding.parameter && argument && binding.parameter !== argument) alias(binding.parameter, argument, `occurrence:${call.occurrence}`)
-    }
-    if (call.target && bodies.has(call.target) && !call.dynamic) continue
-    for (const argument of call.arguments) {
-      const symbol = rootSymbol(argument)
-      if (!symbol) continue
-      let inputs = escapes.get(symbol)
-      if (!inputs) escapes.set(symbol, (inputs = new Set()))
-      inputs.add(`occurrence:${call.occurrence}`)
-    }
-  }
-  for (const occurrence of occurrences.values()) {
-    const links = children.get(occurrence.id)
-    const target = occurrence.kind === 'assignment' ? links?.get('left')
-      : occurrence.syntax === 'DeleteExpression' ? links?.get('expression') : undefined
-    const symbol = rootSymbol(target)
-    if (symbol) {
-      let writes = mutations.get(symbol)
-      if (!writes) mutations.set(symbol, (writes = new Set()))
-      writes.add(`occurrence:${occurrence.id}`)
-    }
-  }
-  // Store direct effects and reverse alias edges only. Expanding the transitive
-  // proof sets here is quadratic on real projects; each demanded traversal is
-  // instead bounded by its caller's value budget and records negative lookups.
-  const incoming = new Map<SymbolId, SymbolId[]>()
-  const aliasEvidence = new Map<SymbolId, Set<string>>()
-  for (const [from, targets] of aliases) for (const [to, links] of targets) {
-    append(incoming, to, from)
-    let keys = aliasEvidence.get(to)
-    if (!keys) aliasEvidence.set(to, (keys = new Set()))
-    for (const link of links) keys.add(link)
-  }
-  for (const [kind, entries] of [['mutation', mutations], ['escape', escapes], ['aliases', aliasEvidence]] as const) {
-    for (const [symbol, writes] of entries) {
-      const keys = [...writes].sort()
-      fingerprints.set(`${kind}:${symbol}`, JSON.stringify(keys.map((key) => [key, fingerprints.get(key)])))
-      evidence.set(`${kind}:${symbol}`, [...new Set(keys.flatMap((key) => evidence.get(key) ?? []))])
-    }
-  }
-  for (const fact of symbolFacts) bind(`symbol:${fact.payload.symbol}`, fact, hashFact(fact))
-  return { bodies, occurrences, children, parents, definitions, definiteDefinitions, initializers, calls, direct,
-    symbols: new Map(symbolFacts.map((fact) => [fact.payload.symbol, fact])),
-    mutations: new Map([...mutations].map(([symbol, writes]) => [symbol, [...new Set([...writes].map((key) => occurrences.get(key.slice('occurrence:'.length) as OccurrenceId)!.owner))]])),
-    escapes: new Set(escapes.keys()), aliases: incoming, fingerprints, evidence }
-}
-
 function escaped<Atom>(value: RuntimeValue<Atom>, state: State): RuntimeValue<Atom> {
   if (value.kind === 'alternatives') return alternatives(value.values.map((item) => escaped(item, state)), state)
   return value.kind === 'object' || value.kind === 'atom' || value.kind === 'external'
     ? { kind: 'unknown', code: 'VALUE_ESCAPE_UNSUPPORTED', reason: 'This value was passed to an unmodeled call that may mutate it.', candidates: [value] } : value
-}
-
-function hashFact(fact: Body | TypeScriptFact<'symbol'>): string {
-  return createHash('sha256').update(JSON.stringify({ id: fact.id, payload: fact.payload, completeness: fact.completeness })).digest('hex')
-}
-
-function append<Key, Value>(map: Map<Key, Value[]>, key: Key, value: Value): void {
-  let values = map.get(key)
-  if (!values) map.set(key, (values = []))
-  values.push(value)
-}
-
-async function collect<Value>(values: AsyncIterable<Value>): Promise<Value[]> {
-  const result: Value[] = []
-  for await (const value of values) result.push(value)
-  return result
 }
 
 /** Freeze only containers created by the engine; opaque values keep their identity. */

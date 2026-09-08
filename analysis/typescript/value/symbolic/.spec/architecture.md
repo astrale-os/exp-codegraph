@@ -36,7 +36,8 @@ delegate to generic evaluation. Canonical receiver symbol origin remains distinc
 method's declaration origin. Model functions and emitted atoms must have stable, deterministic
 meaning for their lifetime; a changed model must use a new function identity.
 
-One snapshot owns one lazy body/symbol index, shared across models and budgets. There is no global
+One resident project owns a lazy body/symbol/source index per immutable generation, shared across
+snapshots, models and budgets. Standalone evaluators keep a query-local index. There is no global
 index or compiler handle. Completed proofs retain evidence and private fingerprints for every
 positive and negative lookup. `canReuse` compares fact identity, payload, completeness, lookup
 membership, model identity and effective budget against the new evaluator. Fact IDs alone do not
@@ -76,3 +77,21 @@ Opaque atom alternatives use identity equality (`Object.is`), including signed z
 Equal object fields do not prove equal model instances; the evaluator never serializes
 an atom to decide identity. A model may deliberately return one shared immutable atom
 when its domain semantics declare those alternatives equivalent.
+
+Committed shard membership drives incremental value indexing. Only facts from changed shards are
+read and admitted again; untouched lookup branches, facts and witnesses are shared through immutable
+hash tries. Direct-effect projections record their positive and negative lookup inputs, so adding or
+removing a callee body also recomputes affected escape/alias joins. The initial index remains a global
+admission and projection; call path filters currently select output sites, not body materialization.
+
+The project retains its current index and explicit snapshot leases. Undemanded changes compact by
+shard relative to the last demanded index, rather than retaining an unbounded transaction chain.
+Completed index updates detach their base promises. Unseen external writes and failed lazy bases
+fall back to a fresh pinned query. Closing a snapshot clears its factory/projection caches and releases
+its index lease; caller-held evaluators and plans may retain their own immutable evidence.
+
+Dependency witnesses preserve exact lookup membership. A present occurrence shares its function
+witness only when both selected fingerprints are equal; overlapping fact owners retain an exact
+occurrence witness. Initializer fingerprints include the referenced occurrence fingerprints, so
+proofs cut short by a budget cannot retain evidence from a removed fact. Revision deltas report every
+changed fingerprint, including added and removed lookup keys, without scanning untouched tables.

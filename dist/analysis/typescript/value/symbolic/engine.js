@@ -1,17 +1,17 @@
-import { createHash } from 'node:crypto';
-import { createTypeScriptFactReader } from '../../facts/index.js';
+import { loadValueIndex } from './facts.js';
 import { resolveBoundedValueLimits } from '../limits.js';
 import { createCallProjection } from './calls.js';
 import { resolutionResultBytes } from './cache.js';
 const PROOF = Symbol('Codegraph value proof');
 const UNDEFINED = Object.freeze({ kind: 'literal', value: undefined });
-export function createValueEvaluatorFactory(query, cache) {
+export function createValueEvaluatorFactory(query, cache, load) {
     let pending;
-    const index = () => {
-        pending ??= indexFacts(query).catch((error) => { pending = undefined; throw error; });
+    const index = load ?? (() => {
+        pending ??= loadValueIndex(query).catch((error) => { pending = undefined; throw error; });
         return pending;
-    };
-    return Object.assign(async (options = {}) => new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache), { calls: createCallProjection(query, index) });
+    });
+    const calls = createCallProjection(query, index);
+    return Object.assign(async (options = {}) => new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache), { calls, dispose() { pending = undefined; calls.dispose(); } });
 }
 class Evaluator {
     #index;
@@ -482,185 +482,11 @@ function alternatives(values, state) {
         return UNDEFINED;
     return flattened.length === 1 ? flattened[0] : { kind: 'alternatives', values: flattened };
 }
-async function indexFacts(query) {
-    const reader = createTypeScriptFactReader(query);
-    const [bodyFacts, symbolFacts] = await Promise.all([collect(reader.export('body')), collect(reader.export('symbol'))]);
-    const bodies = new Map();
-    const occurrences = new Map();
-    const children = new Map();
-    const parents = new Map();
-    const definitions = new Map();
-    const definiteDefinitions = new Set();
-    const initializers = new Map();
-    const calls = new Map();
-    const direct = new Map();
-    const fingerprints = new Map();
-    const evidence = new Map();
-    const bind = (key, fact, fingerprint) => {
-        fingerprints.set(key, fingerprint);
-        evidence.set(key, [fact.id]);
-    };
-    for (const fact of bodyFacts) {
-        const body = fact.payload.body;
-        const fingerprint = hashFact(fact);
-        bodies.set(body.function, fact);
-        bind(`function:${body.function}`, fact, fingerprint);
-        for (const occurrence of body.occurrences) {
-            const previous = occurrences.get(occurrence.id);
-            if (previous && previous.owner !== occurrence.owner)
-                throw new Error(`Occurrence ${occurrence.id} has multiple function owners.`);
-            occurrences.set(occurrence.id, occurrence);
-            bind(`occurrence:${occurrence.id}`, fact, fingerprint);
-        }
-        for (const relation of body.relations) {
-            let map = children.get(relation.parent);
-            if (!map)
-                children.set(relation.parent, (map = new Map()));
-            map.set(relation.role, relation.child);
-            append(parents, relation.child, { parent: relation.parent, role: relation.role });
-        }
-        for (const definition of body.definitions) {
-            append(definitions, definition.use, definition.definition);
-            if (definition.reaching === 'definite')
-                definiteDefinitions.add(definition.use);
-        }
-        for (const call of body.calls)
-            calls.set(call.occurrence, call);
-        for (const [id, value] of Object.entries(fact.payload.values))
-            direct.set(id, value);
-    }
-    for (const occurrence of occurrences.values()) {
-        if (occurrence.syntax !== 'VariableDeclaration')
-            continue;
-        const links = children.get(occurrence.id);
-        const name = links?.get('name');
-        const initializer = links?.get('initializer');
-        const symbol = name && occurrences.get(name)?.symbol;
-        if (symbol && initializer)
-            append(initializers, symbol, initializer);
-    }
-    for (const [symbol, values] of initializers) {
-        fingerprints.set(`initializers:${symbol}`, JSON.stringify([...values].sort()));
-        evidence.set(`initializers:${symbol}`, [...new Set(values.flatMap((id) => evidence.get(`occurrence:${id}`) ?? []))]);
-    }
-    // Initializer provenance cannot prove an object's later shape after an observed
-    // write. Follow direct aliases conservatively; do not invent heap execution.
-    const mutations = new Map();
-    const escapes = new Map();
-    const aliases = new Map();
-    const alias = (from, to, evidence) => {
-        let targets = aliases.get(from);
-        if (!targets)
-            aliases.set(from, (targets = new Map()));
-        let links = targets.get(to);
-        if (!links)
-            targets.set(to, (links = new Set()));
-        links.add(evidence);
-    };
-    const rootSymbol = (id) => {
-        const seen = new Set();
-        while (id && !seen.has(id)) {
-            seen.add(id);
-            const node = occurrences.get(id);
-            if (!node)
-                return;
-            if (node.syntax === 'Identifier')
-                return node.symbol;
-            const links = children.get(id);
-            if (node.syntax === 'PropertyAccessExpression' || node.syntax === 'ElementAccessExpression')
-                id = links?.get('receiver') ?? links?.get('child:0');
-            else if (TRANSPARENT_SYNTAX.has(node.syntax))
-                id = links?.get('expression');
-            else
-                return;
-        }
-        return;
-    };
-    for (const [symbol, values] of initializers) {
-        for (const value of values) {
-            const target = rootSymbol(value);
-            if (target && target !== symbol)
-                alias(symbol, target, `occurrence:${value}`);
-        }
-    }
-    for (const call of calls.values()) {
-        for (const binding of call.bindings) {
-            const argument = rootSymbol(binding.argument);
-            if (binding.parameter && argument && binding.parameter !== argument)
-                alias(binding.parameter, argument, `occurrence:${call.occurrence}`);
-        }
-        if (call.target && bodies.has(call.target) && !call.dynamic)
-            continue;
-        for (const argument of call.arguments) {
-            const symbol = rootSymbol(argument);
-            if (!symbol)
-                continue;
-            let inputs = escapes.get(symbol);
-            if (!inputs)
-                escapes.set(symbol, (inputs = new Set()));
-            inputs.add(`occurrence:${call.occurrence}`);
-        }
-    }
-    for (const occurrence of occurrences.values()) {
-        const links = children.get(occurrence.id);
-        const target = occurrence.kind === 'assignment' ? links?.get('left')
-            : occurrence.syntax === 'DeleteExpression' ? links?.get('expression') : undefined;
-        const symbol = rootSymbol(target);
-        if (symbol) {
-            let writes = mutations.get(symbol);
-            if (!writes)
-                mutations.set(symbol, (writes = new Set()));
-            writes.add(`occurrence:${occurrence.id}`);
-        }
-    }
-    // Store direct effects and reverse alias edges only. Expanding the transitive
-    // proof sets here is quadratic on real projects; each demanded traversal is
-    // instead bounded by its caller's value budget and records negative lookups.
-    const incoming = new Map();
-    const aliasEvidence = new Map();
-    for (const [from, targets] of aliases)
-        for (const [to, links] of targets) {
-            append(incoming, to, from);
-            let keys = aliasEvidence.get(to);
-            if (!keys)
-                aliasEvidence.set(to, (keys = new Set()));
-            for (const link of links)
-                keys.add(link);
-        }
-    for (const [kind, entries] of [['mutation', mutations], ['escape', escapes], ['aliases', aliasEvidence]]) {
-        for (const [symbol, writes] of entries) {
-            const keys = [...writes].sort();
-            fingerprints.set(`${kind}:${symbol}`, JSON.stringify(keys.map((key) => [key, fingerprints.get(key)])));
-            evidence.set(`${kind}:${symbol}`, [...new Set(keys.flatMap((key) => evidence.get(key) ?? []))]);
-        }
-    }
-    for (const fact of symbolFacts)
-        bind(`symbol:${fact.payload.symbol}`, fact, hashFact(fact));
-    return { bodies, occurrences, children, parents, definitions, definiteDefinitions, initializers, calls, direct,
-        symbols: new Map(symbolFacts.map((fact) => [fact.payload.symbol, fact])),
-        mutations: new Map([...mutations].map(([symbol, writes]) => [symbol, [...new Set([...writes].map((key) => occurrences.get(key.slice('occurrence:'.length)).owner))]])),
-        escapes: new Set(escapes.keys()), aliases: incoming, fingerprints, evidence };
-}
 function escaped(value, state) {
     if (value.kind === 'alternatives')
         return alternatives(value.values.map((item) => escaped(item, state)), state);
     return value.kind === 'object' || value.kind === 'atom' || value.kind === 'external'
         ? { kind: 'unknown', code: 'VALUE_ESCAPE_UNSUPPORTED', reason: 'This value was passed to an unmodeled call that may mutate it.', candidates: [value] } : value;
-}
-function hashFact(fact) {
-    return createHash('sha256').update(JSON.stringify({ id: fact.id, payload: fact.payload, completeness: fact.completeness })).digest('hex');
-}
-function append(map, key, value) {
-    let values = map.get(key);
-    if (!values)
-        map.set(key, (values = []));
-    values.push(value);
-}
-async function collect(values) {
-    const result = [];
-    for await (const value of values)
-        result.push(value);
-    return result;
 }
 /** Freeze only containers created by the engine; opaque values keep their identity. */
 function freezeResult(result, scalar) {

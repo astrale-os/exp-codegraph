@@ -247,7 +247,7 @@ describe('symbolic values through the public project API', () => {
     expect(await values.value(declaration('mutableFactory')).resolve()).toMatchObject({ kind: 'unknown', candidates: [{ kind: 'atom', value: 'observed-factory' }] })
   })
 
-  it('shares one immutable index across models without mixing hooks or budgets', async () => {
+  it('shares the generation index across snapshots and models without mixing hooks or budgets', async () => {
     const reader = await project.open()
     const reads = vi.spyOn(reader.query, 'export')
     const first = await reader.values({ call: model })
@@ -260,7 +260,7 @@ describe('symbolic values through the public project API', () => {
     expect(first.canReuse(proof)).toBe(true)
     expect(second.canReuse(proof)).toBe(false)
     expect((await reader.values({ call: model, limits: { maximumSteps: 1 } })).canReuse(proof)).toBe(false)
-    expect(reads.mock.calls).toHaveLength(2)
+    expect(reads.mock.calls).toHaveLength(0)
     reads.mockRestore()
     await reader.dispose()
   })

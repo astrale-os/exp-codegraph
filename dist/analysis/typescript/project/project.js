@@ -8,6 +8,7 @@ import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../physical/index.js';
 import { resolveBoundedValueLimits } from '../value/index.js';
 import { createValueEvaluatorFactory } from '../value/symbolic/engine.js';
 import { ValueResolutionCache } from '../value/symbolic/cache.js';
+import { ValueIndexOwner } from '../value/symbolic/owner.js';
 /** Open a headless project using the installed native analyzer and a caller-local memory store. */
 export async function openTypeScriptProject(options) {
     if (options.sessions && options.binary)
@@ -46,6 +47,7 @@ class ResidentProject {
     #pendingSources = new Set();
     #sourceShards = new Map();
     #values = new ValueResolutionCache();
+    #index = new ValueIndexOwner();
     constructor(descriptor, sessions, store, ownsStore) {
         this.#descriptor = descriptor;
         this.#sessions = sessions;
@@ -58,6 +60,7 @@ class ResidentProject {
             dispose: () => Promise.resolve(),
             commit: async (transaction, options) => {
                 await store.commit(transaction, options);
+                this.#index.committed(transaction);
                 this.#pending.push(transaction);
                 let sourcesByShard = this.#sourceShards.get(transaction.next.universe);
                 if (!sourcesByShard)
@@ -137,7 +140,8 @@ class ResidentProject {
                 await query.dispose();
                 throw new Error('TypeScript project is disposed.');
             }
-            const makeEvaluator = createValueEvaluatorFactory(query, this.#values);
+            const index = this.#index.acquire(query);
+            const makeEvaluator = createValueEvaluatorFactory(query, this.#values, index.load);
             const evaluators = new Map();
             let disposed = false;
             const snapshot = Object.freeze({
@@ -171,6 +175,8 @@ class ResidentProject {
                     disposed = true;
                     this.#readers.delete(snapshot);
                     evaluators.clear();
+                    makeEvaluator.dispose();
+                    index.release();
                     await query.dispose();
                     await this.collectSourceShards();
                 },
@@ -185,6 +191,7 @@ class ResidentProject {
             return this.#closing;
         this.#closed = true;
         this.#values.close();
+        this.#index.close();
         this.#lifetime.abort(new Error('TypeScript project is disposed.'));
         this.#closing = (async () => {
             // Stop a running native request before awaiting queued work, then release its pinned evidence.

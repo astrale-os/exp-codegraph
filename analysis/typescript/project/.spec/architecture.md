@@ -20,7 +20,7 @@ remain explicit caller-controlled extension points.
 An opening signal governs only factory opening. Once the resident process is available, each request
 owns its own cancellation, so finishing a caller's task cannot kill a subsequently reused project.
 
-Value evaluators share one immutable body/symbol index within a snapshot. The call-model function
+Value evaluators share one immutable body/symbol/source index across snapshots of a generation. The call-model function
 identity and exact effective budget select the evaluator; models never share conclusions just
 because their budgets match. Symbolic demand plans preserve closures privately, and independent
 resolutions expose evidence and explicit limits. Different budgets cannot reuse partial
@@ -45,3 +45,10 @@ extraction limits remain partial. Missing capabilities never become a complete e
 A missing logical path cannot prove exclusion by a nonempty path filter. Such a
 selection remains partial unless the explicit source filter already excludes that
 source; no matching path or call is invented.
+
+The resident index owner observes only successfully committed transactions. It maintains an immutable
+shard catalogue and lazily applies changed facts plus affected joins when values are next requested.
+Published indices structurally share untouched lookup branches while pinned readers retain their exact
+revision. Undemanded deltas compact without retaining a chain of snapshots; unknown external-writer
+lineages fall back to full query admission. A failed pending predecessor cannot poison subsequent
+indices. Initial admission remains project-wide and is distinct from incremental update work.
