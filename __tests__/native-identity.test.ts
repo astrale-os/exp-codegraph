@@ -9,7 +9,7 @@ it('preserves canonical native identity preimages, including retained fuzz regre
   const ttsc = createRequire(require.resolve('ttsc/package.json'))
   const platform = dirname(ttsc.resolve(`@ttsc/${process.platform}-${process.arch}/package.json`))
   const go = resolve(platform, 'bin/go/bin', process.platform === 'win32' ? 'go.exe' : 'go')
-  await promisify(execFile)(go, ['test', 'canonical.go', 'canonical_test.go', 'identity.go', 'model.go', '-count=1'], {
+  await promisify(execFile)(go, ['test', 'canonical.go', 'canonical_test.go', 'identity.go', 'generation_identity.go', 'generation_identity_test.go', 'model.go', '-count=1'], {
     cwd: resolve(import.meta.dirname, '../analysis/typescript/native'),
     timeout: 90_000,
     env: { ...process.env, GOTOOLCHAIN: 'local' },

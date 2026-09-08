@@ -69,6 +69,13 @@ global-diagnostic, public-shape, topology, configuration, plugin, or uncertain c
 expand the module projection. Native transport sends only the resulting delta, and the process
 advances its private base only after application-store acknowledgement.
 
+Native identity encoding retains immutable canonical bytes for acknowledged source and shard
+references. A refresh encodes replacement entries only and streams the complete ordered preimage
+into the existing v1 identity hash. This preserves exact portable generation validation and older
+retained generations without rebuilding a second JSON object graph. Hashing and ordering the full
+manifest remain linear in total project size; telemetry distinguishes entries encoded from bytes
+hashed so that reduced allocations cannot be mistaken for a fully incremental identity contract.
+
 The caller describes requested project inputs but never supplies a universe identifier. After the
 resident compiler loads the complete configuration chain, project-reference roots, compiler and
 plugin semantics, exact toolchain and protocol, and platform, the native adapter derives the

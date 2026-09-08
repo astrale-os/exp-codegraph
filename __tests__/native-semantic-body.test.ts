@@ -77,6 +77,30 @@ export const local = localHelper()
 `
 
 describe('native executable scope facts', () => {
+  it('encodes only changed identity entries while retaining the complete generation manifest', async () => {
+    const events: AnalysisTelemetryEvent[] = []
+    const text = `export function current() { return 1 }\n`
+    const current = await fixture(text, true, (event) => events.push(event), async (root) => {
+      await Promise.all(Array.from({ length: 64 }, (_, index) => writeFile(
+        join(root, `unrelated${index}.ts`), `export function unrelated${index}() { return ${index} }\n`,
+      )))
+    })
+    try {
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      events.length = 0
+      await writeFile(join(current.root, 'index.ts'), text + '// private edit\n')
+      await current.service.refresh({ changed: ['index.ts'], signal: AbortSignal.timeout(20_000) })
+      const metrics = (phase: string) => events.find((event) => event.component === 'native' && event.phase === phase)!.metrics!
+      expect(metrics('projection.source-inventory')).toMatchObject({ ownedSources: 66, hashedSources: 1, reusedSources: 65 })
+      expect(metrics('transaction.source-manifest')).toMatchObject({ sources: 66, encodedSources: 1 })
+      const identity = metrics('transaction.generation-identity')
+      expect(identity.manifestShards).toBeGreaterThan(250)
+      expect(identity.encodedReferences).toBe(metrics('transaction.materialize').upsertShards)
+      expect(identity.encodedReferences).toBeLessThan(10)
+      expect((await current.read()).filter((entry) => entry.body.scope === 'function')).toHaveLength(70)
+    } finally { await current.close() }
+  })
+
   it.each([false, true])('joins shorthand values to their lexical bindings while preserving authored keys (packed=%s)', async (packed) => {
     const text = `import { helper as importedHelper } from './builder.js'
 export const path = 'module'
