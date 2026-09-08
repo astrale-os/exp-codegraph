@@ -73,6 +73,16 @@ bases and serialized plan keys, never the plan, reader or value index. Project
 disposal clears and closes the cache so surviving old plans cannot repopulate it.
 Aborted requests reject before a cache hit and before publishing a new receipt.
 
+Resident bases share an exact vocabulary of evidence identifiers and effective budgets.
+Basis keys contain opaque numeric evidence coordinates instead of repeating full fact
+identifiers. These coordinates are collision-free within their owner and never reused;
+their dictionary entries are reference-counted by resident bases and removed with the last
+basis. Preparing or rejecting a demand retains no vocabulary entry. Receipts still expose
+their original ordered fact identifiers and effective limits; atoms are neither interned
+nor transformed. Storage accounting includes the shared vocabulary, per-basis references
+and coordinate arrays. Caller-held receipts may outlive cache residency without retaining
+the cache, a snapshot or an index.
+
 Engine-owned result wrappers, alternatives, evidence and reasons are immutable.
 Opaque model atoms retain their original identity and are never frozen or cloned by
 the engine. Their receipts are cacheable only when the atom graph is already deeply

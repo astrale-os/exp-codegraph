@@ -2,6 +2,7 @@ import type { EvaluatedValueResult } from '../model.ts'
 import type { FactId } from '../../../identity/index.ts'
 import { types } from 'node:util'
 import { RequestFrequency } from './frequency.ts'
+import { ResidentProofCoordinates, type ProofCoordinates } from './coordinates.ts'
 
 export interface ValueDependency {
   readonly key: string
@@ -38,6 +39,7 @@ interface Group {
   readonly basis: ValueProofBasis
   readonly entries: Set<Entry>
   readonly bytes: number
+  readonly coordinates?: ProofCoordinates
   lineage?: object
 }
 
@@ -47,6 +49,8 @@ export class ValueResolutionCache {
   readonly #readers = new Map<string, Readers>()
   readonly #groups = new Map<string, Group>()
   readonly #witnessIds = new WeakMap<ValueDependency, number>()
+  readonly #coordinates = new ResidentProofCoordinates()
+  readonly #basisCoordinates = new WeakMap<ValueProofBasis, ProofCoordinates>()
   readonly #models = new WeakMap<object, number>()
   readonly #maximumEntries: number
   readonly #maximumBytes: number
@@ -84,9 +88,15 @@ export class ValueResolutionCache {
       if (id === undefined) this.#witnessIds.set(dependency, (id = ++this.#nextWitness))
       return id
     })
-    const key = JSON.stringify([limits.maximumDepth, limits.maximumSteps, limits.maximumAlternatives, ids, evidence])
-    return this.#groups.get(key)?.basis ?? Object.freeze({ key,
-      dependencies: Object.freeze(ordered), evidence: Object.freeze([...evidence]), limits })
+    const coordinates = this.#coordinates.prepare(evidence, limits)
+    const key = JSON.stringify([limits.maximumDepth, limits.maximumSteps, limits.maximumAlternatives, ids,
+      coordinates.evidence.map(token => token.id)])
+    const existing = this.#groups.get(key)?.basis
+    if (existing) return existing
+    const basis = Object.freeze({ key, dependencies: Object.freeze(ordered),
+      evidence: Object.freeze(coordinates.evidence.map(token => token.fact)), limits: coordinates.budget.limits })
+    this.#basisCoordinates.set(basis, coordinates)
+    return basis
   }
 
   get(key: string, valid: (result: EvaluatedValueResult<unknown>) => boolean, revision?: ValueIndexRevision): EvaluatedValueResult<unknown> | undefined {
@@ -120,12 +130,18 @@ export class ValueResolutionCache {
         for (const group of readers.groups) for (const entry of group.entries) this.remove(entry)
     }
     let group = basis && this.#groups.get(basis.key)
-    const groupBytes = basis ? group?.bytes ?? basisBytes(basis) : 0
+    const coordinates = basis && this.#basisCoordinates.get(basis)
+    const groupBytes = basis ? group?.bytes ?? basisBytes(basis, coordinates) : 0
     if (groupBytes === undefined) return
     let added = bytes
     if (basis && !group) {
       added += groupBytes
       for (const dependency of basis.dependencies) if (!this.#readers.has(dependency.key)) added += dependencyBytes(dependency)
+      if (coordinates) {
+        const extra = this.#coordinates.additionalBytes(coordinates)
+        if (extra === undefined) return
+        added += extra
+      }
     }
     if (added + this.#frequency!.bytes > this.#maximumBytes) return
     const victims: Entry[] = []
@@ -143,9 +159,10 @@ export class ValueResolutionCache {
     // The last reader of this basis may have been among the evicted entries.
     group = basis && this.#groups.get(basis.key)
     if (basis && !group) {
-      group = { basis, entries: new Set(), bytes: groupBytes, ...(this.#revision ? { lineage: this.#lineage } : {}) }
+      group = { basis, entries: new Set(), bytes: groupBytes, ...(coordinates ? { coordinates } : {}), ...(this.#revision ? { lineage: this.#lineage } : {}) }
       this.#groups.set(basis.key, group)
       this.#bytes += group.bytes
+      if (coordinates) this.#coordinates.retain(coordinates)
       for (const dependency of basis.dependencies) {
         let readers = this.#readers.get(dependency.key)
         if (!readers) {
@@ -184,6 +201,7 @@ export class ValueResolutionCache {
     if (group.entries.size) return
     this.#groups.delete(group.basis.key)
     this.#bytes -= group.bytes
+    if (group.coordinates) this.#coordinates.release(group.coordinates)
     for (const dependency of group.basis.dependencies) {
       const readers = this.#readers.get(dependency.key)!
       readers.groups.delete(group)
@@ -191,17 +209,18 @@ export class ValueResolutionCache {
     }
   }
 
-  private clear(): void { this.#entries.clear(); this.#readers.clear(); this.#groups.clear(); this.#bytes = 0 }
+  private clear(): void { this.#entries.clear(); this.#readers.clear(); this.#groups.clear(); this.#coordinates.clear(); this.#bytes = 0 }
   close(): void { this.#closed = true; this.clear(); this.#frequency = undefined; this.#revision = undefined }
   get size(): number { return this.#entries.size }
-  get bytes(): number { return this.#bytes + (this.#frequency?.bytes ?? 0) }
+  get bytes(): number { return this.#bytes + this.#coordinates.bytes + (this.#frequency?.bytes ?? 0) }
 }
 
 function dependencyBytes(dependency: ValueDependency): number {
   return 192 + dependency.key.length * 2 + (dependency.fingerprint?.length ?? 0) * 2
 }
 
-function basisBytes(basis: ValueProofBasis): number | undefined {
+function basisBytes(basis: ValueProofBasis, coordinates?: ProofCoordinates): number | undefined {
+  if (coordinates) return 512 + basis.key.length * 2 + basis.dependencies.length * 48 + basis.evidence.length * 16
   const shared = resolutionResultBytes({ evidence: basis.evidence, limits: basis.limits })
   return shared === undefined ? undefined : 192 + basis.key.length * 2 + basis.dependencies.length * 48 + shared
 }
