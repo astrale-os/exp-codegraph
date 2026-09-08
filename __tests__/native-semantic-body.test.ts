@@ -5,6 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest'
 
 import { createMemoryAnalysisStore } from '../analysis/memory/index.ts'
 import { createProcessNativeAnalysisSessionFactory } from '../analysis/protocol/index.ts'
+import type { AnalysisTelemetryEvent, AnalysisTelemetrySink } from '../analysis/profiling/index.ts'
 import {
   createTypeScriptAnalysisService,
   createTypeScriptFactReader,
@@ -24,7 +25,7 @@ beforeAll(async () => {
   })).command
 }, 120_000)
 
-async function fixture(source: string, packed: boolean, prepare?: (root: string) => Promise<void>) {
+async function fixture(source: string, packed: boolean, telemetry?: AnalysisTelemetrySink, prepare?: (root: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), 'codegraph-module-body-'))
   await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
     compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, noEmit: true },
@@ -41,7 +42,7 @@ export function from(input: unknown) { return { select: (selection: unknown) => 
   const service = await createTypeScriptAnalysisService({
     project: { root, config: 'tsconfig.json', capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body'] },
     store,
-    sessions: createProcessNativeAnalysisSessionFactory({ command, ...(packed ? { payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS } : {}) }),
+    sessions: createProcessNativeAnalysisSessionFactory({ command, ...(packed ? { payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS } : {}), ...(telemetry ? { telemetry } : {}) }),
   })
   const read = async () => {
     const query = await store.open(service.universe!)
@@ -76,6 +77,21 @@ export const local = localHelper()
 `
 
 describe('native executable scope facts', () => {
+  it('bounds collision inventories by files while keeping same-spelled function owners distinct', async () => {
+    const events: AnalysisTelemetryEvent[] = []
+    const text = `export const callbacks = [function repeated() { return 'first' }, function repeated() { return 'second' }]\n` +
+      Array.from({ length: 300 }, (_, index) => `export function fn${index}() { const value${index} = ${index}; return value${index} }`).join('\n')
+    const current = await fixture(text, true, (event) => events.push(event))
+    try {
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const discovery = events.find((event) => event.component === 'native' && event.phase === 'projection.symbol-discovery')!
+      expect(discovery.metrics!.identityInventories).toBe(2)
+      const functions = (await current.read()).filter((entry) => entry.file === 'index.ts' && entry.body.scope === 'function')
+      expect(functions).toHaveLength(302)
+      expect(new Set(functions.map((entry) => entry.body.function)).size).toBe(302)
+    } finally { await current.close() }
+  })
+
   it('reads persisted version-1 bodies as functions and requires explicit scope in version 2', () => {
     const constants = [1, 2, 3].map((byte) => Buffer.alloc(32, byte).toString('base64url'))
     const packed = { c: constants, s: [], t: [], p: [], o: [], r: [], b: [], e: [], d: [], a: [], u: [[], [], [], [], [], 0], v: [], q: { kind: 'complete' } }
@@ -161,7 +177,7 @@ const secondAlias = alias
 let mutable = defineQuery
 defineQuery(); secondAlias(); other(); Lookalike.defineQuery(); mutable();
 `
-    const current = await fixture(text, packed, async (root) => {
+    const current = await fixture(text, packed, undefined, async (root) => {
       for (const name of ['canonical', 'other']) {
         const directory = join(root, 'node_modules/@fixture', name)
         await mkdir(directory, { recursive: true })

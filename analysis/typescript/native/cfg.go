@@ -271,11 +271,8 @@ func (b *controlFlowBuilder) assignOccurrences() {
 		if block == "" {
 			block = "entry"
 		}
-		for _, value := range b.body.occurrences {
-			if value.ID == occurrence {
-				assigned[block] = append(assigned[block], value)
-				break
-			}
+		if index, exists := b.body.occurrenceIndex[occurrence]; exists {
+			assigned[block] = append(assigned[block], b.body.occurrences[index])
 		}
 	}
 	for id, block := range b.blocks {

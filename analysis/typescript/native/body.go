@@ -13,24 +13,25 @@ import (
 var signatureImportPattern = regexp.MustCompile(`import\("([^"]+)"\)`)
 
 type bodyBuilder struct {
-	x           *extractor
-	file        *shimast.SourceFile
-	owner       string
-	scope       string
-	body        *shimast.Node
-	occurrences []bodyOccurrence
-	occurrence  map[*shimast.Node]string
-	relations   []bodyRelation
-	definitions []definitionUse
-	defs        map[string][]string
-	uses        map[string][]string
-	calls       []resolvedCall
-	values      map[string]any
-	returns     []string
-	throws      []string
-	captures    map[string]bool
-	escapes     []string
-	recursion   bool
+	x               *extractor
+	file            *shimast.SourceFile
+	owner           string
+	scope           string
+	body            *shimast.Node
+	occurrences     []bodyOccurrence
+	occurrence      map[*shimast.Node]string
+	occurrenceIndex map[string]int
+	relations       []bodyRelation
+	definitions     []definitionUse
+	defs            map[string][]string
+	uses            map[string][]string
+	calls           []resolvedCall
+	values          map[string]any
+	returns         []string
+	throws          []string
+	captures        map[string]bool
+	escapes         []string
+	recursion       bool
 }
 
 func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([]factShard, error) {
@@ -85,7 +86,8 @@ func newBodyBuilder(x *extractor, file *shimast.SourceFile, owner, scope string,
 		x: x, file: file, owner: owner, scope: scope, body: body,
 		occurrences: []bodyOccurrence{}, relations: []bodyRelation{},
 		occurrence: map[*shimast.Node]string{}, definitions: []definitionUse{},
-		defs: map[string][]string{}, uses: map[string][]string{}, calls: []resolvedCall{},
+		occurrenceIndex: map[string]int{},
+		defs:            map[string][]string{}, uses: map[string][]string{}, calls: []resolvedCall{},
 		values: map[string]any{}, captures: map[string]bool{},
 		returns: []string{}, throws: []string{}, escapes: []string{},
 	}
@@ -306,6 +308,7 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 	span := b.x.span(b.file, node)
 	id := b.x.occurrenceID(span, "body-"+kind)
 	b.occurrence[node] = id
+	b.occurrenceIndex[id] = len(b.occurrences)
 	b.occurrences = append(b.occurrences, bodyOccurrence{
 		ID: id, Kind: kind, Span: span, Owner: b.owner, Syntax: strings.TrimPrefix(node.KindString(), "Kind"),
 	})
@@ -353,11 +356,8 @@ func (b *bodyBuilder) finishDefinitionUses() {
 }
 
 func (b *bodyBuilder) setOccurrenceSymbol(id, symbol string) {
-	for index := range b.occurrences {
-		if b.occurrences[index].ID == id {
-			b.occurrences[index].Symbol = symbol
-			return
-		}
+	if index, exists := b.occurrenceIndex[id]; exists {
+		b.occurrences[index].Symbol = symbol
 	}
 }
 
