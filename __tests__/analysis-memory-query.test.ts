@@ -24,14 +24,14 @@ vi.mock('../analysis/facts/index.ts', async (original) => {
 })
 
 describe('memory generation query ownership', () => {
-  it('builds envelopes once across leases and bounds selective reads by their candidates', async () => {
+  it('binds only requested envelopes once across leases and bounds selective reads by their candidates', async () => {
     const transaction = corpus(5_000)
     const store = createMemoryAnalysisStore()
     try {
       await store.commit(transaction)
       work.headers = 0
       const retained = await store.open(transaction.next.universe)
-      expect(work.headers).toBe(5_000)
+      expect(work.headers).toBe(0)
       work.fields = 0
       await retained.headers({ subjects: [subject(0)] }, { limit: 1 })
       expect(work.fields).toBeLessThan(5_010)
@@ -45,7 +45,7 @@ describe('memory generation query ownership', () => {
         await query.dispose()
         await expect(query.headers()).rejects.toThrow('disposed')
       }
-      expect(work.headers).toBe(5_000)
+      expect(work.headers).toBe(32)
       expect(work.fields).toBeLessThan(256)
       expect((await retained.headers({ subjects: [subject(0)] })).headers).toHaveLength(1)
       await retained.dispose()

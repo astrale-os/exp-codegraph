@@ -8,6 +8,8 @@ export default defineLayout({
     'identity/',
     'index.ts',
     'internal/',
+    'internal/ordered-map.ts',
+    'internal/query-index.ts',
     'internal/state.ts',
     'memory/',
     'pass/',

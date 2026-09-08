@@ -91,3 +91,22 @@ Generation identities stream the same canonical v1 preimage in bounded chunks. A
 reuses encodings of immutable flat manifest references; custom accessors, nested mutable data
 and toJSON behavior retain the generic canonicalizer. Complete hashing still visits every
 manifest byte, while an unchanged retained reference needs no new canonical object graph.
+
+The memory materializer keeps generation-neutral facts in an ordered persistent index. A delta
+updates only the facts in replaced or deleted shards, their existing secondary postings, and their
+completeness contributions. Both primary indexes and individual posting buckets share untouched
+tree branches; a large namespace bucket is never copied to apply one changed fact. A new snapshot
+owns its tree roots directly, without retaining a chain of previous snapshots or query leases.
+
+Generation-pinned query views bind and memoize only requested fact envelopes. Opening another
+generation therefore does not copy every carried fact, sort the complete population, or recreate
+headers for unselected facts. Sorted iteration and merging preserve exact filters, pagination,
+totals, and generation-bound cursors. The first use of a secondary field indexes it once; later
+revisions carry its unchanged postings. Queries opened only after an unobserved lineage may build
+their initial index from the current immutable shards.
+
+Completeness is maintained from counted shard and fact contributions, including partial reasons
+temporarily masked by unavailable evidence. Removing a contribution restores the remaining exact
+state. Shard capability declarations are counted by namespace so a fact's completeness still
+bounds every capability declared by any retained shard in that namespace. These indexes are
+published only after transaction validation, and carry no mutable producer-owned data.

@@ -1,4 +1,4 @@
-import type { Completeness, Fact, FactHeader, FactShard, FactShardReference } from '../facts/index.ts'
+import type { Fact, FactHeader, FactShard, FactShardReference } from '../facts/index.ts'
 import type { AnalysisGeneration, FactTransaction } from '../generation/index.ts'
 import type {
   AnalysisGenerationId,
@@ -22,7 +22,7 @@ import { factHeader, shardReference } from '../facts/index.ts'
 import { TransactionError, validateFactTransaction } from '../generation/index.ts'
 import { deriveAnalysisId } from '../identity/index.ts'
 import { stableJson } from '../identity/model.ts'
-import { combineCompleteness } from '../facts/index.ts'
+import { MemoryFactIndex } from './query-index.ts'
 import { bindPhysicalFact, immutableFact } from '../facts/representation/index.ts'
 
 export interface MaterializedGeneration {
@@ -87,7 +87,10 @@ export function materializeTransaction(
   // immutable physical shard objects across generations and bind their facts
   // only when a generation-pinned reader observes them. Commit work therefore
   // scales with the delta rather than recreating every unaffected fact.
-  return immutable(new MaterializedSnapshot(transaction.next, shards))
+  const inherited = current instanceof MaterializedSnapshot ? current.indexedFacts() : undefined
+  const removed = inherited ? [...new Set([...transaction.deletes, ...transaction.upserts.map((shard) => shard.key)])]
+    .flatMap((key) => { const shard = current!.shards.get(key); return shard ? [shard] : [] }) : []
+  return immutable(new MaterializedSnapshot(transaction.next, shards, inherited?.update(removed, transaction.upserts)))
 }
 
 export function serializeMaterialized(value: MaterializedGeneration): string {
@@ -165,89 +168,70 @@ export function createSnapshotSet(
 /** Query indexes belong to the retained generation, never to a process-global cache. */
 class MaterializedSnapshot implements MaterializedGeneration {
   #index: MemoryQueryIndex | undefined
+  #facts: MemoryFactIndex | undefined
   readonly generation: AnalysisGeneration
   readonly shards: ReadonlyMap<string, FactShard>
 
   constructor(
     generation: AnalysisGeneration,
     shards: ReadonlyMap<string, FactShard>,
+    facts?: MemoryFactIndex,
   ) {
+    this.#facts = facts
     this.generation = generation
     this.shards = shards
   }
 
   queryIndex(): MemoryQueryIndex {
-    return this.#index ??= new MemoryQueryIndex(this)
+    return this.#index ??= new MemoryQueryIndex(this, this.#facts ??= MemoryFactIndex.build(this.shards))
   }
+
+  indexedFacts(): MemoryFactIndex | undefined { return this.#facts }
 }
 
 class MemoryQueryIndex {
   readonly generation: AnalysisGeneration
-  readonly facts: ReadonlyMap<FactId, Fact>
-  readonly headers: ReadonlyMap<FactId, FactHeader>
-  readonly manifest: readonly FactShardReference[]
-  readonly #ordered: readonly FactHeader[]
-  readonly #postings = new Map<HeaderIndexField, ReadonlyMap<string, readonly FactHeader[]>>()
-  readonly #shardCompletion: readonly [string, Completeness, readonly string[]][]
-  readonly #namespaceCapabilities: ReadonlyMap<string, readonly string[]>
+  readonly #data: MemoryFactIndex
+  readonly #facts = new Map<FactId, Fact>()
+  readonly #headers = new Map<FactId, FactHeader>()
   #capabilities: readonly CapabilityStatus[] | undefined
 
-  constructor(materialized: MaterializedGeneration) {
+  constructor(materialized: MaterializedGeneration, data = MemoryFactIndex.build(materialized.shards)) {
     this.generation = materialized.generation
-    const facts = [...materialized.shards.values()]
-      .flatMap((shard) => shard.facts.map((fact) => immutableFact(bindFact(fact, materialized.generation.id))))
-      .sort((left, right) => left.id.localeCompare(right.id))
-    this.#ordered = facts.map((fact) => Object.freeze(factHeader(fact)))
-    this.facts = new Map(facts.map((fact) => [fact.id, fact]))
-    this.headers = new Map(this.#ordered.map((header) => [header.id, header]))
-    this.manifest = immutable([...materialized.shards.values()].map(shardReference).sort(byKey))
-    this.#shardCompletion = [...materialized.shards.values()].map((shard) => [
-      shard.namespace,
-      shard.completion,
-      shard.capabilities ?? [],
-    ])
-    const capabilities = new Map<string, Set<string>>()
-    for (const shard of materialized.shards.values()) {
-      const values = capabilities.get(shard.namespace) ?? new Set<string>()
-      for (const capability of shard.capabilities ?? []) values.add(capability)
-      capabilities.set(shard.namespace, values)
+    this.#data = data
+  }
+
+  get manifest(): readonly FactShardReference[] { return this.#data.manifest() }
+
+  fact(input: FactId | Fact): Fact | undefined {
+    const id = typeof input === 'string' ? input : input.id
+    let value = this.#facts.get(id)
+    if (!value) {
+      const fact = typeof input === 'string' ? this.#data.facts.get(id) : input
+      if (!fact) return
+      value = immutableFact(bindFact(fact, this.generation.id))
+      this.#facts.set(id, value)
     }
-    this.#namespaceCapabilities = new Map(
-      [...capabilities].map(([namespace, values]) => [namespace, [...values].sort()]),
-    )
+    return value
+  }
+
+  header(input: FactId | Fact): FactHeader | undefined {
+    const id = typeof input === 'string' ? input : input.id
+    let value = this.#headers.get(id)
+    if (!value) {
+      const fact = typeof input === 'string' ? this.#data.facts.get(id) : input
+      if (!fact) return
+      value = Object.freeze({ ...factHeader(fact), generation: this.generation.id })
+      this.#headers.set(id, value)
+    }
+    return value
   }
 
   capabilities(): readonly CapabilityStatus[] {
-    if (this.#capabilities) return this.#capabilities
-    const completion = new Map<string, Completeness>()
-    for (const capability of this.generation.capabilities)
-      completion.set(capability, { kind: 'complete' })
-    for (const [namespace, value, capabilities] of this.#shardCompletion) {
-      completion.set(namespace, combineCompleteness(completion.get(namespace), value))
-      for (const capability of capabilities) {
-        completion.set(capability, combineCompleteness(completion.get(capability), value))
-      }
-    }
-    for (const header of this.#ordered) {
-      const current = completion.get(header.namespace)
-      completion.set(header.namespace, combineCompleteness(current, header.completeness))
-      for (const capability of this.#namespaceCapabilities.get(header.namespace) ?? []) {
-        completion.set(
-          capability,
-          combineCompleteness(completion.get(capability), header.completeness),
-        )
-      }
-    }
-    return this.#capabilities = immutable([...completion]
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([capability, value]) => ({ capability, completeness: value })))
+    return this.#capabilities ??= immutable(this.#data.capabilities(this.generation.capabilities))
   }
 
-  *matching(filter: FactFilter): Iterable<FactHeader> {
-    for (const header of this.candidates(filter)) {
-      if (matchesHeader(header, filter)) yield header
-    }
-  }
+  matching(filter: FactFilter): Iterable<Fact> { return this.#data.matching(filter) }
 
   page(filter: FactFilter, page: PageRequest): FactHeaderPage {
     const limit = page.limit
@@ -259,79 +243,18 @@ class MemoryQueryIndex {
     const headers: FactHeader[] = []
     let total = 0
     let hasNext = false
-    for (const header of this.matching(filter)) {
+    for (const fact of this.matching(filter)) {
       const position = total++
       if (position < start) continue
-      if (headers.length < limit) headers.push(header)
-      else {
-        hasNext = true
-        if (!page.includeTotal) break
-      }
+      if (headers.length < limit) headers.push(this.header(fact)!)
+      else { hasNext = true; if (!page.includeTotal) break }
     }
     return {
       headers,
-      ...(hasNext
-        ? { nextCursor: encodeCursor(this.generation.id, signature, start + headers.length) }
-        : {}),
+      ...(hasNext ? { nextCursor: encodeCursor(this.generation.id, signature, start + headers.length) } : {}),
       ...(page.includeTotal ? { total } : {}),
     }
   }
-
-  private candidates(filter: FactFilter): readonly FactHeader[] {
-    let selected: readonly (readonly FactHeader[])[] | undefined
-    let size = this.#ordered.length
-    for (const [field, values] of [
-      ['subject', filter.subjects],
-      ['subject', filter.symbols],
-      ['source', filter.sources],
-      ['namespace', filter.namespaces],
-      ['kind', filter.kinds],
-      ['completeness', filter.completeness],
-    ] as const) {
-      if (!values) continue
-      if (!values.length) return []
-      const index = this.postings(field)
-      const groups = [...new Set(values)].map((value) => index.get(value) ?? [])
-      const count = groups.reduce((total, group) => total + group.length, 0)
-      if (count === 0) return []
-      if (count < size) {
-        size = count
-        selected = groups
-        // A single candidate is cheaper to check against the remaining filters
-        // than building another project-wide secondary index.
-        if (count === 1) break
-      }
-    }
-    if (!selected) return this.#ordered
-    if (selected.length === 1) return selected[0]!
-    return [...new Map(selected.flatMap((group) => group.map((header) => [header.id, header] as const))).values()]
-      .sort((left, right) => left.id.localeCompare(right.id))
-  }
-
-  private postings(field: HeaderIndexField): ReadonlyMap<string, readonly FactHeader[]> {
-    const existing = this.#postings.get(field)
-    if (existing) return existing
-    const index = new Map<string, FactHeader[]>()
-    for (const header of this.#ordered) {
-      if (field === 'source') {
-        for (const source of new Set(header.provenance.evidence.map((span) => span.source))) {
-          appendHeader(index, source, header)
-        }
-      } else {
-        appendHeader(index, field === 'completeness' ? header.completeness.kind : header[field], header)
-      }
-    }
-    this.#postings.set(field, index)
-    return index
-  }
-}
-
-type HeaderIndexField = 'subject' | 'source' | 'namespace' | 'kind' | 'completeness'
-
-function appendHeader(index: Map<string, FactHeader[]>, key: string, header: FactHeader): void {
-  const bucket = index.get(key)
-  if (bucket) bucket.push(header)
-  else index.set(key, [header])
 }
 
 class PinnedQuery implements AnalysisQuery {
@@ -366,7 +289,7 @@ class PinnedQuery implements AnalysisQuery {
   async headersById(ids: readonly FactId[]): Promise<readonly FactHeader[]> {
     this.assertOpen()
     return [...new Set(ids)].sort().flatMap((id) => {
-      const header = this.#index.headers.get(id)
+      const header = this.#index.header(id)
       return header ? [header] : []
     })
   }
@@ -375,7 +298,7 @@ class PinnedQuery implements AnalysisQuery {
     this.assertOpen()
     for (const header of this.#index.matching(filter)) {
       this.assertOpen()
-      yield header
+      yield this.#index.header(header)!
     }
   }
 
@@ -383,7 +306,7 @@ class PinnedQuery implements AnalysisQuery {
     this.assertOpen()
     const result = this.#index.page(filter, page)
     return {
-      facts: result.headers.map((header) => this.#index.facts.get(header.id)!),
+      facts: result.headers.map((header) => this.#index.fact(header.id)!),
       ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
       ...(result.total !== undefined ? { total: result.total } : {}),
     }
@@ -392,7 +315,7 @@ class PinnedQuery implements AnalysisQuery {
   async factsById(ids: readonly FactId[]): Promise<readonly Fact[]> {
     this.assertOpen()
     return [...new Set(ids)].sort().flatMap((id) => {
-      const fact = this.#index.facts.get(id)
+      const fact = this.#index.fact(id)
       return fact ? [fact] : []
     })
   }
@@ -401,7 +324,7 @@ class PinnedQuery implements AnalysisQuery {
     this.assertOpen()
     for (const header of this.#index.matching(filter)) {
       this.assertOpen()
-      yield this.#index.facts.get(header.id)!
+      yield this.#index.fact(header)!
     }
   }
 
@@ -469,21 +392,6 @@ class PinnedSnapshotSet implements AnalysisSnapshotSet {
     this.#disposed = true
     await this.#release()
   }
-}
-
-function matchesHeader(header: FactHeader, filter: FactFilter): boolean {
-  if (filter.namespaces && !filter.namespaces.includes(header.namespace)) return false
-  if (filter.kinds && !filter.kinds.includes(header.kind)) return false
-  if (filter.subjects && !filter.subjects.includes(header.subject)) return false
-  if (filter.completeness && !filter.completeness.includes(header.completeness.kind)) return false
-  if (
-    filter.sources &&
-    !header.provenance.evidence.some((evidence) => filter.sources!.includes(evidence.source))
-  ) {
-    return false
-  }
-  if (filter.symbols && !filter.symbols.some((symbol) => header.subject === symbol)) return false
-  return true
 }
 
 function filterSignature(filter: FactFilter): string {
