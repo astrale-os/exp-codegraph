@@ -12,12 +12,12 @@ export declare class BodyFragment {
     readonly fact: TypeScriptFact<'body'>;
     readonly owner: SymbolId;
     readonly source: SourceId | undefined;
-    readonly nodes: readonly NodeReference[];
-    readonly calls: readonly NodeReference[];
     readonly effects: readonly number[];
     readonly callsBySource: ReadonlyMap<SourceId, readonly OccurrenceId[]>;
     readonly packed: PackedTypeScriptBodyProjection | undefined;
     constructor(fact: TypeScriptFact<'body'>);
+    logicalNodes(): readonly NodeReference[];
+    logicalCalls(): readonly NodeReference[];
     id(row: number): OccurrenceId;
     effectNode(row: number): Pick<BodyOccurrence, 'id' | 'kind' | 'syntax' | 'symbol' | 'owner'>;
     effectCall(row: number): Pick<ResolvedCall, 'occurrence' | 'target' | 'dynamic' | 'arguments' | 'bindings'>;
