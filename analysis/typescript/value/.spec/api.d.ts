@@ -35,6 +35,13 @@ export type EvaluatedValueResult<Value> = ValueResult<Value> & {
   readonly limits: Readonly<Required<BoundedValueLimits>>
 }
 
+/** Map values conservatively; the result carries no evaluation limits or reusable receipt. */
+export function mapValueResult<Input, Output>(
+  result: ValueResult<Input>,
+  project: (value: Input) => Output,
+  options?: { readonly equals?: (left: Output, right: Output) => boolean },
+): ValueResult<Output>
+
 export interface BoundedValueEvaluator<Atom = never> {
   /** Build a lazy symbolic proof, preserving closures and effective object properties. */
   value(occurrence: OccurrenceId): SymbolicValuePlan<Atom>
