@@ -13,6 +13,7 @@ import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../physical/index.ts'
 import type { TypeScriptAnalysisService, TypeScriptSourceFact } from '../model.ts'
 import { resolveBoundedValueLimits } from '../value/index.ts'
 import { createValueEvaluatorFactory } from '../value/symbolic/engine.ts'
+import { ValueResolutionCache } from '../value/symbolic/cache.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions } from '../value/index.ts'
 import type { TypeScriptProject, TypeScriptProjectOptions, TypeScriptProjectSnapshot, TypeScriptProjectRefresh, TypeScriptProjectUpdate } from './model.ts'
 
@@ -53,6 +54,7 @@ class ResidentProject implements TypeScriptProject {
   readonly #pending: FactTransaction[] = []
   readonly #pendingSources = new Set<SourceId>()
   readonly #sourceShards = new Map<ProjectUniverseId, Map<FactShardKey, readonly SourceId[]>>()
+  readonly #values = new ValueResolutionCache()
 
   constructor(
     descriptor: NativeProjectDescriptor,
@@ -142,7 +144,7 @@ class ResidentProject implements TypeScriptProject {
         await query.dispose()
         throw new Error('TypeScript project is disposed.')
       }
-      const makeEvaluator = createValueEvaluatorFactory(query)
+      const makeEvaluator = createValueEvaluatorFactory(query, this.#values)
       const evaluators = new Map<unknown, Map<string, Promise<BoundedValueEvaluator<unknown>>>>()
       let disposed = false
       const snapshot: TypeScriptProjectSnapshot = Object.freeze({
@@ -186,6 +188,7 @@ class ResidentProject implements TypeScriptProject {
   dispose(): Promise<void> {
     if (this.#closing) return this.#closing
     this.#closed = true
+    this.#values.close()
     this.#lifetime.abort(new Error('TypeScript project is disposed.'))
     this.#closing = (async () => {
       // Stop a running native request before awaiting queued work, then release its pinned evidence.

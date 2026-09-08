@@ -7,6 +7,7 @@ import { createTypeScriptFactReader } from '../facts/index.js';
 import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../physical/index.js';
 import { resolveBoundedValueLimits } from '../value/index.js';
 import { createValueEvaluatorFactory } from '../value/symbolic/engine.js';
+import { ValueResolutionCache } from '../value/symbolic/cache.js';
 /** Open a headless project using the installed native analyzer and a caller-local memory store. */
 export async function openTypeScriptProject(options) {
     if (options.sessions && options.binary)
@@ -44,6 +45,7 @@ class ResidentProject {
     #pending = [];
     #pendingSources = new Set();
     #sourceShards = new Map();
+    #values = new ValueResolutionCache();
     constructor(descriptor, sessions, store, ownsStore) {
         this.#descriptor = descriptor;
         this.#sessions = sessions;
@@ -135,7 +137,7 @@ class ResidentProject {
                 await query.dispose();
                 throw new Error('TypeScript project is disposed.');
             }
-            const makeEvaluator = createValueEvaluatorFactory(query);
+            const makeEvaluator = createValueEvaluatorFactory(query, this.#values);
             const evaluators = new Map();
             let disposed = false;
             const snapshot = Object.freeze({
@@ -182,6 +184,7 @@ class ResidentProject {
         if (this.#closing)
             return this.#closing;
         this.#closed = true;
+        this.#values.close();
         this.#lifetime.abort(new Error('TypeScript project is disposed.'));
         this.#closing = (async () => {
             // Stop a running native request before awaiting queued work, then release its pinned evidence.

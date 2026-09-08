@@ -7,6 +7,7 @@ import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions, BoundedValueL
 import { resolveBoundedValueLimits } from '../limits.ts'
 import type { SymbolicCallModel, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from './model.ts'
 import { createCallProjection } from './calls.ts'
+import { resolutionResultBytes, type ValueResolutionCache } from './cache.ts'
 
 type Environment<Atom> = ReadonlyMap<SymbolId, Reference<Atom>>
 interface Reference<Atom> { readonly occurrence: OccurrenceId; readonly environment: Environment<Atom> }
@@ -70,14 +71,14 @@ interface ValueEvaluatorFactory {
   calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
 }
 
-export function createValueEvaluatorFactory(query: AnalysisQuery): ValueEvaluatorFactory {
+export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueResolutionCache): ValueEvaluatorFactory {
   let pending: Promise<Index> | undefined
   const index = () => {
     pending ??= indexFacts(query).catch((error) => { pending = undefined; throw error })
     return pending
   }
   return Object.assign(async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) =>
-    new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits)),
+    new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache),
   { calls: createCallProjection(query, index) })
 }
 
@@ -85,18 +86,24 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   readonly #index: Index
   readonly #model: SymbolicCallModel<Atom> | undefined
   readonly #limits: Readonly<Required<BoundedValueLimits>>
+  readonly #cache: ValueResolutionCache | undefined
 
-  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>) {
+  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, cache?: ValueResolutionCache) {
     this.#index = index
     this.#model = model
     this.#limits = limits
+    this.#cache = cache
   }
 
   value(occurrence: OccurrenceId): SymbolicValuePlan<Atom> { return this.plan({ kind: 'value', occurrence }) }
 
   canReuse(proof: EvaluatedValueResult<unknown>): boolean {
+    return this.reusable(proof, this.#limits)
+  }
+
+  private reusable(proof: EvaluatedValueResult<unknown>, limits: Readonly<Required<BoundedValueLimits>>): boolean {
     const metadata = (proof as Proof)[PROOF]
-    return !!metadata && metadata.model === this.#model && metadata.limits === JSON.stringify(this.#limits) &&
+    return !!metadata && metadata.model === this.#model && metadata.limits === JSON.stringify(limits) &&
       [...metadata.dependencies].every(([key, fingerprint]) => this.#index.fingerprints.get(key) === fingerprint)
   }
 
@@ -114,7 +121,12 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   }
 
   private resolve(plan: Plan<Atom>, options: SymbolicValueResolveOptions, scalar: boolean): EvaluatedValueResult<unknown> {
-    const state: State = { limits: options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits,
+    const limits = options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits
+    options.signal?.throwIfAborted()
+    const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits, plan])
+    const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits))
+    if (cached) return cached
+    const state: State = { limits,
       signal: options.signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 }
     state.signal?.throwIfAborted()
     const value = this.evaluatePlan(plan, state)
@@ -127,13 +139,21 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         ...(evaluated.candidates ? { candidates: evaluated.candidates } : {}),
       } : {}),
     } as ValueResult<unknown> : evaluated
-    const result = { ...bounded, limits: state.limits }
-    Object.defineProperty(result, PROOF, { value: {
+    const result = { ...freezeResult(bounded, scalar), limits: state.limits }
+    const metadata: ProofMetadata = {
       model: this.#model,
       limits: JSON.stringify(state.limits),
       dependencies: new Map([...state.dependencies].map((key) => [key, this.#index.fingerprints.get(key)])),
-    } satisfies ProofMetadata })
-    return Object.freeze(result)
+    }
+    const resultBytes = key ? resolutionResultBytes(result) : undefined
+    Object.defineProperty(result, PROOF, { value: metadata })
+    const frozen = Object.freeze(result)
+    state.signal?.throwIfAborted()
+    if (key && resultBytes !== undefined) {
+      const dependencyBytes = [...metadata.dependencies].reduce((bytes, [name, fingerprint]) => bytes + 96 + name.length * 2 + (fingerprint?.length ?? 0) * 2, 0)
+      this.#cache!.put(key, frozen, resultBytes + dependencyBytes)
+    }
+    return frozen
   }
 
   private evaluatePlan(plan: Plan<Atom>, state: State): RuntimeValue<Atom> {
@@ -591,4 +611,25 @@ async function collect<Value>(values: AsyncIterable<Value>): Promise<Value[]> {
   const result: Value[] = []
   for await (const value of values) result.push(value)
   return result
+}
+
+/** Freeze only containers created by the engine; opaque values keep their identity. */
+function freezeResult(result: ValueResult<unknown>, scalar: boolean): ValueResult<unknown> {
+  const value = (input: unknown): unknown => {
+    if (scalar) return input
+    const symbolic = input as SymbolicValue<unknown>
+    return Object.freeze(symbolic.kind === 'object'
+      ? { ...symbolic, properties: Object.freeze([...symbolic.properties]) }
+      : { ...symbolic })
+  }
+  const evidence = Object.freeze([...result.evidence])
+  if (result.kind === 'known') return { ...result, value: value(result.value), evidence }
+  if (result.kind === 'unsupported') return { ...result, evidence }
+  const reasons = Object.freeze(result.reasons.map((reason) => Object.freeze({ ...reason,
+    ...('effective' in reason ? { effective: Object.freeze({ ...reason.effective }) } : {}),
+  })))
+  return { ...result, evidence, reasons,
+    ...(result.kind === 'ambiguous' ? { values: Object.freeze(result.values.map(value)) }
+      : result.candidates ? { candidates: Object.freeze(result.candidates.map(value)) } : {}),
+  } as ValueResult<unknown>
 }
