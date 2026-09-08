@@ -126,7 +126,14 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 		selected = affectedSourceClosure(a.session.Program(), selected, public)
 		a.telemetry.record(requestID, "compiler.affected-closure", phase, map[string]any{"programSources": len(a.session.Program().SourceFiles()), "selectedSources": len(selected)})
 	}
+	changedFiles := make([]string, 0, len(updatedFiles))
+	for _, file := range updatedFiles {
+		changedFiles = append(changedFiles, file.FileName())
+	}
+	readUpdates, callableOwners := a.revalidateCallableReads(changedFiles, selected, requestID)
+	selected = append(selected, callableOwners...)
 	selection := refreshSelection{
+		callableReads:      readUpdates,
 		files:              sortedUnique(selected),
 		allModules:         len(public) != 0,
 		diagnosticsChanged: len(public) != 0,

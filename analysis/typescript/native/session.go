@@ -15,6 +15,7 @@ import (
 )
 
 type generationState struct {
+	callableReads      callableReadIndex
 	generation         analysisGeneration
 	manifest           []factShardReference
 	digests            map[string]string
@@ -26,6 +27,7 @@ type generationState struct {
 }
 
 type refreshSelection struct {
+	callableReads      map[string][]callableRead
 	full               bool
 	files              []string
 	allModules         bool
@@ -207,7 +209,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	if input.RecordLimits != nil {
 		projectionBytes = 0
 	}
-	shards, sources, replaced, err := a.extract(nextUniverse, selection, base, projectionBytes, input.ID)
+	shards, sources, replaced, projectedReads, err := a.extract(nextUniverse, selection, base, projectionBytes, input.ID)
 	a.telemetry.record(input.ID, "projection.total", extractionStarted, map[string]any{
 		"shards": len(shards), "sources": len(sources), "full": selection.full,
 	})
@@ -305,14 +307,33 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		ProtocolVersion: protocolVersion, Base: baseID, Next: generation,
 		Manifest: manifest, Upserts: upserts, Deletes: deletes,
 	}
+	readBase := base.callableReads
+	if selection.full {
+		readBase = callableReadIndex{}
+	}
+	readUpdates := selection.callableReads
+	if readUpdates == nil || selection.full {
+		readUpdates = map[string][]callableRead{}
+	}
+	for _, file := range selection.files {
+		readUpdates[file] = projectedReads[file]
+	}
+	for file, reads := range projectedReads {
+		readUpdates[file] = reads
+	}
 	state := generationState{
-		generation: generation, manifest: manifest, digests: digests,
+		callableReads: mergeCallableReads(readBase, readUpdates),
+		generation:    generation, manifest: manifest, digests: digests,
 		sources: sourceRecordMap(sources), sourceShards: mergeSourceShardOwnership(base, sources, shards, selection.full),
 		moduleDependencies: mergeModuleDependencies(base.moduleDependencies, shards, selection.full),
 		moduleDeclarations: mergeModuleDeclarationReferences(base.moduleDeclarations, shards, selection.full),
 		sourceManifest:     sourceManifest,
 	}
-	a.telemetry.record(input.ID, "transaction.state", phase, map[string]any{"manifestShards": len(manifest), "sources": len(sources), "upserts": len(upserts)})
+	a.telemetry.record(input.ID, "transaction.state", phase, map[string]any{
+		"manifestShards": len(manifest), "sources": len(sources), "upserts": len(upserts),
+		"callableReadOwners": len(state.callableReads.owners), "callableReadExpressions": state.callableReads.expressions,
+		"callableReadSources": len(state.callableReads.dependents),
+	})
 	if adopting && generationID == input.Base {
 		state.generation.Sequence = input.BaseSequence
 		a.install(state, nextUniverse, rollover)
@@ -370,10 +391,10 @@ func (a *analyzer) extract(
 	base generationState,
 	maximumProjectionBytes int,
 	requestID int,
-) ([]factShard, []sourceRecord, map[string]bool, error) {
+) ([]factShard, []sourceRecord, map[string]bool, map[string][]callableRead, error) {
 	if selection.full {
-		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
-		return shards, sources, nil, err
+		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		return shards, sources, nil, reads, err
 	}
 	selected := make(map[string]bool, len(selection.files))
 	for _, file := range selection.files {
@@ -417,7 +438,7 @@ func (a *analyzer) extract(
 	for file := range selected {
 		record, exists := x.sources[file]
 		if !exists {
-			return nil, nil, nil, fmt.Errorf("selected TypeScript source disappeared from the owned projection: %s", file)
+			return nil, nil, nil, nil, fmt.Errorf("selected TypeScript source disappeared from the owned projection: %s", file)
 		}
 		for _, key := range base.sourceShards[record.Source] {
 			replaced[key] = true
@@ -444,7 +465,7 @@ func (a *analyzer) extract(
 			modules, err = x.moduleShardsFor(a.session.Program(), selectedModules, base.moduleDependencies)
 		}
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		shards = append(shards, modules...)
 		moduleOwners, declarationShards, declarationReferences := moduleProjectionCounts(modules)
@@ -466,7 +487,7 @@ func (a *analyzer) extract(
 	if a.projection.sourceOwned() {
 		sourceShards, err := x.sourceShards(files, selected, a.telemetry, requestID)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		shards = append(shards, sourceShards...)
 	}
@@ -474,10 +495,10 @@ func (a *analyzer) extract(
 		"bytes": x.semanticPayloadBytes,
 	})
 	if x.payloadEncodingError != nil {
-		return nil, nil, nil, x.payloadEncodingError
+		return nil, nil, nil, nil, x.payloadEncodingError
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	return shards, sources, replaced, nil
+	return shards, sources, replaced, x.callableReads, nil
 }
 
 func sourceRecordMap(records []sourceRecord) map[string]sourceRecord {
