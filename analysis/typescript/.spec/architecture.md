@@ -46,6 +46,8 @@ preserving, while targets, substitutions, overloads, and inferred types come fro
 Checker. Public symbols use portable source coordinates plus qualified authored paths; compiler byte
 positions remain provenance and never identity. External re-export ownership follows local barrels,
 and package ownership walks past nameless nested module-format manifests to the nearest named owner.
+One extraction shares named and absent ownership results by directory, so sibling source files do
+not repeat filesystem walks. Those results never cross a refresh or retain stale package metadata.
 Consumers that need expansion, reduction, or assignability request a derived capability above the
 base fact; native extraction does not serialize competing authoritative views.
 

@@ -12,6 +12,10 @@ it('streams complete records across bounded frames before atomic admission', asy
   await goTest(['framing.go', 'framing_records.go', 'framing_records_test.go', 'model.go', 'telemetry.go'])
 }, 95_000)
 
+it('shares package ownership walks only within one compiler snapshot', async () => {
+  await goTest(['package_coordinate.go', 'package_coordinate_test.go'])
+}, 95_000)
+
 async function goTest(files: readonly string[]): Promise<void> {
   const require = createRequire(import.meta.url)
   const ttsc = createRequire(require.resolve('ttsc/package.json'))

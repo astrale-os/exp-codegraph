@@ -15,7 +15,6 @@ func (x *extractor) callTargetOrigin(symbol *shimast.Symbol) *callTargetOrigin {
 	}
 	if x.callOrigins == nil {
 		x.callOrigins = map[*shimast.Symbol]*callTargetOrigin{}
-		x.packageCoordinates = map[string]string{}
 	}
 	if origin, exists := x.callOrigins[symbol]; exists {
 		return origin
@@ -27,11 +26,7 @@ func (x *extractor) callTargetOrigin(symbol *shimast.Symbol) *callTargetOrigin {
 		if file == nil {
 			return nil
 		}
-		coordinate, exists := x.packageCoordinates[file.FileName()]
-		if !exists {
-			coordinate = workspacePackageCoordinate(x.root, file.FileName())
-			x.packageCoordinates[file.FileName()] = coordinate
-		}
+		coordinate := x.packageCoordinate(file.FileName())
 		if !strings.HasPrefix(coordinate, "package:") {
 			return nil
 		}
@@ -131,4 +126,11 @@ func functionInitializer(declaration *shimast.Node) *shimast.Node {
 		}
 	}
 	return nil
+}
+
+func (x *extractor) packageCoordinate(source string) string {
+	if x.packageCoordinates == nil {
+		x.packageCoordinates = newPackageCoordinateResolver(x.root)
+	}
+	return x.packageCoordinates.coordinate(source)
 }
