@@ -161,7 +161,8 @@ class ProcessNativeAnalysisSession {
                 child.kill('SIGTERM');
                 signal.throwIfAborted();
             }
-            signal.addEventListener('abort', () => void session.abort(signal.reason), { once: true });
+            // Opening is complete here. Later cancellation belongs to the individual
+            // request, not to the signal that happened to create this resident process.
         }
         return session;
     }

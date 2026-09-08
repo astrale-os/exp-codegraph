@@ -7,10 +7,12 @@ import { validateFactTransaction } from '../generation/index.js';
  * snapshot. If that portable universe existed before (for example after a
  * tsconfig edit is reverted), this function safely rebases the complete
  * snapshot onto the caller's retained current generation for that universe.
+ * A restarted process can also produce a complete base-less snapshot in the
+ * same universe; it follows the same admission/rebase path without a rollover.
  */
 export async function materializeNativeTransaction(store, activeUniverse, activeGeneration, transaction, options = {}) {
     const rollover = transaction.next.universe !== activeUniverse;
-    if (!rollover) {
+    if (!rollover && transaction.base !== undefined) {
         assertTransaction(transaction, activeGeneration?.id);
         await store.commit(transaction, options);
         return { generation: transaction.next, transaction, rollover: false };
@@ -20,10 +22,10 @@ export async function materializeNativeTransaction(store, activeUniverse, active
     const destination = await store.current(transaction.next.universe);
     if (!destination) {
         await store.commit(transaction, options);
-        return { generation: transaction.next, transaction, rollover: true };
+        return { generation: transaction.next, transaction, rollover };
     }
     if (destination.id === transaction.next.id) {
-        return { generation: destination, rollover: true };
+        return { generation: destination, rollover };
     }
     const currentManifest = await readManifest(store, destination);
     const nextKeys = new Set(transaction.manifest.map((reference) => reference.key));
@@ -38,7 +40,7 @@ export async function materializeNativeTransaction(store, activeUniverse, active
     };
     assertTransaction(rebased, destination.id);
     await store.commit(rebased, options);
-    return { generation: rebased.next, transaction: rebased, rollover: true };
+    return { generation: rebased.next, transaction: rebased, rollover };
 }
 /** Reconstruct and validate one wire-efficient affected-shard delta. */
 export async function materializeNativeDelta(store, activeGeneration, delta, options = {}) {
