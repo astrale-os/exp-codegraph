@@ -1,11 +1,185 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   deriveAnalysisId,
   type AnalysisQuery,
   type Fact,
 } from '../analysis/index.ts'
-import { createTypeScriptFactReader } from '../analysis/typescript/index.ts'
+import {
+  admitFactPayloadCodecs,
+  bindPhysicalFact,
+  createFactWithPhysicalPayload,
+} from '../analysis/facts/representation/index.ts'
+import {
+  createTypeScriptFactReader,
+  TYPESCRIPT_BODY_PAYLOAD_CODEC,
+  TYPESCRIPT_FACT_PAYLOAD_CODECS,
+} from '../analysis/typescript/index.ts'
+import { validateTypeScriptFactPayload } from '../analysis/typescript/facts/validate.ts'
+
+vi.mock('../analysis/typescript/facts/validate.ts', async (original) => {
+  const actual = await original<typeof import('../analysis/typescript/facts/validate.ts')>()
+  return { ...actual, validateTypeScriptFactPayload: vi.fn(actual.validateTypeScriptFactPayload) }
+})
+
+describe('immutable TypeScript payload admission', () => {
+  /** @evidence TYPESCRIPT-FACT-READER-OWNED-ADMISSION */
+  it('reuses successful validation across readers and generations while checking each envelope', async () => {
+    const fixture = physicalBodyFact()
+    const validate = vi.mocked(validateTypeScriptFactPayload)
+    validate.mockClear()
+    await createTypeScriptFactReader(queryFor([fixture])).facts('body')
+    const next = bindPhysicalFact(fixture, deriveAnalysisId('generation', 'next-body', {}))
+    await createTypeScriptFactReader(queryFor([next])).factsById('body', [next.id])
+    expect(next.payload).toBe(fixture.payload)
+    expect(validate).toHaveBeenCalledTimes(1)
+    await expect(createTypeScriptFactReader(queryFor([{ ...next, schemaVersion: 2 }])).facts('body'))
+      .rejects.toMatchObject({ diagnostics: ['schema-version:2'] })
+    const wrongNamespace = createTypeScriptFactReader(queryFor([{ ...next, namespace: 'wrong' }]))
+    await expect(wrongNamespace.factsById('body', [next.id]))
+      .rejects.toMatchObject({ diagnostics: ['namespace:wrong'] })
+  })
+
+  it('revalidates fully frozen data without an owned decoder certificate', async () => {
+    const fixture = projectFact()
+    Object.freeze(fixture.payload.configurationFiles)
+    Object.freeze(fixture.payload.projectReferences)
+    Object.freeze(fixture.payload)
+    const validate = vi.mocked(validateTypeScriptFactPayload)
+    validate.mockClear()
+    const reader = createTypeScriptFactReader(queryFor([fixture]))
+    await reader.facts('project')
+    await reader.facts('project')
+    expect(validate).toHaveBeenCalledTimes(2)
+  })
+
+  it('owns open value fragments and freezes descendants below already frozen input containers', async () => {
+    let current = 'initial'
+    const items = [{ value: 'initial' }]
+    const input = Object.freeze({
+      nested: Object.freeze({ get value() { return current } }),
+      items: Object.freeze(items),
+    })
+    const fixture = physicalBodyFact(input)
+    const reader = createTypeScriptFactReader(queryFor([fixture]))
+    const first = (await reader.facts('body')).facts[0]!
+    const result = Object.values(first.payload.values)[0]!
+    expect(result).toMatchObject({ kind: 'known', value: { nested: { value: 'initial' }, items: [{ value: 'initial' }] } })
+    if (result.kind !== 'known') throw new Error('Expected known fixture value')
+    const value = result.value as typeof input
+    expect(value).not.toBe(input)
+    expect(Object.isFrozen(value.nested)).toBe(true)
+    expect(Object.isFrozen(value.items[0])).toBe(true)
+    current = 'changed'
+    items[0]!.value = 'changed'
+    expect((await reader.facts('body')).facts[0]!.payload).toBe(first.payload)
+    expect(value.nested.value).toBe('initial')
+    expect(value.items[0]!.value).toBe('initial')
+  })
+
+  it('constructs plain output arrays without invoking caller map methods or array species', async () => {
+    class CallerArray extends Array<unknown> {}
+    const fixture = physicalBodyFact('literal', (values) => {
+      const collection = CallerArray.from(values)
+      Object.defineProperty(collection, 'map', { value: () => { throw new Error('Caller map invoked') } })
+      return collection
+    })
+    const fact = (await createTypeScriptFactReader(queryFor([fixture])).facts('body')).facts[0]!
+    for (const value of Object.values(fact.payload.body)) {
+      if (Array.isArray(value)) expect(Object.getPrototypeOf(value)).toBe(Array.prototype)
+    }
+    expect(fact.payload.body.occurrences).toHaveLength(1)
+  })
+
+  it.each([false, true])('revalidates mutable descendants even under a frozen envelope (shallow=%s)', async (shallow) => {
+    const fixture = projectFact()
+    if (shallow) Object.freeze(fixture.payload)
+    const reader = createTypeScriptFactReader(queryFor([fixture]))
+    await reader.facts('project')
+    fixture.payload.configurationFiles.push(42 as unknown as string)
+    await expect(reader.facts('project')).rejects.toMatchObject({
+      code: 'TYPESCRIPT_FACT_CONTRACT_INVALID',
+      diagnostics: ['configurationFiles:not-string-array'],
+    })
+  })
+
+  it('does not cache getter-backed or replacement payloads with unchanged fact IDs', async () => {
+    const fixture = projectFact()
+    let files: unknown = ['tsconfig.json']
+    const payload = Object.freeze({ ...fixture.payload, get configurationFiles() { return files } })
+    const reader = createTypeScriptFactReader(queryFor([{ ...fixture, payload }]))
+    await reader.facts('project')
+    files = false
+    await expect(reader.facts('project')).rejects.toMatchObject({ code: 'TYPESCRIPT_FACT_CONTRACT_INVALID' })
+    const changed = { ...fixture, payload: Object.freeze({ ...fixture.payload, projectReferences: false }) }
+    await expect(createTypeScriptFactReader(queryFor([changed])).facts('project'))
+      .rejects.toMatchObject({ code: 'TYPESCRIPT_FACT_CONTRACT_INVALID' })
+  })
+
+  /** @evidence TYPESCRIPT-FACT-READER-CUSTOM-ADMISSION */
+  it.each([false, true])('revalidates frozen proxies, including custom codecs with a built-in name (physical=%s)', async (physical) => {
+    const fixture = projectFact()
+    let files: unknown = Object.freeze(['tsconfig.json'])
+    const payload = new Proxy(Object.freeze({}), {
+      get(_target, key) {
+        if (key === 'universe') return 'fixture'
+        if (key === 'configurationFiles') return files
+        if (key === 'projectReferences') return Object.freeze([])
+        return undefined
+      },
+    })
+    const fact = physical
+      ? createFactWithPhysicalPayload(
+          fixture,
+          { codec: TYPESCRIPT_BODY_PAYLOAD_CODEC.id, data: null },
+          admitFactPayloadCodecs([{ id: TYPESCRIPT_BODY_PAYLOAD_CODEC.id, decode: () => payload }]),
+          'custom codec fixture',
+        )
+      : { ...fixture, payload }
+    const reader = createTypeScriptFactReader(queryFor([fact]))
+    await reader.facts('project')
+    files = false
+    await expect(reader.facts('project')).rejects.toMatchObject({
+      diagnostics: ['configurationFiles:not-string-array'],
+    })
+  })
+})
+
+function physicalBodyFact(
+  value: unknown = 'literal',
+  collection: (values: unknown[]) => unknown[] = (values) => values,
+): Fact {
+  const constants = [1, 2, 3].map((byte) => Buffer.alloc(32, byte).toString('base64url'))
+  const { payload: _payload, ...fields } = projectFact()
+  const codec = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((entry) => entry.id === 'typescript.body.packed/1')!
+  const data: Record<string, unknown> = {
+    c: constants, s: [], t: ['expression', 'StringLiteral', 'entry'], p: [],
+    o: [[constants[0], 0, 0, 1, 1, -1]], r: [], b: [[2, [0]]], e: [], d: [], a: [],
+    u: [[], [], [], [], [], 0], v: [[0, { kind: 'known', value, evidence: [] }]], q: { kind: 'complete' },
+  }
+  for (const [key, entry] of Object.entries(data)) {
+    if (Array.isArray(entry)) data[key] = collection(entry)
+  }
+  return createFactWithPhysicalPayload(
+    { ...fields, namespace: 'typescript.body', kind: 'function-body' },
+    {
+      codec: codec.id,
+      data,
+    },
+    admitFactPayloadCodecs(TYPESCRIPT_FACT_PAYLOAD_CODECS),
+    'owned body fixture',
+  )
+}
+
+function projectFact() {
+  return {
+    ...normalizedModuleFixture().module,
+    namespace: 'typescript.project',
+    kind: 'project',
+    schemaVersion: 1,
+    payload: { universe: 'fixture', configurationFiles: ['tsconfig.json'], projectReferences: [] as string[] },
+  }
+}
 
 describe('normalized TypeScript module facts', () => {
   /** @evidence TYPESCRIPT-MODULE-DECLARATION-HYDRATION */

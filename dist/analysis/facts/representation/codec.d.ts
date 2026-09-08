@@ -12,6 +12,10 @@ export interface FactPayloadCodec {
     readonly id: string;
     decode(data: unknown): unknown;
 }
+/** Internal composition only: this decoder constructs an owned plain data tree. */
+export declare function ownFactPayloadCodec<Codec extends FactPayloadCodec>(codec: Codec): Codec;
+/** Certificates concern decoded roots, never a codec name or a caller's frozen object. */
+export declare function hasImmutableFactPayload(payload: object): boolean;
 export type StoredFactPayload = {
     readonly kind: 'semantic';
     readonly value: unknown;

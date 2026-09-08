@@ -1,3 +1,4 @@
+import { ownFactPayloadCodec } from '../../facts/representation/index.js';
 import { validateFunctionBodyIR } from '../body/model.js';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/4';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC = Object.freeze({
@@ -18,7 +19,7 @@ export const TYPESCRIPT_FACT_PAYLOAD_CODECS = Object.freeze([
         id: 'typescript.body.packed/1',
         decode: (input) => decodePackedTypeScriptBody(input, 1),
     }),
-]);
+].map(ownFactPayloadCodec));
 function decodePackedTypeScriptBody(input, version) {
     const packed = exactRecord(input, ['c', 's', 't', 'p', 'o', 'r', 'b', 'e', 'd', 'a', 'u', 'v', 'q'], 'body payload');
     const constants = exactTuple(packed.c, version === 1 ? 3 : 5, 'constants');
@@ -37,7 +38,7 @@ function decodePackedTypeScriptBody(input, version) {
     const texts = uniqueStrings(packed.t, 'texts');
     const symbol = (value, path) => symbols[ordinal(value, symbols.length, path)];
     const text = (value, path) => texts[ordinal(value, texts.length, path)];
-    const occurrences = packed.o.map((value, index) => {
+    const occurrences = Array.from(array(packed.o, 'occurrences'), (value, index) => {
         const row = exactTuple(value, version >= 4 ? 8 : version >= 3 ? 7 : 6, `occurrences[${index}]`);
         const symbolIndex = optionalOrdinal(row[5], symbols.length, `occurrences[${index}].symbol`);
         const operatorIndex = version < 4 ? undefined : optionalOrdinal(row[7], texts.length, `occurrences[${index}].operator`);
@@ -59,8 +60,8 @@ function decodePackedTypeScriptBody(input, version) {
     });
     unique(occurrences.map((entry) => entry.id), 'occurrence identities');
     const occurrence = (value, path) => occurrences[ordinal(value, occurrences.length, path)].id;
-    const parameters = packed.p.map((entry, index) => symbol(entry, `parameters[${index}]`));
-    const relations = packed.r.map((value, index) => {
+    const parameters = Array.from(array(packed.p, 'parameters'), (entry, index) => symbol(entry, `parameters[${index}]`));
+    const relations = Array.from(array(packed.r, 'relations'), (value, index) => {
         const row = exactTuple(value, 3, `relations[${index}]`);
         return {
             parent: occurrence(row[0], `relations[${index}].parent`),
@@ -68,16 +69,16 @@ function decodePackedTypeScriptBody(input, version) {
             role: text(row[2], `relations[${index}].role`),
         };
     });
-    const blocks = packed.b.map((value, index) => {
+    const blocks = Array.from(array(packed.b, 'blocks'), (value, index) => {
         const row = exactTuple(value, 2, `blocks[${index}]`);
         return {
             id: text(row[0], `blocks[${index}].id`),
-            occurrences: array(row[1], `blocks[${index}].occurrences`).map((entry, occurrenceIndex) => occurrence(entry, `blocks[${index}].occurrences[${occurrenceIndex}]`)),
+            occurrences: Array.from(array(row[1], `blocks[${index}].occurrences`), (entry, occurrenceIndex) => occurrence(entry, `blocks[${index}].occurrences[${occurrenceIndex}]`)),
         };
     });
     unique(blocks.map((entry) => entry.id), 'block identities');
     const block = (value, path) => blocks[ordinal(value, blocks.length, path)].id;
-    const edges = packed.e.map((value, index) => {
+    const edges = Array.from(array(packed.e, 'edges'), (value, index) => {
         const row = exactTuple(value, 4, `edges[${index}]`);
         const evidence = optionalOrdinal(row[3], occurrences.length, `edges[${index}].evidence`);
         return {
@@ -87,7 +88,7 @@ function decodePackedTypeScriptBody(input, version) {
             ...(evidence === undefined ? {} : { evidence: occurrences[evidence].id }),
         };
     });
-    const definitions = packed.d.map((value, index) => {
+    const definitions = Array.from(array(packed.d, 'definitions'), (value, index) => {
         const row = exactTuple(value, 4, `definitions[${index}]`);
         const definitionSymbol = optionalOrdinal(row[2], symbols.length, `definitions[${index}].symbol`);
         return {
@@ -97,7 +98,7 @@ function decodePackedTypeScriptBody(input, version) {
             reaching: text(row[3], `definitions[${index}].reaching`),
         };
     });
-    const calls = packed.a.map((value, index) => {
+    const calls = Array.from(array(packed.a, 'calls'), (value, index) => {
         const row = exactTuple(value, version === 1 ? 9 : 10, `calls[${index}]`);
         const target = optionalOrdinal(row[1], symbols.length, `calls[${index}].target`);
         const signature = optionalOrdinal(row[2], texts.length, `calls[${index}].signature`);
@@ -108,9 +109,9 @@ function decodePackedTypeScriptBody(input, version) {
             ...(version === 1 || row[9] === null ? {} : { targetOrigin: admitSymbolOrigin(row[9]) }),
             ...(signature === undefined ? {} : { signature: texts[signature] }),
             ...(receiver === undefined ? {} : { receiver: occurrences[receiver].id }),
-            typeArguments: array(row[4], `calls[${index}].typeArguments`).map((entry, valueIndex) => text(entry, `calls[${index}].typeArguments[${valueIndex}]`)),
-            arguments: array(row[5], `calls[${index}].arguments`).map((entry, valueIndex) => occurrence(entry, `calls[${index}].arguments[${valueIndex}]`)),
-            bindings: array(row[6], `calls[${index}].bindings`).map((entry, bindingIndex) => {
+            typeArguments: Array.from(array(row[4], `calls[${index}].typeArguments`), (entry, valueIndex) => text(entry, `calls[${index}].typeArguments[${valueIndex}]`)),
+            arguments: Array.from(array(row[5], `calls[${index}].arguments`), (entry, valueIndex) => occurrence(entry, `calls[${index}].arguments[${valueIndex}]`)),
+            bindings: Array.from(array(row[6], `calls[${index}].bindings`), (entry, bindingIndex) => {
                 const binding = exactTuple(entry, 4, `calls[${index}].bindings[${bindingIndex}]`);
                 const parameter = optionalOrdinal(binding[1], symbols.length, `calls[${index}].bindings[${bindingIndex}].parameter`);
                 return {
@@ -120,7 +121,7 @@ function decodePackedTypeScriptBody(input, version) {
                     rest: bit(binding[3], `calls[${index}].bindings[${bindingIndex}].rest`),
                 };
             }),
-            callbacks: array(row[7], `calls[${index}].callbacks`).map((entry, valueIndex) => symbol(entry, `calls[${index}].callbacks[${valueIndex}]`)),
+            callbacks: Array.from(array(row[7], `calls[${index}].callbacks`), (entry, valueIndex) => symbol(entry, `calls[${index}].callbacks[${valueIndex}]`)),
             dynamic: bit(row[8], `calls[${index}].dynamic`),
         };
     });
@@ -140,7 +141,7 @@ function decodePackedTypeScriptBody(input, version) {
             function: owner,
             returns: occurrenceArray(summary[0], occurrences, 'summary.returns'),
             throws: occurrenceArray(summary[1], occurrences, 'summary.throws'),
-            captures: array(summary[2], 'summary.captures').map((entry, index) => symbol(entry, `summary.captures[${index}]`)),
+            captures: Array.from(array(summary[2], 'summary.captures'), (entry, index) => symbol(entry, `summary.captures[${index}]`)),
             calls: occurrenceArray(summary[3], occurrences, 'summary.calls'),
             escapes: occurrenceArray(summary[4], occurrences, 'summary.escapes'),
             recursion: bit(summary[5], 'summary.recursion'),
@@ -168,7 +169,7 @@ function admitSymbolOrigin(input) {
         !Array.isArray(value.path) || !value.path.length || value.path.some((part) => typeof part !== 'string' || !part)) {
         throw new TypeError('Packed TypeScript symbol origin is invalid.');
     }
-    return { package: value.package, file: value.file, path: value.path };
+    return { package: value.package, file: value.file, path: Array.from(value.path) };
 }
 function admitCompleteness(value, path) {
     const input = record(value, path);
@@ -180,14 +181,14 @@ function admitCompleteness(value, path) {
         exactKeys(input, ['kind', 'reasons'], path);
         return {
             kind: 'partial',
-            reasons: array(input.reasons, `${path}.reasons`).map((reason, index) => admitLimit(reason, `${path}.reasons[${index}]`)),
+            reasons: Array.from(array(input.reasons, `${path}.reasons`), (reason, index) => admitLimit(reason, `${path}.reasons[${index}]`)),
         };
     }
     if (input.kind === 'unavailable') {
         exactKeys(input, ['kind', 'reasons'], path);
         return {
             kind: 'unavailable',
-            reasons: array(input.reasons, `${path}.reasons`).map((reason, index) => admitFailure(reason, `${path}.reasons[${index}]`)),
+            reasons: Array.from(array(input.reasons, `${path}.reasons`), (reason, index) => admitFailure(reason, `${path}.reasons[${index}]`)),
         };
     }
     throw new TypeError(`Packed ${path}.kind is invalid.`);
@@ -199,13 +200,13 @@ function admitValueResult(value, path) {
         exactKeys(input, ['kind', 'value', 'evidence'], path);
         if (!Object.hasOwn(input, 'value'))
             throw new TypeError(`Packed ${path}.value is required.`);
-        return { kind: 'known', value: input.value, evidence };
+        return { kind: 'known', value: ownedValue(input.value), evidence };
     }
     if (input.kind === 'unknown') {
         exactKeys(input, ['kind', 'reasons', 'evidence'], path);
         return {
             kind: 'unknown',
-            reasons: array(input.reasons, `${path}.reasons`).map((reason, index) => admitFailure(reason, `${path}.reasons[${index}]`)),
+            reasons: Array.from(array(input.reasons, `${path}.reasons`), (reason, index) => admitFailure(reason, `${path}.reasons[${index}]`)),
             evidence,
         };
     }
@@ -213,8 +214,8 @@ function admitValueResult(value, path) {
         exactKeys(input, ['kind', 'values', 'reasons', 'evidence'], path);
         return {
             kind: 'ambiguous',
-            values: array(input.values, `${path}.values`),
-            reasons: array(input.reasons, `${path}.reasons`).map((reason, index) => admitLimit(reason, `${path}.reasons[${index}]`)),
+            values: Array.from(array(input.values, `${path}.values`), ownedValue),
+            reasons: Array.from(array(input.reasons, `${path}.reasons`), (reason, index) => admitLimit(reason, `${path}.reasons[${index}]`)),
             evidence,
         };
     }
@@ -233,11 +234,22 @@ function admitLimit(value, path) {
     if (typeof input.code !== 'string' || !input.code || typeof input.message !== 'string' || !input.message) {
         throw new TypeError(`Packed ${path} has an invalid code or message.`);
     }
-    const admitted = record(input.effective, `${path}.effective`);
+    const admitted = { ...record(input.effective, `${path}.effective`) };
     if (Object.values(admitted).some((entry) => typeof entry !== 'number' && typeof entry !== 'string' && typeof entry !== 'boolean'))
         throw new TypeError(`Packed ${path}.effective is invalid.`);
     const effective = admitted;
     return { code: input.code, message: input.message, effective };
+}
+// The packed format is JSON data. Snapshot its open value fragments while decoding,
+// so the owned output never retains an input container or a live accessor.
+function ownedValue(value) {
+    if (typeof value === 'function')
+        throw new TypeError('Packed values must be data.');
+    if (value === null || typeof value !== 'object')
+        return value;
+    return Array.isArray(value)
+        ? Array.from(value, ownedValue)
+        : Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, ownedValue(entry)]));
 }
 function admitFailure(value, path) {
     const input = record(value, path);
@@ -260,7 +272,7 @@ function admitFailure(value, path) {
     };
 }
 function factIdentities(value, path) {
-    return array(value, path).map((entry) => {
+    return Array.from(array(value, path), (entry) => {
         if (!analysisIdentity(entry, 'fact'))
             throw new TypeError(`Packed ${path} is invalid.`);
         return entry;
@@ -283,7 +295,7 @@ function exactKeys(value, keys, path) {
     }
 }
 function occurrenceArray(value, occurrences, path) {
-    return array(value, path).map((entry, index) => occurrences[ordinal(entry, occurrences.length, `${path}[${index}]`)].id);
+    return Array.from(array(value, path), (entry, index) => occurrences[ordinal(entry, occurrences.length, `${path}[${index}]`)].id);
 }
 function expandId(value, kind) {
     if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{43}$/u.test(value)) {
@@ -318,10 +330,11 @@ function array(value, path) {
     return value;
 }
 function uniqueStrings(values, path) {
-    if (values.some((value) => typeof value !== 'string')) {
+    const copied = Array.from(array(values, path));
+    if (copied.some((value) => typeof value !== 'string')) {
         throw new TypeError(`Packed ${path} must contain strings.`);
     }
-    const result = values;
+    const result = copied;
     unique(result, path);
     return result;
 }

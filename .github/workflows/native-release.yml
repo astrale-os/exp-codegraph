@@ -6,11 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/native-release.yml'
-      - 'analysis/typescript/distribution/**'
-      - 'analysis/typescript/native/**'
-      - 'analysis/typescript/project/**'
-      - 'analysis/typescript/value/**'
-      - 'analysis/protocol/**'
+      - 'analysis/**'
       - 'native-packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -22,11 +18,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/native-release.yml'
-      - 'analysis/typescript/distribution/**'
-      - 'analysis/typescript/native/**'
-      - 'analysis/typescript/project/**'
-      - 'analysis/typescript/value/**'
-      - 'analysis/protocol/**'
+      - 'analysis/**'
       - 'native-packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -76,7 +68,7 @@ jobs:
       - name: Qualify native semantics and extension boundary
         run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Qualify native regression and diagnostic transport
-        run: pnpm exec vitest run __tests__/native-semantic-body.test.ts __tests__/typescript-value-semantics.test.ts __tests__/typescript-symbolic-values.test.ts __tests__/typescript-project.test.ts __tests__/native-distribution.test.ts --maxWorkers 1
+        run: pnpm exec vitest run __tests__/native-semantic-body.test.ts __tests__/typescript-normalized-facts.test.ts __tests__/typescript-value-semantics.test.ts __tests__/typescript-symbolic-values.test.ts __tests__/typescript-project.test.ts __tests__/native-distribution.test.ts --maxWorkers 1
         env:
           CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Upload qualified native artifact

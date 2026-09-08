@@ -3,6 +3,8 @@ import type { AnalysisGenerationId } from '../../identity/index.ts'
 
 const PHYSICAL_PAYLOAD = Symbol('codegraph.physical-fact-payload')
 const ADMITTED_SHARDS = new WeakMap<object, number>()
+const OWNED_PAYLOAD_CODECS = new WeakSet<FactPayloadCodec>()
+const IMMUTABLE_PAYLOADS = new WeakSet<object>()
 
 export interface PhysicalPayloadRecord {
   readonly codec: string
@@ -16,6 +18,17 @@ export interface PhysicalPayloadRecord {
 export interface FactPayloadCodec {
   readonly id: string
   decode(data: unknown): unknown
+}
+
+/** Internal composition only: this decoder constructs an owned plain data tree. */
+export function ownFactPayloadCodec<Codec extends FactPayloadCodec>(codec: Codec): Codec {
+  OWNED_PAYLOAD_CODECS.add(codec)
+  return Object.freeze(codec)
+}
+
+/** Certificates concern decoded roots, never a codec name or a caller's frozen object. */
+export function hasImmutableFactPayload(payload: object): boolean {
+  return IMMUTABLE_PAYLOADS.has(payload)
 }
 
 export type StoredFactPayload =
@@ -178,7 +191,11 @@ function decodedPayload(state: PhysicalPayloadState): unknown {
   if (state.status === 'decoded') return state.decoded
   if (state.status === 'failed') throw state.failure
   try {
-    state.decoded = deepFreeze(state.codec.decode(state.record.data))
+    const owned = OWNED_PAYLOAD_CODECS.has(state.codec)
+    state.decoded = deepFreeze(state.codec.decode(state.record.data), owned)
+    if (owned && state.decoded !== null && typeof state.decoded === 'object') {
+      IMMUTABLE_PAYLOADS.add(state.decoded)
+    }
     state.status = 'decoded'
     return state.decoded
   } catch (error) {
@@ -208,13 +225,15 @@ function admitPhysicalPayloadRecord(value: unknown, owner: string): PhysicalPayl
   return { codec: record.codec, data: record.data }
 }
 
-function deepFreeze<Value>(value: Value): Value {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
+function deepFreeze<Value>(value: Value, owned = false): Value {
+  // Owned decoder trees are traversed once, including any already frozen parents.
+  // Object.isFrozen alone cannot certify their descendants.
+  if (!value || typeof value !== 'object' || (!owned && Object.isFrozen(value))) return value
   if (value instanceof Map) {
-    for (const entry of value.values()) deepFreeze(entry)
+    for (const entry of value.values()) deepFreeze(entry, owned)
   } else {
     for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
-      if ('value' in descriptor) deepFreeze(descriptor.value)
+      if ('value' in descriptor) deepFreeze(descriptor.value, owned)
     }
   }
   return Object.freeze(value)

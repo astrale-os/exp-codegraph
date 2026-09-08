@@ -1,5 +1,16 @@
 const PHYSICAL_PAYLOAD = Symbol('codegraph.physical-fact-payload');
 const ADMITTED_SHARDS = new WeakMap();
+const OWNED_PAYLOAD_CODECS = new WeakSet();
+const IMMUTABLE_PAYLOADS = new WeakSet();
+/** Internal composition only: this decoder constructs an owned plain data tree. */
+export function ownFactPayloadCodec(codec) {
+    OWNED_PAYLOAD_CODECS.add(codec);
+    return Object.freeze(codec);
+}
+/** Certificates concern decoded roots, never a codec name or a caller's frozen object. */
+export function hasImmutableFactPayload(payload) {
+    return IMMUTABLE_PAYLOADS.has(payload);
+}
 export function admitFactPayloadCodecs(codecs) {
     const admitted = new Map();
     for (const codec of codecs ?? []) {
@@ -116,7 +127,11 @@ function decodedPayload(state) {
     if (state.status === 'failed')
         throw state.failure;
     try {
-        state.decoded = deepFreeze(state.codec.decode(state.record.data));
+        const owned = OWNED_PAYLOAD_CODECS.has(state.codec);
+        state.decoded = deepFreeze(state.codec.decode(state.record.data), owned);
+        if (owned && state.decoded !== null && typeof state.decoded === 'object') {
+            IMMUTABLE_PAYLOADS.add(state.decoded);
+        }
         state.status = 'decoded';
         return state.decoded;
     }
@@ -142,17 +157,19 @@ function admitPhysicalPayloadRecord(value, owner) {
     }
     return { codec: record.codec, data: record.data };
 }
-function deepFreeze(value) {
-    if (!value || typeof value !== 'object' || Object.isFrozen(value))
+function deepFreeze(value, owned = false) {
+    // Owned decoder trees are traversed once, including any already frozen parents.
+    // Object.isFrozen alone cannot certify their descendants.
+    if (!value || typeof value !== 'object' || (!owned && Object.isFrozen(value)))
         return value;
     if (value instanceof Map) {
         for (const entry of value.values())
-            deepFreeze(entry);
+            deepFreeze(entry, owned);
     }
     else {
         for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
             if ('value' in descriptor)
-                deepFreeze(descriptor.value);
+                deepFreeze(descriptor.value, owned);
         }
     }
     return Object.freeze(value);
