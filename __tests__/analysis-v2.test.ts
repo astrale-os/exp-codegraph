@@ -44,7 +44,7 @@ import {
   type SourceRevisionId,
   type SymbolId,
 } from '../analysis/index.ts'
-import { combineCompleteness } from '../analysis/internal/completeness.ts'
+import { combineCompleteness } from '../analysis/facts/index.ts'
 import { materializeTransaction, serializeMaterialized } from '../analysis/internal/state.ts'
 import { stableJson } from '../analysis/identity/model.ts'
 import {

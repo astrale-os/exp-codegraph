@@ -3,7 +3,7 @@ import { factHeader, shardReference } from '../facts/index.js';
 import { TransactionError, validateFactTransaction } from '../generation/index.js';
 import { deriveAnalysisId } from '../identity/index.js';
 import { stableJson } from '../identity/model.js';
-import { combineCompleteness } from './completeness.js';
+import { combineCompleteness } from '../facts/index.js';
 import { bindPhysicalFact, immutableFact } from '../facts/representation/index.js';
 export function materializeTransaction(current, transaction) {
     const diagnostics = [...validateFactTransaction(transaction, current?.generation.id)];

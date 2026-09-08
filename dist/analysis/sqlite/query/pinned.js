@@ -1,4 +1,4 @@
-import { combineCompleteness } from '../../internal/completeness.js';
+import { combineCompleteness } from '../../facts/index.js';
 import { factFromRows, factHeaderFromRows, parseCapabilities, parseJson, } from '../materialization/model.js';
 import { loadManifest } from '../materialization/read.js';
 import { loadShardPayloads, persistedFactPayload, ShardPayloadCache, } from '../materialization/payload.js';

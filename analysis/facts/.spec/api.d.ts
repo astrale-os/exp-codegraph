@@ -80,3 +80,6 @@ export interface FactShard {
 export function validateFactShard(shard: FactShard): readonly string[]
 export function factShardDigest(shard: Omit<FactShard, 'digest'>): FactShardDigest
 export function shardReference(shard: FactShard): FactShardReference
+
+/** Combine evidence completeness with deterministic, deduplicated reasons. */
+export function combineCompleteness(left: Completeness | undefined, right: Completeness): Completeness

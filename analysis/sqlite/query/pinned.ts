@@ -12,7 +12,7 @@ import type {
   PageRequest,
 } from '../../query/index.ts'
 
-import { combineCompleteness } from '../../internal/completeness.ts'
+import { combineCompleteness } from '../../facts/index.ts'
 import type { FactPayloadCodecMap } from '../../facts/representation/index.ts'
 import {
   factFromRows,

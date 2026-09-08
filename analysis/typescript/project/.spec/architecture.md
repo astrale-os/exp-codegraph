@@ -32,3 +32,16 @@ it only after opening the successful next generation. Historical reader access c
 evict that current result. Caller-supplied stores keep their own retention policy.
 Source-deletion metadata is keyed by universe and discarded when the corresponding
 owned-store lineage is collected; retained historical lineages keep their metadata.
+
+
+The snapshot exposes a typed call inventory over its existing immutable value index.
+Source and exact logical-path filters select calls before site projection; source/body
+admission and interprocedural value indexing remain shared and currently project-wide.
+Unresolved calls are retained, including missing callee or source relations. Structural
+inventory completeness is distinct from downstream bounded discovery: topology-only CFG
+limits do not imply missing calls, while unsupported class/namespace execution and unknown
+extraction limits remain partial. Missing capabilities never become a complete empty result.
+
+A missing logical path cannot prove exclusion by a nonempty path filter. Such a
+selection remains partial unless the explicit source filter already excludes that
+source; no matching path or call is invented.

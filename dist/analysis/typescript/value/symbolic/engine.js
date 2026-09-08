@@ -1,15 +1,16 @@
 import { createHash } from 'node:crypto';
 import { createTypeScriptFactReader } from '../../facts/index.js';
 import { resolveBoundedValueLimits } from '../limits.js';
+import { createCallProjection } from './calls.js';
 const PROOF = Symbol('Codegraph value proof');
 const UNDEFINED = Object.freeze({ kind: 'literal', value: undefined });
-/** Instance-local index owner, shared by every model attached to one pinned snapshot. */
 export function createValueEvaluatorFactory(query) {
     let pending;
-    return async (options = {}) => {
+    const index = () => {
         pending ??= indexFacts(query).catch((error) => { pending = undefined; throw error; });
-        return new Evaluator(await pending, options.call, resolveBoundedValueLimits(options.limits));
+        return pending;
     };
+    return Object.assign(async (options = {}) => new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits)), { calls: createCallProjection(query, index) });
 }
 class Evaluator {
     #index;
