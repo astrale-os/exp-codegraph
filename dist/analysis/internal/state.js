@@ -48,7 +48,7 @@ export function materializeTransaction(current, transaction) {
     // immutable physical shard objects across generations and bind their facts
     // only when a generation-pinned reader observes them. Commit work therefore
     // scales with the delta rather than recreating every unaffected fact.
-    return immutable({ generation: transaction.next, shards });
+    return immutable(new MaterializedSnapshot(transaction.next, shards));
 }
 export function serializeMaterialized(value) {
     return stableJson({
@@ -94,10 +94,7 @@ export function parseMaterialized(value) {
     if (diagnostics.length) {
         throw new Error(`Persisted analysis snapshot failed semantic validation: ${[...new Set(diagnostics)].sort().join(', ')}`);
     }
-    return immutable({
-        generation: parsed.generation,
-        shards: new Map(parsed.shards.map((s) => [s.key, s])),
-    });
+    return immutable(new MaterializedSnapshot(parsed.generation, new Map(parsed.shards.map((s) => [s.key, s]))));
 }
 export function createQuery(materialized, release) {
     return new PinnedQuery(materialized, release);
@@ -105,27 +102,38 @@ export function createQuery(materialized, release) {
 export function createSnapshotSet(values, inventory, open, release) {
     return new PinnedSnapshotSet(values, inventory, open, release);
 }
-class PinnedQuery {
+/** Query indexes belong to the retained generation, never to a process-global cache. */
+class MaterializedSnapshot {
+    #index;
     generation;
-    #facts;
-    #headers;
-    #byId;
-    #headerById;
-    #manifest;
+    shards;
+    constructor(generation, shards) {
+        this.generation = generation;
+        this.shards = shards;
+    }
+    queryIndex() {
+        return this.#index ??= new MemoryQueryIndex(this);
+    }
+}
+class MemoryQueryIndex {
+    generation;
+    facts;
+    headers;
+    manifest;
+    #ordered;
+    #postings = new Map();
     #shardCompletion;
     #namespaceCapabilities;
-    #release;
-    #disposed = false;
-    constructor(materialized, release) {
-        this.#release = release;
+    #capabilities;
+    constructor(materialized) {
         this.generation = materialized.generation;
-        this.#facts = [...materialized.shards.values()]
-            .flatMap((shard) => shard.facts.map((fact) => bindFact(fact, materialized.generation.id)))
+        const facts = [...materialized.shards.values()]
+            .flatMap((shard) => shard.facts.map((fact) => immutableFact(bindFact(fact, materialized.generation.id))))
             .sort((left, right) => left.id.localeCompare(right.id));
-        this.#headers = this.#facts.map(factHeader);
-        this.#byId = new Map(this.#facts.map((fact) => [fact.id, fact]));
-        this.#headerById = new Map(this.#headers.map((header) => [header.id, header]));
-        this.#manifest = [...materialized.shards.values()].map(shardReference).sort(byKey);
+        this.#ordered = facts.map((fact) => Object.freeze(factHeader(fact)));
+        this.facts = new Map(facts.map((fact) => [fact.id, fact]));
+        this.headers = new Map(this.#ordered.map((header) => [header.id, header]));
+        this.manifest = immutable([...materialized.shards.values()].map(shardReference).sort(byKey));
         this.#shardCompletion = [...materialized.shards.values()].map((shard) => [
             shard.namespace,
             shard.completion,
@@ -140,12 +148,9 @@ class PinnedQuery {
         }
         this.#namespaceCapabilities = new Map([...capabilities].map(([namespace, values]) => [namespace, [...values].sort()]));
     }
-    async manifest() {
-        this.assertOpen();
-        return this.#manifest;
-    }
-    async capabilities() {
-        this.assertOpen();
+    capabilities() {
+        if (this.#capabilities)
+            return this.#capabilities;
         const completion = new Map();
         for (const capability of this.generation.capabilities)
             completion.set(capability, { kind: 'complete' });
@@ -155,83 +160,174 @@ class PinnedQuery {
                 completion.set(capability, combineCompleteness(completion.get(capability), value));
             }
         }
-        for (const fact of this.#facts) {
-            const current = completion.get(fact.namespace);
-            completion.set(fact.namespace, combineCompleteness(current, fact.completeness));
-            for (const capability of this.#namespaceCapabilities.get(fact.namespace) ?? []) {
-                completion.set(capability, combineCompleteness(completion.get(capability), fact.completeness));
+        for (const header of this.#ordered) {
+            const current = completion.get(header.namespace);
+            completion.set(header.namespace, combineCompleteness(current, header.completeness));
+            for (const capability of this.#namespaceCapabilities.get(header.namespace) ?? []) {
+                completion.set(capability, combineCompleteness(completion.get(capability), header.completeness));
             }
         }
-        return [...completion]
+        return this.#capabilities = immutable([...completion]
             .sort(([left], [right]) => left.localeCompare(right))
-            .map(([capability, value]) => ({ capability, completeness: value }));
+            .map(([capability, value]) => ({ capability, completeness: value })));
     }
-    async headers(filter = {}, page = { limit: 100 }) {
-        this.assertOpen();
+    *matching(filter) {
+        for (const header of this.candidates(filter)) {
+            if (matchesHeader(header, filter))
+                yield header;
+        }
+    }
+    page(filter, page) {
         const limit = page.limit;
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
             throw new RangeError('Fact page limit must be an integer from 1 through 10000.');
         }
         const signature = filterSignature(filter);
         const start = page.cursor ? decodeCursor(page.cursor, this.generation.id, signature) : 0;
-        const matching = this.#headers.filter((header) => matchesHeader(header, filter));
-        const headers = matching.slice(start, start + limit);
-        const next = start + headers.length;
+        const headers = [];
+        let total = 0;
+        let hasNext = false;
+        for (const header of this.matching(filter)) {
+            const position = total++;
+            if (position < start)
+                continue;
+            if (headers.length < limit)
+                headers.push(header);
+            else {
+                hasNext = true;
+                if (!page.includeTotal)
+                    break;
+            }
+        }
         return {
             headers,
-            ...(next < matching.length
-                ? { nextCursor: encodeCursor(this.generation.id, signature, next) }
+            ...(hasNext
+                ? { nextCursor: encodeCursor(this.generation.id, signature, start + headers.length) }
                 : {}),
-            ...(page.includeTotal ? { total: matching.length } : {}),
+            ...(page.includeTotal ? { total } : {}),
         };
+    }
+    candidates(filter) {
+        let selected;
+        let size = this.#ordered.length;
+        for (const [field, values] of [
+            ['subject', filter.subjects],
+            ['subject', filter.symbols],
+            ['source', filter.sources],
+            ['namespace', filter.namespaces],
+            ['kind', filter.kinds],
+            ['completeness', filter.completeness],
+        ]) {
+            if (!values)
+                continue;
+            if (!values.length)
+                return [];
+            const index = this.postings(field);
+            const groups = [...new Set(values)].map((value) => index.get(value) ?? []);
+            const count = groups.reduce((total, group) => total + group.length, 0);
+            if (count === 0)
+                return [];
+            if (count < size) {
+                size = count;
+                selected = groups;
+                // A single candidate is cheaper to check against the remaining filters
+                // than building another project-wide secondary index.
+                if (count === 1)
+                    break;
+            }
+        }
+        if (!selected)
+            return this.#ordered;
+        if (selected.length === 1)
+            return selected[0];
+        return [...new Map(selected.flatMap((group) => group.map((header) => [header.id, header]))).values()]
+            .sort((left, right) => left.id.localeCompare(right.id));
+    }
+    postings(field) {
+        const existing = this.#postings.get(field);
+        if (existing)
+            return existing;
+        const index = new Map();
+        for (const header of this.#ordered) {
+            if (field === 'source') {
+                for (const source of new Set(header.provenance.evidence.map((span) => span.source))) {
+                    appendHeader(index, source, header);
+                }
+            }
+            else {
+                appendHeader(index, field === 'completeness' ? header.completeness.kind : header[field], header);
+            }
+        }
+        this.#postings.set(field, index);
+        return index;
+    }
+}
+function appendHeader(index, key, header) {
+    const bucket = index.get(key);
+    if (bucket)
+        bucket.push(header);
+    else
+        index.set(key, [header]);
+}
+class PinnedQuery {
+    generation;
+    #index;
+    #release;
+    #disposed = false;
+    constructor(materialized, release) {
+        this.generation = materialized.generation;
+        this.#release = release;
+        this.#index = materialized instanceof MaterializedSnapshot
+            ? materialized.queryIndex()
+            : new MemoryQueryIndex(materialized);
+    }
+    async manifest() {
+        this.assertOpen();
+        return this.#index.manifest;
+    }
+    async capabilities() {
+        this.assertOpen();
+        return this.#index.capabilities();
+    }
+    async headers(filter = {}, page = { limit: 100 }) {
+        this.assertOpen();
+        return this.#index.page(filter, page);
     }
     async headersById(ids) {
         this.assertOpen();
         return [...new Set(ids)].sort().flatMap((id) => {
-            const header = this.#headerById.get(id);
+            const header = this.#index.headers.get(id);
             return header ? [header] : [];
         });
     }
     async *exportHeaders(filter = {}) {
         this.assertOpen();
-        for (const header of this.#headers) {
+        for (const header of this.#index.matching(filter)) {
             this.assertOpen();
-            if (matchesHeader(header, filter))
-                yield header;
+            yield header;
         }
     }
     async facts(filter = {}, page = { limit: 100 }) {
         this.assertOpen();
-        const limit = page.limit;
-        if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
-            throw new RangeError('Fact page limit must be an integer from 1 through 10000.');
-        }
-        const signature = filterSignature(filter);
-        const start = page.cursor ? decodeCursor(page.cursor, this.generation.id, signature) : 0;
-        const matching = this.#facts.filter((fact) => matches(fact, filter));
-        const facts = matching.slice(start, start + limit);
-        const next = start + facts.length;
+        const result = this.#index.page(filter, page);
         return {
-            facts,
-            ...(next < matching.length
-                ? { nextCursor: encodeCursor(this.generation.id, signature, next) }
-                : {}),
-            ...(page.includeTotal ? { total: matching.length } : {}),
+            facts: result.headers.map((header) => this.#index.facts.get(header.id)),
+            ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+            ...(result.total !== undefined ? { total: result.total } : {}),
         };
     }
     async factsById(ids) {
         this.assertOpen();
         return [...new Set(ids)].sort().flatMap((id) => {
-            const fact = this.#byId.get(id);
+            const fact = this.#index.facts.get(id);
             return fact ? [fact] : [];
         });
     }
     async *export(filter = {}) {
         this.assertOpen();
-        for (const fact of this.#facts) {
+        for (const header of this.#index.matching(filter)) {
             this.assertOpen();
-            if (matches(fact, filter))
-                yield fact;
+            yield this.#index.facts.get(header.id);
         }
     }
     async [Symbol.asyncDispose]() {
@@ -283,23 +379,6 @@ class PinnedSnapshotSet {
         this.#disposed = true;
         await this.#release();
     }
-}
-function matches(fact, filter) {
-    if (filter.namespaces && !filter.namespaces.includes(fact.namespace))
-        return false;
-    if (filter.kinds && !filter.kinds.includes(fact.kind))
-        return false;
-    if (filter.subjects && !filter.subjects.includes(fact.subject))
-        return false;
-    if (filter.completeness && !filter.completeness.includes(fact.completeness.kind))
-        return false;
-    if (filter.sources &&
-        !fact.provenance.evidence.some((evidence) => filter.sources.includes(evidence.source))) {
-        return false;
-    }
-    if (filter.symbols && !filter.symbols.some((symbol) => fact.subject === symbol))
-        return false;
-    return true;
 }
 function matchesHeader(header, filter) {
     if (filter.namespaces && !filter.namespaces.includes(header.namespace))
