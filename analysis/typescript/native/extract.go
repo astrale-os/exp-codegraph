@@ -47,6 +47,7 @@ type extractor struct {
 	callOrigins                  map[*shimast.Symbol]*callTargetOrigin
 	packageCoordinates           map[string]string
 	symbolIdentityCounts         map[*shimast.SourceFile]map[string]int
+	signatureIDs                 map[*shimast.Node]string
 	moduleDeclarations           map[*shimast.Symbol]moduleDeclarationObservation
 	moduleDeclarationsByIdentity map[string]moduleDeclarationObservation
 	moduleDeclarationCacheHits   int

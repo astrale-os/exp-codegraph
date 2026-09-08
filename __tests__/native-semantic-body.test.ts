@@ -77,6 +77,70 @@ export const local = localHelper()
 `
 
 describe('native executable scope facts', () => {
+  it('keeps signature identities stable across generic instantiations, body edits and cold compilers', async () => {
+    const text = `export function identity<T>(value: T): T { return value }
+export function overloaded(value: string): string
+export function overloaded(value: number): number
+export function overloaded(value: string | number) { return value }
+export function probe() { identity<string>('a'); identity<number>(1); overloaded('a'); overloaded(1) }
+`
+    const current = await fixture(text, true)
+    let cold: Awaited<ReturnType<typeof fixture>> | undefined
+    try {
+      const signatures = async (project: typeof current) => {
+        const bodies = await project.read()
+        return bodies.filter((entry) => entry.file === 'index.ts').flatMap((entry) => entry.body.calls).map((call) => call.signature).sort()
+      }
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const initial = await signatures(current)
+      expect(initial).toHaveLength(4)
+      expect(initial.every((signature) => /^signature:[a-f0-9]{64}$/.test(signature!))).toBe(true)
+      expect(new Set(initial).size).toBe(3)
+      await writeFile(join(current.root, 'index.ts'), text.replace('{ return value }', '{ const result = value; return result }'))
+      await current.service.refresh({ changed: ['index.ts'], signal: AbortSignal.timeout(20_000) })
+      expect(await signatures(current)).toEqual(initial)
+      await current.service.refresh({ invalidate: true, signal: AbortSignal.timeout(20_000) })
+      expect(await signatures(current)).toEqual(initial)
+      cold = await fixture(text, true)
+      await cold.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      expect(await signatures(cold)).toEqual(initial)
+    } finally { await cold?.close(); await current.close() }
+  })
+
+  it('uses the last completed straight-line definition and remains conservative across branches', async () => {
+    const text = `export function overwrite() { let request: unknown = { canonical: true }; request = { kind: 'invented-request' }; return request }
+export function selfRead() { let request = 'old'; request = request; return request }
+export function branch(flag: boolean) { let request = 'old'; if (flag) request = 'new'; return request }
+export function loop(flag: boolean) { let request = 'old'; while (flag) { request = 'new'; break }; return request }
+`
+    const current = await fixture(text, true)
+    try {
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const bodies = (await current.read()).filter((entry) => entry.file === 'index.ts' && entry.body.scope === 'function')
+      const returned = (name: string) => {
+        const body = bodies.find((entry) => entry.body.occurrences.some((value) => text.slice(value.span.start, value.span.end).startsWith(`let request`) && value.span.start > text.indexOf(`function ${name}`) && value.span.start < text.indexOf('\n', text.indexOf(`function ${name}`))))!.body
+        const returns = new Set(body.summary.returns)
+        const use = body.relations.find((relation) => returns.has(relation.parent) && relation.role === 'expression')!.child
+        return { body, definitions: body.definitions.filter((entry) => entry.use === use) }
+      }
+      const overwrite = returned('overwrite')
+      expect(overwrite.definitions).toHaveLength(1)
+      expect(overwrite.definitions[0]!.reaching).toBe('definite')
+      const overwritten = overwrite.body.occurrences.find((entry) => entry.id === overwrite.definitions[0]!.definition)!
+      expect(overwritten.span.start).toBe(text.indexOf('request = { kind:'))
+      const self = returned('selfRead')
+      const right = self.body.occurrences.find((entry) => entry.span.start === text.indexOf('= request;') + 2)!
+      const oldDefinition = self.body.definitions.find((entry) => entry.use === right.id)!
+      const old = self.body.occurrences.find((entry) => entry.id === oldDefinition.definition)!
+      expect(old.span.start).toBe(text.indexOf("request = 'old'"))
+      for (const name of ['branch', 'loop']) {
+        const result = returned(name)
+        expect(result.definitions).toHaveLength(2)
+        expect(result.definitions.every((entry) => entry.reaching === 'possible')).toBe(true)
+      }
+    } finally { await current.close() }
+  })
+
   it('bounds collision inventories by files while keeping same-spelled function owners distinct', async () => {
     const events: AnalysisTelemetryEvent[] = []
     const text = `export const callbacks = [function repeated() { return 'first' }, function repeated() { return 'second' }]\n` +

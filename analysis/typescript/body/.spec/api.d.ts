@@ -71,6 +71,7 @@ export interface ResolvedCall {
     readonly file: string
     readonly path: readonly string[]
   }
+  /** Portable identity of the selected signature declaration, not rendered or instantiated type text. */
   readonly signature?: string
   readonly receiver?: OccurrenceId
   readonly typeArguments: readonly string[]
