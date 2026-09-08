@@ -3,7 +3,7 @@ import { defineLaw } from '@astrale-os/codegraph/authoring'
 export const CODEGRAPH_PROTOCOL_BOUNDED_FRAMES = defineLaw({
   id: 'CODEGRAPH-PROTOCOL-BOUNDED-FRAMES',
   statement:
-    'Every native JSONL frame, assembled physical transaction, and decoded semantic Fact-payload set is independently bounded; a multi-frame transaction resolves only after exact request identity, protocol, order, count, byte length, digest, physical capability, and semantic transaction admission succeed, and no prefix is consumer-visible.',
+    'Every native JSONL frame, buffered record and expanded semantic shard is independently bounded; configured aggregate limits and legacy assembled-response limits are also enforced. A multi-frame transaction resolves only after exact request identity, protocol, order, count, byte length, digest, physical capability and semantic transaction admission succeed, and no prefix is consumer-visible.',
   tests: [
     {
       file: '../../__tests__/analysis-v2.test.ts',

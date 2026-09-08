@@ -89,6 +89,8 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     expect(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS).toEqual({
       maximumFrameBytes: 64 * 1_024 * 1_024,
       transactionChunkFrameBytes: 8 * 1_024 * 1_024,
+      maximumRecordBytes: 64 * 1_024 * 1_024,
+      maximumDecodedShardBytes: 384 * 1_024 * 1_024,
       maximumTransactionBytes: 384 * 1_024 * 1_024,
       maximumPhysicalTransactionBytes: 512 * 1_024 * 1_024,
       maximumErrorBytes: 1 * 1_024 * 1_024,
@@ -738,6 +740,68 @@ lines.on('line', (line) => {
   })
 
   /** @evidence CODEGRAPH-PROTOCOL-SEMANTIC-PAYLOAD-LIMIT */
+  it('bounds individual streamed records and shards while preserving optional aggregate budgets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-record-budgets-'))
+    temporary.push(root)
+    const seed = buildTransaction({ sequence: 1, values: [] })
+    const shards = Array.from({ length: 4 }, (_, index) => {
+      const original = buildTransaction({ sequence: 1, values: [`${index}:${'x'.repeat(600)}`] }).upserts[0]!
+      const draft = { ...original, key: deriveAnalysisId('fact-shard-key', 'fixture.values', { owner: index }) }
+      return { ...draft, digest: factShardDigest(draft) }
+    }).sort((left, right) => left.key.localeCompare(right.key))
+    const manifest = shards.map(shardReference)
+    const generation = generationIdentity(seed.next, manifest)
+    const transaction = {
+      ...seed, next: { ...seed.next, id: generation }, manifest,
+      upserts: shards.map((shard) => ({ ...shard, facts: shard.facts.map((fact) => ({ ...fact, generation })) })),
+    }
+    expect(validateFactTransaction(transaction)).toEqual([])
+    const { upserts, deletes, ...metadata } = transaction
+    const { manifest: _manifest, ...header } = metadata
+    const encoded = [
+      ['header', header, [manifest.length, upserts.length, deletes.length]],
+      ...manifest.map((value) => ['manifest', value]), ...upserts.map((value) => ['upsert', value]),
+    ].map((record) => JSON.stringify(record) + '\n').join('')
+    expect(Buffer.byteLength(encoded)).toBeGreaterThan(4_096)
+    const sidecar = join(root, 'sidecar.mjs')
+    await writeFile(sidecar, `
+import { createInterface } from 'node:readline'
+import { createHash } from 'node:crypto'
+const bytes = Buffer.from(${JSON.stringify(encoded)})
+const sha256 = createHash('sha256').update(bytes).digest('hex')
+const chunks = Math.ceil(bytes.length / 128)
+const frame = value => process.stdout.write(JSON.stringify(value) + '\\n')
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+  if (request.recordLimits.maximumRecordBytes < 1024 || request.recordLimits.maximumDecodedShardBytes < 1024) process.exit(2)
+  const common = { id: request.id, protocolVersion: 1, payloadKind: 'transaction', bytes: bytes.length, chunks, sha256 }
+  frame({ ...common, kind: 'transaction-start', encoding: 'base64-json-records/1' })
+  for (let sequence = 0; sequence < chunks; sequence++) frame({ id: request.id, protocolVersion: 1, kind: 'transaction-chunk', sequence, data: bytes.subarray(sequence * 128, (sequence + 1) * 128).toString('base64') })
+  frame({ ...common, kind: 'transaction-end' })
+})
+`)
+    const open = (limits = {}) => createProcessNativeAnalysisSessionFactory({
+      command: process.execPath, arguments: [sidecar], maximumFrameBytes: 1_024,
+      maximumRecordBytes: 4_096, maximumDecodedShardBytes: 1_024, ...limits,
+    }).open({ root, config: 'tsconfig.json', capabilities: ['fixture.values'] })
+    const successful = await open()
+    try {
+      const response = await successful.request({ id: 1, kind: 'refresh' })
+      expect(response).toEqual({ id: 1, protocolVersion: 1, kind: 'transaction', transaction })
+    } finally { await successful.dispose() }
+    for (const limits of [
+      { maximumRecordBytes: 1_024 },
+      { maximumTransactionBytes: 1_024 },
+      { maximumPhysicalTransactionBytes: 4_096 },
+    ]) {
+      const rejected = await open(limits)
+      try {
+        await expect(rejected.request({ id: 1, kind: 'refresh' })).rejects.toThrow('invalid protocol frame')
+      } finally { await rejected.dispose() }
+    }
+  })
+
   it('admits complete records before receiving the rest and rejects invalid record boundaries', () => {
     const transaction = buildTransaction({ sequence: 1, values: ['é𐀀\n'.repeat(64)] })
     const { manifest, upserts, deletes, ...header } = transaction

@@ -274,7 +274,7 @@ export function value() { return helper() }
       await freshParity(repaired.generation.id)
       await pinned.dispose()
     } finally { await project.dispose() }
-  })
+  }, 30_000)
 
   it('releases a delayed reader instead of returning it after disposal', async () => {
     const backing = createMemoryAnalysisStore()

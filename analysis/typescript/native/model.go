@@ -19,6 +19,16 @@ type request struct {
 	Changed      []string       `json:"changed,omitempty"`
 	Changes      []sourceChange `json:"changes,omitempty"`
 	Invalidate   bool           `json:"invalidate,omitempty"`
+	RecordLimits *recordLimits  `json:"recordLimits,omitempty"`
+}
+
+// Private record-stream negotiation. Older producers ignore this request field
+// and retain their CLI aggregate budgets; public analysis requests stay unchanged.
+type recordLimits struct {
+	MaximumRecordBytes              int `json:"maximumRecordBytes"`
+	MaximumDecodedShardBytes        int `json:"maximumDecodedShardBytes"`
+	MaximumTransactionBytes         int `json:"maximumTransactionBytes"`
+	MaximumPhysicalTransactionBytes int `json:"maximumPhysicalTransactionBytes"`
 }
 
 type sourceChange struct {
@@ -101,6 +111,7 @@ type fact struct {
 	Provenance      provenance               `json:"provenance"`
 	Payload         any                      `json:"payload,omitempty"`
 	PhysicalPayload *physicalPayloadEnvelope `json:"physicalPayload,omitempty"`
+	semanticBytes   int                      // Measured before physical packing; owned by this extraction.
 }
 
 type factShard struct {

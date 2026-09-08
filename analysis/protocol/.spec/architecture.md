@@ -35,8 +35,17 @@ transaction-sized serialization buffer. The consumer checks shard identity and s
 budgets as each complete record arrives. It retains admitted immutable facts, a partial record,
 and the incremental stream hash; it never concatenates or parses a whole record transaction.
 UTF-8 characters and individual shards can span frames. Missing, reordered, duplicate, unterminated
-or invalid UTF-8 records fail admission. Both aggregate physical and decoded semantic limits still
-apply; this change bounds transient serialization work without relaxing configured budgets.
+or invalid UTF-8 records fail admission. Each record is limited to 64 MiB including its newline,
+and each shard to 384 MiB of expanded semantic payloads by default. Physical metadata remains
+bounded by the encoded record limit. These are transient ingestion bounds, not a claim that the
+complete retained fact store or compiler fits in one record's memory.
+
+Explicit aggregate physical and semantic budgets still apply to the actual response upserts,
+including a replayed pending candidate. Without such an explicit budget, record streaming does not
+impose a total project-size ceiling. The adapter negotiates private `recordLimits` on refresh
+requests. An older producer ignores that additive field and retains its original CLI defaults;
+legacy terminal/base64-json responses remain bounded at 384 MiB semantic and 512 MiB physical
+because they still assemble an entire response. Configured aggregate bounds apply to both paths.
 
 Native publication is commit-late. The process retains one replayable candidate until the
 application store commits the reconstructed transaction and acknowledges its exact generation and

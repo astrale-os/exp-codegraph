@@ -67,7 +67,7 @@ export class TransactionRecordDecoder {
   private retain(bytes: Uint8Array): void {
     if (!bytes.length) return
     const length = this.#recordBytes + bytes.length
-    if (length > this.#maximumRecordBytes) {
+    if (length + 1 > this.#maximumRecordBytes) {
       throw new RangeError('Transaction record exceeds the configured physical byte limit.')
     }
     // Geometric growth also bounds bookkeeping when a producer sends tiny
@@ -84,7 +84,7 @@ export class TransactionRecordDecoder {
 
   private record(bytes: Uint8Array): void {
     if (!bytes.length) throw new TypeError('Transaction records must not be empty.')
-    if (bytes.length > this.#maximumRecordBytes) throw new RangeError('Transaction record exceeds the configured physical byte limit.')
+    if (bytes.length + 1 > this.#maximumRecordBytes) throw new RangeError('Transaction record exceeds the configured physical byte limit.')
     const record: unknown = JSON.parse(this.#decoder.decode(bytes))
     this.#buffer = undefined
     this.#recordBytes = 0

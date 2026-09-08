@@ -71,6 +71,13 @@ global-diagnostic, public-shape, topology, configuration, plugin, or uncertain c
 expand the module projection. Native transport sends only the resulting delta, and the process
 advances its private base only after application-store acknowledgement.
 
+Record-stream admission bounds each encoded JSON record (including its newline) and the sum of
+expanded semantic payload bytes within each shard. Explicit aggregate budgets apply to the actual
+transaction upserts, including pending replays, independently of discarded projection work. The
+private refresh request negotiates those record budgets so older binaries can ignore the extension
+and retain their bounded legacy aggregate protocol. Package and compiler telemetry still report
+all projection work; disabling an implicit aggregate project-size cap does not hide its cost.
+
 Native identity encoding retains immutable canonical bytes for acknowledged source and shard
 references. A refresh encodes replacement entries only and streams the complete ordered preimage
 into the existing v1 identity hash. This preserves exact portable generation validation and older

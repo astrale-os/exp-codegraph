@@ -48,6 +48,7 @@ type analyzer struct {
 	modules                     []moduleBoundary
 	payloadCodecs               map[string]bool
 	maximumSemanticPayloadBytes int
+	maximumDecodedShardBytes    int
 	session                     *driver.Session
 	states                      map[string]generationState
 	current                     string
@@ -56,7 +57,7 @@ type analyzer struct {
 	telemetry                   *nativeTelemetry
 }
 
-func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry) (*analyzer, error) {
+func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry) (*analyzer, error) {
 	started := time.Now()
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -88,8 +89,8 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 		root: root, config: config, universe: universe, capabilities: capabilities, modules: modules,
 		projection:                  planProjections(capabilities),
 		payloadCodecs:               payloadCodecs,
-		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
-		session:                     session, states: map[string]generationState{}, telemetry: telemetry,
+		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes, maximumDecodedShardBytes: maximumDecodedShardBytes,
+		session: session, states: map[string]generationState{}, telemetry: telemetry,
 	}, nil
 }
 
@@ -202,7 +203,11 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 
 	extractionStarted := time.Now()
-	shards, sources, replaced, err := a.extract(nextUniverse, selection, base, input.ID)
+	projectionBytes := a.maximumSemanticPayloadBytes
+	if input.RecordLimits != nil {
+		projectionBytes = 0
+	}
+	shards, sources, replaced, err := a.extract(nextUniverse, selection, base, projectionBytes, input.ID)
 	a.telemetry.record(input.ID, "projection.total", extractionStarted, map[string]any{
 		"shards": len(shards), "sources": len(sources), "full": selection.full,
 	})
@@ -291,6 +296,11 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 	sort.Slice(upserts, func(i, j int) bool { return upserts[i].Key < upserts[j].Key })
 	sort.Strings(deletes)
+	if input.RecordLimits != nil {
+		if err := validateSemanticShardBytes(upserts, input.RecordLimits.MaximumDecodedShardBytes, input.RecordLimits.MaximumTransactionBytes); err != nil {
+			return nil, "", err
+		}
+	}
 	transaction = &factTransaction{
 		ProtocolVersion: protocolVersion, Base: baseID, Next: generation,
 		Manifest: manifest, Upserts: upserts, Deletes: deletes,
@@ -358,10 +368,11 @@ func (a *analyzer) extract(
 	universe string,
 	selection refreshSelection,
 	base generationState,
+	maximumProjectionBytes int,
 	requestID int,
 ) ([]factShard, []sourceRecord, map[string]bool, error) {
 	if selection.full {
-		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, a.maximumSemanticPayloadBytes, a.telemetry, requestID)
+		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
 		return shards, sources, nil, err
 	}
 	selected := make(map[string]bool, len(selection.files))
@@ -372,7 +383,7 @@ func (a *analyzer) extract(
 		a.root, universe, a.session.Program(), a.modules,
 		a.projection,
 		a.payloadCodecs,
-		a.maximumSemanticPayloadBytes,
+		maximumProjectionBytes, a.maximumDecodedShardBytes,
 		base.sources, selected, a.telemetry, requestID,
 	)
 	replaced := map[string]bool{}
