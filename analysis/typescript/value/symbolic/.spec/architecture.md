@@ -71,3 +71,8 @@ Engine-owned result wrappers, alternatives, evidence and reasons are immutable.
 Opaque model atoms retain their original identity and are never frozen or cloned by
 the engine. Their receipts are cacheable only when the atom graph is already deeply
 immutable and portable; mutable atoms remain supported without automatic reuse.
+
+Opaque atom alternatives use identity equality (`Object.is`), including signed zero.
+Equal object fields do not prove equal model instances; the evaluator never serializes
+an atom to decide identity. A model may deliberately return one shared immutable atom
+when its domain semantics declare those alternatives equivalent.

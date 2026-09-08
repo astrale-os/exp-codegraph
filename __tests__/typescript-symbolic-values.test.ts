@@ -321,6 +321,26 @@ describe('symbolic values through the public project API', () => {
     expect(first.value.value).toBe(atom)
   })
 
+  it('distinguishes opaque instances with equal fields and collapses only shared atom identities', async () => {
+    const left = Object.freeze({ identity: 'same-fields' })
+    const right = Object.freeze({ identity: 'same-fields' })
+    const values = await snapshot.values({ call: (context) => {
+      const label = context.argument(0)
+      return { kind: 'atom', value: label?.kind === 'known' && label.value.kind === 'literal' && label.value.value === 'left' ? left : right }
+    } })
+    const distinct = await values.value(declaration('branch')).invoke().resolve()
+    expect(distinct.kind).toBe('ambiguous')
+    if (distinct.kind !== 'ambiguous') throw new Error('Distinct model instances must remain ambiguous.')
+    expect(distinct.values).toHaveLength(2)
+    expect(distinct.values[0]).toMatchObject({ kind: 'atom', value: left })
+    expect(distinct.values[1]).toMatchObject({ kind: 'atom', value: right })
+    if (distinct.values[0]?.kind !== 'atom' || distinct.values[1]?.kind !== 'atom') throw new Error('Expected atom alternatives.')
+    expect(distinct.values[0].value).toBe(left)
+    expect(distinct.values[1].value).toBe(right)
+    const shared = await snapshot.values({ call: () => ({ kind: 'atom', value: left }) })
+    expect(await shared.value(declaration('branch')).invoke().resolve()).toMatchObject({ kind: 'known', value: { kind: 'atom', value: left } })
+  })
+
   it('does not publish thrown or cancelled resolutions into the project cache', async () => {
     let attempts = 0
     const cancellation = new AbortController()
