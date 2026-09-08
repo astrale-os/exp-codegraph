@@ -23,6 +23,7 @@ import { TransactionError, validateFactTransaction } from '../generation/index.t
 import { deriveAnalysisId } from '../identity/index.ts'
 import { stableJson } from '../identity/model.ts'
 import { MemoryFactIndex } from './query-index.ts'
+import { matchesMaterializedManifest } from './manifest.ts'
 import { bindPhysicalFact, immutableFact } from '../facts/representation/index.ts'
 
 export interface MaterializedGeneration {
@@ -55,8 +56,7 @@ export function materializeTransaction(
       throw new TransactionError('MANIFEST_INVALID', `Unknown delete ${key}.`)
   }
   for (const shard of transaction.upserts) shards.set(shard.key, immutable(shard))
-  const actual = [...shards.values()].map(shardReference).sort(byKey)
-  if (stableJson(actual) !== stableJson(transaction.manifest)) {
+  if (!matchesMaterializedManifest(shards, transaction)) {
     throw new TransactionError(
       'MANIFEST_INVALID',
       'The transaction manifest is not the complete materialized next generation.',

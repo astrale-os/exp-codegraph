@@ -110,3 +110,17 @@ temporarily masked by unavailable evidence. Removing a contribution restores the
 state. Shard capability declarations are counted by namespace so a fact's completeness still
 bounds every capability declared by any retained shard in that namespace. These indexes are
 published only after transaction validation, and carry no mutable producer-owned data.
+
+Memory admission compares ordinary manifest entries directly against the complete materialized
+shard catalogue. It verifies cardinality, ordered unique membership, digests, namespaces, schema
+versions, fact counts, and optional capability arrays without sorting another reference population
+or allocating two canonical JSON graphs and strings. Weak shape certificates cover only immutable
+data; they retain neither generations nor copied references. An absent optional field is rechecked
+against prototype inheritance on certificate reuse. Custom accessors, proxies, `toJSON`,
+or nonstandard array behavior use the original whole-value comparison with its original observation
+order. An invalid complete manifest still fails atomically with `MANIFEST_INVALID`.
+
+This removes redundant materialization rather than changing the complete-manifest identity
+contract. Admission still visits every manifest entry and verifies duplicate facts and closed
+derivation inputs across the materialized population; the v1 generation hash still consumes every
+canonical manifest byte. Commit complexity is therefore not claimed to depend only on the delta.
