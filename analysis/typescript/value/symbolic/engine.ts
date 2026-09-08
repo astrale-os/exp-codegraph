@@ -379,15 +379,13 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
       const results = value.values.map((item) => this.result(item, state, scalar))
       const incomplete = results.filter((item) => item.kind === 'unknown' || item.kind === 'unsupported')
       if (incomplete.length) {
-        const candidates = [...new Map(results.flatMap((item) => item.kind === 'known' ? [item.value]
-          : item.kind === 'ambiguous' ? item.values : item.kind === 'unknown' ? item.candidates ?? [] : [])
-          .map((item) => [JSON.stringify(item), item])).values()]
+        const candidates = distinctValues(results.flatMap((item) => item.kind === 'known' ? [item.value]
+          : item.kind === 'ambiguous' ? item.values : item.kind === 'unknown' ? item.candidates ?? [] : []), scalar)
         return { kind: 'unknown', reasons: incomplete.flatMap((item) => item.kind === 'unknown' ? item.reasons
           : [{ code: 'VALUE_PATH_UNSUPPORTED', message: `A possible value path uses ${item.construct}.`, retryable: false }]),
           ...(candidates.length ? { candidates } : {}), evidence }
       }
-      const values = [...new Map(results.flatMap((item) => item.kind === 'known' ? [item.value] : item.kind === 'ambiguous' ? item.values : [])
-        .map((item) => [JSON.stringify(item), item])).values()]
+      const values = distinctValues(results.flatMap((item) => item.kind === 'known' ? [item.value] : item.kind === 'ambiguous' ? item.values : []), scalar)
       if (values.length === 1) return { kind: 'known', value: values[0], evidence }
       return { kind: 'ambiguous', values, reasons: [{ code: 'VALUE_ALTERNATIVES', message: 'Several statically reachable values remain possible.', effective: { alternatives: values.length } }], evidence }
     }
@@ -632,4 +630,25 @@ function freezeResult(result: ValueResult<unknown>, scalar: boolean): ValueResul
     ...(result.kind === 'ambiguous' ? { values: Object.freeze(result.values.map(value)) }
       : result.candidates ? { candidates: Object.freeze(result.candidates.map(value)) } : {}),
   } as ValueResult<unknown>
+}
+
+const NEGATIVE_ZERO_ATOM = Symbol('negative-zero-atom')
+
+/** Opaque atoms have model-owned identity, never structural JSON equality. */
+function distinctValues(values: readonly unknown[], scalar: boolean): unknown[] {
+  const atoms = new Set<unknown>()
+  const shapes = new Set<string | undefined>()
+  return values.filter((value) => {
+    if (!scalar && (value as SymbolicValue<unknown>).kind === 'atom') {
+      const atom = (value as Extract<SymbolicValue<unknown>, { kind: 'atom' }>).value
+      const key = Object.is(atom, -0) ? NEGATIVE_ZERO_ATOM : atom
+      if (atoms.has(key)) return false
+      atoms.add(key)
+      return true
+    }
+    const key = JSON.stringify(value)
+    if (shapes.has(key)) return false
+    shapes.add(key)
+    return true
+  })
 }
