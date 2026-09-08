@@ -10,6 +10,7 @@ interface CallIndex {
   readonly occurrences: ReadonlyMap<OccurrenceId, BodyOccurrence>
   readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>
   readonly calls: ReadonlyMap<OccurrenceId, ResolvedCall>
+  readonly sources?: ReadonlyMap<SourceId, TypeScriptFact<'source'>>
 }
 
 // These limitations affect execution topology, while walkOwned still visits
@@ -28,16 +29,15 @@ export function createCallProjection(query: AnalysisQuery, loadIndex: () => Prom
     bySource: ReadonlyMap<SourceId, Completeness>
   }> | undefined
   const sites = new Map<OccurrenceId, TypeScriptCallSite>()
-  return async (options: TypeScriptCallQuery = {}): Promise<TypeScriptCallInventory> => {
+  const project = async (options: TypeScriptCallQuery = {}): Promise<TypeScriptCallInventory> => {
     const signal = options.signal
     const paths = options.paths && new Set(options.paths)
     const sources = options.sources && new Set(options.sources)
     signal?.throwIfAborted()
     pending ??= (async () => {
       const reader = createTypeScriptFactReader(query)
-      const [index, sourceFacts, capabilities] = await Promise.all([
-        loadIndex(), collect(reader.export('source')), query.capabilities(),
-      ])
+      const [index, capabilities] = await Promise.all([loadIndex(), query.capabilities()])
+      const sourceFacts = index.sources ? [...index.sources.values()] : await collect(reader.export('source'))
       const paths = new Map(sourceFacts.map((fact) => [fact.payload.source, fact.payload.logicalPath]))
       const calls = new Map<SourceId, ResolvedCall[]>()
       const bySource = new Map<SourceId, Completeness>()
@@ -111,6 +111,7 @@ export function createCallProjection(query: AnalysisQuery, loadIndex: () => Prom
       left.occurrence.span.start - right.occurrence.span.start || left.call.occurrence.localeCompare(right.call.occurrence))
     return Object.freeze({ sites: Object.freeze(result), completeness: freezeCompleteness(completeness) })
   }
+  return Object.assign(project, { dispose() { pending = undefined; sites.clear() } })
 }
 
 function inventoryCompleteness(completeness: Completeness): Completeness {
