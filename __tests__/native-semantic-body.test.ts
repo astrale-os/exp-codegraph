@@ -77,6 +77,33 @@ export const local = localHelper()
 `
 
 describe('native executable scope facts', () => {
+  it.each([false, true])('joins shorthand values to their lexical bindings while preserving authored keys (packed=%s)', async (packed) => {
+    const text = `import { helper as importedHelper } from './builder.js'
+export const path = 'module'
+export function capture(path: string) { const local = 'local'; return { path, local, importedHelper } }
+export const direct = importedHelper
+`
+    const current = await fixture(text, packed)
+    try {
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const bodies = await current.read()
+      const body = bodies.find((entry) => entry.file === 'index.ts' && entry.body.parameters.length === 1)!.body
+      const properties = body.occurrences.filter((entry) => entry.syntax === 'ShorthandPropertyAssignment')
+      expect(properties.map((entry) => entry.propertyName)).toEqual(['path', 'local', 'importedHelper'])
+      const valueOf = (name: string) => {
+        const property = properties.find((entry) => entry.propertyName === name)!
+        return body.occurrences.find((entry) => entry.syntax === 'Identifier' && entry.span.start === property.span.start)!
+      }
+      expect(valueOf('path')).toMatchObject({ kind: 'use', symbol: body.parameters[0] })
+      const local = body.occurrences.find((entry) => entry.kind === 'definition' && text.slice(entry.span.start, entry.span.end) === 'local')!
+      expect(valueOf('local')).toMatchObject({ kind: 'use', symbol: local.symbol })
+      const direct = bodies.find((entry) => entry.file === 'index.ts' && entry.body.scope === 'module')!.body.occurrences
+        .find((entry) => entry.syntax === 'Identifier' && entry.span.start === text.lastIndexOf('importedHelper'))!
+      expect(direct.symbol).toBeTruthy()
+      expect(valueOf('importedHelper')).toMatchObject({ kind: 'use', symbol: direct.symbol })
+    } finally { await current.close() }
+  })
+
   it('keeps signature identities stable across generic instantiations, body edits and cold compilers', async () => {
     const text = `export function identity<T>(value: T): T { return value }
 export function overloaded(value: string): string

@@ -15,6 +15,7 @@ import { resolveTtscNativeAnalysis } from '../analysis/typescript/ttsc/index.ts'
 import type { OccurrenceId } from '../analysis/identity/index.ts'
 
 const source = `
+import { remote as imported } from './helper'
 function concise() { const helper = () => 'concise'; return helper(); }
 function forwarded() { const helper = (value: string) => value; return helper('forwarded'); }
 function block() { const value = 'block'; return value; }
@@ -26,8 +27,11 @@ function restCall() { return rest('first', 'second'); }
 function select(second: string, third: string) { return third; }
 function spreadCall(values: [string, string]) { return select(...values); }
 function unrelated() { return select('unrelated', 'poison'); }
+function shorthand(path: string) { const local = () => path; return { path, local, imported }; }
+function explicit(path: string) { return { path: path }; }
 function probe(values: [string, string]) {
   concise(); forwarded(); block(); binary(); property(); element(); restCall(); spreadCall(values);
+  shorthand('captured'); explicit('captured');
 }
 `
 
@@ -43,9 +47,10 @@ describe('bounded values from real TypeScript bodies', () => {
     await Promise.all([
       writeFile(join(root, 'tsconfig.json'), JSON.stringify({
         compilerOptions: { noLib: true, noEmit: true, strict: true },
-        files: ['values.ts'],
+        files: ['values.ts', 'helper.ts'],
       })),
       writeFile(join(root, 'values.ts'), source),
+      writeFile(join(root, 'helper.ts'), "export function remote() { return 'alias' }\n"),
     ])
     const native = await resolveTtscNativeAnalysis({
       root: resolve(import.meta.dirname, '..'),
@@ -55,7 +60,7 @@ describe('bounded values from real TypeScript bodies', () => {
     })
     const store = createMemoryAnalysisStore()
     const service = await createTypeScriptAnalysisService({
-      project: { root, config: 'tsconfig.json', capabilities: ['typescript.body'] },
+      project: { root, config: 'tsconfig.json', capabilities: ['typescript.symbol', 'typescript.body'] },
       sessions: createProcessNativeAnalysisSessionFactory({ command: native.command }),
       store,
     })
@@ -118,6 +123,15 @@ describe('bounded values from real TypeScript bodies', () => {
       reasons: [expect.objectContaining({ code: 'VALUE_STEP_LIMIT' })],
       limits: { maximumSteps: 1 },
     })
+  })
+
+  it('resolves shorthand parameters, local closures and imported aliases under their authored keys', async () => {
+    const shape = evaluator.value(call("shorthand('captured')"))
+    expect(await shape.property('path').resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'captured' } })
+    expect(await shape.property('local').invoke().resolve({ limits: { maximumDepth: 32 } })).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'captured' } })
+    expect(await shape.property('imported').invoke().resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'alias' } })
+    expect(await shape.property('remote').resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: undefined } })
+    expect(await evaluator.value(call("explicit('captured')")).property('path').resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'captured' } })
   })
 
   it('propagates cancellation without caching a semantic conclusion', async () => {

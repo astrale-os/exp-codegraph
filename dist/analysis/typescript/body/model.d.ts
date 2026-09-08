@@ -29,7 +29,7 @@ export interface BodyOccurrence {
     readonly symbolOrigin?: TypeScriptSymbolOrigin;
     /** Actual module namespace value; never inferred from a compatible object type. */
     readonly symbolKind?: 'module-namespace';
-    /** Authored name on a property-access occurrence, independent of canonical export aliases. */
+    /** Authored property-access or shorthand key, independent of canonical export aliases. */
     readonly propertyName?: string;
     /** Static module expectation; a consumer must join it to the resolved runtime namespace. */
     readonly propertyNamespace?: SymbolId;

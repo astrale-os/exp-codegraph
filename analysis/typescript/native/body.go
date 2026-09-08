@@ -309,6 +309,9 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 	b.occurrences = append(b.occurrences, bodyOccurrence{
 		ID: id, Kind: kind, Span: span, Owner: b.owner, Syntax: strings.TrimPrefix(node.KindString(), "Kind"),
 	})
+	if node.Kind == shimast.KindShorthandPropertyAssignment && node.Name() != nil {
+		b.occurrences[len(b.occurrences)-1].PropertyName = node.Name().Text()
+	}
 	if node.Kind == shimast.KindPropertyAccessExpression && node.Name() != nil {
 		b.occurrences[len(b.occurrences)-1].PropertyName = node.Name().Text()
 		member := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(node.Name()))
@@ -331,6 +334,11 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 
 func (b *bodyBuilder) identifier(node *shimast.Node) {
 	symbol := b.x.checker.GetSymbolAtLocation(node)
+	if node.Parent != nil && node.Parent.Kind == shimast.KindShorthandPropertyAssignment && node.Parent.Name() == node {
+		// The authored key and its value binding share one token. The ordinary
+		// lookup returns the property symbol, which cannot join a captured parameter.
+		symbol = b.x.checker.GetShorthandAssignmentValueSymbol(node.Parent)
+	}
 	typeOnly := false
 	seen := map[*shimast.Symbol]bool{}
 	for symbol != nil && symbol.Flags&shimast.SymbolFlagsAlias != 0 && !seen[symbol] {
