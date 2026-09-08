@@ -1,0 +1,76 @@
+name: Publish qualified npm artifacts
+
+# Deliberately manual. Qualification and publication remain separate actions.
+on:
+  workflow_dispatch:
+    inputs:
+      expected-sha:
+        description: Exact main commit already qualified on every native target.
+        required: true
+        type: string
+      qualification-run-id:
+        description: Successful native-release.yml main run containing codegraph-release.
+        required: true
+        type: string
+
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    env:
+      EXPECTED_SHA: ${{ inputs.expected-sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.expected-sha }}
+          fetch-depth: 0
+          persist-credentials: 'false'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+      - name: Read exact main qualification provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFICATION_RUN_ID: ${{ inputs.qualification-run-id }}
+        run: |
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "$QUALIFICATION_RUN_ID" =~ ^[0-9]+$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git merge-base --is-ancestor "$EXPECTED_SHA" origin/main
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN_ID" > "$RUNNER_TEMP/qualification.json"
+      - name: Download the already qualified package cohort
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codegraph-release
+          path: release
+          run-id: ${{ inputs.qualification-run-id }}
+          github-token: ${{ github.token }}
+      - name: Admit source, executable digests and existing npm versions
+        id: packages
+        run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --qualification-run "$RUNNER_TEMP/qualification.json" --npm-preflight --github-output "$GITHUB_OUTPUT"
+      - name: Publish the exact prepared archives using Trusted Publishing
+        uses: astrale-os/config/.github/actions/publish/packages@8e2e2abd0320be0c2f64033916519ab3b66c7dd7
+        with:
+          dirs: native-packages/darwin-arm64 native-packages/darwin-x64 native-packages/linux-arm64 native-packages/linux-x64 native-packages/win32-x64 .
+          mirror-public-packages: 'false'
+          install-command: 'true'
+          build-command: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --npm-preflight
+          tarballs-json: ${{ steps.packages.outputs.tarballs-json }}
+          prerelease-tag: auto
+      - name: Verify every immutable npm archive
+        run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --npm-published
+      - name: Qualify a root-only npm consumer
+        env:
+          CODEGRAPH_PACKAGE_VERSION: ${{ steps.packages.outputs.version }}
+          ACTIONS_ID_TOKEN_REQUEST_TOKEN: ''
+          ACTIONS_ID_TOKEN_REQUEST_URL: ''
+        run: node qualification/v2/release/packed-consumer.mjs --npm-version "$CODEGRAPH_PACKAGE_VERSION" --source-revision "$EXPECTED_SHA"

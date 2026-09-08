@@ -23,7 +23,7 @@ jobs:
       - uses: astrale-os/config/.github/actions/setup@9bffee57d53b603b556bb545145fdde10f20a4c5
         with:
           frozen-lockfile: 'true'
-      - name: Prove registry publication is disabled
+      - name: Verify exact public distribution and manual release policy
         run: pnpm artifact:policy
       - name: Typecheck public and extension surfaces
         run: pnpm typecheck

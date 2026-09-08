@@ -6,9 +6,19 @@ import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
+import { assertNpmConsumerLock } from '../../../scripts/native/admit-packages.mjs'
+
 const execFile = promisify(execFileCallback)
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
-const releaseDirectory = resolve(requiredArgument('--release-directory'))
+const releasePath = argument('--release-directory')
+const npmVersion = argument('--npm-version')
+const sourceRevision = argument('--source-revision')
+assert(Boolean(releasePath) !== Boolean(npmVersion), 'Select packed archives or an exact npm version.')
+const releaseDirectory = releasePath ? resolve(releasePath) : undefined
+if (npmVersion) {
+  assert.match(npmVersion, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u)
+  assert.match(sourceRevision ?? '', /^[a-f0-9]{40}$/u)
+}
 const npmRegistry = 'https://registry.npmjs.org/'
 const releaseAgeExclusions = [
   '@astrale-os/*',
@@ -29,25 +39,14 @@ assert(supported.includes(target), `Unsupported packed-consumer target ${target}
 
 const temporary = await mkdtemp(join(tmpdir(), 'codegraph-packed-consumer-'))
 try {
-  const files = await readdir(releaseDirectory)
-  const rootArchive = exactlyOne(files, /^astrale-os-codegraph-\d[^/]*\.tgz$/u)
-  const nativeArchives = supported.map((nativeTarget) =>
-    exactlyOne(
-      files,
-      new RegExp(
-        `^astrale-os-codegraph-native-${escapeRegExp(nativeTarget)}-\\d[^/]*\\.tgz$`,
-        'u',
-      ),
-    ),
-  )
-  const archives = [rootArchive, ...nativeArchives]
+  const archives = releaseDirectory ? await releaseArchives(releaseDirectory) : []
   const consumer = join(temporary, 'consumer')
   await mkdir(consumer, { recursive: true })
   const dependencyEnvironment = await prepareConsumerPolicy(consumer)
   await writeFile(
     join(consumer, 'package.json'),
     JSON.stringify({
-      name: '@fixture/codegraph-github-artifact-consumer',
+      name: '@fixture/codegraph-release-consumer',
       private: true,
       type: 'module',
       packageManager: 'pnpm@11.13.1',
@@ -60,17 +59,25 @@ try {
     '--prefer-offline',
     '--ignore-scripts',
     '--save-exact',
-    ...archives.map((archive) => resolve(releaseDirectory, archive)),
+    ...(releaseDirectory
+      ? archives.map((archive) => resolve(releaseDirectory, archive))
+      : [`@astrale-os/codegraph@${npmVersion}`]),
   ]
   await installConsumer(pnpmArguments, repositoryRoot, dependencyEnvironment)
   const lock = await readFile(join(consumer, 'pnpm-lock.yaml'), 'utf8')
-  await assertPackedConsumerLock(lock, consumer, releaseDirectory, archives)
+  if (releaseDirectory) await assertPackedConsumerLock(lock, consumer, releaseDirectory, archives)
+  else assertNpmConsumerLock(lock)
 
   const installed = join(consumer, 'node_modules/@astrale-os/codegraph')
-  const installedNative = join(consumer, 'node_modules/@astrale-os', `codegraph-native-${target}`)
   const rootManifest = JSON.parse(await readFile(join(installed, 'package.json'), 'utf8'))
-  assert.equal(rootManifest.private, true)
-  assert.equal(rootManifest.publishConfig, undefined)
+  assert.notEqual(rootManifest.private, true)
+  assert.equal(rootManifest.publishConfig?.registry, npmRegistry)
+  assert.equal(rootManifest.publishConfig?.access, 'public')
+  if (npmVersion) assert.equal(rootManifest.version, npmVersion)
+  if (sourceRevision) {
+    const release = JSON.parse(await readFile(join(installed, 'native-release.json'), 'utf8'))
+    assert.equal(release.sourceRevision, sourceRevision)
+  }
   assert.equal(rootManifest.dependencies?.ttsc, undefined)
   await assertMissing(join(consumer, 'node_modules/ttsc'))
   await assertMissing(join(consumer, 'node_modules/@ttsc'))
@@ -84,15 +91,6 @@ try {
       path.endsWith('.go'),
   )
   assert.deepEqual(forbidden, [], `Production package leaked compiler inputs: ${forbidden.join(', ')}`)
-  const nativeFiles = (await filesUnder(installedNative)).map((path) => path.slice(installedNative.length + 1))
-  assert.deepEqual(nativeFiles.sort(), [
-    'LICENSE',
-    'THIRD_PARTY_NOTICES.md',
-    target === 'win32-x64' ? 'bin/codegraph-native.exe' : 'bin/codegraph-native',
-    'manifest.json',
-    'package.json',
-  ])
-
   const cli = join(installed, 'dist/cli.js')
   const version = await execFile(process.execPath, [cli, '--version'], { cwd: consumer })
   assert.equal(version.stderr, '')
@@ -105,6 +103,17 @@ try {
   const native = await typescript.resolvePackagedNativeAnalysis()
   assert.equal(native.origin, 'package')
   assert.equal(native.target, target)
+  const installedNative = resolve(native.command, '../..')
+  const nativeFiles = (await filesUnder(installedNative)).map((path) => path.slice(installedNative.length + 1))
+  assert.deepEqual(nativeFiles.sort(), [
+    'LICENSE',
+    'THIRD_PARTY_NOTICES.md',
+    target === 'win32-x64' ? 'bin/codegraph-native.exe' : 'bin/codegraph-native',
+    'manifest.json',
+    'package.json',
+  ])
+
+
 
   const project = join(temporary, 'project')
   await cp(resolve(repositoryRoot, 'qualification/v2/ttsc/fixtures/adversarial'), project, {
@@ -174,15 +183,16 @@ try {
   await qualifyResidentProject(typescript, join(temporary, 'resident'))
 
   process.stdout.write(
-    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: 'github-artifact' })}\n`,
+    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: npmVersion ? 'npmjs' : 'packed-artifact' })}\n`,
   )
 } finally {
   await rm(temporary, { recursive: true, force: true })
 }
 
-function requiredArgument(name) {
+function argument(name) {
   const index = process.argv.indexOf(name)
-  const value = index < 0 ? undefined : process.argv[index + 1]
+  if (index < 0) return undefined
+  const value = process.argv[index + 1]
   if (!value || value.startsWith('--')) throw new Error(`${name} requires a value.`)
   return value
 }
@@ -245,7 +255,7 @@ async function assertPackedConsumerLock(lock, consumer, releaseDirectory, archiv
 function neutralRegistryEnvironment(userConfig, globalConfig) {
   const env = {}
   for (const [name, value] of Object.entries(process.env)) {
-    if (/^(?:npm_config_|NPM_TOKEN$|NODE_AUTH_TOKEN$|GH_TOKEN$|GITHUB_TOKEN$)/iu.test(name)) continue
+    if (/^(?:npm_config_|NPM_TOKEN$|NODE_AUTH_TOKEN$|GH_TOKEN$|GITHUB_TOKEN$|ACTIONS_ID_TOKEN_REQUEST_|ASTRALE_.*TOKEN$)/iu.test(name)) continue
     env[name] = value
   }
   return {
@@ -316,4 +326,13 @@ async function qualifyResidentProject(typescript, root) {
       assert.deepEqual(await before.facts.facts('source'), original)
     } finally { await before.dispose() }
   } finally { await project.dispose() }
+}
+
+async function releaseArchives(directory) {
+  const files = await readdir(directory)
+  const rootArchive = exactlyOne(files, /^astrale-os-codegraph-\d[^/]*\.tgz$/u)
+  const nativeArchives = supported.map((nativeTarget) => exactlyOne(files,
+    new RegExp(`^astrale-os-codegraph-native-${escapeRegExp(nativeTarget)}-\\d[^/]*\\.tgz$`, 'u'),
+  ))
+  return [rootArchive, ...nativeArchives]
 }

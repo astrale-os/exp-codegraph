@@ -39,7 +39,7 @@ afterEach(async () => {
   )
 })
 
-describe('packed GitHub artifact', () => {
+describe('packed release artifact', () => {
   it('lets ordinary NodeNext consumers emit declarations without compiling package TypeScript', async () => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-typed-consumer-'))
     temporary.push(root)
