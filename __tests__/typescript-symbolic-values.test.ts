@@ -265,6 +265,80 @@ describe('symbolic values through the public project API', () => {
     await reader.dispose()
   })
 
+  it('automatically reuses equivalent plans across disposed readers without mixing budgets or models', async () => {
+    const counted = vi.fn(model)
+    const reader = await project.open()
+    const values = await reader.values({ call: counted })
+    const first = await values.value(declaration('direct')).resolve()
+    const evaluated = counted.mock.calls.length
+    expect(await values.value(declaration('direct')).resolve()).toBe(first)
+    expect(counted).toHaveBeenCalledTimes(evaluated)
+    await reader.dispose()
+    const nextReader = await project.open()
+    const next = await nextReader.values({ call: counted })
+    expect(await next.value(declaration('direct')).resolve()).toBe(first)
+    expect(counted).toHaveBeenCalledTimes(evaluated)
+    const bounded = await next.value(declaration('direct')).resolve({ limits: { maximumSteps: 1 } })
+    expect(bounded.kind).toBe('unknown')
+    expect(await next.value(declaration('direct')).resolve({ limits: { maximumSteps: 1 } })).toBe(bounded)
+    expect(await next.value(declaration('direct')).resolve()).toBe(first)
+    const other = await nextReader.values({ call: () => ({ kind: 'atom', value: 'other-model' }) })
+    expect(await other.value(declaration('direct')).resolve()).toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'other-model' } })
+    const scalar = await next.evaluate(declaration('direct'))
+    expect(scalar.kind).toBe('unknown')
+    expect(scalar).not.toBe(first)
+    await expect(next.value(declaration('direct')).resolve({ signal: AbortSignal.abort(new Error('cancel cached request')) })).rejects.toThrow('cancel cached request')
+    await nextReader.dispose()
+  })
+
+  it('freezes owned receipt containers and preserves immutable opaque atom identity', async () => {
+    const atom = Object.freeze({ identity: Object.freeze({ name: 'opaque' }) })
+    const hook = vi.fn(() => ({ kind: 'atom' as const, value: atom }))
+    const values = await snapshot.values({ call: hook })
+    const result = await values.value(declaration('direct')).resolve()
+    expect(result).toMatchObject({ kind: 'known', value: { kind: 'atom', value: atom } })
+    if (result.kind !== 'known' || result.value.kind !== 'atom') throw new Error('Expected modeled atom.')
+    expect(result.value.value).toBe(atom)
+    expect(Reflect.set(result.value, 'kind', 'literal')).toBe(false)
+    expect(() => (result.evidence as unknown[]).push('poison')).toThrow()
+    expect(await values.value(declaration('direct')).resolve()).toBe(result)
+    expect(hook).toHaveBeenCalledTimes(1)
+    const object = await (await snapshot.values()).value(declaration('definition')).invoke().resolve()
+    if (object.kind !== 'known' || object.value.kind !== 'object') throw new Error('Expected object shape.')
+    expect(() => (object.value.properties as string[]).push('poison')).toThrow()
+  })
+
+  it('bypasses mutable opaque atoms without freezing or cloning caller state', async () => {
+    const atom = { label: 'original' }
+    const hook = vi.fn(() => ({ kind: 'atom' as const, value: atom }))
+    const values = await snapshot.values({ call: hook })
+    const first = await values.value(declaration('direct')).resolve()
+    const second = await values.value(declaration('direct')).resolve()
+    expect(hook).toHaveBeenCalledTimes(2)
+    expect(first).not.toBe(second)
+    expect(Object.isFrozen(atom)).toBe(false)
+    if (first.kind !== 'known' || first.value.kind !== 'atom') throw new Error('Expected modeled atom.')
+    expect(first.value.value).toBe(atom)
+  })
+
+  it('does not publish thrown or cancelled resolutions into the project cache', async () => {
+    let attempts = 0
+    const cancellation = new AbortController()
+    const hook = () => {
+      if (++attempts === 1) throw new Error('transient model failure')
+      if (attempts === 2) cancellation.abort(new Error('cancel during model'))
+      return { kind: 'atom' as const, value: 'recovered' }
+    }
+    const values = await snapshot.values({ call: hook })
+    await expect(values.value(declaration('direct')).resolve()).rejects.toThrow('transient model failure')
+    await expect(values.value(declaration('direct')).resolve({ signal: cancellation.signal })).rejects.toThrow('cancel during model')
+    const recovered = await values.value(declaration('direct')).resolve()
+    expect(recovered.kind).toBe('known')
+    expect(attempts).toBe(3)
+    expect(await values.value(declaration('direct')).resolve()).toBe(recovered)
+    expect(attempts).toBe(3)
+  })
+
   it('does not let a custom model overwrite exhausted operand budgets', async () => {
     const values = await snapshot.values({ limits: { maximumSteps: 2 }, call: (context) => {
       context.argument(0)
@@ -327,6 +401,7 @@ describe('symbolic values through the public project API', () => {
     const recovered = await repaired.values({ call: model, limits: { maximumDepth: 64 } })
     expect(recovered.canReuse(proof)).toBe(false)
     expect(recovered.canReuse(before)).toBe(true)
+    expect(await recovered.value(declaration('crossMutation')).invoke().property('build').invoke().resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'stable' } })
     await mutated.dispose()
     await repaired.dispose()
   })
@@ -343,6 +418,7 @@ describe('symbolic values through the public project API', () => {
     const next = await missing.values({ call: model, limits: { maximumDepth: 64 } })
     expect(next.canReuse(before)).toBe(false)
     expect(next.canReuse(unrelated)).toBe(true)
+    expect(await next.value(declaration('direct')).resolve()).toBe(unrelated)
     const absent = await next.value(declaration('dependent')).invoke().property('build').invoke().resolve()
     expect(absent.kind).not.toBe('known')
     await writeFile(join(root, 'helper.ts'), "export function helper() { return 'new' }\n")

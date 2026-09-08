@@ -2,29 +2,35 @@ import { createHash } from 'node:crypto';
 import { createTypeScriptFactReader } from '../../facts/index.js';
 import { resolveBoundedValueLimits } from '../limits.js';
 import { createCallProjection } from './calls.js';
+import { resolutionResultBytes } from './cache.js';
 const PROOF = Symbol('Codegraph value proof');
 const UNDEFINED = Object.freeze({ kind: 'literal', value: undefined });
-export function createValueEvaluatorFactory(query) {
+export function createValueEvaluatorFactory(query, cache) {
     let pending;
     const index = () => {
         pending ??= indexFacts(query).catch((error) => { pending = undefined; throw error; });
         return pending;
     };
-    return Object.assign(async (options = {}) => new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits)), { calls: createCallProjection(query, index) });
+    return Object.assign(async (options = {}) => new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache), { calls: createCallProjection(query, index) });
 }
 class Evaluator {
     #index;
     #model;
     #limits;
-    constructor(index, model, limits) {
+    #cache;
+    constructor(index, model, limits, cache) {
         this.#index = index;
         this.#model = model;
         this.#limits = limits;
+        this.#cache = cache;
     }
     value(occurrence) { return this.plan({ kind: 'value', occurrence }); }
     canReuse(proof) {
+        return this.reusable(proof, this.#limits);
+    }
+    reusable(proof, limits) {
         const metadata = proof[PROOF];
-        return !!metadata && metadata.model === this.#model && metadata.limits === JSON.stringify(this.#limits) &&
+        return !!metadata && metadata.model === this.#model && metadata.limits === JSON.stringify(limits) &&
             [...metadata.dependencies].every(([key, fingerprint]) => this.#index.fingerprints.get(key) === fingerprint);
     }
     async evaluate(occurrence, options = {}) {
@@ -39,7 +45,13 @@ class Evaluator {
         return plan;
     }
     resolve(plan, options, scalar) {
-        const state = { limits: options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits,
+        const limits = options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits;
+        options.signal?.throwIfAborted();
+        const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits, plan]);
+        const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits));
+        if (cached)
+            return cached;
+        const state = { limits,
             signal: options.signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 };
         state.signal?.throwIfAborted();
         const value = this.evaluatePlan(plan, state);
@@ -52,13 +64,21 @@ class Evaluator {
                 ...(evaluated.candidates ? { candidates: evaluated.candidates } : {}),
             } : {}),
         } : evaluated;
-        const result = { ...bounded, limits: state.limits };
-        Object.defineProperty(result, PROOF, { value: {
-                model: this.#model,
-                limits: JSON.stringify(state.limits),
-                dependencies: new Map([...state.dependencies].map((key) => [key, this.#index.fingerprints.get(key)])),
-            } });
-        return Object.freeze(result);
+        const result = { ...freezeResult(bounded, scalar), limits: state.limits };
+        const metadata = {
+            model: this.#model,
+            limits: JSON.stringify(state.limits),
+            dependencies: new Map([...state.dependencies].map((key) => [key, this.#index.fingerprints.get(key)])),
+        };
+        const resultBytes = key ? resolutionResultBytes(result) : undefined;
+        Object.defineProperty(result, PROOF, { value: metadata });
+        const frozen = Object.freeze(result);
+        state.signal?.throwIfAborted();
+        if (key && resultBytes !== undefined) {
+            const dependencyBytes = [...metadata.dependencies].reduce((bytes, [name, fingerprint]) => bytes + 96 + name.length * 2 + (fingerprint?.length ?? 0) * 2, 0);
+            this.#cache.put(key, frozen, resultBytes + dependencyBytes);
+        }
+        return frozen;
     }
     evaluatePlan(plan, state) {
         if (plan.kind === 'value')
@@ -604,5 +624,28 @@ async function collect(values) {
     for await (const value of values)
         result.push(value);
     return result;
+}
+/** Freeze only containers created by the engine; opaque values keep their identity. */
+function freezeResult(result, scalar) {
+    const value = (input) => {
+        if (scalar)
+            return input;
+        const symbolic = input;
+        return Object.freeze(symbolic.kind === 'object'
+            ? { ...symbolic, properties: Object.freeze([...symbolic.properties]) }
+            : { ...symbolic });
+    };
+    const evidence = Object.freeze([...result.evidence]);
+    if (result.kind === 'known')
+        return { ...result, value: value(result.value), evidence };
+    if (result.kind === 'unsupported')
+        return { ...result, evidence };
+    const reasons = Object.freeze(result.reasons.map((reason) => Object.freeze({ ...reason,
+        ...('effective' in reason ? { effective: Object.freeze({ ...reason.effective }) } : {}),
+    })));
+    return { ...result, evidence, reasons,
+        ...(result.kind === 'ambiguous' ? { values: Object.freeze(result.values.map(value)) }
+            : result.candidates ? { candidates: Object.freeze(result.candidates.map(value)) } : {}),
+    };
 }
 //# sourceMappingURL=engine.js.map

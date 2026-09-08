@@ -55,3 +55,19 @@ in the private runtime value, preserving local aliases without adding a public
 value kind. A structurally compatible external object or local cast is not a module
 namespace. Synthetic property plans without a member occurrence remain explicit
 unknown when no exported-member relation is available.
+
+
+A resident project transparently reuses completed resolutions across its snapshots.
+The key contains the immutable demand plan, scalar/symbolic mode, model identity and
+effective budget; every hit validates the existing positive and negative dependency
+fingerprints against the requested snapshot. The shared LRU is bounded across all
+models and budgets by 1024 entries and an 8 MiB conservative storage estimate.
+Oversized or non-portable results bypass caching. Entries retain only receipts,
+fingerprints and serialized plan keys, never the plan, reader or value index. Project
+disposal clears and closes the cache so surviving old plans cannot repopulate it.
+Aborted requests reject before a cache hit and before publishing a new receipt.
+
+Engine-owned result wrappers, alternatives, evidence and reasons are immutable.
+Opaque model atoms retain their original identity and are never frozen or cloned by
+the engine. Their receipts are cacheable only when the atom graph is already deeply
+immutable and portable; mutable atoms remain supported without automatic reuse.
