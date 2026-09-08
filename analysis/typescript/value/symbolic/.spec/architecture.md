@@ -60,11 +60,16 @@ unknown when no exported-member relation is available.
 
 A resident project transparently reuses completed resolutions across its snapshots.
 The key contains the immutable demand plan, scalar/symbolic mode, model identity and
-effective budget; every hit validates the existing positive and negative dependency
-fingerprints against the requested snapshot. The shared LRU is bounded across all
-models and budgets by 1024 entries and an 8 MiB conservative storage estimate.
-Oversized or non-portable results bypass caching. Entries retain only receipts,
-fingerprints and serialized plan keys, never the plan, reader or value index. Project
+effective budget. Adjacent indexed revisions invalidate readers of changed positive
+and negative keys through an inverse dependency graph; other readers validate each
+shared proof basis once per immutable index. A discontinuous revision starts a new
+validation lineage without retaining prior indexes. Equal dependency, evidence and budget bases
+share immutable storage across receipts. The cache remains bounded across all models
+and budgets by an 8 MiB conservative storage estimate, including shared dependency
+memberships and its bounded aging frequency sketch. Admission retains useful resident
+work through scans exceeding capacity; equally frequent newcomers do not displace it.
+Oversized or non-portable results bypass caching. Entries retain only receipts, shared
+bases and serialized plan keys, never the plan, reader or value index. Project
 disposal clears and closes the cache so surviving old plans cannot repopulate it.
 Aborted requests reject before a cache hit and before publishing a new receipt.
 
