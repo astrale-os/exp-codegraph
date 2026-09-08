@@ -27,7 +27,7 @@ export const TYPESCRIPT_STABLE_PUBLIC_IDENTITIES = defineLaw({
 export const TYPESCRIPT_PORTABLE_SEMANTIC_IDENTITIES = defineLaw({
   id: 'TYPESCRIPT-PORTABLE-SEMANTIC-IDENTITIES',
   statement:
-    'Compiler symbol, body, occurrence, and derived fact identities use portable logical source ownership; source-file module names, compiler allocation details, checkout roots, and local store paths never enter their equality preimages.',
+    'Compiler symbol, body, occurrence, and derived fact identities use portable logical source ownership; source-file module names, compiler allocation details, checkout roots, and local store paths never enter their equality preimages. The universe owns exact compiler configuration and referenced project identity; source membership belongs to the generation, so adding an unrelated file cannot rename existing symbols.',
 })
 
 export const TYPESCRIPT_PUBLIC_API_CLOSURE = defineLaw({

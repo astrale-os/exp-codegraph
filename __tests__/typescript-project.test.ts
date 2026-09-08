@@ -181,7 +181,7 @@ describe('resident TypeScript project public API', () => {
     } finally { await project.dispose() }
   })
 
-  it('bounds owned universe retention through repeated topology edits and keeps the current and explicit readers pinned', async () => {
+  it('bounds owned universe retention through repeated configuration edits and keeps the current and explicit readers pinned', async () => {
     const root = await fixture()
     const project = await openTypeScriptProject({ root })
     try {
@@ -189,8 +189,8 @@ describe('resident TypeScript project public API', () => {
       const pinned = await project.open(initial.generation)
       const generations = [initial.generation]
       for (let index = 0; index < 5; index++) {
-        await writeFile(join(root, `added${index}.ts`), `export const added${index} = ${index}\n`)
-        generations.push((await project.refresh({ changed: [`added${index}.ts`] })).generation)
+        await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, target: 'ES2022', maxNodeModuleJsDepth: index + 1 }, include: ['*.ts'] }))
+        generations.push((await project.refresh({ changed: ['tsconfig.json'] })).generation)
       }
       expect(new Set(generations.map((generation) => generation.universe)).size).toBe(6)
       expect((await pinned.facts.facts('source')).facts).toHaveLength(1)
@@ -199,16 +199,15 @@ describe('resident TypeScript project public API', () => {
       expect(current.generation).toEqual(generations.at(-1))
       await current.dispose()
       await pinned.dispose()
-      await writeFile(join(root, 'another.ts'), 'export const another = true\n')
-      const next = await project.refresh({ changed: ['another.ts'] })
+      await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, target: 'ES2022', maxNodeModuleJsDepth: 6 }, include: ['*.ts'] }))
+      const next = await project.refresh({ changed: ['tsconfig.json'] })
       await expect(project.open(initial.generation)).rejects.toThrow('universe')
       const retained = await project.open(next.generation)
-      expect((await retained.facts.facts('source')).facts).toHaveLength(7)
+      expect((await retained.facts.facts('source')).facts).toHaveLength(1)
       await retained.dispose()
       // Reverting to an evicted universe recovers from a complete native snapshot.
-      for (let index = 0; index < 5; index++) await rm(join(root, `added${index}.ts`))
-      await rm(join(root, 'another.ts'))
-      const restored = await project.refresh({ changed: [...Array.from({ length: 5 }, (_, index) => `added${index}.ts`), 'another.ts'] })
+      await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, target: 'ES2022' }, include: ['*.ts'] }))
+      const restored = await project.refresh({ changed: ['tsconfig.json'] })
       expect(restored.generation.universe).toBe(initial.generation.universe)
       const rebuilt = await project.open()
       expect((await rebuilt.facts.facts('source')).facts).toHaveLength(1)
@@ -217,6 +216,63 @@ describe('resident TypeScript project public API', () => {
       try { expect(restored.generation.id).toBe((await cold.refresh()).generation.id) }
       finally { await cold.dispose() }
       expect((await project.refresh()).transactions).toEqual([])
+    } finally { await project.dispose() }
+  })
+
+  it('keeps source membership within one universe and refreshes negative resolutions without renaming existing symbols', async () => {
+    const root = await fixture()
+    await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', noEmit: true }, include: ['*.ts'] }))
+    await writeFile(join(root, 'index.ts'), `import { helper } from './helper.js'
+export function stable() { return 42 }
+export function value() { return helper() }
+`)
+    const options = { root, capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body', 'typescript.diagnostic'] as const }
+    const project = await openTypeScriptProject(options)
+    try {
+      const initial = await project.refresh()
+      const pinned = await project.open(initial.generation)
+      const originalSymbols = (await pinned.facts.facts('symbol')).facts
+      const stable = originalSymbols.find((fact) => fact.payload.name === 'stable')!.payload.symbol
+      const missing = (await pinned.facts.facts('diagnostic')).facts.filter((fact) => String(fact.payload.code) === '2307')
+      expect(missing).toHaveLength(1)
+      const inspect = async (count: number, unresolved: boolean) => {
+        const snapshot = await project.open()
+        try {
+          expect((await snapshot.facts.facts('source')).facts).toHaveLength(count)
+          expect((await snapshot.facts.facts('symbol')).facts.find((fact) => fact.payload.name === 'stable')!.payload.symbol).toBe(stable)
+          expect((await snapshot.facts.facts('diagnostic')).facts.some((fact) => String(fact.payload.code) === '2307')).toBe(unresolved)
+        } finally { await snapshot.dispose() }
+      }
+      const freshParity = async (id: string) => {
+        const cold = await openTypeScriptProject(options)
+        try { expect((await cold.refresh()).generation.id).toBe(id) }
+        finally { await cold.dispose() }
+      }
+      await writeFile(join(root, 'helper.ts'), "export function helper() { return 'resolved' }\n")
+      const added = await project.refresh({ changed: ['helper.ts'] })
+      expect(added.generation.universe).toBe(initial.generation.universe)
+      expect(added.generation.sequence).toBeGreaterThan(initial.generation.sequence)
+      expect(added.generation.sourceManifest).not.toBe(initial.generation.sourceManifest)
+      await inspect(2, false)
+      await freshParity(added.generation.id)
+      expect((await pinned.facts.facts('symbol')).facts).toEqual(originalSymbols)
+      expect((await pinned.facts.facts('diagnostic')).facts.filter((fact) => String(fact.payload.code) === '2307')).toEqual(missing)
+      await writeFile(join(root, 'unrelated.ts'), 'export const unrelated = true\n')
+      const unrelated = await project.refresh({ changed: ['unrelated.ts'] })
+      expect(unrelated.generation.universe).toBe(initial.generation.universe)
+      await inspect(3, false)
+      await freshParity(unrelated.generation.id)
+      await rm(join(root, 'helper.ts'))
+      const removed = await project.refresh({ changed: ['helper.ts'] })
+      expect(removed.generation.universe).toBe(initial.generation.universe)
+      await inspect(2, true)
+      await freshParity(removed.generation.id)
+      await rm(join(root, 'unrelated.ts'))
+      const repaired = await project.refresh({ changed: ['unrelated.ts'] })
+      expect(repaired.generation.id).toBe(initial.generation.id)
+      await inspect(1, true)
+      await freshParity(repaired.generation.id)
+      await pinned.dispose()
     } finally { await project.dispose() }
   })
 

@@ -79,9 +79,14 @@ manifest remain linear in total project size; telemetry distinguishes entries en
 hashed so that reduced allocations cannot be mistaken for a fully incremental identity contract.
 
 The caller describes requested project inputs but never supplies a universe identifier. After the
-resident compiler loads the complete configuration chain, project-reference roots, compiler and
+resident compiler loads the complete configuration chain, referenced project configurations, compiler and
 plugin semantics, exact toolchain and protocol, and platform, the native adapter derives the
 portable universe. Requested capabilities and module-observation boundaries select a generation in
 that universe; they never rename the compiler project or its stable semantic identities. A changed
 compiler universe starts a complete base-less lineage, while restoring identical compiler inputs may
-select the already retained generation for that universe.
+select the already retained generation for that universe. Universe identity v2 retains the entry
+project, every referenced project configuration, exact configuration content, toolchain, and platform.
+Files discovered by configuration globs belong to the generation's source manifest. Adding or
+removing a source forces a complete compiler projection, including negative module resolutions,
+while preserving the universe and existing portable symbol identities. Explicit configuration or
+project-reference edits still establish a separate universe; old pinned generations remain exact.
