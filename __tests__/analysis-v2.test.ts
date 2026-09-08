@@ -2411,6 +2411,101 @@ process.exit(0)
     expect(disposed).toBe(true)
   })
 
+  /** @evidence TYPESCRIPT-PORTABLE-RETRY */
+  it.each(['pass', 'publication'] as const)(
+    'retains changed semantic inputs after a failed %s until publication succeeds',
+    async (failure) => {
+      const first = retryMetadataTransaction(1, ['index.ts', 'removed.ts'])
+      const edited = retryMetadataTransaction(2, ['index.ts'], first)
+      const sourceIdentity = (path: string) => deriveAnalysisId('source', `typescript:${first.next.universe}`, { path })
+      let requestCount = 0
+      let failNext = false
+      let runs = 0
+      const backing = createMemoryAnalysisStore()
+      const store: AnalysisStore = {
+        dispose: () => backing.dispose(),
+        current: (universe) => backing.current(universe),
+        open: (universe, generation) => backing.open(universe, generation),
+        snapshotSet: (generations, inventory) => backing.snapshotSet(generations, inventory),
+        async commit(transaction, options) {
+          if (failure === 'publication' && failNext) {
+            failNext = false
+            throw new Error('publication temporarily unavailable')
+          }
+          await backing.commit(transaction, options)
+        },
+      }
+      const manifest = pass(
+        'retry-derived', ['fixture.derived'], ['fixture.values'],
+        [{ namespace: 'fixture.values', minimumVersion: 1, maximumVersion: 1 }],
+        [{ namespace: 'fixture.derived', version: 1 }],
+      ) as PortablePass['manifest']
+      const derived: PortablePass = {
+        manifest,
+        async run(context) {
+          runs++
+          if (failure === 'pass' && failNext) {
+            failNext = false
+            throw new Error('derivation temporarily unavailable')
+          }
+          const inputs = await context.query.facts({ namespaces: ['fixture.values'] })
+          return {
+            completion: { kind: 'complete' },
+            shards: [passShard(manifest, context.generation.id, inputs.facts)],
+            diagnostics: [],
+          }
+        },
+      }
+      const pipeline = await createTypeScriptAnalysisPipeline({
+        project: { root: '/tmp/codegraph-retry', config: 'tsconfig.json', capabilities: ['fixture.values'] },
+        sessions: {
+          async open() {
+            return {
+              async request(request) {
+                requestCount++
+                return requestCount <= 2
+                  ? { id: request.id, protocolVersion: 1, kind: 'transaction', transaction: requestCount === 1 ? first : edited }
+                  : { id: request.id, protocolVersion: 1, kind: 'unchanged', generation: edited.next.id }
+              },
+              async dispose() {},
+            }
+          },
+        },
+        store,
+        passes: [derived],
+        requestedCapabilities: ['fixture.derived'],
+        producer: first.next.producer,
+      })
+      try {
+        const original = await pipeline.refresh()
+        expect(original.changedModules).toBeUndefined()
+        failNext = true
+        await expect(pipeline.refresh({ changes: [{ path: 'index.ts', kind: 'change' }] })).rejects.toThrow()
+        expect((await store.current(first.next.universe))?.id).toBe(original.generation.id)
+        const retried = await pipeline.refresh()
+        expect(retried.invalidatedPasses).toContain(manifest.id)
+        expect(retried.changedSources).toEqual(['index.ts', 'removed.ts'].map(sourceIdentity).sort())
+        expect(retried.changedModules).toEqual(['index', 'removed'])
+        expect(runs).toBe(3)
+        const query = await store.open(retried.generation.universe, retried.generation.id)
+        try {
+          const input = (await query.facts({ namespaces: ['fixture.values'] })).facts
+          const output = (await query.facts({ namespaces: ['fixture.derived'] })).facts
+          expect(input.map((fact) => fact.payload)).toEqual(['after'])
+          expect(output[0]!.provenance.inputs).toEqual(input.map((fact) => fact.id))
+        } finally { await query.dispose() }
+        const unchanged = await pipeline.refresh()
+        expect(unchanged.transaction).toBeUndefined()
+        expect(unchanged.changedSources).toEqual([])
+        expect(unchanged.changedModules).toEqual([])
+        expect(runs).toBe(3)
+      } finally {
+        await pipeline.dispose()
+        await store.dispose()
+      }
+    },
+  )
+
   it('runs policies read-only and makes unavailable evidence indeterminate', async () => {
     const store = createMemoryAnalysisStore()
     const base = buildTransaction({ sequence: 1, values: ['input'] })
@@ -3042,6 +3137,67 @@ function buildTwoShardTransaction(): FactTransaction {
     manifest: references,
     upserts,
     deletes: [],
+  }
+}
+
+/** Native-shaped module/source changes, including a source and module deletion. */
+function retryMetadataTransaction(
+  sequence: number,
+  files: readonly string[],
+  previous?: FactTransaction,
+): FactTransaction {
+  const base = buildTransaction({
+    sequence,
+    ...(previous ? { base: previous.next.id } : {}),
+    values: [sequence === 1 ? 'before' : 'after'],
+  })
+  const template = base.upserts[0]!.facts[0]!
+  const shards = files.flatMap((path) => {
+    const source = deriveAnalysisId('source', `typescript:${base.next.universe}`, { path })
+    const revision = deriveAnalysisId('source-revision', source, { sequence })
+    const module = path.replace(/\.ts$/u, '')
+    const definitions = [
+      {
+        namespace: 'typescript.source', kind: 'source', subject: source,
+        payload: { source, revision, textDigest: String(sequence), logicalPath: path, declaration: false, projectOwned: true },
+      },
+      {
+        namespace: 'astrale.typescript.module', kind: 'module', subject: module,
+        payload: {
+          target: { id: module, name: module, project: 'tsconfig.json', root: '.', entrypoint: path, facades: [], aliases: [], internals: [] },
+          exports: [], declarations: [], dependencies: [], inboundDependencies: [],
+          declaredPackages: [], developmentPackages: [], workspacePackages: [],
+          errorCodes: [], files: [path], issues: [],
+        },
+      },
+    ]
+    return definitions.map((definition) => {
+      const fact: Fact = {
+        ...template,
+        ...definition,
+        id: deriveAnalysisId('fact', definition.namespace, { path, sequence }),
+        provenance: { ...template.provenance, evidence: [{ source, revision, start: 0, end: 1 }] },
+      }
+      const draft = {
+        key: deriveAnalysisId('fact-shard-key', definition.namespace, { path }),
+        namespace: definition.namespace, schemaVersion: 1, completion: { kind: 'complete' } as const,
+        facts: [fact],
+      }
+      return { ...draft, digest: factShardDigest(draft) }
+    })
+  })
+  const upserts = [...base.upserts, ...shards].sort((left, right) => left.key.localeCompare(right.key))
+  const manifest = upserts.map(shardReference)
+  const capabilities = [...base.next.capabilities, 'typescript.source', 'astrale.typescript.module'].sort()
+  const identity = { ...base.next, capabilities }
+  const id = generationIdentity(identity, manifest)
+  const keys = new Set(manifest.map((reference) => reference.key))
+  return {
+    ...base,
+    next: { ...identity, id },
+    manifest,
+    upserts: upserts.map((shard) => ({ ...shard, facts: shard.facts.map((fact) => ({ ...fact, generation: id })) })),
+    deletes: (previous?.manifest ?? []).filter((reference) => !keys.has(reference.key)).map((reference) => reference.key),
   }
 }
 

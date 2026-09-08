@@ -111,11 +111,15 @@ export const TYPESCRIPT_DEMAND_DRIVEN_PROJECTION = defineLaw({
 export const TYPESCRIPT_ATOMIC_PUBLICATION = defineLaw({
   id: 'TYPESCRIPT-ATOMIC-PUBLICATION',
   statement:
-    'The resident native generation remains a private compiler lineage; native facts and the requested portable pass closure stage together, then exactly one complete validated generation becomes visible to consumers or no generation is published.',
+    'The resident native generation remains a private compiler lineage; native facts and the requested portable pass closure stage together, then exactly one complete validated generation becomes visible to consumers or no generation is published. Failed derivation or publication retains pending input invalidation and changed source/module ownership, including deletions and unknown module scope, until a complete consumer generation commits.',
   tests: [
     {
       file: '../../__tests__/analysis-v2.test.ts',
       id: 'TYPESCRIPT-ATOMIC-PUBLICATION',
+    },
+    {
+      file: '../../__tests__/analysis-v2.test.ts',
+      id: 'TYPESCRIPT-PORTABLE-RETRY',
     },
   ],
 })
