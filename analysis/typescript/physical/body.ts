@@ -490,10 +490,10 @@ export class PackedTypeScriptBodyProjection {
   readonly #texts: readonly string[]
   readonly #nodes = new Map<number, FunctionBodyIR['occurrences'][number]>()
   readonly #resolvedCalls = new Map<number, FunctionBodyIR['calls'][number]>()
-  #children: ReadonlyMap<number, ReadonlyMap<string, number>> | undefined
-  #parents: ReadonlyMap<number, readonly { parent: number; role: string }[]> | undefined
-  #definitions: ReadonlyMap<number, readonly number[]> | undefined
-  #definite: ReadonlySet<number> | undefined
+  #children: Uint32Array | undefined
+  #parents: Uint32Array | undefined
+  #definitions: Uint32Array | undefined
+  #definite: Uint8Array | undefined
   #values: ReadonlyMap<number, ValueResult<unknown>> | undefined
 
   constructor(record: PhysicalPayloadRecord, version: number) {
@@ -551,21 +551,54 @@ export class PackedTypeScriptBodyProjection {
 
   children(index: number): ReadonlyMap<string, OccurrenceId> | undefined {
     this.relations()
-    const rows = this.#children!.get(index)
-    return rows && new Map([...rows].map(([role, child]) => [role, this.occurrences[child]!]))
+    if (!Number.isInteger(index) || index < 0 || index >= this.occurrences.length) return undefined
+    const rows = this.#children!
+    const end = rows[index + 1]
+    if (rows[index] === end) return undefined
+    const children = new Map<string, OccurrenceId>()
+    const base = this.occurrences.length + 1
+    for (let cursor = rows[index]!; cursor < end!; cursor++) {
+      const row = this.#packed.r[rows[base + cursor]!] as number[]
+      children.set(this.#texts[row[2]!]!, this.occurrences[row[1]!]!)
+    }
+    return children
   }
 
   parents(index: number): readonly { parent: OccurrenceId; role: string }[] | undefined {
     this.relations()
-    return this.#parents!.get(index)?.map(({ parent, role }) => ({ parent: this.occurrences[parent]!, role }))
+    if (!Number.isInteger(index) || index < 0 || index >= this.occurrences.length) return undefined
+    const rows = this.#parents!
+    const end = rows[index + 1]
+    if (rows[index] === end) return undefined
+    const parents = []
+    const base = this.occurrences.length + 1
+    for (let cursor = rows[index]!; cursor < end!; cursor++) {
+      const row = this.#packed.r[rows[base + cursor]!] as number[]
+      parents.push({ parent: this.occurrences[row[0]!]!, role: this.#texts[row[2]!]! })
+    }
+    return parents
   }
 
   definitions(index: number): readonly OccurrenceId[] | undefined {
     this.definitionRows()
-    return this.#definitions!.get(index)?.map((row) => this.occurrences[row]!)
+    if (!Number.isInteger(index) || index < 0 || index >= this.occurrences.length) return undefined
+    const rows = this.#definitions!
+    const end = rows[index + 1]
+    if (rows[index] === end) return undefined
+    const definitions = []
+    const base = this.occurrences.length + 1
+    for (let cursor = rows[index]!; cursor < end!; cursor++) {
+      const row = this.#packed.d[rows[base + cursor]!] as number[]
+      definitions.push(this.occurrences[row[0]!]!)
+    }
+    return definitions
   }
 
-  definite(index: number): boolean { this.definitionRows(); return this.#definite!.has(index) }
+  definite(index: number): boolean {
+    this.definitionRows()
+    return Number.isInteger(index) && index >= 0 && index < this.occurrences.length &&
+      (this.#definite![index >>> 3]! & (1 << (index & 7))) !== 0
+  }
 
   value(index: number): ValueResult<unknown> | undefined {
     this.#values ??= new Map((this.#packed.v as [number, unknown][]).map(([key, value], index) =>
@@ -575,34 +608,69 @@ export class PackedTypeScriptBodyProjection {
 
   private relations(): void {
     if (this.#children) return
-    const children = new Map<number, Map<string, number>>()
-    const parents = new Map<number, { parent: number; role: string }[]>()
-    for (const [parent, child, text] of this.#packed.r as [number, number, number][]) {
-      const role = this.#texts[text]!
-      let outgoing = children.get(parent)
-      if (!outgoing) children.set(parent, (outgoing = new Map()))
-      outgoing.set(role, child)
-      let incoming = parents.get(child)
-      if (!incoming) parents.set(child, (incoming = []))
-      incoming.push({ parent, role })
+    const rows = this.#packed.r as number[][]
+    const children = indexBodyRows(rows, this.occurrences.length, 0)
+    if (rows.length) {
+      // Collapse repeated roles once, retaining their first position and last
+      // child. Reads then visit only the requested children, even for a wide
+      // bucket with many replacements of the same role.
+      const positions = new Uint32Array(this.#texts.length)
+      const owners = new Uint32Array(this.#texts.length)
+      const base = this.occurrences.length + 1
+      let cursor = 0
+      for (let parent = 0; parent < this.occurrences.length; parent++) {
+        const start = children[parent]!, end = children[parent + 1]!
+        children[parent] = cursor
+        for (let entry = start; entry < end; entry++) {
+          const row = children[base + entry]!, role = rows[row]![2]!
+          if (owners[role] !== parent + 1) {
+            owners[role] = parent + 1
+            positions[role] = cursor++
+          }
+          children[base + positions[role]!] = row
+        }
+      }
+      children[this.occurrences.length] = cursor
     }
+    const parents = indexBodyRows(rows, this.occurrences.length, 1)
     this.#children = children
     this.#parents = parents
   }
 
   private definitionRows(): void {
     if (this.#definitions) return
-    const definitions = new Map<number, number[]>()
-    const definite = new Set<number>()
-    for (const [definition, use, , reaching] of this.#packed.d as [number, number, number, number][]) {
-      let values = definitions.get(use)
-      if (!values) definitions.set(use, (values = []))
-      values.push(definition)
-      if (this.#texts[reaching] === 'definite') definite.add(use)
+    const rows = this.#packed.d as number[][]
+    const definite = new Uint8Array(rows.length ? Math.ceil(this.occurrences.length / 8) : 0)
+    for (const row of rows) {
+      const use = row[1]!
+      if (this.#texts[row[3]!] === 'definite') definite[use >>> 3]! |= 1 << (use & 7)
     }
-    this.#definitions = definitions
+    this.#definitions = indexBodyRows(rows, this.occurrences.length, 1)
     this.#definite = definite
   }
+}
+
+// The first occurrenceCount + 1 entries delimit stable buckets in the remaining
+// row ordinals. Reverse scatter turns cumulative ends into starts in place, so
+// construction needs no cursor array or per-link objects. Only admitted local
+// ordinals enter this index. Packed rows are never mutated; buffers stay private
+// to the projection owned by that exact admitted physical record.
+function indexBodyRows(rows: readonly (readonly number[])[], occurrenceCount: number, key: 0 | 1): Uint32Array {
+  if (!rows.length) return new Uint32Array(0)
+  const base = occurrenceCount + 1
+  const index = new Uint32Array(base + rows.length)
+  for (const row of rows) index[row[key]!]!++
+  let end = 0
+  for (let occurrence = 0; occurrence < occurrenceCount; occurrence++) {
+    end += index[occurrence]!
+    index[occurrence] = end
+  }
+  index[occurrenceCount] = rows.length
+  for (let row = rows.length - 1; row >= 0; row--) {
+    const cursor = --index[rows[row]![key]!]!
+    index[base + cursor] = row
+  }
+  return index
 }
 
 const BODY_PROJECTIONS = new WeakMap<PhysicalPayloadRecord, PackedTypeScriptBodyProjection>()

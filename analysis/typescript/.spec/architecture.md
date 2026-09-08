@@ -100,6 +100,18 @@ private refresh request negotiates those record budgets so older binaries can ig
 and retain their bounded legacy aggregate protocol. Package and compiler telemetry still report
 all projection work; disabling an implicit aggregate project-size cap does not hide its cost.
 
+Each admitted packed body owns its lazy adjacency projection. Relations and definition uses are
+indexed by private numeric offset and row-ordinal tables, rather than per-occurrence maps and link
+objects. Construction is linear in local occurrences, links, and the body's text dictionary;
+collapsing child roles temporarily uses two 32-bit arrays over that dictionary. Empty link columns
+allocate no occurrence-sized table. Stable buckets retain parent and definition order, including repeated
+definitions and self-edges. Child roles retain their first insertion position and last child,
+collapsing replacements once so reads visit only the resulting children. Definite reaching uses
+occupy a local bitset. The raw packed rows remain immutable and authoritative, and returned maps
+and arrays are independent reader values. Unchanged physical records reuse their projection;
+changed records own new tables while pinned snapshots keep the old ones. Codecs 1–5, logical
+identity, semantic admission, and unowned or foreign-codec fallback are unchanged.
+
 Native identity encoding retains immutable canonical bytes for acknowledged source and shard
 references. A refresh encodes replacement entries only and streams the complete ordered preimage
 into the existing v1 identity hash. This preserves exact portable generation validation and older
