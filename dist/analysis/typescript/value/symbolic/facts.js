@@ -206,10 +206,27 @@ export class IndexedValues {
     dependency(key) {
         let canonical = key;
         if (key.startsWith('occurrence:')) {
-            const occurrence = this.occurrences.get(key.slice(11));
-            const candidate = occurrence && `function:${occurrence.owner}`;
-            if (candidate && this.fingerprint(candidate) === this.fingerprint(key))
-                canonical = candidate;
+            const id = key.slice(11);
+            const slot = this.#columns.occurrences.slots.get(id);
+            if (slot && 'owner' in slot) {
+                const { fragment, row } = slot.value;
+                // An admitted packed row shares its body's owner. Other providers keep
+                // their node's owner, including custom objects with observable getters.
+                const owner = fragment.packed ? fragment.owner : fragment.node(row).owner;
+                const candidate = `function:${owner}`;
+                const body = typeof owner === 'string' ? this.#columns.bodies.slots.get(owner) : undefined;
+                // Equal contributing facts read the very same hash entry. Establish
+                // that equality without expanding a node or rereading both hashes.
+                const sameOwner = body && 'owner' in body && body.owner === slot.owner;
+                if (sameOwner || this.fingerprint(candidate) === this.fingerprint(key))
+                    canonical = candidate;
+            }
+            else if (slot) {
+                const occurrence = this.occurrences.get(id);
+                const candidate = occurrence && `function:${occurrence.owner}`;
+                if (candidate && this.fingerprint(candidate) === this.fingerprint(key))
+                    canonical = candidate;
+            }
         }
         return this.#witnesses.get(canonical) ?? Object.freeze({ key: canonical, fingerprint: this.fingerprint(canonical) });
     }
