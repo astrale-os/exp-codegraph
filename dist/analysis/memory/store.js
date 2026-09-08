@@ -5,6 +5,8 @@ export function createMemoryAnalysisStore(options = {}) {
 }
 class MemoryAnalysisStore {
     #maximumRetained;
+    #maximumUniverses;
+    #mostRecentUniverse;
     #telemetry;
     #universes = new Map();
     #current = new Map();
@@ -12,6 +14,10 @@ class MemoryAnalysisStore {
     constructor(options) {
         this.#maximumRetained = options.maximumRetainedGenerations ?? 4;
         this.#telemetry = options.telemetry;
+        this.#maximumUniverses = options.maximumRetainedUniverses;
+        if (this.#maximumUniverses !== undefined && (!Number.isSafeInteger(this.#maximumUniverses) || this.#maximumUniverses < 1)) {
+            throw new RangeError('maximumRetainedUniverses must be a positive integer.');
+        }
         if (!Number.isSafeInteger(this.#maximumRetained) || this.#maximumRetained < 1) {
             throw new RangeError('maximumRetainedGenerations must be a positive integer.');
         }
@@ -34,6 +40,7 @@ class MemoryAnalysisStore {
         }
         retained.set(next.generation.sequence, { value: next, leases: 0 });
         this.#current.set(universe, next.generation.sequence);
+        this.activate(universe);
         this.collect(universe);
         if (this.#telemetry) {
             dispatchAnalysisTelemetry(this.#telemetry, {
@@ -53,6 +60,7 @@ class MemoryAnalysisStore {
         this.assertOpen();
         const retained = this.retained(universe, generation);
         retained.leases++;
+        this.activate(universe);
         return createQuery(retained.value, () => {
             retained.leases--;
             this.collect(universe);
@@ -111,7 +119,7 @@ class MemoryAnalysisStore {
     }
     collect(universe) {
         const values = this.#universes.get(universe);
-        if (!values || values.size <= this.#maximumRetained)
+        if (!values)
             return;
         const current = this.#current.get(universe);
         const candidates = [...values]
@@ -120,6 +128,22 @@ class MemoryAnalysisStore {
         while (values.size > this.#maximumRetained && candidates.length) {
             values.delete(candidates.shift()[0]);
         }
+        if (this.#maximumUniverses === undefined)
+            return;
+        for (const [candidate, generations] of this.#universes) {
+            if (this.#universes.size <= this.#maximumUniverses)
+                break;
+            if (candidate === this.#mostRecentUniverse || [...generations.values()].some((entry) => entry.leases > 0))
+                continue;
+            this.#universes.delete(candidate);
+            this.#current.delete(candidate);
+        }
+    }
+    activate(universe) {
+        this.#mostRecentUniverse = universe;
+        const retained = this.#universes.get(universe);
+        this.#universes.delete(universe);
+        this.#universes.set(universe, retained);
     }
     assertOpen() {
         if (this.#disposed)

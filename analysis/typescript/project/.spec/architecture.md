@@ -25,3 +25,10 @@ identity and exact effective budget select the evaluator; models never share con
 because their budgets match. Symbolic demand plans preserve closures privately, and independent
 resolutions expose evidence and explicit limits. Different budgets cannot reuse partial
 conclusions as complete evidence.
+
+The owned memory store retains at most two universes unless explicit reader leases
+require more. The resident project holds its own current-generation lease, replacing
+it only after opening the successful next generation. Historical reader access cannot
+evict that current result. Caller-supplied stores keep their own retention policy.
+Source-deletion metadata is keyed by universe and discarded when the corresponding
+owned-store lineage is collected; retained historical lineages keep their metadata.
