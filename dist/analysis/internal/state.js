@@ -4,6 +4,7 @@ import { TransactionError, validateFactTransaction } from '../generation/index.j
 import { deriveAnalysisId } from '../identity/index.js';
 import { stableJson } from '../identity/model.js';
 import { MemoryFactIndex } from './query-index.js';
+import { matchesMaterializedManifest } from './manifest.js';
 import { bindPhysicalFact, immutableFact } from '../facts/representation/index.js';
 export function materializeTransaction(current, transaction) {
     const diagnostics = [...validateFactTransaction(transaction, current?.generation.id)];
@@ -25,8 +26,7 @@ export function materializeTransaction(current, transaction) {
     }
     for (const shard of transaction.upserts)
         shards.set(shard.key, immutable(shard));
-    const actual = [...shards.values()].map(shardReference).sort(byKey);
-    if (stableJson(actual) !== stableJson(transaction.manifest)) {
+    if (!matchesMaterializedManifest(shards, transaction)) {
         throw new TransactionError('MANIFEST_INVALID', 'The transaction manifest is not the complete materialized next generation.');
     }
     const facts = [...shards.values()].flatMap((shard) => shard.facts);
