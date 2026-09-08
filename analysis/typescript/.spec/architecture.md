@@ -91,6 +91,10 @@ into the existing v1 identity hash. This preserves exact portable generation val
 retained generations without rebuilding a second JSON object graph. Hashing and ordering the full
 manifest remain linear in total project size; telemetry distinguishes entries encoded from bytes
 hashed so that reduced allocations cannot be mistaken for a fully incremental identity contract.
+During one canonical encoding, nested objects borrow a shared field workspace and return it on
+completion. Its storage follows the active nesting path, while a typed stable sort preserves
+duplicate-key last-value semantics. The workspace ends with that encoding and retains no project
+or generation state.
 
 The caller describes requested project inputs but never supplies a universe identifier. After the
 resident compiler loads the complete configuration chain, referenced project configurations, compiler and
