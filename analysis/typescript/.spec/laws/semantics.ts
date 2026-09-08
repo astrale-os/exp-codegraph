@@ -87,7 +87,7 @@ export const TYPESCRIPT_INCREMENTAL_EQUIVALENCE = defineLaw({
 export const TYPESCRIPT_AFFECTED_SOURCE_CLOSURE = defineLaw({
   id: 'TYPESCRIPT-AFFECTED-SOURCE-CLOSURE',
   statement:
-    'A compiler-proven private edit reprojects only its owning source shards; a declaration-shape change expands through the exact transitive reverse dependency closure, while global scope, import-graph uncertainty, root churn, configuration changes, and mutating plugins fail closed to a complete rebuild.',
+    'A compiler-proven private edit reprojects its owning source shards and revalidates the exact foreign runtime callable reads omitted by declaration emit; only changed callable observations select additional source owners. Retargeted reads are retained even when their current result is unchanged. A declaration-shape change expands through the exact transitive reverse dependency closure, while global scope, import-graph uncertainty, root churn, configuration changes, and mutating plugins fail closed to a complete rebuild.',
 })
 
 export const TYPESCRIPT_AFFECTED_MODULE_PROJECTION = defineLaw({

@@ -36,6 +36,7 @@ var supportedCapabilities = []string{
 }
 
 type extractor struct {
+	callableReads                map[string][]callableRead
 	root                         string
 	universe                     string
 	plan                         projectionPlan
@@ -64,7 +65,7 @@ type extractor struct {
 	requestID                    int
 }
 
-func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
+func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, map[string][]callableRead, error) {
 	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, maximumDecodedShardBytes, nil, nil, telemetry, requestID)
 	var shards []factShard
 	telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
@@ -86,7 +87,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		phase := time.Now()
 		moduleShards, err := x.moduleShards(program)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		shards = append(shards, moduleShards...)
 		moduleOwners, declarationShards, declarationReferences := moduleProjectionCounts(moduleShards)
@@ -100,7 +101,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	if plan.sourceOwned() {
 		sourceShards, err := x.sourceShards(files, nil, telemetry, requestID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		shards = append(shards, sourceShards...)
 	}
@@ -108,10 +109,10 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		"bytes": x.semanticPayloadBytes,
 	})
 	if x.payloadEncodingError != nil {
-		return nil, nil, x.payloadEncodingError
+		return nil, nil, nil, x.payloadEncodingError
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	return shards, records, nil
+	return shards, records, x.callableReads, nil
 }
 
 // prepareExtractor installs a complete source identity table while hashing only
@@ -131,7 +132,8 @@ func prepareExtractor(
 	requestID int,
 ) (*extractor, []*shimast.SourceFile, []sourceRecord) {
 	x := &extractor{
-		root: root, universe: universe, plan: plan, checker: program.Checker,
+		callableReads: map[string][]callableRead{},
+		root:          root, universe: universe, plan: plan, checker: program.Checker,
 		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
 		symbolSeen: map[string]symbolFactPayload{}, moduleDeclarations: map[*shimast.Symbol]moduleDeclarationObservation{},
 		moduleDeclarationsByIdentity: map[string]moduleDeclarationObservation{},

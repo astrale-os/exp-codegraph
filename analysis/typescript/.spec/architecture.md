@@ -57,8 +57,15 @@ closure over it, and advances the caller-owned store once. A mandatory pass, val
 or commit failure therefore cannot expose a native-only intermediate generation.
 
 Incremental extraction is ownership-driven. The resident compiler proves whether an edit preserved
-its import graph and declaration shape. Private edits replace only source-owned symbol, occurrence,
-and body shards; public-shape changes expand through TypeScript's reverse dependencies. The logical
+its import graph and declaration shape. Callable projection also records the foreign declarations
+actually read while following runtime const aliases and locating callback bodies; declaration emit
+alone cannot describe those values. Each committed generation retains these portable observations
+and their reverse source dependencies, without retaining Checker objects. A private edit revalidates
+only expressions which read its source, using the current Checker and the same projector. Recorded
+expressions are located in one syntax walk per affected owner, without a separate scan per call. An unchanged
+target preserves the consumer's shards while retaining any newly read dependencies; a changed target
+or absent expression selects that consumer for projection. Replacing an owning source removes its old
+observations. Public-shape changes expand through TypeScript's reverse dependencies. The logical
 public module observation remains complete. Its physical schema stores each canonical declaration
 once in a content-addressed declaration shard under the existing module capability namespace and
 stores only declaration identity, fact identity, and owner-local export paths in module shards. The
