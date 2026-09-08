@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
 import { isAbsolute, posix } from 'node:path';
+import { createAnalysisIdentityHash } from './hash.js';
 const kindPattern = /^[a-z][a-z0-9-]*$/u;
 const valuePattern = /^[a-z][a-z0-9-]*:[a-f0-9]{64}$/u;
 export function admitAnalysisId(kind, value) {
@@ -11,16 +11,7 @@ export function admitAnalysisId(kind, value) {
     return value;
 }
 export function deriveAnalysisId(kind, namespace, input) {
-    if (!kindPattern.test(kind))
-        throw new TypeError(`Invalid analysis identity kind: ${kind}`);
-    if (!namespace || namespace.includes('\0'))
-        throw new TypeError('Identity namespace is required.');
-    const digest = createHash('sha256')
-        .update('astrale.analysis.identity\0')
-        .update(kind)
-        .update('\0')
-        .update(namespace)
-        .update('\0')
+    const digest = createAnalysisIdentityHash(kind, namespace)
         .update(stableJson(input))
         .digest('hex');
     return `${kind}:${digest}`;

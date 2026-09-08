@@ -86,3 +86,8 @@ Shard content digests omit only the enclosing generation field from each fact. T
 those semantic shard digests determines the generation identity, after which transaction validation
 binds every fact to that exact generation. Fact IDs are row keys inside a generation-pinned query;
 there is no recursive digest construction.
+
+Generation identities stream the same canonical v1 preimage in bounded chunks. A weak cache
+reuses encodings of immutable flat manifest references; custom accessors, nested mutable data
+and toJSON behavior retain the generic canonicalizer. Complete hashing still visits every
+manifest byte, while an unchanged retained reference needs no new canonical object graph.
