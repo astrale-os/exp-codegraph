@@ -18,10 +18,16 @@ const transactionRecordEncoding = "base64-json-records/1"
 // shard and verifies the entire stream, then acknowledges its atomic commit.
 func writeRecordPayloadResponse(
 	output io.Writer, id int, payloadKind string, transaction *factTransaction,
-	maximumFrameBytes, transactionChunkFrameBytes, maximumTransactionBytes int,
+	maximumFrameBytes, transactionChunkFrameBytes int, limits recordLimits,
 	telemetry *nativeTelemetry,
 ) error {
 	started := time.Now()
+	if err := limits.validate(); err != nil {
+		return err
+	}
+	if err := validateSemanticShardBytes(transaction.Upserts, limits.MaximumDecodedShardBytes, limits.MaximumTransactionBytes); err != nil {
+		return err
+	}
 	manifest := transaction.Manifest
 	if payloadKind == "delta" {
 		manifest = nil
@@ -38,6 +44,9 @@ func writeRecordPayloadResponse(
 			encoded, err := json.Marshal(value)
 			if err != nil {
 				return fmt.Errorf("encode native transaction record: %w", err)
+			}
+			if len(encoded) >= limits.MaximumRecordBytes {
+				return fmt.Errorf("native record exceeds configured limit: bytes=%d limit=%d", len(encoded)+1, limits.MaximumRecordBytes)
 			}
 			encoded = append(encoded, '\n')
 			return write(encoded)
@@ -65,8 +74,8 @@ func writeRecordPayloadResponse(
 	digest := sha256.New()
 	bytes := 0
 	if err := visit(func(record []byte) error {
-		if len(record) > maximumTransactionBytes-bytes {
-			return fmt.Errorf("native transaction exceeds configured limit: bytes=%d limit=%d", bytes+len(record), maximumTransactionBytes)
+		if limits.MaximumPhysicalTransactionBytes > 0 && len(record) > limits.MaximumPhysicalTransactionBytes-bytes {
+			return fmt.Errorf("native transaction exceeds configured limit: bytes=%d limit=%d", bytes+len(record), limits.MaximumPhysicalTransactionBytes)
 		}
 		bytes += len(record)
 		_, err := digest.Write(record)
@@ -133,4 +142,35 @@ func writeRecordPayloadResponse(
 		"chunked": true, "records": 1 + len(manifest) + len(transaction.Upserts) + len(transaction.Deletes),
 	})
 	return err
+}
+
+func (limits recordLimits) validate() error {
+	if limits.MaximumRecordBytes < 1024 || limits.MaximumDecodedShardBytes < 1024 {
+		return fmt.Errorf("record and decoded shard limits must be at least 1024 bytes")
+	}
+	if (limits.MaximumTransactionBytes != 0 && limits.MaximumTransactionBytes < 1024) || (limits.MaximumPhysicalTransactionBytes != 0 && limits.MaximumPhysicalTransactionBytes < 1024) {
+		return fmt.Errorf("record-stream aggregate limits must be zero or at least 1024 bytes")
+	}
+	return nil
+}
+
+func validateSemanticShardBytes(shards []factShard, maximumDecodedShardBytes, maximumTransactionBytes int) error {
+	totalSemanticBytes := 0
+	for _, shard := range shards {
+		semanticBytes := 0
+		for _, fact := range shard.Facts {
+			if fact.semanticBytes <= 0 {
+				return fmt.Errorf("native fact omitted its admitted semantic payload size")
+			}
+			if fact.semanticBytes > maximumDecodedShardBytes-semanticBytes {
+				return fmt.Errorf("semantic shard payloads exceed configured limit: bytes=%d limit=%d", semanticBytes+fact.semanticBytes, maximumDecodedShardBytes)
+			}
+			semanticBytes += fact.semanticBytes
+			if maximumTransactionBytes > 0 && fact.semanticBytes > maximumTransactionBytes-totalSemanticBytes {
+				return fmt.Errorf("semantic fact payloads exceed configured limit: bytes=%d limit=%d", totalSemanticBytes+fact.semanticBytes, maximumTransactionBytes)
+			}
+			totalSemanticBytes += fact.semanticBytes
+		}
+	}
+	return nil
 }

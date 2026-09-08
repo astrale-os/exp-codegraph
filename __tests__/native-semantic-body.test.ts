@@ -1,4 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { spawn, spawnSync } from 'node:child_process'
+import { once } from 'node:events'
+import { createInterface } from 'node:readline'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -77,6 +80,97 @@ export const local = localHelper()
 `
 
 describe('native executable scope facts', () => {
+  it('budgets the transmitted delta independently of discarded public fanout and rechecks pending replay', async () => {
+    const current = await fixture("import { helper } from './builder.js'; export const value = helper()\n", true, undefined, async (root) => {
+      await Promise.all(Array.from({ length: 16 }, (_, index) => writeFile(join(root, `unit${index}.ts`),
+        `import { helper } from './builder.js'; export function unit${index}() { return helper() + '${'x'.repeat(2000)}' }\n`)))
+    })
+    const child = spawn(command, ['serve', '--cwd', current.root, '--tsconfig', 'tsconfig.json',
+      '--capabilities-json', '["typescript.source","typescript.body"]',
+      '--payload-codecs-json', JSON.stringify(TYPESCRIPT_FACT_PAYLOAD_CODECS.map((codec) => codec.id)), '--telemetry-stderr'],
+    { stdio: ['pipe', 'pipe', 'pipe'] })
+    const closed = once(child, 'close')
+    const timeout = setTimeout(() => child.kill(), 20_000)
+    const lines = createInterface({ input: child.stdout })
+    const iterator = lines[Symbol.asyncIterator]()
+    const events: AnalysisTelemetryEvent[] = []
+    let stderr = '', telemetry = ''
+    child.stderr.on('data', (chunk) => {
+      telemetry += chunk
+      let end: number
+      while ((end = telemetry.indexOf('\n')) >= 0) {
+        const line = telemetry.slice(0, end)
+        const prefix = '@astrale/codegraph/telemetry '
+        if (line.startsWith(prefix)) events.push(JSON.parse(line.slice(prefix.length)))
+        else stderr += line + '\n'
+        telemetry = telemetry.slice(end + 1)
+      }
+    })
+    const request = async (value: unknown) => {
+      child.stdin.write(JSON.stringify(value) + '\n')
+      const frames = []
+      for (;;) {
+        const line = await iterator.next()
+        if (line.done) throw new Error(stderr || 'native closed before its response')
+        const frame = JSON.parse(line.value)
+        frames.push(frame)
+        if (['transaction-end', 'acknowledged', 'error'].includes(frame.kind)) return frames
+      }
+    }
+    const generation = (frames: readonly { kind: string; data?: string }[]) => {
+      const records = Buffer.concat(frames.filter((frame) => frame.kind === 'transaction-chunk').map((frame) => Buffer.from(frame.data!, 'base64'))).toString('utf8')
+      return JSON.parse(records.slice(0, records.indexOf('\n')))[1].next
+    }
+    try {
+      const limits = { maximumRecordBytes: 256 * 1024, maximumDecodedShardBytes: 256 * 1024, maximumTransactionBytes: 0, maximumPhysicalTransactionBytes: 0 }
+      const initial = generation(await request({ id: 1, kind: 'refresh', recordLimits: limits }))
+      await request({ id: 2, kind: 'acknowledge', generation: initial.id, sequence: initial.sequence })
+      await writeFile(join(current.root, 'builder.ts'), `export const helper = () => 'query-id'\nexport const additional = true\n`)
+      const delta = await request({ id: 3, kind: 'refresh', base: initial.id, baseSequence: initial.sequence, changes: [{ path: 'builder.ts', kind: 'change' }], recordLimits: { ...limits, maximumTransactionBytes: 64 * 1024 } })
+      expect(delta.at(-1), JSON.stringify(delta.at(-1))).toMatchObject({ kind: 'transaction-end' })
+      expect(generation(delta).sequence).toBe(2)
+      await expect(request({ id: 4, kind: 'refresh', base: initial.id, baseSequence: initial.sequence, recordLimits: { ...limits, maximumTransactionBytes: 1024 } })).rejects.toThrow('semantic fact payloads exceed')
+      await closed
+      const measured = events.find((event) => event.phase === 'facts.semantic-payloads' && event.request === 3)!
+      expect(measured.metrics!.bytes).toBeGreaterThan(64 * 1024)
+    } finally { clearTimeout(timeout); child.kill(); lines.close(); await closed; await current.close() }
+  })
+
+  it('negotiates record budgets through requests and recovers after an explicit aggregate rejection', async () => {
+    const current = await fixture('export const initial = 1\n', true, undefined, async (root) => {
+      await Promise.all(Array.from({ length: 16 }, (_, index) => writeFile(
+        join(root, `unit${index}.ts`), `export function unit${index}() { return '${'x'.repeat(500)}' }\n`,
+      )))
+    })
+    try {
+      const limits = { maximumRecordBytes: 64 * 1024, maximumDecodedShardBytes: 64 * 1024, maximumTransactionBytes: 0, maximumPhysicalTransactionBytes: 0 }
+      const result = spawnSync(command, ['serve', '--cwd', current.root, '--tsconfig', 'tsconfig.json',
+        '--capabilities-json', '["typescript.source","typescript.body"]',
+        '--payload-codecs-json', JSON.stringify(TYPESCRIPT_FACT_PAYLOAD_CODECS.map((codec) => codec.id)),
+        // These are also accepted by older binaries, which ignore recordLimits.
+        '--maximum-transaction-bytes', '1024', '--maximum-physical-transaction-bytes', '1024'], {
+        encoding: 'utf8', timeout: 10_000, maxBuffer: 8 * 1024 * 1024,
+        input: [
+          { id: 1, kind: 'refresh', recordLimits: { ...limits, maximumRecordBytes: 0 } },
+          { id: 2, kind: 'refresh', recordLimits: { ...limits, maximumTransactionBytes: 1024 } },
+          { id: 3, kind: 'refresh', recordLimits: limits },
+        ].map((request) => JSON.stringify(request) + '\n').join(''),
+      })
+      expect(result.error).toBeUndefined()
+      expect(result.status, result.stderr).toBe(0)
+      const frames = result.stdout.trim().split('\n').map((line) => JSON.parse(line))
+      expect(frames[0]).toMatchObject({ id: 1, kind: 'error', code: 'REQUEST_INVALID' })
+      expect(frames[1]).toMatchObject({ id: 2, kind: 'error', code: 'ANALYSIS_FAILED' })
+      expect(frames[1].message).toContain('semantic fact payloads exceed')
+      expect(frames[2]).toMatchObject({ id: 3, kind: 'transaction-start', encoding: 'base64-json-records/1' })
+      expect(frames.at(-1)).toMatchObject({ id: 3, kind: 'transaction-end' })
+      const records = Buffer.concat(frames.filter((frame) => frame.kind === 'transaction-chunk').map((frame) => Buffer.from(frame.data, 'base64'))).toString('utf8').trim().split('\n')
+      expect(JSON.parse(records[0]!)[1].next.sequence).toBe(1)
+      expect(records.filter((line) => JSON.parse(line)[0] === 'upsert').length).toBeGreaterThan(16)
+      expect(records.every((line) => Buffer.byteLength(line) + 1 <= limits.maximumRecordBytes)).toBe(true)
+    } finally { await current.close() }
+  })
+
   it('encodes only changed identity entries while retaining the complete generation manifest', async () => {
     const events: AnalysisTelemetryEvent[] = []
     const text = `export function current() { return 1 }\n`

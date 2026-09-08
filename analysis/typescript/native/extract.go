@@ -57,14 +57,15 @@ type extractor struct {
 	payloadCodecs                map[string]bool
 	bodyPackingError             error
 	maximumSemanticPayloadBytes  int
+	maximumDecodedShardBytes     int
 	semanticPayloadBytes         int
 	payloadEncodingError         error
 	telemetry                    *nativeTelemetry
 	requestID                    int
 }
 
-func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
-	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, nil, nil, telemetry, requestID)
+func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
+	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, maximumDecodedShardBytes, nil, nil, telemetry, requestID)
 	var shards []factShard
 	telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
 		"capabilities": strings.Join(plan.capabilities(), ","),
@@ -123,7 +124,7 @@ func prepareExtractor(
 	modules []moduleBoundary,
 	plan projectionPlan,
 	payloadCodecs map[string]bool,
-	maximumSemanticPayloadBytes int,
+	maximumSemanticPayloadBytes, maximumDecodedShardBytes int,
 	prior map[string]sourceRecord,
 	selected map[string]bool,
 	telemetry *nativeTelemetry,
@@ -135,8 +136,8 @@ func prepareExtractor(
 		symbolSeen: map[string]symbolFactPayload{}, moduleDeclarations: map[*shimast.Symbol]moduleDeclarationObservation{},
 		moduleDeclarationsByIdentity: map[string]moduleDeclarationObservation{},
 		modules:                      modules, payloadCodecs: payloadCodecs,
-		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
-		telemetry:                   telemetry, requestID: requestID,
+		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes, maximumDecodedShardBytes: maximumDecodedShardBytes,
+		telemetry: telemetry, requestID: requestID,
 	}
 	phase := time.Now()
 	files := program.SourceFiles()
@@ -429,13 +430,18 @@ func (x *extractor) newFactVersionWithIdentityPayload(
 	completion completeness,
 	schemaVersion int,
 ) fact {
+	semanticBytes := 0
 	if x.payloadEncodingError == nil {
 		encoded, err := json.Marshal(payload)
 		if err != nil {
 			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)
 		} else {
-			x.semanticPayloadBytes += len(encoded)
-			if x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
+			semanticBytes = len(encoded)
+			x.semanticPayloadBytes += semanticBytes
+			if x.maximumDecodedShardBytes > 0 && semanticBytes > x.maximumDecodedShardBytes {
+				x.payloadEncodingError = fmt.Errorf("semantic fact payload exceeds decoded shard limit: bytes=%d limit=%d", semanticBytes, x.maximumDecodedShardBytes)
+			}
+			if x.maximumSemanticPayloadBytes > 0 && x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
 				x.payloadEncodingError = fmt.Errorf(
 					"semantic fact payloads exceed configured limit: bytes=%d limit=%d",
 					x.semanticPayloadBytes,
@@ -457,7 +463,7 @@ func (x *extractor) newFactVersionWithIdentityPayload(
 		ID: id, Namespace: namespace, SchemaVersion: schemaVersion, Kind: kind, Subject: subject,
 		Completeness: completion,
 		Provenance:   provenance{Pass: pass, PassVersion: passVersion, Evidence: evidence, Inputs: []string{}},
-		Payload:      payload,
+		Payload:      payload, semanticBytes: semanticBytes,
 	}
 }
 

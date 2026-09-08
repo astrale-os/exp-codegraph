@@ -130,9 +130,13 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly maximumFrameBytes?: number
   /** Preferred frame ceiling for chunks within a streamed transaction. */
   readonly transactionChunkFrameBytes?: number
-  /** Maximum decoded semantic Fact-payload bytes in one response. */
+  /** Maximum encoded bytes in one streamed record, including its newline. */
+  readonly maximumRecordBytes?: number
+  /** Maximum total expanded semantic payload bytes in one shard. */
+  readonly maximumDecodedShardBytes?: number
+  /** Optional aggregate semantic payload limit; legacy responses default to 384 MiB. */
   readonly maximumTransactionBytes?: number
-  /** Maximum encoded physical bytes assembled before semantic decoding. */
+  /** Optional aggregate physical limit; legacy responses default to 512 MiB. */
   readonly maximumPhysicalTransactionBytes?: number
   readonly maximumErrorBytes?: number
   /** Optional adapter-owned native-process resident-set watchdog. */
@@ -148,6 +152,8 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
 export const DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS: Readonly<{
   readonly maximumFrameBytes: number
   readonly transactionChunkFrameBytes: number
+  readonly maximumRecordBytes: number
+  readonly maximumDecodedShardBytes: number
   readonly maximumTransactionBytes: number
   readonly maximumPhysicalTransactionBytes: number
   readonly maximumErrorBytes: number
