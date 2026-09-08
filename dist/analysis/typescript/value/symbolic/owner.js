@@ -1,5 +1,5 @@
 import { createTypeScriptFactReader } from '../../facts/index.js';
-import { IndexedValues, loadValueIndex } from './facts.js';
+import { IndexedValues, loadValueIndex, readIndexedBodies } from './facts.js';
 import { ValueIndexTable } from './table.js';
 /** Project-local ownership: one current revision plus explicit snapshot leases, with no history chain. */
 export class ValueIndexOwner {
@@ -105,7 +105,7 @@ export class ValueIndexOwner {
                 ids[shard.kind].push(...shard.facts);
         }
         const [bodies, symbols, sources] = await Promise.all([
-            reader.factsById('body', ids.body), reader.factsById('symbol', ids.symbol), reader.factsById('source', ids.source),
+            readIndexedBodies(query, ids.body), reader.factsById('symbol', ids.symbol), reader.factsById('source', ids.source),
         ]);
         if (bodies.length !== ids.body.length || symbols.length !== ids.symbol.length || sources.length !== ids.source.length) {
             throw new Error('A committed value index shard is missing facts in its pinned query.');

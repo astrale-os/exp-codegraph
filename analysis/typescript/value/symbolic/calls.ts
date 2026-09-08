@@ -11,6 +11,7 @@ interface CallIndex {
   readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>
   readonly calls: ReadonlyMap<OccurrenceId, ResolvedCall>
   readonly sources?: ReadonlyMap<SourceId, TypeScriptFact<'source'>>
+  readonly callsBySource?: ReadonlyMap<SourceId, readonly OccurrenceId[]>
 }
 
 // These limitations affect execution topology, while walkOwned still visits
@@ -24,7 +25,7 @@ export function createCallProjection(query: AnalysisQuery, loadIndex: () => Prom
   let pending: Promise<{
     index: CallIndex
     paths: ReadonlyMap<SourceId, string>
-    calls: ReadonlyMap<SourceId, readonly ResolvedCall[]>
+    calls: ReadonlyMap<SourceId, readonly OccurrenceId[]>
     completion: Completeness
     bySource: ReadonlyMap<SourceId, Completeness>
   }> | undefined
@@ -39,7 +40,7 @@ export function createCallProjection(query: AnalysisQuery, loadIndex: () => Prom
       const [index, capabilities] = await Promise.all([loadIndex(), query.capabilities()])
       const sourceFacts = index.sources ? [...index.sources.values()] : await collect(reader.export('source'))
       const paths = new Map(sourceFacts.map((fact) => [fact.payload.source, fact.payload.logicalPath]))
-      const calls = new Map<SourceId, ResolvedCall[]>()
+      let calls: ReadonlyMap<SourceId, readonly OccurrenceId[]> = index.callsBySource ?? new Map()
       const bySource = new Map<SourceId, Completeness>()
       let completion: Completeness = { kind: 'complete' }
       const attributed = new Set([...index.bodies.values()].flatMap((fact) =>
@@ -58,12 +59,16 @@ export function createCallProjection(query: AnalysisQuery, loadIndex: () => Prom
         if (source) bySource.set(source, combineCompleteness(bySource.get(source), completeness))
         else completion = combineCompleteness(completion, completeness)
       }
-      for (const call of index.calls.values()) {
-        const occurrence = index.occurrences.get(call.occurrence)
-        if (!occurrence) throw new Error(`Call ${call.occurrence} has no admitted occurrence.`)
-        let values = calls.get(occurrence.span.source)
-        if (!values) calls.set(occurrence.span.source, (values = []))
-        values.push(call)
+      if (!index.callsBySource) {
+        const discovered = new Map<SourceId, OccurrenceId[]>()
+        for (const call of index.calls.values()) {
+          const occurrence = index.occurrences.get(call.occurrence)
+          if (!occurrence) throw new Error(`Call ${call.occurrence} has no admitted occurrence.`)
+          let values = discovered.get(occurrence.span.source)
+          if (!values) discovered.set(occurrence.span.source, (values = []))
+          values.push(call.occurrence)
+        }
+        calls = discovered
       }
       return { index, paths, calls, completion, bySource }
     })().catch((error) => { pending = undefined; throw error })
@@ -85,16 +90,19 @@ export function createCallProjection(query: AnalysisQuery, loadIndex: () => Prom
     }
     for (const [source, calls] of inventory.calls) {
       if (!selected(source)) continue
-      for (const call of calls) {
+      for (const id of new Set(calls)) {
         signal?.throwIfAborted()
+        const call = inventory.index.calls.get(id)!
         let site = sites.get(call.occurrence)
         if (!site) {
           const occurrence = inventory.index.occurrences.get(call.occurrence)!
+          if (occurrence.span.source !== source) continue
           const callee = inventory.index.children.get(call.occurrence)?.get('callee')
           const path = inventory.paths.get(source)
           site = Object.freeze({ call, occurrence, ...(callee ? { callee } : {}), ...(path !== undefined ? { path } : {}) })
           sites.set(call.occurrence, site)
         }
+        if (site.occurrence.span.source !== source) continue
         if (!site.callee || site.path === undefined) completeness = combineCompleteness(completeness, {
           kind: 'partial', reasons: [{ code: 'CALL_SITE_RELATION_MISSING',
             message: 'A call site lacks its callee relation or logical source path.', effective: {} }],

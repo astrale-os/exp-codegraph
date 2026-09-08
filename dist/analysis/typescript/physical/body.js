@@ -1,4 +1,4 @@
-import { ownFactPayloadCodec } from '../../facts/representation/index.js';
+import { ownFactPayloadCodec, physicalPayloadForProjection } from '../../facts/representation/index.js';
 import { validateFunctionBodyIR } from '../body/model.js';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/5';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC = Object.freeze({
@@ -42,32 +42,7 @@ function decodePackedTypeScriptBody(input, version) {
     const texts = uniqueStrings(packed.t, 'texts');
     const symbol = (value, path) => symbols[ordinal(value, symbols.length, path)];
     const text = (value, path) => texts[ordinal(value, texts.length, path)];
-    const occurrences = Array.from(array(packed.o, 'occurrences'), (value, index) => {
-        const row = exactTuple(value, version >= 5 ? 11 : version >= 4 ? 8 : version >= 3 ? 7 : 6, `occurrences[${index}]`);
-        const symbolIndex = optionalOrdinal(row[5], symbols.length, `occurrences[${index}].symbol`);
-        const operatorIndex = version < 4 ? undefined : optionalOrdinal(row[7], texts.length, `occurrences[${index}].operator`);
-        const symbolKindIndex = version < 5 ? undefined : optionalOrdinal(row[8], texts.length, `occurrences[${index}].symbolKind`);
-        const propertyNameIndex = version < 5 ? undefined : optionalOrdinal(row[9], texts.length, `occurrences[${index}].propertyName`);
-        const propertyNamespaceIndex = version < 5 ? undefined : optionalOrdinal(row[10], symbols.length, `occurrences[${index}].propertyNamespace`);
-        return {
-            id: expandId(row[0], 'occurrence'),
-            kind: text(row[1], `occurrences[${index}].kind`),
-            span: {
-                source,
-                revision,
-                start: integer(row[2], 0, `occurrences[${index}].start`),
-                end: integer(row[3], 1, `occurrences[${index}].end`),
-            },
-            owner,
-            syntax: text(row[4], `occurrences[${index}].syntax`),
-            ...(symbolIndex === undefined ? {} : { symbol: symbols[symbolIndex] }),
-            ...(version < 3 || row[6] === null ? {} : { symbolOrigin: admitSymbolOrigin(row[6]) }),
-            ...(operatorIndex === undefined ? {} : { operator: texts[operatorIndex] }),
-            ...(symbolKindIndex === undefined ? {} : { symbolKind: texts[symbolKindIndex] }),
-            ...(propertyNameIndex === undefined ? {} : { propertyName: texts[propertyNameIndex] }),
-            ...(propertyNamespaceIndex === undefined ? {} : { propertyNamespace: symbols[propertyNamespaceIndex] }),
-        };
-    });
+    const occurrences = Array.from(array(packed.o, 'occurrences'), (value, index) => decodeOccurrence(value, index, version, source, revision, owner, symbols, texts));
     unique(occurrences.map((entry) => entry.id), 'occurrence identities');
     const occurrence = (value, path) => occurrences[ordinal(value, occurrences.length, path)].id;
     const parameters = Array.from(array(packed.p, 'parameters'), (entry, index) => symbol(entry, `parameters[${index}]`));
@@ -108,33 +83,7 @@ function decodePackedTypeScriptBody(input, version) {
             reaching: text(row[3], `definitions[${index}].reaching`),
         };
     });
-    const calls = Array.from(array(packed.a, 'calls'), (value, index) => {
-        const row = exactTuple(value, version === 1 ? 9 : 10, `calls[${index}]`);
-        const target = optionalOrdinal(row[1], symbols.length, `calls[${index}].target`);
-        const signature = optionalOrdinal(row[2], texts.length, `calls[${index}].signature`);
-        const receiver = optionalOrdinal(row[3], occurrences.length, `calls[${index}].receiver`);
-        return {
-            occurrence: occurrence(row[0], `calls[${index}].occurrence`),
-            ...(target === undefined ? {} : { target: symbols[target] }),
-            ...(version === 1 || row[9] === null ? {} : { targetOrigin: admitSymbolOrigin(row[9]) }),
-            ...(signature === undefined ? {} : { signature: texts[signature] }),
-            ...(receiver === undefined ? {} : { receiver: occurrences[receiver].id }),
-            typeArguments: Array.from(array(row[4], `calls[${index}].typeArguments`), (entry, valueIndex) => text(entry, `calls[${index}].typeArguments[${valueIndex}]`)),
-            arguments: Array.from(array(row[5], `calls[${index}].arguments`), (entry, valueIndex) => occurrence(entry, `calls[${index}].arguments[${valueIndex}]`)),
-            bindings: Array.from(array(row[6], `calls[${index}].bindings`), (entry, bindingIndex) => {
-                const binding = exactTuple(entry, 4, `calls[${index}].bindings[${bindingIndex}]`);
-                const parameter = optionalOrdinal(binding[1], symbols.length, `calls[${index}].bindings[${bindingIndex}].parameter`);
-                return {
-                    argument: occurrence(binding[0], `calls[${index}].bindings[${bindingIndex}].argument`),
-                    ...(parameter === undefined ? {} : { parameter: symbols[parameter] }),
-                    index: integer(binding[2], 0, `calls[${index}].bindings[${bindingIndex}].index`),
-                    rest: bit(binding[3], `calls[${index}].bindings[${bindingIndex}].rest`),
-                };
-            }),
-            callbacks: Array.from(array(row[7], `calls[${index}].callbacks`), (entry, valueIndex) => symbol(entry, `calls[${index}].callbacks[${valueIndex}]`)),
-            dynamic: bit(row[8], `calls[${index}].dynamic`),
-        };
-    });
+    const calls = Array.from(array(packed.a, 'calls'), (value, index) => decodeCall(value, index, version, symbols, texts, occurrences.length, occurrence));
     const summary = exactTuple(packed.u, 6, 'summary');
     const body = {
         ...(scope === undefined ? {} : { scope: scope }),
@@ -172,6 +121,62 @@ function decodePackedTypeScriptBody(input, version) {
         values[occurrences[key].id] = admitValueResult(row[1], `values[${index}].value`);
     }
     return { body, values, completeness: admitCompleteness(packed.q, 'completeness') };
+}
+function decodeOccurrence(value, index, version, source, revision, owner, symbols, texts) {
+    const text = (value, path) => texts[ordinal(value, texts.length, path)];
+    const row = exactTuple(value, version >= 5 ? 11 : version >= 4 ? 8 : version >= 3 ? 7 : 6, `occurrences[${index}]`);
+    const symbolIndex = optionalOrdinal(row[5], symbols.length, `occurrences[${index}].symbol`);
+    const operatorIndex = version < 4 ? undefined : optionalOrdinal(row[7], texts.length, `occurrences[${index}].operator`);
+    const symbolKindIndex = version < 5 ? undefined : optionalOrdinal(row[8], texts.length, `occurrences[${index}].symbolKind`);
+    const propertyNameIndex = version < 5 ? undefined : optionalOrdinal(row[9], texts.length, `occurrences[${index}].propertyName`);
+    const propertyNamespaceIndex = version < 5 ? undefined : optionalOrdinal(row[10], symbols.length, `occurrences[${index}].propertyNamespace`);
+    return {
+        id: expandId(row[0], 'occurrence'),
+        kind: text(row[1], `occurrences[${index}].kind`),
+        span: {
+            source,
+            revision,
+            start: integer(row[2], 0, `occurrences[${index}].start`),
+            end: integer(row[3], 1, `occurrences[${index}].end`),
+        },
+        owner,
+        syntax: text(row[4], `occurrences[${index}].syntax`),
+        ...(symbolIndex === undefined ? {} : { symbol: symbols[symbolIndex] }),
+        ...(version < 3 || row[6] === null ? {} : { symbolOrigin: admitSymbolOrigin(row[6]) }),
+        ...(operatorIndex === undefined ? {} : { operator: texts[operatorIndex] }),
+        ...(symbolKindIndex === undefined ? {} : { symbolKind: texts[symbolKindIndex] }),
+        ...(propertyNameIndex === undefined ? {} : { propertyName: texts[propertyNameIndex] }),
+        ...(propertyNamespaceIndex === undefined ? {} : { propertyNamespace: symbols[propertyNamespaceIndex] }),
+    };
+}
+function decodeCall(value, index, version, symbols, texts, occurrenceCount, occurrence) {
+    const symbol = (value, path) => symbols[ordinal(value, symbols.length, path)];
+    const text = (value, path) => texts[ordinal(value, texts.length, path)];
+    const row = exactTuple(value, version === 1 ? 9 : 10, `calls[${index}]`);
+    const target = optionalOrdinal(row[1], symbols.length, `calls[${index}].target`);
+    const signature = optionalOrdinal(row[2], texts.length, `calls[${index}].signature`);
+    const receiver = optionalOrdinal(row[3], occurrenceCount, `calls[${index}].receiver`);
+    return {
+        occurrence: occurrence(row[0], `calls[${index}].occurrence`),
+        ...(target === undefined ? {} : { target: symbols[target] }),
+        ...(version === 1 || row[9] === null ? {} : { targetOrigin: admitSymbolOrigin(row[9]) }),
+        ...(signature === undefined ? {} : { signature: texts[signature] }),
+        ...(receiver === undefined ? {} : { receiver: occurrence(receiver, `calls[${index}].receiver`) }),
+        typeArguments: Array.from(array(row[4], `calls[${index}].typeArguments`), (entry, valueIndex) => text(entry, `calls[${index}].typeArguments[${valueIndex}]`)),
+        arguments: Array.from(array(row[5], `calls[${index}].arguments`), (entry, valueIndex) => occurrence(entry, `calls[${index}].arguments[${valueIndex}]`)),
+        bindings: Array.from(array(row[6], `calls[${index}].bindings`), (entry, bindingIndex) => {
+            const binding = exactTuple(entry, 4, `calls[${index}].bindings[${bindingIndex}]`);
+            const parameter = optionalOrdinal(binding[1], symbols.length, `calls[${index}].bindings[${bindingIndex}].parameter`);
+            return {
+                argument: occurrence(binding[0], `calls[${index}].bindings[${bindingIndex}].argument`),
+                ...(parameter === undefined ? {} : { parameter: symbols[parameter] }),
+                index: integer(binding[2], 0, `calls[${index}].bindings[${bindingIndex}].index`),
+                rest: bit(binding[3], `calls[${index}].bindings[${bindingIndex}].rest`),
+            };
+        }),
+        callbacks: Array.from(array(row[7], `calls[${index}].callbacks`), (entry, valueIndex) => symbol(entry, `calls[${index}].callbacks[${valueIndex}]`)),
+        dynamic: bit(row[8], `calls[${index}].dynamic`),
+    };
 }
 function admitSymbolOrigin(input) {
     const value = exactRecord(input, ['package', 'file', 'path'], 'symbol origin');
@@ -373,5 +378,147 @@ function bit(value, path) {
     if (value !== 0 && value !== 1)
         throw new TypeError(`Packed ${path} must be 0 or 1.`);
     return value === 1;
+}
+/** Private column view; creation requires the exact admitted, owned physical state. */
+export class PackedTypeScriptBodyProjection {
+    record;
+    owner;
+    source;
+    revision;
+    occurrences;
+    calls;
+    effectCandidates;
+    #packed;
+    #version;
+    #symbols;
+    #texts;
+    #nodes = new Map();
+    #resolvedCalls = new Map();
+    #children;
+    #parents;
+    #definitions;
+    #definite;
+    #values;
+    constructor(record, version) {
+        this.record = record;
+        this.#packed = record.data;
+        this.#version = version;
+        const packed = this.#packed;
+        this.owner = expandId(packed.c[2], 'symbol');
+        this.source = expandId(packed.c[0], 'source');
+        this.revision = expandId(packed.c[1], 'source-revision');
+        this.#symbols = packed.s.map((entry) => expandId(entry, 'symbol'));
+        this.#texts = packed.t;
+        this.occurrences = packed.o.map((row) => expandId(row[0], 'occurrence'));
+        this.calls = packed.a.map((row) => row[0]);
+        this.effectCandidates = packed.o.flatMap((row, index) => this.#texts[row[4]] === 'VariableDeclaration' || this.#texts[row[4]] === 'DeleteExpression' ||
+            this.#texts[row[1]] === 'assignment' ? [index] : []);
+    }
+    effectNode(index) {
+        const row = this.#packed.o[index];
+        return { id: this.occurrences[index], owner: this.owner,
+            kind: this.#texts[row[1]],
+            syntax: this.#texts[row[4]], ...(row[5] === -1 ? {} : { symbol: this.#symbols[row[5]] }) };
+    }
+    effectCall(index) {
+        const row = this.#packed.a[index];
+        return { occurrence: this.occurrences[row[0]],
+            ...(row[1] === -1 ? {} : { target: this.#symbols[row[1]] }), dynamic: row[8] === 1,
+            arguments: row[5].map((value) => this.occurrences[value]),
+            bindings: row[6].map((binding) => ({ argument: this.occurrences[binding[0]],
+                ...(binding[1] === -1 ? {} : { parameter: this.#symbols[binding[1]] }), index: binding[2], rest: binding[3] === 1 })) };
+    }
+    occurrence(index) {
+        let value = this.#nodes.get(index);
+        if (!value) {
+            value = freezeProjection(decodeOccurrence(this.#packed.o[index], index, this.#version, this.source, this.revision, this.owner, this.#symbols, this.#texts));
+            this.#nodes.set(index, value);
+        }
+        return value;
+    }
+    call(index) {
+        let value = this.#resolvedCalls.get(index);
+        if (!value) {
+            value = freezeProjection(decodeCall(this.#packed.a[index], index, this.#version, this.#symbols, this.#texts, this.occurrences.length, (ordinal) => this.occurrences[ordinal]));
+            this.#resolvedCalls.set(index, value);
+        }
+        return value;
+    }
+    children(index) {
+        this.relations();
+        const rows = this.#children.get(index);
+        return rows && new Map([...rows].map(([role, child]) => [role, this.occurrences[child]]));
+    }
+    parents(index) {
+        this.relations();
+        return this.#parents.get(index)?.map(({ parent, role }) => ({ parent: this.occurrences[parent], role }));
+    }
+    definitions(index) {
+        this.definitionRows();
+        return this.#definitions.get(index)?.map((row) => this.occurrences[row]);
+    }
+    definite(index) { this.definitionRows(); return this.#definite.has(index); }
+    value(index) {
+        this.#values ??= new Map(this.#packed.v.map(([key, value], index) => [key, freezeProjection(admitValueResult(value, `values[${index}].value`))]));
+        return this.#values.get(index);
+    }
+    relations() {
+        if (this.#children)
+            return;
+        const children = new Map();
+        const parents = new Map();
+        for (const [parent, child, text] of this.#packed.r) {
+            const role = this.#texts[text];
+            let outgoing = children.get(parent);
+            if (!outgoing)
+                children.set(parent, (outgoing = new Map()));
+            outgoing.set(role, child);
+            let incoming = parents.get(child);
+            if (!incoming)
+                parents.set(child, (incoming = []));
+            incoming.push({ parent, role });
+        }
+        this.#children = children;
+        this.#parents = parents;
+    }
+    definitionRows() {
+        if (this.#definitions)
+            return;
+        const definitions = new Map();
+        const definite = new Set();
+        for (const [definition, use, , reaching] of this.#packed.d) {
+            let values = definitions.get(use);
+            if (!values)
+                definitions.set(use, (values = []));
+            values.push(definition);
+            if (this.#texts[reaching] === 'definite')
+                definite.add(use);
+        }
+        this.#definitions = definitions;
+        this.#definite = definite;
+    }
+}
+const BODY_PROJECTIONS = new WeakMap();
+export function projectPackedTypeScriptBody(fact) {
+    for (let index = 0; index < TYPESCRIPT_FACT_PAYLOAD_CODECS.length; index++) {
+        const record = physicalPayloadForProjection(fact, TYPESCRIPT_FACT_PAYLOAD_CODECS[index]);
+        if (!record)
+            continue;
+        let projection = BODY_PROJECTIONS.get(record);
+        if (!projection) {
+            projection = new PackedTypeScriptBodyProjection(record, 5 - index);
+            BODY_PROJECTIONS.set(record, projection);
+        }
+        return projection;
+    }
+    return undefined;
+}
+function freezeProjection(value) {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+        for (const entry of Object.values(value))
+            freezeProjection(entry);
+        Object.freeze(value);
+    }
+    return value;
 }
 //# sourceMappingURL=body.js.map
