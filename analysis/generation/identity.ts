@@ -3,7 +3,7 @@ import type { FactShardReference } from '../facts/index.ts'
 import { deriveAnalysisId, type AnalysisGenerationId } from '../identity/index.ts'
 import { createAnalysisIdentityHash } from '../identity/hash.ts'
 import { stableJson } from '../identity/model.ts'
-import type { AnalysisGeneration } from './model.ts'
+import type { AnalysisGeneration } from './types.ts'
 
 // A weak cache cannot retain evicted generations. Only immutable flat data
 // records qualify: freezing a parent alone cannot certify nested objects or
