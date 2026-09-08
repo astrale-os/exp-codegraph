@@ -308,18 +308,14 @@ func runServe(arguments []string) int {
 		}
 		var writeErr error
 		if transaction.Base == "" {
-			writeErr = writeTransactionResponse(
-				output, input.ID, transaction,
+			writeErr = writeRecordPayloadResponse(
+				output, input.ID, "transaction", transaction,
 				options.maximumFrameBytes, options.transactionChunkFrameBytes,
 				options.maximumPhysicalTransactionBytes, telemetry,
 			)
 		} else {
-			writeErr = writeDeltaResponse(
-				output, input.ID, &factDelta{
-					ProtocolVersion: transaction.ProtocolVersion,
-					Base:            transaction.Base, Next: transaction.Next,
-					Upserts: transaction.Upserts, Deletes: transaction.Deletes,
-				},
+			writeErr = writeRecordPayloadResponse(
+				output, input.ID, "delta", transaction,
 				options.maximumFrameBytes, options.transactionChunkFrameBytes,
 				options.maximumPhysicalTransactionBytes, telemetry,
 			)

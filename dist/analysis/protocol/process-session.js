@@ -8,6 +8,7 @@ import { admitAnalysisId, portablePath } from '../identity/index.js';
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.js';
 import { admitFactPayloadCodecs, admittedFactShardPayloadBytes, createFactWithPhysicalPayload, createFactWithSemanticPayload, physicalPayloadForTransport, } from '../facts/representation/index.js';
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from './model.js';
+import { TransactionRecordDecoder } from './transaction-records.js';
 export class NativeAnalysisProcessResourceError extends Error {
     name = 'NativeAnalysisProcessResourceError';
     code;
@@ -304,6 +305,10 @@ class ProcessNativeAnalysisSession {
             chunks: frame.chunks,
             sha256: frame.sha256,
             parts: [],
+            digest: createHash('sha256'),
+            ...(frame.encoding === 'base64-json-records/1' ? {
+                records: this.transactionRecords(frame.payloadKind),
+            } : {}),
             nextSequence: 0,
             receivedBytes: 0,
         };
@@ -324,7 +329,11 @@ class ProcessNativeAnalysisSession {
         if (assembly.receivedBytes + part.byteLength > assembly.bytes) {
             throw new TypeError('Transaction chunks exceed the announced byte length.');
         }
-        assembly.parts.push(part);
+        assembly.digest.update(part);
+        if (assembly.records)
+            assembly.records.append(part);
+        else
+            assembly.parts.push(part);
         assembly.receivedBytes += part.byteLength;
         assembly.nextSequence++;
     }
@@ -344,16 +353,31 @@ class ProcessNativeAnalysisSession {
         if (assembly.receivedBytes !== assembly.bytes) {
             throw new TypeError(`Transaction stream byte length is invalid: expected ${assembly.bytes}, received ${assembly.receivedBytes}.`);
         }
-        const serialized = Buffer.concat(assembly.parts, assembly.bytes);
-        const digest = createHash('sha256').update(serialized).digest('hex');
+        const digest = assembly.digest.digest('hex');
         if (digest !== assembly.sha256)
             throw new TypeError('Transaction stream digest is invalid.');
         let payload;
         try {
-            const parsed = JSON.parse(serialized.toString('utf8'));
-            payload = assembly.payloadKind === 'transaction'
-                ? validateTransaction(parsed, this.#payloadCodecs, this.#maximumTransactionBytes)
-                : validateDelta(parsed, this.#payloadCodecs, this.#maximumTransactionBytes);
+            if (assembly.records) {
+                const staged = assembly.records.finish();
+                if (assembly.payloadKind === 'transaction')
+                    payload = staged;
+                else {
+                    if (!staged.base)
+                        throw new TypeError('delta.base is required.');
+                    if (staged.manifest.length)
+                        throw new TypeError('Delta record stream must omit the manifest.');
+                    const { manifest: _manifest, ...delta } = staged;
+                    payload = { ...delta, base: staged.base };
+                }
+            }
+            else {
+                const serialized = Buffer.concat(assembly.parts, assembly.bytes);
+                const parsed = JSON.parse(serialized.toString('utf8'));
+                payload = assembly.payloadKind === 'transaction'
+                    ? validateTransaction(parsed, this.#payloadCodecs, this.#maximumTransactionBytes)
+                    : validateDelta(parsed, this.#payloadCodecs, this.#maximumTransactionBytes);
+            }
         }
         catch (error) {
             throw new TypeError('Transaction stream does not contain a valid transaction.', {
@@ -373,6 +397,30 @@ class ProcessNativeAnalysisSession {
                 kind: 'delta',
                 delta: payload,
             });
+    }
+    transactionRecords(payloadKind) {
+        let semanticBytes = 0;
+        return new TransactionRecordDecoder(this.#maximumPhysicalTransactionBytes, {
+            header: (input) => {
+                const header = requiredRecord(input, 'transaction record header');
+                const admitted = validateTransaction({ ...header, manifest: [], upserts: [], deletes: [] }, this.#payloadCodecs, this.#maximumTransactionBytes);
+                if (payloadKind === 'delta' && !admitted.base)
+                    throw new TypeError('delta.base is required.');
+                return { protocolVersion: admitted.protocolVersion, next: admitted.next,
+                    ...(admitted.base ? { base: admitted.base } : {}) };
+            },
+            reference: (input) => validateReference(input, 'transaction record reference'),
+            deletion: (input) => admitAnalysisId('fact-shard-key', requiredString(input, 'transaction record deletion')),
+            shard: (input) => {
+                const shard = validateShard(input, 'transaction record shard', this.#payloadCodecs);
+                admitWireShards([shard], this.#maximumTransactionBytes);
+                semanticBytes += admittedFactShardPayloadBytes(shard) ?? 0;
+                if (semanticBytes > this.#maximumTransactionBytes) {
+                    throw new RangeError('Native analysis transaction exceeds the configured decoded semantic payload limit.');
+                }
+                return shard;
+            },
+        });
     }
     resolve(id, pending, response) {
         this.#pending.delete(id);
@@ -651,14 +699,15 @@ function validateWireFrame(input, payloadCodecs, maximumSemanticPayloadBytes) {
         throw new TypeError('Response kind is invalid.');
     }
     if (value.kind === 'transaction-start') {
-        if (value.encoding !== 'base64-json')
+        if (value.encoding !== 'base64-json' && value.encoding !== 'base64-json-records/1') {
             throw new TypeError('Transaction encoding is invalid.');
+        }
         return {
             id: value.id,
             protocolVersion: NATIVE_ANALYSIS_PROTOCOL_VERSION,
             kind: 'transaction-start',
             payloadKind: requiredPayloadKind(value.payloadKind),
-            encoding: 'base64-json',
+            encoding: value.encoding,
             bytes: requiredInteger(value.bytes, 'bytes', 1),
             chunks: requiredInteger(value.chunks, 'chunks', 1),
             sha256: requiredDigest(value.sha256, 'sha256'),
