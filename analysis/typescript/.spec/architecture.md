@@ -46,6 +46,8 @@ preserving, while targets, substitutions, overloads, and inferred types come fro
 Checker. Public symbols use portable source coordinates plus qualified authored paths; compiler byte
 positions remain provenance and never identity. External re-export ownership follows local barrels,
 and package ownership walks past nameless nested module-format manifests to the nearest named owner.
+One extraction shares named and absent ownership results by directory, so sibling source files do
+not repeat filesystem walks. Those results never cross a refresh or retain stale package metadata.
 Consumers that need expansion, reduction, or assignability request a derived capability above the
 base fact; native extraction does not serialize competing authoritative views.
 
@@ -55,8 +57,15 @@ closure over it, and advances the caller-owned store once. A mandatory pass, val
 or commit failure therefore cannot expose a native-only intermediate generation.
 
 Incremental extraction is ownership-driven. The resident compiler proves whether an edit preserved
-its import graph and declaration shape. Private edits replace only source-owned symbol, occurrence,
-and body shards; public-shape changes expand through TypeScript's reverse dependencies. The logical
+its import graph and declaration shape. Callable projection also records the foreign declarations
+actually read while following runtime const aliases and locating callback bodies; declaration emit
+alone cannot describe those values. The acknowledged native generation retains these portable observations
+and their reverse source dependencies, without retaining Checker objects. A private edit revalidates
+only expressions which read its source, using the current Checker and the same projector. Recorded
+expressions are located in one syntax walk per affected owner, without a separate scan per call. An unchanged
+target preserves the consumer's shards while retaining any newly read dependencies; a changed target
+or absent expression selects that consumer for projection. Replacing an owning source removes its old
+observations. Public-shape changes expand through TypeScript's reverse dependencies. The logical
 public module observation remains complete. Its physical schema stores each canonical declaration
 once in a content-addressed declaration shard under the existing module capability namespace and
 stores only declaration identity, fact identity, and owner-local export paths in module shards. The
@@ -69,10 +78,92 @@ global-diagnostic, public-shape, topology, configuration, plugin, or uncertain c
 expand the module projection. Native transport sends only the resulting delta, and the process
 advances its private base only after application-store acknowledgement.
 
+The resident process owns exactly one acknowledged generation and, during publication, one pending
+candidate with its replay transaction. Refresh accepts only the acknowledged base, so retaining
+historical native indexes would serve no reader. Acknowledgement transfers the candidate into the
+base slot and releases the previous manifest, source ownership, and dependency indexes; closing the
+session releases both slots. Candidate construction still preserves the base's immutable evidence
+until publication succeeds. A rejected store commit can replay the exact candidate, an interrupted
+process recovers from the client store, and a universe rollover remains a complete snapshot whose
+sequence is adopted only after acknowledgement. Historical snapshots and reader leases belong to
+the client store and survive independently of the native process.
+
+This removes the former sixteen-generation multiplier on retained index containers. One generation
+still requires project-sized metadata, and a pending refresh temporarily owns both generations.
+Immutable unchanged entries remain shared; complete manifest hashing and index construction retain
+their existing project-sized work. This change does not reduce the cold compiler's own heap.
+
+Record-stream admission bounds each encoded JSON record (including its newline) and the sum of
+expanded semantic payload bytes within each shard. Explicit aggregate budgets apply to the actual
+transaction upserts, including pending replays, independently of discarded projection work. The
+private refresh request negotiates those record budgets so older binaries can ignore the extension
+and retain their bounded legacy aggregate protocol. Package and compiler telemetry still report
+all projection work; disabling an implicit aggregate project-size cap does not hide its cost.
+
+Physical body codec 6 stores occurrence identities, nine numeric fields and declaration origins
+in three parallel columns. Relations, control-flow edges and definitions use flat numeric tables
+with fixed strides. The native producer constructs these columns directly; the admitted JSON
+record remains the single authoritative storage and transport representation. Integer values
+retain their full safe range rather than being narrowed to 32 bits. Semantic decoding reuses
+invocation-local scratch rows without retaining those rows in the decoded tree. Projection and
+adjacency reads address column cells directly, without rebuilding the tables of rows. Readers
+retain codecs 1–5; native negotiation prefers 6, then 5, then logical payloads. Physical codec
+selection does not change semantic fact, shard or generation identities and admission budgets.
+
+Each admitted packed body owns its lazy adjacency projection. Relations and definition uses are
+indexed by private numeric offset and row-ordinal tables, rather than per-occurrence maps and link
+objects. Construction is linear in local occurrences, links, and the body's text dictionary;
+collapsing child roles temporarily uses two 32-bit arrays over that dictionary. Empty link columns
+allocate no occurrence-sized table. Stable buckets retain parent and definition order, including repeated
+definitions and self-edges. Child roles retain their first insertion position and last child,
+collapsing replacements once so reads visit only the resulting children. Definite reaching uses
+occupy a local bitset. The raw packed rows remain immutable and authoritative, and returned maps
+and arrays are independent reader values. Unchanged physical records reuse their projection;
+changed records own new tables while pinned snapshots keep the old ones. All six codecs preserve
+logical identity, semantic admission, and unowned or foreign-codec fallback.
+
+The symbolic index owns one immutable contribution per admitted packed occurrence or call. Its
+fact identity, body fragment, and row ordinal also serve as the column's singleton entry; the
+fragment keeps no second array of row references. A private self-valued data field lets ordinary
+column reads use that same object without a getter or a second lookup. Projected occurrences,
+calls, portable proofs, and transport payloads never expose these entries. Overlapping facts retain
+their individual contributions and project them in fact-identity order, so promotion and demotion preserve the exact
+surviving entry and pinned index roots. Function identity never replaces contributing fact identity.
+Generic overlapping columns also retain their contribution wrappers, and their cost belongs in any
+net memory comparison. Logical or custom bodies own their original captured row references and
+adjacency containers separately; packed bodies allocate none of those fallback containers. Deleting
+a packed body visits its row ordinals without constructing replacements. This removes redundant
+row storage, while the shared hash trie, lookup keys, physical records, and other columns remain.
+
+Native identity encoding retains immutable canonical bytes for acknowledged source and shard
+references. A refresh encodes replacement entries only and streams the complete ordered preimage
+into the existing v1 identity hash. This preserves exact portable generation validation and older
+retained generations without rebuilding a second JSON object graph. Hashing and ordering the full
+manifest remain linear in total project size; telemetry distinguishes entries encoded from bytes
+hashed so that reduced allocations cannot be mistaken for a fully incremental identity contract.
+During one canonical encoding, nested objects borrow a shared field workspace and return it on
+completion. Its storage follows the active nesting path, while a typed stable sort preserves
+duplicate-key last-value semantics. The workspace ends with that encoding and retains no project
+or generation state.
+
+Identity construction serializes each newly projected logical payload once. A private prepared fact
+owns the canonical payload bytes until its shard is finalized; exact v1 fact and shard envelopes stream
+those same bytes into their full SHA-256 preimages. Admission retains the original semantic JSON
+byte count, including HTML escapes, independently of its canonical spelling. Final module logical
+IDs enter the shard envelope after normalization; generation and physical codec metadata stay
+excluded. Finalization publishes ordinary facts without the temporary bytes, and normalized
+declaration shards finalize individually so their canonical payloads never accumulate across the
+project. A failed encoding or budget admission cannot advance the acknowledged generation.
+
 The caller describes requested project inputs but never supplies a universe identifier. After the
-resident compiler loads the complete configuration chain, project-reference roots, compiler and
+resident compiler loads the complete configuration chain, referenced project configurations, compiler and
 plugin semantics, exact toolchain and protocol, and platform, the native adapter derives the
 portable universe. Requested capabilities and module-observation boundaries select a generation in
 that universe; they never rename the compiler project or its stable semantic identities. A changed
 compiler universe starts a complete base-less lineage, while restoring identical compiler inputs may
-select the already retained generation for that universe.
+select the already retained generation for that universe. Universe identity v2 retains the entry
+project, every referenced project configuration, exact configuration content, toolchain, and platform.
+Files discovered by configuration globs belong to the generation's source manifest. Adding or
+removing a source forces a complete compiler projection, including negative module resolutions,
+while preserving the universe and existing portable symbol identities. Explicit configuration or
+project-reference edits still establish a separate universe; old pinned generations remain exact.

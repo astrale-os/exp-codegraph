@@ -15,7 +15,6 @@ func (x *extractor) callTargetOrigin(symbol *shimast.Symbol) *callTargetOrigin {
 	}
 	if x.callOrigins == nil {
 		x.callOrigins = map[*shimast.Symbol]*callTargetOrigin{}
-		x.packageCoordinates = map[string]string{}
 	}
 	if origin, exists := x.callOrigins[symbol]; exists {
 		return origin
@@ -27,11 +26,7 @@ func (x *extractor) callTargetOrigin(symbol *shimast.Symbol) *callTargetOrigin {
 		if file == nil {
 			return nil
 		}
-		coordinate, exists := x.packageCoordinates[file.FileName()]
-		if !exists {
-			coordinate = workspacePackageCoordinate(x.root, file.FileName())
-			x.packageCoordinates[file.FileName()] = coordinate
-		}
+		coordinate := x.packageCoordinate(file.FileName())
 		if !strings.HasPrefix(coordinate, "package:") {
 			return nil
 		}
@@ -70,11 +65,12 @@ func (x *extractor) callTargetOrigin(symbol *shimast.Symbol) *callTargetOrigin {
 
 // A const alias preserves a callable's value identity. Its resolved signature
 // alone would also match mutable or merely structurally compatible lookalikes.
-func (b *bodyBuilder) canonicalCallSymbol(node *shimast.Node) *shimast.Symbol {
-	symbol := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(node))
+func (x *extractor) canonicalCallSymbol(node *shimast.Node, read func(*shimast.Symbol)) *shimast.Symbol {
+	symbol := unalias(x.checker, x.checker.GetSymbolAtLocation(node))
 	seen := map[*shimast.Symbol]bool{}
 	for symbol != nil && !seen[symbol] {
 		seen[symbol] = true
+		read(symbol)
 		declaration := declarationNode(symbol)
 		if declaration == nil || declaration.Kind != shimast.KindVariableDeclaration || !shimast.IsConst(declaration) {
 			break
@@ -93,7 +89,7 @@ func (b *bodyBuilder) canonicalCallSymbol(node *shimast.Node) *shimast.Symbol {
 		if initializer == nil || (initializer.Kind != shimast.KindIdentifier && initializer.Kind != shimast.KindPropertyAccessExpression) {
 			break
 		}
-		next := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(initializer))
+		next := unalias(x.checker, x.checker.GetSymbolAtLocation(initializer))
 		if next == nil {
 			break
 		}
@@ -131,4 +127,11 @@ func functionInitializer(declaration *shimast.Node) *shimast.Node {
 		}
 	}
 	return nil
+}
+
+func (x *extractor) packageCoordinate(source string) string {
+	if x.packageCoordinates == nil {
+		x.packageCoordinates = newPackageCoordinateResolver(x.root)
+	}
+	return x.packageCoordinates.coordinate(source)
 }

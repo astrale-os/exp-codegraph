@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -36,6 +35,7 @@ var supportedCapabilities = []string{
 }
 
 type extractor struct {
+	callableReads                map[string][]callableRead
 	root                         string
 	universe                     string
 	plan                         projectionPlan
@@ -45,7 +45,7 @@ type extractor struct {
 	symbolSeen                   map[string]symbolFactPayload
 	symbolsBySource              map[string][]symbolFactPayload
 	callOrigins                  map[*shimast.Symbol]*callTargetOrigin
-	packageCoordinates           map[string]string
+	packageCoordinates           *packageCoordinateResolver
 	symbolIdentityCounts         map[*shimast.SourceFile]map[string]int
 	signatureIDs                 map[*shimast.Node]string
 	moduleDeclarations           map[*shimast.Symbol]moduleDeclarationObservation
@@ -57,14 +57,15 @@ type extractor struct {
 	payloadCodecs                map[string]bool
 	bodyPackingError             error
 	maximumSemanticPayloadBytes  int
+	maximumDecodedShardBytes     int
 	semanticPayloadBytes         int
 	payloadEncodingError         error
 	telemetry                    *nativeTelemetry
 	requestID                    int
 }
 
-func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, error) {
-	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, nil, nil, telemetry, requestID)
+func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, map[string][]callableRead, error) {
+	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, maximumDecodedShardBytes, nil, nil, telemetry, requestID)
 	var shards []factShard
 	telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
 		"capabilities": strings.Join(plan.capabilities(), ","),
@@ -85,7 +86,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		phase := time.Now()
 		moduleShards, err := x.moduleShards(program)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		shards = append(shards, moduleShards...)
 		moduleOwners, declarationShards, declarationReferences := moduleProjectionCounts(moduleShards)
@@ -99,7 +100,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	if plan.sourceOwned() {
 		sourceShards, err := x.sourceShards(files, nil, telemetry, requestID)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		shards = append(shards, sourceShards...)
 	}
@@ -107,10 +108,10 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		"bytes": x.semanticPayloadBytes,
 	})
 	if x.payloadEncodingError != nil {
-		return nil, nil, x.payloadEncodingError
+		return nil, nil, nil, x.payloadEncodingError
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	return shards, records, nil
+	return shards, records, x.callableReads, nil
 }
 
 // prepareExtractor installs a complete source identity table while hashing only
@@ -123,24 +124,26 @@ func prepareExtractor(
 	modules []moduleBoundary,
 	plan projectionPlan,
 	payloadCodecs map[string]bool,
-	maximumSemanticPayloadBytes int,
+	maximumSemanticPayloadBytes, maximumDecodedShardBytes int,
 	prior map[string]sourceRecord,
 	selected map[string]bool,
 	telemetry *nativeTelemetry,
 	requestID int,
 ) (*extractor, []*shimast.SourceFile, []sourceRecord) {
 	x := &extractor{
-		root: root, universe: universe, plan: plan, checker: program.Checker,
+		callableReads: map[string][]callableRead{},
+		root:          root, universe: universe, plan: plan, checker: program.Checker,
 		sources: map[string]sourceRecord{}, symbolIDs: map[*shimast.Symbol]string{},
 		symbolSeen: map[string]symbolFactPayload{}, moduleDeclarations: map[*shimast.Symbol]moduleDeclarationObservation{},
 		moduleDeclarationsByIdentity: map[string]moduleDeclarationObservation{},
 		modules:                      modules, payloadCodecs: payloadCodecs,
-		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
-		telemetry:                   telemetry, requestID: requestID,
+		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes, maximumDecodedShardBytes: maximumDecodedShardBytes,
+		telemetry: telemetry, requestID: requestID,
 	}
+	phase := time.Now()
 	files := program.SourceFiles()
 	sort.Slice(files, func(i, j int) bool { return files[i].FileName() < files[j].FileName() })
-	phase := time.Now()
+	reused, hashed := 0, 0
 	for _, file := range files {
 		path, owned := x.ownedPath(file.FileName())
 		if !owned {
@@ -148,16 +151,21 @@ func prepareExtractor(
 		}
 		if record, exists := prior[file.FileName()]; exists && selected != nil && !selected[file.FileName()] {
 			x.sources[file.FileName()] = record
+			reused++
+			continue
+		}
+		digest := hashText(file.Text())
+		hashed++
+		if record, exists := prior[file.FileName()]; exists && record.Path == path && record.TextDigest == digest {
+			x.sources[file.FileName()] = record
 			continue
 		}
 		source := deriveID("source", "typescript:"+universe, map[string]any{"path": path})
-		digest := hashText(file.Text())
 		x.sources[file.FileName()] = sourceRecord{
 			Physical: file.FileName(), Path: path, Source: source, TextDigest: digest,
 			Revision: deriveID("source-revision", source, map[string]any{"digest": digest}),
 		}
 	}
-	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources)})
 	var records []sourceRecord
 	for _, file := range files {
 		record, ok := x.sources[file.FileName()]
@@ -167,6 +175,7 @@ func prepareExtractor(
 		records = append(records, record)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources), "reusedSources": reused, "hashedSources": hashed})
 	return x, files, records
 }
 
@@ -268,6 +277,9 @@ func (x *extractor) sourceShards(
 		}
 		telemetry.record(requestID, "projection.bodies", phase, map[string]any{"sources": selectedCount, "shards": bodyShards})
 	}
+	if x.packageCoordinates != nil {
+		telemetry.record(requestID, "projection.package-ownership", time.Now(), map[string]any{"sources": len(x.packageCoordinates.coordinates), "directories": len(x.packageCoordinates.directories), "manifestReads": x.packageCoordinates.reads})
+	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil
 }
@@ -288,12 +300,12 @@ func (x *extractor) projectShard(program *driver.Program) factShard {
 		ProjectReferences:  sortedUnique(references),
 	}
 	entry := x.newFact(projectNamespace, "typescript-project", x.universe, payload, nil, complete())
-	return finishShard(projectNamespace, x.universe, complete(), []fact{entry})
+	return finishShard(projectNamespace, x.universe, complete(), []preparedFact{entry})
 }
 
 func (x *extractor) diagnosticShard(program *driver.Program) factShard {
 	diagnostics := program.Diagnostics()
-	facts := make([]fact, 0, len(diagnostics))
+	facts := make([]preparedFact, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		severity := "error"
 		if diagnostic.Severity == driver.SeverityWarning {
@@ -335,7 +347,7 @@ func (x *extractor) sourceShard(file *shimast.SourceFile, record sourceRecord) f
 		Declaration: file.IsDeclarationFile, ProjectOwned: true,
 	}
 	entry := x.newFact(sourceNamespace, "source", record.Source, payload, nil, complete())
-	return finishShard(sourceNamespace, record.Source, complete(), []fact{entry})
+	return finishShard(sourceNamespace, record.Source, complete(), []preparedFact{entry})
 }
 
 func (x *extractor) discoverSymbols(file *shimast.SourceFile) {
@@ -359,7 +371,7 @@ func (x *extractor) symbolShard(file *shimast.SourceFile, record sourceRecord) f
 			}
 		}
 	}
-	var facts []fact
+	var facts []preparedFact
 	for _, payload := range x.symbolsBySource[record.Source] {
 		facts = append(facts, x.newFact(
 			symbolNamespace, "symbol", payload.Symbol, payload, payload.Declarations, complete(),
@@ -369,7 +381,7 @@ func (x *extractor) symbolShard(file *shimast.SourceFile, record sourceRecord) f
 }
 
 func (x *extractor) occurrenceShard(file *shimast.SourceFile, record sourceRecord) factShard {
-	var facts []fact
+	var facts []preparedFact
 	walkFile(file, func(node *shimast.Node) bool {
 		kind, reference := occurrenceKind(node)
 		if kind == "" {
@@ -395,7 +407,7 @@ func (x *extractor) newFact(
 	payload any,
 	evidence []sourceSpan,
 	completion completeness,
-) fact {
+) preparedFact {
 	return x.newFactVersion(namespace, kind, subject, payload, evidence, completion, 1)
 }
 
@@ -405,64 +417,33 @@ func (x *extractor) newFactVersion(
 	evidence []sourceSpan,
 	completion completeness,
 	schemaVersion int,
-) fact {
-	return x.newFactVersionWithIdentityPayload(
-		namespace, kind, subject, payload, payload, evidence, completion, schemaVersion,
-	)
-}
-
-func (x *extractor) newFactVersionWithIdentityPayload(
-	namespace, kind, subject string,
-	payload any,
-	identityPayload any,
-	evidence []sourceSpan,
-	completion completeness,
-	schemaVersion int,
-) fact {
-	if x.payloadEncodingError == nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)
-		} else {
-			x.semanticPayloadBytes += len(encoded)
-			if x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
-				x.payloadEncodingError = fmt.Errorf(
-					"semantic fact payloads exceed configured limit: bytes=%d limit=%d",
-					x.semanticPayloadBytes,
-					x.maximumSemanticPayloadBytes,
-				)
-			}
-		}
-	}
+) preparedFact {
 	if evidence == nil {
 		evidence = []sourceSpan{}
 	}
 	pass := deriveID("pass", "astrale.analysis.typescript.native", map[string]any{
 		"namespace": namespace, "version": passVersion,
 	})
-	id := deriveID("fact", namespace, map[string]any{
-		"kind": kind, "subject": subject, "payload": identityPayload, "evidence": evidence,
-	})
-	return fact{
-		ID: id, Namespace: namespace, SchemaVersion: schemaVersion, Kind: kind, Subject: subject,
+	entry, err := prepareFact(fact{
+		Namespace: namespace, SchemaVersion: schemaVersion, Kind: kind, Subject: subject,
 		Completeness: completion,
 		Provenance:   provenance{Pass: pass, PassVersion: passVersion, Evidence: evidence, Inputs: []string{}},
 		Payload:      payload,
+	})
+	if x.payloadEncodingError == nil {
+		if err != nil {
+			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)
+		} else {
+			x.semanticPayloadBytes += entry.semanticBytes
+			if x.maximumDecodedShardBytes > 0 && entry.semanticBytes > x.maximumDecodedShardBytes {
+				x.payloadEncodingError = fmt.Errorf("semantic fact payload exceeds decoded shard limit: bytes=%d limit=%d", entry.semanticBytes, x.maximumDecodedShardBytes)
+			}
+			if x.maximumSemanticPayloadBytes > 0 && x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
+				x.payloadEncodingError = fmt.Errorf("semantic fact payloads exceed configured limit: bytes=%d limit=%d", x.semanticPayloadBytes, x.maximumSemanticPayloadBytes)
+			}
+		}
 	}
-}
-
-func finishShard(namespace, owner string, completion completeness, facts []fact) factShard {
-	return finishShardVersion(namespace, owner, completion, facts, 1)
-}
-
-func finishShardVersion(namespace, owner string, completion completeness, facts []fact, schemaVersion int) factShard {
-	sort.Slice(facts, func(i, j int) bool { return facts[i].ID < facts[j].ID })
-	shard := factShard{
-		Key:       deriveID("fact-shard-key", namespace, map[string]any{"owner": owner}),
-		Namespace: namespace, SchemaVersion: schemaVersion, Completion: completion, Facts: facts,
-	}
-	shard.Digest = shardDigest(shard)
-	return shard
+	return entry
 }
 
 func (x *extractor) symbolID(symbol *shimast.Symbol) string {

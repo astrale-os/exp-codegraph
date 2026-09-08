@@ -86,3 +86,41 @@ Shard content digests omit only the enclosing generation field from each fact. T
 those semantic shard digests determines the generation identity, after which transaction validation
 binds every fact to that exact generation. Fact IDs are row keys inside a generation-pinned query;
 there is no recursive digest construction.
+
+Generation identities stream the same canonical v1 preimage in bounded chunks. A weak cache
+reuses encodings of immutable flat manifest references; custom accessors, nested mutable data
+and toJSON behavior retain the generic canonicalizer. Complete hashing still visits every
+manifest byte, while an unchanged retained reference needs no new canonical object graph.
+
+The memory materializer keeps generation-neutral facts in an ordered persistent index. A delta
+updates only the facts in replaced or deleted shards, their existing secondary postings, and their
+completeness contributions. Both primary indexes and individual posting buckets share untouched
+tree branches; a large namespace bucket is never copied to apply one changed fact. A new snapshot
+owns its tree roots directly, without retaining a chain of previous snapshots or query leases.
+
+Generation-pinned query views bind and memoize only requested fact envelopes. Opening another
+generation therefore does not copy every carried fact, sort the complete population, or recreate
+headers for unselected facts. Sorted iteration and merging preserve exact filters, pagination,
+totals, and generation-bound cursors. The first use of a secondary field indexes it once; later
+revisions carry its unchanged postings. Queries opened only after an unobserved lineage may build
+their initial index from the current immutable shards.
+
+Completeness is maintained from counted shard and fact contributions, including partial reasons
+temporarily masked by unavailable evidence. Removing a contribution restores the remaining exact
+state. Shard capability declarations are counted by namespace so a fact's completeness still
+bounds every capability declared by any retained shard in that namespace. These indexes are
+published only after transaction validation, and carry no mutable producer-owned data.
+
+Memory admission compares ordinary manifest entries directly against the complete materialized
+shard catalogue. It verifies cardinality, ordered unique membership, digests, namespaces, schema
+versions, fact counts, and optional capability arrays without sorting another reference population
+or allocating two canonical JSON graphs and strings. Weak shape certificates cover only immutable
+data; they retain neither generations nor copied references. An absent optional field is rechecked
+against prototype inheritance on certificate reuse. Custom accessors, proxies, `toJSON`,
+or nonstandard array behavior use the original whole-value comparison with its original observation
+order. An invalid complete manifest still fails atomically with `MANIFEST_INVALID`.
+
+This removes redundant materialization rather than changing the complete-manifest identity
+contract. Admission still visits every manifest entry and verifies duplicate facts and closed
+derivation inputs across the materialized population; the v1 generation hash still consumes every
+canonical manifest byte. Commit complexity is therefore not claimed to depend only on the delta.

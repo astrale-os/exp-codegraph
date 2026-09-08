@@ -36,7 +36,8 @@ delegate to generic evaluation. Canonical receiver symbol origin remains distinc
 method's declaration origin. Model functions and emitted atoms must have stable, deterministic
 meaning for their lifetime; a changed model must use a new function identity.
 
-One snapshot owns one lazy body/symbol index, shared across models and budgets. There is no global
+One resident project owns a lazy body/symbol/source index per immutable generation, shared across
+snapshots, models and budgets. Standalone evaluators keep a query-local index. There is no global
 index or compiler handle. Completed proofs retain evidence and private fingerprints for every
 positive and negative lookup. `canReuse` compares fact identity, payload, completeness, lookup
 membership, model identity and effective budget against the new evaluator. Fact IDs alone do not
@@ -59,13 +60,28 @@ unknown when no exported-member relation is available.
 
 A resident project transparently reuses completed resolutions across its snapshots.
 The key contains the immutable demand plan, scalar/symbolic mode, model identity and
-effective budget; every hit validates the existing positive and negative dependency
-fingerprints against the requested snapshot. The shared LRU is bounded across all
-models and budgets by 1024 entries and an 8 MiB conservative storage estimate.
-Oversized or non-portable results bypass caching. Entries retain only receipts,
-fingerprints and serialized plan keys, never the plan, reader or value index. Project
+effective budget. Adjacent indexed revisions invalidate readers of changed positive
+and negative keys through an inverse dependency graph; other readers validate each
+shared proof basis once per immutable index. A discontinuous revision starts a new
+validation lineage without retaining prior indexes. Equal dependency, evidence and budget bases
+share immutable storage across receipts. The cache remains bounded across all models
+and budgets by an 8 MiB conservative storage estimate, including shared dependency
+memberships and its bounded aging frequency sketch. Admission retains useful resident
+work through scans exceeding capacity; equally frequent newcomers do not displace it.
+Oversized or non-portable results bypass caching. Entries retain only receipts, shared
+bases and serialized plan keys, never the plan, reader or value index. Project
 disposal clears and closes the cache so surviving old plans cannot repopulate it.
 Aborted requests reject before a cache hit and before publishing a new receipt.
+
+Resident bases share an exact vocabulary of evidence identifiers and effective budgets.
+Basis keys contain opaque numeric evidence coordinates instead of repeating full fact
+identifiers. These coordinates are collision-free within their owner and never reused;
+their dictionary entries are reference-counted by resident bases and removed with the last
+basis. Preparing or rejecting a demand retains no vocabulary entry. Receipts still expose
+their original ordered fact identifiers and effective limits; atoms are neither interned
+nor transformed. Storage accounting includes the shared vocabulary, per-basis references
+and coordinate arrays. Caller-held receipts may outlive cache residency without retaining
+the cache, a snapshot or an index.
 
 Engine-owned result wrappers, alternatives, evidence and reasons are immutable.
 Opaque model atoms retain their original identity and are never frozen or cloned by
@@ -76,3 +92,41 @@ Opaque atom alternatives use identity equality (`Object.is`), including signed z
 Equal object fields do not prove equal model instances; the evaluator never serializes
 an atom to decide identity. A model may deliberately return one shared immutable atom
 when its domain semantics declare those alternatives equivalent.
+
+Committed shard membership drives incremental value indexing. Only facts from changed shards are
+read and admitted again; untouched lookup branches, facts and witnesses are shared through immutable
+hash tries. Multiple contributor writes to one slot are grouped within the transaction and merged
+once at publication, avoiding quadratic call catalogues for wide source files. Direct-effect projections record their positive and negative lookup inputs, so adding or
+removing a callee body also recomputes affected escape/alias joins. Initial admission remains global
+and atomic. The value index retains occurrence-to-fragment routes and source-to-call identifiers;
+logical occurrences, relations, definitions and values are projected only when demanded. Call path
+filters select source buckets before materializing call sites. Helpers outside those paths resolve
+through the same function lookup. Global mutation, initializer, alias and escape inputs are projected
+from compact columns regardless of the selected sources, so filtering cannot conceal an effect.
+
+Trie branches use a bitmap and compact child arrays. A bounded slot string preserves each branch's
+existing insertion order independently of its lookup positions. Edits copy shared branches before
+writing; publishing an edit prevents later mutation of pinned roots. Digest words only route lookups:
+leaves and collision buckets compare complete keys, including arbitrary non-coordinate strings.
+
+The packed fast path requires an exact physical fact state, a known composed decoder instance,
+freshly parsed owned JSON input and successful shard admission. Codec names, inherited wrappers
+and caller-frozen objects do not establish ownership. Uncertified/custom representations retain
+full semantic admission and an index-owned copy of their data containers, without freezing caller state.
+Fallback call grouping uses each occurrence’s actual source; only the packed format attests one source
+per body. Changed owned body fingerprints use their exact immutable representation
+and fact header; unchanged fragments and hashes are shared. Full bodies are expanded only when
+a semantic demand needs function execution metadata. Private fragment caches are retained by their
+immutable facts and leased indices, with no strong reference to a preceding index or query.
+
+The project retains its current index and explicit snapshot leases. Undemanded changes compact by
+shard relative to the last demanded index, rather than retaining an unbounded transaction chain.
+Completed index updates detach their base promises. Unseen external writes and failed lazy bases
+fall back to a fresh pinned query. Closing a snapshot clears its factory/projection caches and releases
+its index lease; caller-held evaluators and plans may retain their own immutable evidence.
+
+Dependency witnesses preserve exact lookup membership. A present occurrence shares its function
+witness only when both contributing fingerprints are equal; overlapping fact owners retain an exact
+occurrence witness. Initializer fingerprints include the referenced occurrence fingerprints, so
+proofs cut short by a budget cannot retain evidence from a removed fact. Revision deltas report every
+changed fingerprint, including added and removed lookup keys, without scanning untouched tables.

@@ -1,19 +1,7 @@
 import type { FactShard, FactShardReference } from '../facts/index.ts';
-import type { AnalysisGenerationId, FactShardKey, ProducerId, ProjectUniverseId, SourceManifestId } from '../identity/index.ts';
-export interface ProducerIdentity {
-    readonly id: ProducerId;
-    readonly name: string;
-    readonly version: string;
-    readonly protocolVersion: number;
-}
-export interface AnalysisGeneration {
-    readonly id: AnalysisGenerationId;
-    readonly sequence: number;
-    readonly universe: ProjectUniverseId;
-    readonly producer: ProducerIdentity;
-    readonly sourceManifest: SourceManifestId;
-    readonly capabilities: readonly string[];
-}
+import type { AnalysisGenerationId, FactShardKey } from '../identity/index.ts';
+import type { AnalysisGeneration } from './types.ts';
+export type { AnalysisGeneration, ProducerIdentity } from './types.ts';
 export interface FactTransaction {
     readonly protocolVersion: number;
     readonly base?: AnalysisGenerationId;

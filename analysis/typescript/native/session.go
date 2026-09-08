@@ -15,6 +15,7 @@ import (
 )
 
 type generationState struct {
+	callableReads      callableReadIndex
 	generation         analysisGeneration
 	manifest           []factShardReference
 	digests            map[string]string
@@ -26,6 +27,7 @@ type generationState struct {
 }
 
 type refreshSelection struct {
+	callableReads      map[string][]callableRead
 	full               bool
 	files              []string
 	allModules         bool
@@ -35,8 +37,6 @@ type refreshSelection struct {
 type pendingGeneration struct {
 	state       generationState
 	transaction *factTransaction
-	universe    string
-	rollover    bool
 }
 
 type analyzer struct {
@@ -48,15 +48,17 @@ type analyzer struct {
 	modules                     []moduleBoundary
 	payloadCodecs               map[string]bool
 	maximumSemanticPayloadBytes int
+	maximumDecodedShardBytes    int
 	session                     *driver.Session
-	states                      map[string]generationState
-	current                     string
-	pendingFull                 bool
-	pending                     *pendingGeneration
-	telemetry                   *nativeTelemetry
+	// Only the acknowledged base and its unpublished candidate belong to this
+	// process. Historical snapshots and reader leases belong to the client store.
+	acknowledged generationState
+	pendingFull  bool
+	pending      *pendingGeneration
+	telemetry    *nativeTelemetry
 }
 
-func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes int, telemetry *nativeTelemetry) (*analyzer, error) {
+func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry) (*analyzer, error) {
 	started := time.Now()
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -88,12 +90,15 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 		root: root, config: config, universe: universe, capabilities: capabilities, modules: modules,
 		projection:                  planProjections(capabilities),
 		payloadCodecs:               payloadCodecs,
-		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
-		session:                     session, states: map[string]generationState{}, telemetry: telemetry,
+		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes, maximumDecodedShardBytes: maximumDecodedShardBytes,
+		session: session, telemetry: telemetry,
 	}, nil
 }
 
 func (a *analyzer) close() error {
+	a.acknowledged = generationState{}
+	a.pending = nil
+	a.pendingFull = false
 	if a.session == nil {
 		return nil
 	}
@@ -128,13 +133,13 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		a.telemetry.record(input.ID, "refresh.total", started, metrics)
 	}()
 	if a.pending != nil {
-		if input.Base != a.current || input.Invalidate || len(changes) != 0 {
+		if input.Base != a.acknowledged.generation.ID || input.Invalidate || len(changes) != 0 {
 			return nil, "", protocolError("COMMIT_PENDING", "A native generation is awaiting application-store acknowledgement.")
 		}
 		return a.pending.transaction, "", nil
 	}
-	adopting := a.current == "" && input.Base != ""
-	if input.Base != a.current && !adopting {
+	adopting := a.acknowledged.generation.ID == "" && input.Base != ""
+	if input.Base != a.acknowledged.generation.ID && !adopting {
 		return nil, "", protocolError("BASE_STALE", "The requested base is not the resident analyzer's current private generation.")
 	}
 	// Callers own change discovery. Once a resident base exists, an empty
@@ -162,7 +167,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		selection.full = true
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": "rebuild"})
 	} else {
-		selection, compilerAdvanced, err = a.apply(changes)
+		selection, compilerAdvanced, err = a.apply(changes, input.ID)
 		if err != nil {
 			return nil, "", err
 		}
@@ -196,13 +201,21 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	if rollover {
 		baseID = ""
 	}
-	base, hasBase := a.states[baseID]
+	base := generationState{}
+	hasBase := baseID != "" && baseID == a.acknowledged.generation.ID
+	if hasBase {
+		base = a.acknowledged
+	}
 	if !hasBase {
 		selection.full = true
 	}
 
 	extractionStarted := time.Now()
-	shards, sources, replaced, err := a.extract(nextUniverse, selection, base, input.ID)
+	projectionBytes := a.maximumSemanticPayloadBytes
+	if input.RecordLimits != nil {
+		projectionBytes = 0
+	}
+	shards, sources, replaced, projectedReads, err := a.extract(nextUniverse, selection, base, projectionBytes, input.ID)
 	a.telemetry.record(input.ID, "projection.total", extractionStarted, map[string]any{
 		"shards": len(shards), "sources": len(sources), "full": selection.full,
 	})
@@ -214,14 +227,10 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 
 	materializationStarted := time.Now()
-	sourceEntries := make([]map[string]any, 0, len(sources))
-	for _, source := range sources {
-		sourceEntries = append(sourceEntries, map[string]any{"path": source.Path, "revision": source.Revision})
-	}
-	sourceManifest := deriveID("source-manifest", "typescript:"+nextUniverse, map[string]any{
-		"configuration": configuration,
-		"sources":       sourceEntries,
-	})
+	phase := time.Now()
+	sourceManifest, encodedSources, sourceBytes := nativeSourceManifestIdentity(nextUniverse, configuration, sources)
+	a.telemetry.record(input.ID, "transaction.source-manifest", phase, map[string]any{"sources": len(sources), "encodedSources": encodedSources, "hashedSourceBytes": sourceBytes})
+	phase = time.Now()
 	manifestByKey := make(map[string]factShardReference, len(base.manifest)+len(shards))
 	if hasBase && !selection.full {
 		for _, reference := range base.manifest {
@@ -231,10 +240,17 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		}
 	}
 	for _, shard := range shards {
-		manifestByKey[shard.Key] = factShardReference{
+		reference := factShardReference{
 			Key: shard.Key, Digest: shard.Digest, Namespace: shard.Namespace,
 			SchemaVersion: shard.SchemaVersion, Facts: len(shard.Facts),
 		}
+		if hasBase && base.digests[shard.Key] == shard.Digest {
+			index := sort.Search(len(base.manifest), func(index int) bool { return base.manifest[index].Key >= shard.Key })
+			if index < len(base.manifest) && base.manifest[index].Key == shard.Key {
+				reference = base.manifest[index]
+			}
+		}
+		manifestByKey[shard.Key] = reference
 	}
 	manifest := make([]factShardReference, 0, len(manifestByKey))
 	digests := make(map[string]string, len(manifestByKey))
@@ -243,10 +259,12 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		digests[reference.Key] = reference.Digest
 	}
 	sort.Slice(manifest, func(i, j int) bool { return manifest[i].Key < manifest[j].Key })
+	a.telemetry.record(input.ID, "transaction.manifest", phase, map[string]any{"baseShards": len(base.manifest), "candidateShards": len(manifest), "projectedShards": len(shards)})
 	if hasBase && base.sourceManifest == sourceManifest && stableJSON(base.manifest) == stableJSON(manifest) {
 		return nil, input.Base, nil
 	}
 
+	phase = time.Now()
 	producer := producerIdentity{
 		ID: deriveID("producer", "astrale.analysis.typescript.native", map[string]any{
 			"name": "ttsc-typescript-go", "version": producerVersion,
@@ -258,14 +276,14 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	if hasBase {
 		sequence = base.generation.Sequence + 1
 	}
-	generationID := deriveID("generation", "astrale.analysis.generation.v1", map[string]any{
-		"universe": nextUniverse, "producer": producer, "sourceManifest": sourceManifest,
-		"capabilities": a.capabilities, "manifest": manifest,
-	})
 	generation := analysisGeneration{
-		ID: generationID, Sequence: sequence, Universe: nextUniverse, Producer: producer,
+		Sequence: sequence, Universe: nextUniverse, Producer: producer,
 		SourceManifest: sourceManifest, Capabilities: a.capabilities,
 	}
+	generationID, encodedReferences, manifestBytes := nativeGenerationIdentity(generation, manifest)
+	generation.ID = generationID
+	a.telemetry.record(input.ID, "transaction.generation-identity", phase, map[string]any{"manifestShards": len(manifest), "encodedReferences": encodedReferences, "hashedReferenceBytes": manifestBytes})
+	phase = time.Now()
 	upserts := make([]factShard, 0, len(shards))
 	for _, shard := range shards {
 		if hasBase && base.digests[shard.Key] == shard.Digest {
@@ -286,24 +304,49 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 	sort.Slice(upserts, func(i, j int) bool { return upserts[i].Key < upserts[j].Key })
 	sort.Strings(deletes)
+	if input.RecordLimits != nil {
+		if err := validateSemanticShardBytes(upserts, input.RecordLimits.MaximumDecodedShardBytes, input.RecordLimits.MaximumTransactionBytes); err != nil {
+			return nil, "", err
+		}
+	}
 	transaction = &factTransaction{
 		ProtocolVersion: protocolVersion, Base: baseID, Next: generation,
 		Manifest: manifest, Upserts: upserts, Deletes: deletes,
 	}
+	readBase := base.callableReads
+	if selection.full {
+		readBase = callableReadIndex{}
+	}
+	readUpdates := selection.callableReads
+	if readUpdates == nil || selection.full {
+		readUpdates = map[string][]callableRead{}
+	}
+	for _, file := range selection.files {
+		readUpdates[file] = projectedReads[file]
+	}
+	for file, reads := range projectedReads {
+		readUpdates[file] = reads
+	}
 	state := generationState{
-		generation: generation, manifest: manifest, digests: digests,
+		callableReads: mergeCallableReads(readBase, readUpdates),
+		generation:    generation, manifest: manifest, digests: digests,
 		sources: sourceRecordMap(sources), sourceShards: mergeSourceShardOwnership(base, sources, shards, selection.full),
 		moduleDependencies: mergeModuleDependencies(base.moduleDependencies, shards, selection.full),
 		moduleDeclarations: mergeModuleDeclarationReferences(base.moduleDeclarations, shards, selection.full),
 		sourceManifest:     sourceManifest,
 	}
+	a.telemetry.record(input.ID, "transaction.state", phase, map[string]any{
+		"manifestShards": len(manifest), "sources": len(sources), "upserts": len(upserts),
+		"callableReadOwners": len(state.callableReads.owners), "callableReadExpressions": state.callableReads.expressions,
+		"callableReadSources": len(state.callableReads.dependents),
+	})
 	if adopting && generationID == input.Base {
 		state.generation.Sequence = input.BaseSequence
-		a.install(state, nextUniverse, rollover)
+		a.install(state)
 		return nil, input.Base, nil
 	}
 	a.pending = &pendingGeneration{
-		state: state, transaction: transaction, universe: nextUniverse, rollover: rollover,
+		state: state, transaction: transaction,
 	}
 	a.telemetry.record(input.ID, "transaction.materialize", materializationStarted, map[string]any{
 		"manifestShards": len(manifest), "upsertShards": len(upserts), "deleteShards": len(deletes),
@@ -312,7 +355,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 }
 
 func (a *analyzer) acknowledge(input request) error {
-	if input.Generation == a.current && a.pending == nil {
+	if input.Generation == a.acknowledged.generation.ID && a.pending == nil {
 		return nil
 	}
 	if a.pending == nil {
@@ -326,20 +369,17 @@ func (a *analyzer) acknowledge(input request) error {
 	}
 	pending := a.pending
 	pending.state.generation.Sequence = input.Sequence
-	a.install(pending.state, pending.universe, pending.rollover)
+	a.install(pending.state)
 	return nil
 }
 
-func (a *analyzer) install(state generationState, universe string, rollover bool) {
-	if rollover || universe != a.universe {
-		a.states = map[string]generationState{}
-	}
-	a.universe = universe
-	a.states[state.generation.ID] = state
-	a.current = state.generation.ID
+// Publication transfers the candidate into the sole acknowledged slot. Keeping
+// the former base would retain complete indexes that no protocol request can read.
+func (a *analyzer) install(state generationState) {
+	a.universe = state.generation.Universe
+	a.acknowledged = state
 	a.pending = nil
 	a.pendingFull = false
-	a.collectStates()
 }
 
 // extract produces a complete snapshot for uncertain changes and only
@@ -352,11 +392,12 @@ func (a *analyzer) extract(
 	universe string,
 	selection refreshSelection,
 	base generationState,
+	maximumProjectionBytes int,
 	requestID int,
-) ([]factShard, []sourceRecord, map[string]bool, error) {
+) ([]factShard, []sourceRecord, map[string]bool, map[string][]callableRead, error) {
 	if selection.full {
-		shards, sources, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, a.maximumSemanticPayloadBytes, a.telemetry, requestID)
-		return shards, sources, nil, err
+		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		return shards, sources, nil, reads, err
 	}
 	selected := make(map[string]bool, len(selection.files))
 	for _, file := range selection.files {
@@ -366,7 +407,7 @@ func (a *analyzer) extract(
 		a.root, universe, a.session.Program(), a.modules,
 		a.projection,
 		a.payloadCodecs,
-		a.maximumSemanticPayloadBytes,
+		maximumProjectionBytes, a.maximumDecodedShardBytes,
 		base.sources, selected, a.telemetry, requestID,
 	)
 	replaced := map[string]bool{}
@@ -381,8 +422,8 @@ func (a *analyzer) extract(
 				replaced[reference.Key] = true
 			}
 		case projectNamespace:
-			// The compiler universe already proved configuration and root-set
-			// stability, so the project fact is unchanged in this lineage.
+			// Configuration is stable in this lineage. Source membership changes
+			// enter through full extraction, so this project fact remains valid.
 			continue
 		}
 	}
@@ -400,7 +441,7 @@ func (a *analyzer) extract(
 	for file := range selected {
 		record, exists := x.sources[file]
 		if !exists {
-			return nil, nil, nil, fmt.Errorf("selected TypeScript source disappeared from the owned projection: %s", file)
+			return nil, nil, nil, nil, fmt.Errorf("selected TypeScript source disappeared from the owned projection: %s", file)
 		}
 		for _, key := range base.sourceShards[record.Source] {
 			replaced[key] = true
@@ -427,7 +468,7 @@ func (a *analyzer) extract(
 			modules, err = x.moduleShardsFor(a.session.Program(), selectedModules, base.moduleDependencies)
 		}
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		shards = append(shards, modules...)
 		moduleOwners, declarationShards, declarationReferences := moduleProjectionCounts(modules)
@@ -449,7 +490,7 @@ func (a *analyzer) extract(
 	if a.projection.sourceOwned() {
 		sourceShards, err := x.sourceShards(files, selected, a.telemetry, requestID)
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		shards = append(shards, sourceShards...)
 	}
@@ -457,10 +498,10 @@ func (a *analyzer) extract(
 		"bytes": x.semanticPayloadBytes,
 	})
 	if x.payloadEncodingError != nil {
-		return nil, nil, nil, x.payloadEncodingError
+		return nil, nil, nil, nil, x.payloadEncodingError
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
-	return shards, sources, replaced, nil
+	return shards, sources, replaced, x.callableReads, nil
 }
 
 func sourceRecordMap(records []sourceRecord) map[string]sourceRecord {
@@ -600,28 +641,26 @@ func (a *analyzer) projectUniverse() (string, []map[string]any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	roots := make([]map[string]any, 0)
+	project, err := a.portableUniversePath(a.session.Program().ParsedConfig.ConfigName())
+	if err != nil {
+		return "", nil, err
+	}
+	projects := make([]string, 0, len(configs))
 	for _, parsed := range configs {
 		config, err := a.portableUniversePath(parsed.ConfigName())
 		if err != nil {
 			return "", nil, err
 		}
-		for _, path := range parsed.FileNames() {
-			file, err := a.portableUniversePath(path)
-			if err != nil {
-				return "", nil, err
-			}
-			roots = append(roots, map[string]any{"config": config, "file": file})
-		}
+		projects = append(projects, config)
 	}
-	sort.Slice(roots, func(i, j int) bool {
-		left := roots[i]["config"].(string) + "\x00" + roots[i]["file"].(string)
-		right := roots[j]["config"].(string) + "\x00" + roots[j]["file"].(string)
-		return left < right
-	})
-	universe := deriveID("project-universe", "astrale.analysis.typescript.universe.v1", map[string]any{
+	// A compiler universe owns configuration and project-reference identity.
+	// Glob expansion is generation membership, carried by sourceManifest. An
+	// added source still forces a fresh compiler/projection, without renaming
+	// every existing symbol or invalidating unrelated portable proof identities.
+	universe := deriveID("project-universe", "astrale.analysis.typescript.universe.v2", map[string]any{
 		"configuration": configuration,
-		"roots":         roots,
+		"project":       project,
+		"projects":      sortedUnique(projects),
 		"producer": map[string]any{
 			"name": "ttsc-typescript-go", "version": producerVersion,
 			"ttsc": ttscVersion, "typescriptGo": shimcore.Version(), "protocol": protocolVersion,
@@ -755,27 +794,6 @@ func (a *analyzer) rebuild() error {
 	previous := a.session
 	a.session = next
 	return previous.Close()
-}
-
-func (a *analyzer) collectStates() {
-	if len(a.states) <= 16 {
-		return
-	}
-	type candidate struct {
-		id       string
-		sequence int
-	}
-	values := make([]candidate, 0, len(a.states))
-	for id, state := range a.states {
-		if id != a.current {
-			values = append(values, candidate{id: id, sequence: state.generation.Sequence})
-		}
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i].sequence < values[j].sequence })
-	for len(a.states) > 16 && len(values) != 0 {
-		delete(a.states, values[0].id)
-		values = values[1:]
-	}
 }
 
 func admitCapabilities(requested []string) ([]string, error) {

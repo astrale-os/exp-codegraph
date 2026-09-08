@@ -47,6 +47,7 @@ import {
 import { combineCompleteness } from '../analysis/facts/index.ts'
 import { materializeTransaction, serializeMaterialized } from '../analysis/internal/state.ts'
 import { stableJson } from '../analysis/identity/model.ts'
+import { TransactionRecordDecoder } from '../analysis/protocol/transaction-records.ts'
 import {
   admitFactPayloadCodecs,
   bindPhysicalFact,
@@ -61,7 +62,7 @@ import {
   validateFunctionBodyIR,
   type FunctionBodyIR,
 } from '../analysis/typescript/body/index.ts'
-import { TYPESCRIPT_BODY_PAYLOAD_CODEC } from '../analysis/typescript/physical/index.ts'
+import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/physical/index.ts'
 import {
   createTypeScriptFactReader,
   createTypeScriptAnalysisPipeline,
@@ -88,6 +89,8 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     expect(DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS).toEqual({
       maximumFrameBytes: 64 * 1_024 * 1_024,
       transactionChunkFrameBytes: 8 * 1_024 * 1_024,
+      maximumRecordBytes: 64 * 1_024 * 1_024,
+      maximumDecodedShardBytes: 384 * 1_024 * 1_024,
       maximumTransactionBytes: 384 * 1_024 * 1_024,
       maximumPhysicalTransactionBytes: 512 * 1_024 * 1_024,
       maximumErrorBytes: 1 * 1_024 * 1_024,
@@ -108,6 +111,32 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     ).toBe(
       String.raw`{"actual":"line\u2028paragraph\u2029separator","literal":"line\\u2028paragraph\\u2029separator"}`,
     )
+  })
+
+  it('preserves canonical identity bytes for sparse values and scalar-ordered special keys', () => {
+    const sparse = new Array<unknown>(3)
+    sparse[1] = undefined
+    sparse[2] = 42n
+    const input = Object.fromEntries([
+      ['𐀀tail', 1], ['𐀀', 2], ['\uE000', 3], ['\uD800', 4],
+      ['__proto__', 'own data'], ['10', 'ten'], ['2', 'two'],
+      ['absent', undefined], ['date', new Date('2026-09-08T00:00:00.000Z')],
+      ['sparse', sparse],
+    ])
+    expect(stableJson(input)).toBe(
+      '{"2":"two","10":"ten","__proto__":"own data","date":{"$date":"2026-09-08T00:00:00.000Z"},"sparse":[null,{"$undefined":true},{"$bigint":"42"}],"\\ud800":4,"\uE000":3,"𐀀":2,"𐀀tail":1}',
+    )
+  })
+
+  it('reads identity accessors once before descending in canonical key order', () => {
+    const reads: string[] = []
+    const input = {
+      get z() { reads.push('z'); return { get child() { reads.push('z.child'); return 2 } } },
+      get a() { reads.push('a'); return { get child() { reads.push('a.child'); return 1 } } },
+      get omitted() { reads.push('omitted'); return undefined },
+    }
+    expect(stableJson(input)).toBe('{"a":{"child":1},"z":{"child":2}}')
+    expect(reads).toEqual(['z', 'a', 'omitted', 'a.child', 'z.child'])
   })
 
   it('publishes and validates the effective bounded-value evaluator budget', () => {
@@ -573,7 +602,7 @@ lines.on('line', (line) => {
   })
 
   /** @evidence CODEGRAPH-PROTOCOL-BOUNDED-FRAMES */
-  it('assembles bounded native transaction frames and rejects unsafe stream sequences', async () => {
+  it.each(['base64-json', 'base64-json-records/1'] as const)('assembles %s frames and rejects unsafe stream sequences', async (encoding) => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-native-framing-'))
     temporary.push(root)
     const sidecar = join(root, 'sidecar.mjs')
@@ -581,7 +610,13 @@ lines.on('line', (line) => {
       sequence: 1,
       values: [`bounded-${'payload'.repeat(900)}`],
     })
-    const serialized = JSON.stringify(transaction)
+    const { manifest, upserts, deletes, ...header } = transaction
+    const serialized = encoding === 'base64-json' ? JSON.stringify(transaction) : [
+      ['header', header, [manifest.length, upserts.length, deletes.length]],
+      ...manifest.map((reference) => ['manifest', reference]),
+      ...upserts.map((shard) => ['upsert', shard]),
+      ...deletes.map((key) => ['delete', key]),
+    ].map((record) => JSON.stringify(record) + '\n').join('')
     const digest = createHash('sha256').update(serialized).digest('hex')
     await writeFile(
       sidecar,
@@ -596,7 +631,7 @@ const start = (id, overrides = {}) => ({
   id,
   protocolVersion: 1,
   kind: 'transaction-start',
-  encoding: 'base64-json',
+  encoding: ${JSON.stringify(encoding)},
   bytes: encoded.length,
   chunks,
   sha256: digest,
@@ -615,7 +650,8 @@ lines.on('line', (line) => {
     frame(start(request.id, { bytes: 40000 }))
     return
   }
-  frame(start(request.id))
+  const announcedDigest = mode === 'bad-digest' ? '0'.repeat(64) : digest
+  frame(start(request.id, { sha256: announcedDigest }))
   if (mode === 'incomplete') {
     process.stdout.write('', () => process.exit(0))
     return
@@ -645,7 +681,7 @@ lines.on('line', (line) => {
     kind: 'transaction-end',
     bytes: encoded.length,
     chunks,
-    sha256: digest,
+    sha256: announcedDigest,
   })
 })
 `,
@@ -678,6 +714,12 @@ lines.on('line', (line) => {
     ).rejects.toThrow('invalid protocol frame')
     await outOfOrder.dispose()
 
+    const badDigest = await factory.open(project)
+    await expect(
+      badDigest.request({ id: 1, kind: 'refresh', changed: ['bad-digest'] }),
+    ).rejects.toMatchObject({ cause: expect.objectContaining({ message: 'Transaction stream digest is invalid.' }) })
+    await badDigest.dispose()
+
     const incomplete = await factory.open(project)
     await expect(
       incomplete.request({ id: 1, kind: 'refresh', changed: ['incomplete'] }),
@@ -698,7 +740,113 @@ lines.on('line', (line) => {
   })
 
   /** @evidence CODEGRAPH-PROTOCOL-SEMANTIC-PAYLOAD-LIMIT */
-  it('enforces decoded semantic payload limits independently of compact wire size', async () => {
+  it('bounds individual streamed records and shards while preserving optional aggregate budgets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-record-budgets-'))
+    temporary.push(root)
+    const seed = buildTransaction({ sequence: 1, values: [] })
+    const shards = Array.from({ length: 4 }, (_, index) => {
+      const original = buildTransaction({ sequence: 1, values: [`${index}:${'x'.repeat(600)}`] }).upserts[0]!
+      const draft = { ...original, key: deriveAnalysisId('fact-shard-key', 'fixture.values', { owner: index }) }
+      return { ...draft, digest: factShardDigest(draft) }
+    }).sort((left, right) => left.key.localeCompare(right.key))
+    const manifest = shards.map(shardReference)
+    const generation = generationIdentity(seed.next, manifest)
+    const transaction = {
+      ...seed, next: { ...seed.next, id: generation }, manifest,
+      upserts: shards.map((shard) => ({ ...shard, facts: shard.facts.map((fact) => ({ ...fact, generation })) })),
+    }
+    expect(validateFactTransaction(transaction)).toEqual([])
+    const { upserts, deletes, ...metadata } = transaction
+    const { manifest: _manifest, ...header } = metadata
+    const encoded = [
+      ['header', header, [manifest.length, upserts.length, deletes.length]],
+      ...manifest.map((value) => ['manifest', value]), ...upserts.map((value) => ['upsert', value]),
+    ].map((record) => JSON.stringify(record) + '\n').join('')
+    expect(Buffer.byteLength(encoded)).toBeGreaterThan(4_096)
+    const sidecar = join(root, 'sidecar.mjs')
+    await writeFile(sidecar, `
+import { createInterface } from 'node:readline'
+import { createHash } from 'node:crypto'
+const bytes = Buffer.from(${JSON.stringify(encoded)})
+const sha256 = createHash('sha256').update(bytes).digest('hex')
+const chunks = Math.ceil(bytes.length / 128)
+const frame = value => process.stdout.write(JSON.stringify(value) + '\\n')
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line)
+  if (request.kind === 'dispose') process.exit(0)
+  if (request.recordLimits.maximumRecordBytes < 1024 || request.recordLimits.maximumDecodedShardBytes < 1024) process.exit(2)
+  const common = { id: request.id, protocolVersion: 1, payloadKind: 'transaction', bytes: bytes.length, chunks, sha256 }
+  frame({ ...common, kind: 'transaction-start', encoding: 'base64-json-records/1' })
+  for (let sequence = 0; sequence < chunks; sequence++) frame({ id: request.id, protocolVersion: 1, kind: 'transaction-chunk', sequence, data: bytes.subarray(sequence * 128, (sequence + 1) * 128).toString('base64') })
+  frame({ ...common, kind: 'transaction-end' })
+})
+`)
+    const open = (limits = {}) => createProcessNativeAnalysisSessionFactory({
+      command: process.execPath, arguments: [sidecar], maximumFrameBytes: 1_024,
+      maximumRecordBytes: 4_096, maximumDecodedShardBytes: 1_024, ...limits,
+    }).open({ root, config: 'tsconfig.json', capabilities: ['fixture.values'] })
+    const successful = await open()
+    try {
+      const response = await successful.request({ id: 1, kind: 'refresh' })
+      expect(response).toEqual({ id: 1, protocolVersion: 1, kind: 'transaction', transaction })
+    } finally { await successful.dispose() }
+    for (const limits of [
+      { maximumRecordBytes: 1_024 },
+      { maximumTransactionBytes: 1_024 },
+      { maximumPhysicalTransactionBytes: 4_096 },
+    ]) {
+      const rejected = await open(limits)
+      try {
+        await expect(rejected.request({ id: 1, kind: 'refresh' })).rejects.toThrow('invalid protocol frame')
+      } finally { await rejected.dispose() }
+    }
+  })
+
+  it('admits complete records before receiving the rest and rejects invalid record boundaries', () => {
+    const transaction = buildTransaction({ sequence: 1, values: ['é𐀀\n'.repeat(64)] })
+    const { manifest, upserts, deletes, ...header } = transaction
+    let admitted = 0
+    const decoder = () => new TransactionRecordDecoder(32 * 1_024, {
+      header: () => header,
+      reference: (input) => input as typeof manifest[number],
+      deletion: (input) => input as typeof deletes[number],
+      shard: (input) => {
+        const shard = input as typeof upserts[number]
+        expect(validateFactShard(shard)).toEqual([])
+        admitted++
+        return shard
+      },
+    })
+    const record = (value: unknown) => Buffer.from(JSON.stringify(value) + '\n')
+    const prefix = record(['header', header, [1, 1, 0]])
+    const reference = record(['manifest', manifest[0]])
+    const shard = record(['upsert', upserts[0]])
+    const successful = decoder()
+    successful.append(prefix)
+    successful.append(reference)
+    for (const byte of shard) successful.append(Uint8Array.of(byte))
+    expect(admitted).toBe(1)
+    expect(successful.finish()).toEqual(transaction)
+    expect(() => successful.append(prefix)).toThrow('already finished')
+
+    const outOfOrder = decoder()
+    outOfOrder.append(prefix)
+    expect(() => outOfOrder.append(shard)).toThrow('order or count')
+    const incomplete = decoder()
+    incomplete.append(prefix)
+    expect(() => incomplete.finish()).toThrow('incomplete')
+    const duplicate = decoder()
+    duplicate.append(Buffer.concat([prefix, reference, shard]))
+    expect(() => duplicate.append(shard)).toThrow('order or count')
+    const partial = decoder()
+    partial.append(prefix.subarray(0, prefix.length - 1))
+    expect(() => partial.finish()).toThrow('unterminated')
+    expect(() => decoder().append(Buffer.from([0xff, 10]))).toThrow()
+    expect(() => decoder().append(record(['header', header, [-1, 0, 0]]))).toThrow('header is invalid')
+    expect(() => decoder().append(Buffer.alloc(32 * 1_024 + 1, 32))).toThrow('physical byte limit')
+  })
+
+  it.each(['direct', 'records'] as const)('enforces decoded semantic limits for %s payloads independently of compact wire size', async (encoding) => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-native-semantic-limit-'))
     temporary.push(root)
     const sidecar = join(root, 'sidecar.mjs')
@@ -720,11 +868,29 @@ lines.on('line', (line) => {
       sidecar,
       `
 import { createInterface } from 'node:readline'
+import { createHash } from 'node:crypto'
 const transaction = ${JSON.stringify(wire)}
+const records = ${JSON.stringify(encoding)} === 'records'
+const { manifest, upserts, deletes, ...header } = transaction
+const data = Buffer.from([
+  ['header', header, [manifest.length, upserts.length, deletes.length]],
+  ...manifest.map(value => ['manifest', value]),
+  ...upserts.map(value => ['upsert', value]),
+  ...deletes.map(value => ['delete', value]),
+].map(value => JSON.stringify(value) + '\\n').join(''))
+const sha256 = createHash('sha256').update(data).digest('hex')
+const frame = value => process.stdout.write(JSON.stringify(value) + '\\n')
 const lines = createInterface({ input: process.stdin })
 lines.on('line', (line) => {
   const request = JSON.parse(line)
   if (request.kind === 'dispose') process.exit(0)
+  if (records) {
+    const common = { id: request.id, protocolVersion: 1, payloadKind: 'transaction', bytes: data.length, chunks: 1, sha256 }
+    frame({ ...common, kind: 'transaction-start', encoding: 'base64-json-records/1' })
+    frame({ id: request.id, protocolVersion: 1, kind: 'transaction-chunk', sequence: 0, data: data.toString('base64') })
+    frame({ ...common, kind: 'transaction-end' })
+    return
+  }
   process.stdout.write(JSON.stringify({
     id: request.id,
     protocolVersion: 1,
@@ -2752,9 +2918,17 @@ process.exit(0)
     ])
   })
 
-  it('decodes compact bodies exactly and rejects corrupt dictionaries and ordinals', () => {
+  it.each([5, 6])('decodes packed/%i bodies exactly and rejects corrupt dictionaries and ordinals', (version) => {
+    const codec = TYPESCRIPT_FACT_PAYLOAD_CODECS.find(entry => entry.id === `typescript.body.packed/${version}`)!
+    const decode = (input: ReturnType<typeof packedBodyFixture>) => codec.decode(version === 5 ? input : {
+      ...input,
+      o: [input.o.map(row => row[0]),
+        input.o.flatMap(row => [row[1], row[2], row[3], row[4], row[5], row[7], row[8], row[9], row[10]]),
+        input.o.map(row => row[6])],
+      r: input.r.flat(), e: input.e.flat(), d: input.d.flat(),
+    })
     const packed = packedBodyFixture()
-    const decoded = TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(packed) as {
+    const decoded = decode(packed) as {
       readonly body: FunctionBodyIR
       readonly values: Readonly<Record<string, ValueResult<unknown>>>
     }
@@ -2773,48 +2947,48 @@ process.exit(0)
 
     const duplicated = structuredClone(packed)
     duplicated.t.push(duplicated.t[0]!)
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(duplicated)).toThrow('duplicated')
+    expect(() => decode(duplicated)).toThrow('duplicated')
 
     const outside = structuredClone(packed)
     outside.p.push(0)
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(outside)).toThrow('outside')
+    expect(() => decode(outside)).toThrow('outside')
 
     const malformed = structuredClone(packed)
     malformed.c[0] = 'not-an-identity'
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(malformed)).toThrow('identity is invalid')
+    expect(() => decode(malformed)).toThrow('identity is invalid')
 
     const repeatedValue = structuredClone(packed)
     repeatedValue.v.push(
       [0, { kind: 'known', value: 1, evidence: [] }],
       [0, { kind: 'known', value: 1, evidence: [] }],
     )
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(repeatedValue)).toThrow(
+    expect(() => decode(repeatedValue)).toThrow(
       'repeats a value occurrence',
     )
 
     const invalidCompleteness = structuredClone(packed)
     invalidCompleteness.q = { kind: 'mystery' }
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidCompleteness)).toThrow(
+    expect(() => decode(invalidCompleteness)).toThrow(
       'completeness.kind is invalid',
     )
 
     const invalidValue = structuredClone(packed)
     invalidValue.v.push([0, { kind: 'mystery', evidence: [] }])
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidValue)).toThrow(
+    expect(() => decode(invalidValue)).toThrow(
       'value.kind is invalid',
     )
 
     const invalidOccurrenceKind = structuredClone(packed)
     invalidOccurrenceKind.t.push('not-an-occurrence-kind')
     invalidOccurrenceKind.o[0]![1] = invalidOccurrenceKind.t.length - 1
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidOccurrenceKind)).toThrow(
+    expect(() => decode(invalidOccurrenceKind)).toThrow(
       'BODY_OCCURRENCE_KIND_INVALID',
     )
 
     const invalidSpan = structuredClone(packed)
     invalidSpan.o[0]![2] = 2
     invalidSpan.o[0]![3] = 1
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidSpan)).toThrow(
+    expect(() => decode(invalidSpan)).toThrow(
       'BODY_OCCURRENCE_SPAN_INVALID',
     )
   })

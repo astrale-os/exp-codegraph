@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"hash"
 
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 )
@@ -110,14 +109,6 @@ func logicalModuleFactID(
 	writeCanonicalValue(digest, subject)
 	writeCanonicalPart(digest, `}`)
 	return "fact:" + hex.EncodeToString(digest.Sum(nil)), nil
-}
-
-func writeCanonicalValue(destination hash.Hash, value any) {
-	writeCanonicalPart(destination, stableJSON(value))
-}
-
-func writeCanonicalPart(destination hash.Hash, value string) {
-	_, _ = destination.Write([]byte(value))
 }
 
 // Retain only the normalized cross-owner evidence required to compose an

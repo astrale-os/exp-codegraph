@@ -7,7 +7,10 @@ const (
 	passVersion     = "1.6.1"
 )
 
-const typescriptBodyPayloadCodec = "typescript.body.packed/5"
+const (
+	typescriptBodyPayloadCodec   = "typescript.body.packed/6"
+	typescriptBodyPayloadCodecV5 = "typescript.body.packed/5"
+)
 
 type request struct {
 	ID           int            `json:"id"`
@@ -19,6 +22,16 @@ type request struct {
 	Changed      []string       `json:"changed,omitempty"`
 	Changes      []sourceChange `json:"changes,omitempty"`
 	Invalidate   bool           `json:"invalidate,omitempty"`
+	RecordLimits *recordLimits  `json:"recordLimits,omitempty"`
+}
+
+// Private record-stream negotiation. Older producers ignore this request field
+// and retain their CLI aggregate budgets; public analysis requests stay unchanged.
+type recordLimits struct {
+	MaximumRecordBytes              int `json:"maximumRecordBytes"`
+	MaximumDecodedShardBytes        int `json:"maximumDecodedShardBytes"`
+	MaximumTransactionBytes         int `json:"maximumTransactionBytes"`
+	MaximumPhysicalTransactionBytes int `json:"maximumPhysicalTransactionBytes"`
 }
 
 type sourceChange struct {
@@ -101,6 +114,7 @@ type fact struct {
 	Provenance      provenance               `json:"provenance"`
 	Payload         any                      `json:"payload,omitempty"`
 	PhysicalPayload *physicalPayloadEnvelope `json:"physicalPayload,omitempty"`
+	semanticBytes   int                      // Measured before physical packing; owned by this extraction.
 }
 
 type factShard struct {
@@ -118,6 +132,7 @@ type factShardReference struct {
 	Namespace     string `json:"namespace"`
 	SchemaVersion int    `json:"schemaVersion"`
 	Facts         int    `json:"facts"`
+	canonical     []byte
 }
 
 type sourceRecord struct {
@@ -126,6 +141,7 @@ type sourceRecord struct {
 	Source     string
 	Revision   string
 	TextDigest string
+	canonical  []byte
 }
 
 type moduleBoundary struct {
@@ -407,11 +423,11 @@ type packedBodyData struct {
 	Symbols      []string     `json:"s"`
 	Texts        []string     `json:"t"`
 	Parameters   []int        `json:"p"`
-	Occurrences  [][]any      `json:"o"`
-	Relations    [][]any      `json:"r"`
+	Occurrences  any          `json:"o"` // v5 rows or v6 [identities, numeric fields, origins].
+	Relations    any          `json:"r"` // v5 rows or v6 flat numeric fields.
 	Blocks       [][]any      `json:"b"`
-	Edges        [][]any      `json:"e"`
-	Definitions  [][]any      `json:"d"`
+	Edges        any          `json:"e"`
+	Definitions  any          `json:"d"`
 	Calls        [][]any      `json:"a"`
 	Summary      []any        `json:"u"`
 	Values       [][]any      `json:"v"`

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createProcessNativeAnalysisSessionFactory, createMemoryAnalysisStore, type AnalysisStore } from '../analysis/index.ts'
-import { openTypeScriptProject as openProject, resolvePackagedNativeAnalysis as resolvePackaged } from '../analysis/typescript/index.ts'
+import { openTypeScriptProject as openProject, resolvePackagedNativeAnalysis as resolvePackaged, TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/index.ts'
 
 // Source regressions run against the just-built candidate. Default package resolution
 // is qualified independently after all target artifacts have been assembled and packed.
@@ -56,6 +56,36 @@ describe('resident TypeScript project public API', () => {
     await expect(project.refresh()).rejects.toThrow('disposed')
   })
 
+  it('keeps old client snapshots exact beyond the former native history window and across reopening', async () => {
+    const root = await fixture()
+    const store = createMemoryAnalysisStore({ maximumRetainedGenerations: 1 })
+    const project = await openTypeScriptProject({ root, store })
+    try {
+      const initial = await project.refresh()
+      const pinned = await store.open(initial.generation.universe, initial.generation.id)
+      try {
+        const original = await pinned.facts()
+        let current = initial
+        for (let revision = 1; revision <= 20; revision++) {
+          await writeFile(join(root, 'index.ts'), `export function value() { return 'revision-${revision}' }\n`)
+          const next = await project.refresh({ changes: [{ path: 'index.ts', kind: 'change' }] })
+          expect(next.transactions).toHaveLength(1)
+          expect(next.transactions[0]!.base).toBe(current.generation.id)
+          expect(next.generation.sequence).toBe(current.generation.sequence + 1)
+          current = next
+        }
+        expect(await pinned.facts()).toEqual(original)
+        await project.dispose()
+        const reopened = await openTypeScriptProject({ root, store })
+        try {
+          expect((await reopened.refresh()).generation).toEqual(current.generation)
+          expect(await pinned.facts()).toEqual(original)
+          expect((await reopened.refresh()).transactions).toEqual([])
+        } finally { await reopened.dispose() }
+      } finally { await pinned.dispose() }
+    } finally { await project.dispose(); await store.dispose() }
+  })
+
   it('reopens the native process after a request failure and keeps caller stores available', async () => {
     const root = await fixture()
     const native = await resolvePackagedNativeAnalysis()
@@ -104,6 +134,37 @@ describe('resident TypeScript project public API', () => {
     await started
     await project.dispose()
     await rejected
+  })
+
+  it('keeps the committed generation after semantic budget rejection and repairs with exact fresh identities', async () => {
+    const root = await fixture()
+    const native = await resolvePackagedNativeAnalysis()
+    const store = createMemoryAnalysisStore()
+    const project = await openTypeScriptProject({ root, store, sessions: createProcessNativeAnalysisSessionFactory({
+      command: native.command, maximumTransactionBytes: 64 * 1024,
+      payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS,
+    }) })
+    try {
+      const initial = await project.refresh()
+      const pinned = await project.open(initial.generation)
+      try {
+        const original = await pinned.facts.facts('body')
+        // Escaped semantic JSON exceeds admission even though its canonical
+        // spelling and physical string table are substantially smaller.
+        await writeFile(join(root, 'index.ts'), `export function value() { return '${'<&>'.repeat(10_000)}' }\n`)
+        await expect(project.refresh({ changed: ['index.ts'] })).rejects.toThrow('semantic fact payloads exceed')
+        expect(await store.current(initial.generation.universe)).toEqual(initial.generation)
+        expect(await pinned.facts.facts('body')).toEqual(original)
+        await writeFile(join(root, 'index.ts'), "export function value() { return 'repaired' }\n")
+        const repaired = await project.refresh({ changed: ['index.ts'] })
+        expect(repaired.generation.id).not.toBe(initial.generation.id)
+        const fresh = await openTypeScriptProject({ root })
+        try { expect((await fresh.refresh()).generation.id).toBe(repaired.generation.id) }
+        finally { await fresh.dispose() }
+        expect(await pinned.facts.facts('body')).toEqual(original)
+        expect((await project.refresh()).transactions).toEqual([])
+      } finally { await pinned.dispose() }
+    } finally { await project.dispose(); await store.dispose() }
   })
 
   it('does not keep a completed opening request signal attached to the resident process', async () => {
@@ -181,7 +242,7 @@ describe('resident TypeScript project public API', () => {
     } finally { await project.dispose() }
   })
 
-  it('bounds owned universe retention through repeated topology edits and keeps the current and explicit readers pinned', async () => {
+  it('bounds owned universe retention through repeated configuration edits and keeps the current and explicit readers pinned', async () => {
     const root = await fixture()
     const project = await openTypeScriptProject({ root })
     try {
@@ -189,8 +250,8 @@ describe('resident TypeScript project public API', () => {
       const pinned = await project.open(initial.generation)
       const generations = [initial.generation]
       for (let index = 0; index < 5; index++) {
-        await writeFile(join(root, `added${index}.ts`), `export const added${index} = ${index}\n`)
-        generations.push((await project.refresh({ changed: [`added${index}.ts`] })).generation)
+        await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, target: 'ES2022', maxNodeModuleJsDepth: index + 1 }, include: ['*.ts'] }))
+        generations.push((await project.refresh({ changed: ['tsconfig.json'] })).generation)
       }
       expect(new Set(generations.map((generation) => generation.universe)).size).toBe(6)
       expect((await pinned.facts.facts('source')).facts).toHaveLength(1)
@@ -199,16 +260,15 @@ describe('resident TypeScript project public API', () => {
       expect(current.generation).toEqual(generations.at(-1))
       await current.dispose()
       await pinned.dispose()
-      await writeFile(join(root, 'another.ts'), 'export const another = true\n')
-      const next = await project.refresh({ changed: ['another.ts'] })
+      await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, target: 'ES2022', maxNodeModuleJsDepth: 6 }, include: ['*.ts'] }))
+      const next = await project.refresh({ changed: ['tsconfig.json'] })
       await expect(project.open(initial.generation)).rejects.toThrow('universe')
       const retained = await project.open(next.generation)
-      expect((await retained.facts.facts('source')).facts).toHaveLength(7)
+      expect((await retained.facts.facts('source')).facts).toHaveLength(1)
       await retained.dispose()
       // Reverting to an evicted universe recovers from a complete native snapshot.
-      for (let index = 0; index < 5; index++) await rm(join(root, `added${index}.ts`))
-      await rm(join(root, 'another.ts'))
-      const restored = await project.refresh({ changed: [...Array.from({ length: 5 }, (_, index) => `added${index}.ts`), 'another.ts'] })
+      await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, target: 'ES2022' }, include: ['*.ts'] }))
+      const restored = await project.refresh({ changed: ['tsconfig.json'] })
       expect(restored.generation.universe).toBe(initial.generation.universe)
       const rebuilt = await project.open()
       expect((await rebuilt.facts.facts('source')).facts).toHaveLength(1)
@@ -219,6 +279,177 @@ describe('resident TypeScript project public API', () => {
       expect((await project.refresh()).transactions).toEqual([])
     } finally { await project.dispose() }
   })
+
+  it.each([
+    ['direct alias', 'export const factory: () => string = first;', "import { factory } from './helper.js'; export const result = factory();"],
+    ['alias chain', 'const middle: () => string = first; export const factory: () => string = middle;', "import { factory } from './helper.js'; export const result = factory();"],
+    ['namespace', 'export const factory: () => string = first;', "import * as helpers from './helper.js'; export const result = helpers.factory();"],
+    ['declared namespace', 'export namespace helpers { export const factory: () => string = first; }', "import { helpers } from './helper.js'; export const result = helpers.factory();"],
+    ['annotated object member', 'export const api: {fn:()=>string} = {fn:first};', "import { api } from './helper.js'; export const result = api.fn();"],
+    ['callback argument', 'export const factory: () => string = first;', "import { factory } from './helper.js'; declare function consume(value:()=>string):void; consume(factory);"],
+  ])('revalidates runtime callable reads hidden by unchanged declaration emit: %s', async (variant, definition, caller) => {
+    const root = await fixture()
+    const helper = `import { first } from './first.js'; import { second } from './second.js'; ${definition}\n`
+    await Promise.all([
+      writeFile(join(root, 'first.ts'), "export function first(): string { return 'first' }\n"),
+      writeFile(join(root, 'second.ts'), "export function second(): string { return 'second' }\n"),
+      writeFile(join(root, 'helper.ts'), helper),
+      writeFile(join(root, 'index.ts'), caller!),
+    ])
+    const options = { root, capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body'] as const }
+    const project = await openTypeScriptProject(options)
+    try {
+      const initial = await project.refresh()
+      const pinned = await project.open(initial.generation)
+      try {
+        const original = (await pinned.calls({ paths: ['index.ts'] })).sites
+        expect(original).toHaveLength(1)
+        await writeFile(join(root, 'helper.ts'), helper.replace('= first', '= second').replace('fn:first', 'fn:second'))
+        const changed = await project.refresh({ changed: ['helper.ts'] })
+        const snapshot = await project.open()
+        try {
+          const sites = (await snapshot.calls({ paths: ['index.ts'] })).sites
+          expect(sites).toHaveLength(1)
+          if (variant === 'callback argument') {
+            expect(sites[0]!.call.callbacks).not.toEqual(original[0]!.call.callbacks)
+          } else {
+            const values = await snapshot.values()
+            expect(await values.value(sites[0]!.occurrence.id).resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'second' } })
+            if (variant !== 'annotated object member') expect(sites[0]!.call.target).not.toBe(original[0]!.call.target)
+          }
+          const cold = await openTypeScriptProject(options)
+          try { expect((await cold.refresh()).generation.id).toBe(changed.generation.id) }
+          finally { await cold.dispose() }
+          expect((await pinned.calls({ paths: ['index.ts'] })).sites).toEqual(original)
+        } finally { await snapshot.dispose() }
+      } finally { await pinned.dispose() }
+    } finally { await project.dispose() }
+  })
+
+  // These lifecycle scenarios repeatedly compare resident edits with independent
+  // cold compilers. Their timeout bounds qualification, not native request latency.
+  it('updates unchanged callable proofs, avoids private body fanout and removes vanished expression reads', async () => {
+    const root = await fixture()
+    const declarations = "export function first(): string { return 'first' }\nexport function second(): string { return 'second' }\n"
+    const alias = (target: string) => `import { first, second } from './functions.js'; export const alias: () => string = ${target};\n`
+    const choose = (target: string) => `import { alias as left } from './left.js'; import { alias as right } from './right.js'; export const factory: () => string = ${target};\n`
+    const caller = "import { factory } from './helper.js'; export const result = factory();\n"
+    await Promise.all([
+      writeFile(join(root, 'functions.ts'), declarations),
+      writeFile(join(root, 'left.ts'), alias('first')),
+      writeFile(join(root, 'right.ts'), alias('first')),
+      writeFile(join(root, 'helper.ts'), choose('left')),
+      writeFile(join(root, 'index.ts'), caller),
+    ])
+    const events: import('../analysis/profiling/index.ts').AnalysisTelemetryEvent[] = []
+    const native = await resolvePackagedNativeAnalysis()
+    const options = { root, capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body'] as const }
+    const project = await openTypeScriptProject({ ...options, sessions: createProcessNativeAnalysisSessionFactory({ command: native.command, telemetry: (event) => events.push(event) }) })
+    const metrics = (phase: string) => events.find((event) => event.component === 'native' && event.phase === phase)?.metrics
+    const edit = async (file: string, text: string) => {
+      events.length = 0
+      await writeFile(join(root, file), text)
+      const update = await project.refresh({ changed: [file] })
+      const cold = await openTypeScriptProject(options)
+      try { expect((await cold.refresh()).generation.id).toBe(update.generation.id) }
+      finally { await cold.dispose() }
+      return update
+    }
+    try {
+      await project.refresh()
+      await edit('functions.ts', declarations.replace("return 'first'", "return 'private body edit'"))
+      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 0 })
+      expect(metrics('projection.source-inventory')).toMatchObject({ hashedSources: 1 })
+      // Same target, different dependency path: right.ts must become a read.
+      await edit('helper.ts', choose('right'))
+      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 0 })
+      expect(metrics('projection.source-inventory')).toMatchObject({ hashedSources: 1 })
+      await edit('right.ts', alias('second'))
+      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 1 })
+      expect(metrics('projection.source-inventory')).toMatchObject({ hashedSources: 2 })
+      // A missing target and repair remain exact even with the same annotation.
+      await edit('right.ts', alias('missing'))
+      await edit('right.ts', alias('second'))
+      // Replacing the owning source clears its old positional observations.
+      await edit('index.ts', 'export const result: string = "removed";\n')
+      await edit('right.ts', alias('first'))
+      expect(metrics('compiler.callable-reads')).toBeUndefined()
+      await edit('index.ts', caller)
+      await edit('right.ts', alias('second'))
+      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 1 })
+      // A source disappearing and returning rebuilds the read index with the
+      // committed generation; no stale positional or reverse reads survive.
+      await rm(join(root, 'right.ts'))
+      const removed = await project.refresh({ changes: [{ path: 'right.ts', kind: 'unlink' }] })
+      const coldWithoutRight = await openTypeScriptProject(options)
+      try { expect((await coldWithoutRight.refresh()).generation.id).toBe(removed.generation.id) }
+      finally { await coldWithoutRight.dispose() }
+      await writeFile(join(root, 'right.ts'), alias('first'))
+      const restored = await project.refresh({ changes: [{ path: 'right.ts', kind: 'add' }] })
+      const coldWithRight = await openTypeScriptProject(options)
+      try { expect((await coldWithRight.refresh()).generation.id).toBe(restored.generation.id) }
+      finally { await coldWithRight.dispose() }
+      await edit('right.ts', alias('second'))
+      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 1 })
+    } finally { await project.dispose() }
+  }, 30_000)
+
+  it('keeps source membership within one universe and refreshes negative resolutions without renaming existing symbols', async () => {
+    const root = await fixture()
+    await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', module: 'NodeNext', moduleResolution: 'NodeNext', noEmit: true }, include: ['*.ts'] }))
+    await writeFile(join(root, 'index.ts'), `import { helper } from './helper.js'
+export function stable() { return 42 }
+export function value() { return helper() }
+`)
+    const options = { root, capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body', 'typescript.diagnostic'] as const }
+    const project = await openTypeScriptProject(options)
+    try {
+      const initial = await project.refresh()
+      const pinned = await project.open(initial.generation)
+      const originalSymbols = (await pinned.facts.facts('symbol')).facts
+      const stable = originalSymbols.find((fact) => fact.payload.name === 'stable')!.payload.symbol
+      const missing = (await pinned.facts.facts('diagnostic')).facts.filter((fact) => String(fact.payload.code) === '2307')
+      expect(missing).toHaveLength(1)
+      const inspect = async (count: number, unresolved: boolean) => {
+        const snapshot = await project.open()
+        try {
+          expect((await snapshot.facts.facts('source')).facts).toHaveLength(count)
+          expect((await snapshot.facts.facts('symbol')).facts.find((fact) => fact.payload.name === 'stable')!.payload.symbol).toBe(stable)
+          expect((await snapshot.facts.facts('diagnostic')).facts.some((fact) => String(fact.payload.code) === '2307')).toBe(unresolved)
+        } finally { await snapshot.dispose() }
+      }
+      const freshParity = async (id: string) => {
+        const cold = await openTypeScriptProject(options)
+        try { expect((await cold.refresh()).generation.id).toBe(id) }
+        finally { await cold.dispose() }
+      }
+      await writeFile(join(root, 'helper.ts'), "export function helper() { return 'resolved' }\n")
+      const added = await project.refresh({ changed: ['helper.ts'] })
+      expect(added.generation.universe).toBe(initial.generation.universe)
+      expect(added.generation.sequence).toBeGreaterThan(initial.generation.sequence)
+      expect(added.generation.sourceManifest).not.toBe(initial.generation.sourceManifest)
+      await inspect(2, false)
+      await freshParity(added.generation.id)
+      expect((await pinned.facts.facts('symbol')).facts).toEqual(originalSymbols)
+      expect((await pinned.facts.facts('diagnostic')).facts.filter((fact) => String(fact.payload.code) === '2307')).toEqual(missing)
+      await writeFile(join(root, 'unrelated.ts'), 'export const unrelated = true\n')
+      const unrelated = await project.refresh({ changed: ['unrelated.ts'] })
+      expect(unrelated.generation.universe).toBe(initial.generation.universe)
+      await inspect(3, false)
+      await freshParity(unrelated.generation.id)
+      await rm(join(root, 'helper.ts'))
+      const removed = await project.refresh({ changed: ['helper.ts'] })
+      expect(removed.generation.universe).toBe(initial.generation.universe)
+      await inspect(2, true)
+      await freshParity(removed.generation.id)
+      await rm(join(root, 'unrelated.ts'))
+      const repaired = await project.refresh({ changed: ['unrelated.ts'] })
+      expect(repaired.generation.id).toBe(initial.generation.id)
+      await inspect(1, true)
+      await freshParity(repaired.generation.id)
+      await pinned.dispose()
+    } finally { await project.dispose() }
+  }, 30_000)
 
   it('releases a delayed reader instead of returning it after disposal', async () => {
     const backing = createMemoryAnalysisStore()

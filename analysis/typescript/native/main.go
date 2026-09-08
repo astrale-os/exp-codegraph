@@ -41,6 +41,7 @@ type commandOptions struct {
 	cwd, config, universe, capabilitiesJSON, modulesJSON, payloadCodecsJSON string
 	maximumFrameBytes, transactionChunkFrameBytes                           int
 	maximumTransactionBytes, maximumPhysicalTransactionBytes                int
+	maximumRecordBytes, maximumDecodedShardBytes                            int
 	telemetryFD                                                             int
 	telemetryStderr                                                         bool
 }
@@ -56,8 +57,14 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	payloadCodecs := flags.String("payload-codecs-json", "[]", "supported physical fact payload codec JSON")
 	maximumFrameBytes := flags.Int("maximum-frame-bytes", 64*1024*1024, "maximum JSONL frame bytes")
 	transactionChunkFrameBytes := flags.Int("transaction-chunk-frame-bytes", 8*1024*1024, "preferred streamed transaction frame bytes")
-	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", 384*1024*1024, "maximum decoded semantic fact payload bytes")
-	maximumPhysicalTransactionBytes := flags.Int("maximum-physical-transaction-bytes", 512*1024*1024, "maximum assembled physical transaction bytes")
+	aggregateSemantic, aggregatePhysical := 0, 0
+	if command != "serve" {
+		aggregateSemantic, aggregatePhysical = 384*1024*1024, 512*1024*1024
+	}
+	maximumRecordBytes := flags.Int("maximum-record-bytes", 64*1024*1024, "maximum encoded record line bytes including newline")
+	maximumDecodedShardBytes := flags.Int("maximum-decoded-shard-bytes", 384*1024*1024, "maximum total expanded semantic payload bytes in one shard")
+	maximumTransactionBytes := flags.Int("maximum-transaction-bytes", aggregateSemantic, "maximum decoded semantic fact payload bytes")
+	maximumPhysicalTransactionBytes := flags.Int("maximum-physical-transaction-bytes", aggregatePhysical, "maximum assembled physical transaction bytes")
 	telemetryFD := flags.Int("telemetry-fd", -1, "optional diagnostic NDJSON descriptor")
 	telemetryStderr := flags.Bool("telemetry-stderr", false, "marked diagnostic NDJSON on stderr")
 	_ = flags.String("plugins-json", "", "ttsc compatibility")
@@ -79,8 +86,8 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 	if *universe == "" {
 		*universe = deriveID("project-universe", "typescript.native.default", map[string]any{"config": *config})
 	}
-	if *maximumFrameBytes < 1024 || *transactionChunkFrameBytes < 1024 || *maximumTransactionBytes < 1024 || *maximumPhysicalTransactionBytes < 1024 {
-		return commandOptions{}, fmt.Errorf("native frame and transaction limits must be at least 1024 bytes")
+	if *maximumFrameBytes < 1024 || *transactionChunkFrameBytes < 1024 || *maximumRecordBytes < 1024 || *maximumDecodedShardBytes < 1024 || (*maximumTransactionBytes != 0 && *maximumTransactionBytes < 1024) || (*maximumPhysicalTransactionBytes != 0 && *maximumPhysicalTransactionBytes < 1024) || (command != "serve" && (*maximumTransactionBytes == 0 || *maximumPhysicalTransactionBytes == 0)) {
+		return commandOptions{}, fmt.Errorf("native frame, record and shard limits must be at least 1024 bytes; streamed aggregate limits may be zero")
 	}
 	if *transactionChunkFrameBytes > *maximumFrameBytes {
 		return commandOptions{}, fmt.Errorf("native transaction chunk frame limit exceeds the maximum frame limit")
@@ -89,7 +96,8 @@ func parseOptions(command string, arguments []string) (commandOptions, error) {
 		cwd: *cwd, config: *config, universe: *universe,
 		capabilitiesJSON: *capabilities, modulesJSON: *modules, payloadCodecsJSON: *payloadCodecs,
 		maximumFrameBytes: *maximumFrameBytes, transactionChunkFrameBytes: *transactionChunkFrameBytes,
-		maximumTransactionBytes:         *maximumTransactionBytes,
+		maximumTransactionBytes: *maximumTransactionBytes,
+		maximumRecordBytes:      *maximumRecordBytes, maximumDecodedShardBytes: *maximumDecodedShardBytes,
 		maximumPhysicalTransactionBytes: *maximumPhysicalTransactionBytes,
 		telemetryFD:                     *telemetryFD,
 		telemetryStderr:                 *telemetryStderr,
@@ -166,7 +174,7 @@ func runCheck(arguments []string) int {
 		return 2
 	}
 	defer telemetry.close()
-	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, payloadCodecs, options.maximumTransactionBytes, telemetry)
+	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, payloadCodecs, options.maximumTransactionBytes, options.maximumDecodedShardBytes, telemetry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -205,7 +213,7 @@ func runServe(arguments []string) int {
 		return 2
 	}
 	defer telemetry.close()
-	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, payloadCodecs, options.maximumTransactionBytes, telemetry)
+	analyzer, err := newAnalyzer(options.cwd, options.config, options.universe, capabilities, modules, payloadCodecs, options.maximumTransactionBytes, options.maximumDecodedShardBytes, telemetry)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
@@ -276,6 +284,23 @@ func runServe(arguments []string) int {
 			}
 			continue
 		}
+		limits := recordLimits{MaximumRecordBytes: options.maximumRecordBytes, MaximumDecodedShardBytes: options.maximumDecodedShardBytes, MaximumTransactionBytes: options.maximumTransactionBytes, MaximumPhysicalTransactionBytes: options.maximumPhysicalTransactionBytes}
+		if input.RecordLimits != nil {
+			limits = *input.RecordLimits
+		}
+		if err := limits.validate(); err != nil {
+			if writeErr := writeFrame(output, errorResponse(input.ID, "REQUEST_INVALID", err), options.maximumFrameBytes); writeErr != nil {
+				fmt.Fprintln(os.Stderr, writeErr)
+				return 2
+			}
+			if err := flush(); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			continue
+		}
+		analyzer.maximumSemanticPayloadBytes = limits.MaximumTransactionBytes
+		analyzer.maximumDecodedShardBytes = limits.MaximumDecodedShardBytes
 		transaction, unchanged, err := analyzer.refresh(input)
 		if err != nil {
 			code := "ANALYSIS_FAILED"
@@ -308,20 +333,16 @@ func runServe(arguments []string) int {
 		}
 		var writeErr error
 		if transaction.Base == "" {
-			writeErr = writeTransactionResponse(
-				output, input.ID, transaction,
+			writeErr = writeRecordPayloadResponse(
+				output, input.ID, "transaction", transaction,
 				options.maximumFrameBytes, options.transactionChunkFrameBytes,
-				options.maximumPhysicalTransactionBytes, telemetry,
+				limits, telemetry,
 			)
 		} else {
-			writeErr = writeDeltaResponse(
-				output, input.ID, &factDelta{
-					ProtocolVersion: transaction.ProtocolVersion,
-					Base:            transaction.Base, Next: transaction.Next,
-					Upserts: transaction.Upserts, Deletes: transaction.Deletes,
-				},
+			writeErr = writeRecordPayloadResponse(
+				output, input.ID, "delta", transaction,
 				options.maximumFrameBytes, options.transactionChunkFrameBytes,
-				options.maximumPhysicalTransactionBytes, telemetry,
+				limits, telemetry,
 			)
 		}
 		if writeErr != nil {

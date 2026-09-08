@@ -1,29 +1,66 @@
-import { createHash } from 'node:crypto';
-import { createTypeScriptFactReader } from '../../facts/index.js';
+import { loadValueIndex } from './facts.js';
 import { resolveBoundedValueLimits } from '../limits.js';
 import { createCallProjection } from './calls.js';
 import { resolutionResultBytes } from './cache.js';
 const PROOF = Symbol('Codegraph value proof');
 const UNDEFINED = Object.freeze({ kind: 'literal', value: undefined });
-export function createValueEvaluatorFactory(query, cache) {
+export function createValueEvaluatorFactory(query, cache, load) {
     let pending;
-    const index = () => {
-        pending ??= indexFacts(query).catch((error) => { pending = undefined; throw error; });
+    let context;
+    const index = load ?? (() => {
+        pending ??= loadValueIndex(query).catch((error) => { pending = undefined; throw error; });
         return pending;
+    });
+    const calls = createCallProjection(query, index);
+    return Object.assign(async (options = {}) => {
+        const materialized = await index();
+        context ??= createProofContext(materialized, cache);
+        return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache);
+    }, { calls, dispose() { pending = undefined; context = undefined; calls.dispose(); } });
+}
+function createProofContext(index, cache) {
+    const witnesses = new Map();
+    const validations = new WeakMap();
+    return {
+        revision: index.revision,
+        dependency(key) {
+            const supplied = index.dependency(key);
+            if (supplied.fingerprint !== undefined)
+                return cache?.dependency(supplied) ?? supplied;
+            let witness = witnesses.get(supplied.key);
+            if (!witness) {
+                witness = supplied;
+                witnesses.set(supplied.key, witness);
+            }
+            return cache?.dependency(witness) ?? witness;
+        },
+        valid(basis) {
+            const previous = validations.get(basis);
+            if (previous !== undefined)
+                return previous;
+            for (const { key, fingerprint } of basis.dependencies)
+                if (index.fingerprints.get(key) !== fingerprint) {
+                    validations.set(basis, false);
+                    return false;
+                }
+            validations.set(basis, true);
+            return true;
+        },
     };
-    return Object.assign(async (options = {}) => new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache), { calls: createCallProjection(query, index) });
 }
 class Evaluator {
     #index;
     #model;
     #limits;
     #cache;
+    #context;
     #operands = new WeakMap();
-    constructor(index, model, limits, cache) {
+    constructor(index, model, limits, context, cache) {
         this.#index = index;
         this.#model = model;
         this.#limits = limits;
         this.#cache = cache;
+        this.#context = context;
     }
     value(occurrence) { return this.plan({ kind: 'value', occurrence }); }
     canReuse(proof) {
@@ -31,8 +68,11 @@ class Evaluator {
     }
     reusable(proof, limits) {
         const metadata = proof[PROOF];
-        return !!metadata && metadata.model === this.#model && metadata.limits === JSON.stringify(limits) &&
-            [...metadata.dependencies].every(([key, fingerprint]) => this.#index.fingerprints.get(key) === fingerprint);
+        if (!metadata || metadata.model !== this.#model ||
+            proof.limits.maximumDepth !== limits.maximumDepth || proof.limits.maximumSteps !== limits.maximumSteps ||
+            proof.limits.maximumAlternatives !== limits.maximumAlternatives)
+            return false;
+        return this.#context.valid(metadata.basis);
     }
     async evaluate(occurrence, options = {}) {
         return this.resolve({ kind: 'value', occurrence }, options, true);
@@ -48,8 +88,9 @@ class Evaluator {
     resolve(plan, options, scalar) {
         const limits = options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits;
         options.signal?.throwIfAborted();
-        const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits, plan]);
-        const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits));
+        const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits.maximumDepth,
+            limits.maximumSteps, limits.maximumAlternatives, ...planParts(plan)]);
+        const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits), this.#context.revision);
         if (cached)
             return cached;
         const state = { limits,
@@ -65,19 +106,20 @@ class Evaluator {
                 ...(evaluated.candidates ? { candidates: evaluated.candidates } : {}),
             } : {}),
         } : evaluated;
-        const result = { ...freezeResult(bounded, scalar), limits: state.limits };
-        const metadata = {
+        const basis = this.#cache?.basis(state.dependencies, bounded.evidence, state.limits) ?? Object.freeze({
+            key: '', dependencies: Object.freeze([...state.dependencies]), evidence: Object.freeze([...bounded.evidence]), limits: state.limits,
+        });
+        const result = { ...freezeResult(bounded, scalar, basis.evidence), limits: basis.limits };
+        const metadata = Object.freeze({
             model: this.#model,
-            limits: JSON.stringify(state.limits),
-            dependencies: new Map([...state.dependencies].map((key) => [key, this.#index.fingerprints.get(key)])),
-        };
-        const resultBytes = key ? resolutionResultBytes(result) : undefined;
+            basis,
+        });
+        const resultBytes = key ? resolutionResultBytes(result, [basis.evidence, basis.limits]) : undefined;
         Object.defineProperty(result, PROOF, { value: metadata });
         const frozen = Object.freeze(result);
         state.signal?.throwIfAborted();
         if (key && resultBytes !== undefined) {
-            const dependencyBytes = [...metadata.dependencies].reduce((bytes, [name, fingerprint]) => bytes + 96 + name.length * 2 + (fingerprint?.length ?? 0) * 2, 0);
-            this.#cache.put(key, frozen, resultBytes + dependencyBytes);
+            this.#cache.put(key, frozen, resultBytes, basis);
         }
         return frozen;
     }
@@ -461,7 +503,7 @@ class Evaluator {
     }
     depend(state, ...keys) {
         for (const key of keys) {
-            state.dependencies.add(key);
+            state.dependencies.add(this.#context.dependency(key));
             for (const fact of this.#index.evidence.get(key) ?? [])
                 state.evidence.add(fact);
         }
@@ -469,6 +511,20 @@ class Evaluator {
 }
 const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration']);
 const TRANSPARENT_SYNTAX = new Set(['ParenthesizedExpression', 'NonNullExpression', 'SatisfiesExpression', 'AsExpression', 'TypeAssertionExpression']);
+function planParts(plan, parts = []) {
+    if (plan.kind === 'value')
+        parts.push('value', plan.occurrence);
+    else if (plan.kind === 'unavailable')
+        parts.push('unavailable', plan.code, plan.reason);
+    else {
+        planParts(plan.input, parts);
+        if (plan.kind === 'property')
+            parts.push('property', plan.name);
+        else
+            parts.push('invoke');
+    }
+    return parts;
+}
 function uncertain(code, reason) { return { kind: 'unknown', code, reason }; }
 function exhaust(state, code, reason) {
     state.exhausted ??= { kind: 'unknown', code, reason };
@@ -482,188 +538,14 @@ function alternatives(values, state) {
         return UNDEFINED;
     return flattened.length === 1 ? flattened[0] : { kind: 'alternatives', values: flattened };
 }
-async function indexFacts(query) {
-    const reader = createTypeScriptFactReader(query);
-    const [bodyFacts, symbolFacts] = await Promise.all([collect(reader.export('body')), collect(reader.export('symbol'))]);
-    const bodies = new Map();
-    const occurrences = new Map();
-    const children = new Map();
-    const parents = new Map();
-    const definitions = new Map();
-    const definiteDefinitions = new Set();
-    const initializers = new Map();
-    const calls = new Map();
-    const direct = new Map();
-    const fingerprints = new Map();
-    const evidence = new Map();
-    const bind = (key, fact, fingerprint) => {
-        fingerprints.set(key, fingerprint);
-        evidence.set(key, [fact.id]);
-    };
-    for (const fact of bodyFacts) {
-        const body = fact.payload.body;
-        const fingerprint = hashFact(fact);
-        bodies.set(body.function, fact);
-        bind(`function:${body.function}`, fact, fingerprint);
-        for (const occurrence of body.occurrences) {
-            const previous = occurrences.get(occurrence.id);
-            if (previous && previous.owner !== occurrence.owner)
-                throw new Error(`Occurrence ${occurrence.id} has multiple function owners.`);
-            occurrences.set(occurrence.id, occurrence);
-            bind(`occurrence:${occurrence.id}`, fact, fingerprint);
-        }
-        for (const relation of body.relations) {
-            let map = children.get(relation.parent);
-            if (!map)
-                children.set(relation.parent, (map = new Map()));
-            map.set(relation.role, relation.child);
-            append(parents, relation.child, { parent: relation.parent, role: relation.role });
-        }
-        for (const definition of body.definitions) {
-            append(definitions, definition.use, definition.definition);
-            if (definition.reaching === 'definite')
-                definiteDefinitions.add(definition.use);
-        }
-        for (const call of body.calls)
-            calls.set(call.occurrence, call);
-        for (const [id, value] of Object.entries(fact.payload.values))
-            direct.set(id, value);
-    }
-    for (const occurrence of occurrences.values()) {
-        if (occurrence.syntax !== 'VariableDeclaration')
-            continue;
-        const links = children.get(occurrence.id);
-        const name = links?.get('name');
-        const initializer = links?.get('initializer');
-        const symbol = name && occurrences.get(name)?.symbol;
-        if (symbol && initializer)
-            append(initializers, symbol, initializer);
-    }
-    for (const [symbol, values] of initializers) {
-        fingerprints.set(`initializers:${symbol}`, JSON.stringify([...values].sort()));
-        evidence.set(`initializers:${symbol}`, [...new Set(values.flatMap((id) => evidence.get(`occurrence:${id}`) ?? []))]);
-    }
-    // Initializer provenance cannot prove an object's later shape after an observed
-    // write. Follow direct aliases conservatively; do not invent heap execution.
-    const mutations = new Map();
-    const escapes = new Map();
-    const aliases = new Map();
-    const alias = (from, to, evidence) => {
-        let targets = aliases.get(from);
-        if (!targets)
-            aliases.set(from, (targets = new Map()));
-        let links = targets.get(to);
-        if (!links)
-            targets.set(to, (links = new Set()));
-        links.add(evidence);
-    };
-    const rootSymbol = (id) => {
-        const seen = new Set();
-        while (id && !seen.has(id)) {
-            seen.add(id);
-            const node = occurrences.get(id);
-            if (!node)
-                return;
-            if (node.syntax === 'Identifier')
-                return node.symbol;
-            const links = children.get(id);
-            if (node.syntax === 'PropertyAccessExpression' || node.syntax === 'ElementAccessExpression')
-                id = links?.get('receiver') ?? links?.get('child:0');
-            else if (TRANSPARENT_SYNTAX.has(node.syntax))
-                id = links?.get('expression');
-            else
-                return;
-        }
-        return;
-    };
-    for (const [symbol, values] of initializers) {
-        for (const value of values) {
-            const target = rootSymbol(value);
-            if (target && target !== symbol)
-                alias(symbol, target, `occurrence:${value}`);
-        }
-    }
-    for (const call of calls.values()) {
-        for (const binding of call.bindings) {
-            const argument = rootSymbol(binding.argument);
-            if (binding.parameter && argument && binding.parameter !== argument)
-                alias(binding.parameter, argument, `occurrence:${call.occurrence}`);
-        }
-        if (call.target && bodies.has(call.target) && !call.dynamic)
-            continue;
-        for (const argument of call.arguments) {
-            const symbol = rootSymbol(argument);
-            if (!symbol)
-                continue;
-            let inputs = escapes.get(symbol);
-            if (!inputs)
-                escapes.set(symbol, (inputs = new Set()));
-            inputs.add(`occurrence:${call.occurrence}`);
-        }
-    }
-    for (const occurrence of occurrences.values()) {
-        const links = children.get(occurrence.id);
-        const target = occurrence.kind === 'assignment' ? links?.get('left')
-            : occurrence.syntax === 'DeleteExpression' ? links?.get('expression') : undefined;
-        const symbol = rootSymbol(target);
-        if (symbol) {
-            let writes = mutations.get(symbol);
-            if (!writes)
-                mutations.set(symbol, (writes = new Set()));
-            writes.add(`occurrence:${occurrence.id}`);
-        }
-    }
-    // Store direct effects and reverse alias edges only. Expanding the transitive
-    // proof sets here is quadratic on real projects; each demanded traversal is
-    // instead bounded by its caller's value budget and records negative lookups.
-    const incoming = new Map();
-    const aliasEvidence = new Map();
-    for (const [from, targets] of aliases)
-        for (const [to, links] of targets) {
-            append(incoming, to, from);
-            let keys = aliasEvidence.get(to);
-            if (!keys)
-                aliasEvidence.set(to, (keys = new Set()));
-            for (const link of links)
-                keys.add(link);
-        }
-    for (const [kind, entries] of [['mutation', mutations], ['escape', escapes], ['aliases', aliasEvidence]]) {
-        for (const [symbol, writes] of entries) {
-            const keys = [...writes].sort();
-            fingerprints.set(`${kind}:${symbol}`, JSON.stringify(keys.map((key) => [key, fingerprints.get(key)])));
-            evidence.set(`${kind}:${symbol}`, [...new Set(keys.flatMap((key) => evidence.get(key) ?? []))]);
-        }
-    }
-    for (const fact of symbolFacts)
-        bind(`symbol:${fact.payload.symbol}`, fact, hashFact(fact));
-    return { bodies, occurrences, children, parents, definitions, definiteDefinitions, initializers, calls, direct,
-        symbols: new Map(symbolFacts.map((fact) => [fact.payload.symbol, fact])),
-        mutations: new Map([...mutations].map(([symbol, writes]) => [symbol, [...new Set([...writes].map((key) => occurrences.get(key.slice('occurrence:'.length)).owner))]])),
-        escapes: new Set(escapes.keys()), aliases: incoming, fingerprints, evidence };
-}
 function escaped(value, state) {
     if (value.kind === 'alternatives')
         return alternatives(value.values.map((item) => escaped(item, state)), state);
     return value.kind === 'object' || value.kind === 'atom' || value.kind === 'external'
         ? { kind: 'unknown', code: 'VALUE_ESCAPE_UNSUPPORTED', reason: 'This value was passed to an unmodeled call that may mutate it.', candidates: [value] } : value;
 }
-function hashFact(fact) {
-    return createHash('sha256').update(JSON.stringify({ id: fact.id, payload: fact.payload, completeness: fact.completeness })).digest('hex');
-}
-function append(map, key, value) {
-    let values = map.get(key);
-    if (!values)
-        map.set(key, (values = []));
-    values.push(value);
-}
-async function collect(values) {
-    const result = [];
-    for await (const value of values)
-        result.push(value);
-    return result;
-}
 /** Freeze only containers created by the engine; opaque values keep their identity. */
-function freezeResult(result, scalar) {
+function freezeResult(result, scalar, sharedEvidence) {
     const value = (input) => {
         if (scalar)
             return input;
@@ -672,7 +554,7 @@ function freezeResult(result, scalar) {
             ? { ...symbolic, properties: Object.freeze([...symbolic.properties]) }
             : { ...symbolic });
     };
-    const evidence = Object.freeze([...result.evidence]);
+    const evidence = sharedEvidence ?? Object.freeze([...result.evidence]);
     if (result.kind === 'known')
         return { ...result, value: value(result.value), evidence };
     if (result.kind === 'unsupported')

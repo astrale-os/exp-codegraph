@@ -1,16 +1,28 @@
 import { types } from 'node:util';
-/** One resident project owns this bounded LRU across every model and budget. */
+import { RequestFrequency } from './frequency.js';
+import { ResidentProofCoordinates } from './coordinates.js';
+/** Project-owned, byte-bounded admission and invalidation across models and budgets. */
 export class ValueResolutionCache {
     #entries = new Map();
+    #readers = new Map();
+    #groups = new Map();
+    #witnessIds = new WeakMap();
+    #coordinates = new ResidentProofCoordinates();
+    #basisCoordinates = new WeakMap();
     #models = new WeakMap();
     #maximumEntries;
     #maximumBytes;
+    #frequency;
+    #revision;
+    #lineage = {};
     #nextModel = 0;
+    #nextWitness = 0;
     #bytes = 0;
     #closed = false;
-    constructor(maximumEntries = 1024, maximumBytes = 8 * 1024 * 1024) {
+    constructor(maximumEntries = Infinity, maximumBytes = 8 * 1024 * 1024) {
         this.#maximumEntries = maximumEntries;
         this.#maximumBytes = maximumBytes;
+        this.#frequency = new RequestFrequency(maximumBytes);
     }
     model(model) {
         if (!model)
@@ -20,43 +32,190 @@ export class ValueResolutionCache {
             this.#models.set(model, (id = ++this.#nextModel));
         return id;
     }
-    get(key, valid) {
+    dependency(witness) {
+        const resident = this.#readers.get(witness.key)?.witness;
+        return resident && resident.fingerprint === witness.fingerprint ? resident : witness;
+    }
+    /** Only resident bases are interned; rejected demands add no retained registry entry. */
+    basis(dependencies, evidence, limits) {
+        const ordered = [...new Map(Array.from(dependencies, dependency => [dependency.key, this.dependency(dependency)])).values()];
+        const ids = ordered.map((dependency) => {
+            let id = this.#witnessIds.get(dependency);
+            if (id === undefined)
+                this.#witnessIds.set(dependency, (id = ++this.#nextWitness));
+            return id;
+        });
+        const coordinates = this.#coordinates.prepare(evidence, limits);
+        const key = JSON.stringify([limits.maximumDepth, limits.maximumSteps, limits.maximumAlternatives, ids,
+            coordinates.evidence.map(token => token.id)]);
+        const existing = this.#groups.get(key)?.basis;
+        if (existing)
+            return existing;
+        const basis = Object.freeze({ key, dependencies: Object.freeze(ordered),
+            evidence: Object.freeze(coordinates.evidence.map(token => token.fact)), limits: coordinates.budget.limits });
+        this.#basisCoordinates.set(basis, coordinates);
+        return basis;
+    }
+    get(key, valid, revision) {
+        if (this.#closed)
+            return;
+        if (revision)
+            this.advance(revision);
+        else if (this.#revision) {
+            this.#revision = undefined;
+            this.#lineage = {};
+        }
+        this.#frequency.record(key);
         const entry = this.#entries.get(key);
         if (!entry)
             return;
-        this.#entries.delete(key);
-        if (!valid(entry.result)) {
-            this.#bytes -= entry.bytes;
+        // Direct deltas removed changed readers; a discontinuous reader must first
+        // authenticate its shared basis against its own immutable index.
+        if (!(revision && entry.group?.lineage === this.#lineage) && !valid(entry.result)) {
+            this.remove(entry);
             return;
         }
+        if (revision && entry.group)
+            entry.group.lineage = this.#lineage;
+        this.#entries.delete(key);
         this.#entries.set(key, entry);
         return entry.result;
     }
-    put(key, result, bytes) {
+    put(key, result, bytes, basis) {
         if (this.#closed)
             return;
-        bytes += key.length * 2 + 128;
-        if (bytes > this.#maximumBytes)
+        // One inverse membership per entry; shared bases own the dependency graph.
+        bytes += key.length * 2 + 224;
+        if (bytes + this.#frequency.bytes > this.#maximumBytes)
             return;
         const previous = this.#entries.get(key);
-        if (previous) {
-            this.#bytes -= previous.bytes;
-            this.#entries.delete(key);
+        if (previous)
+            this.remove(previous);
+        // Also supports independently constructed readers with no revision journal.
+        // A newly observed fingerprint retires all cached bases that read its old value.
+        for (const dependency of basis?.dependencies ?? []) {
+            const readers = this.#readers.get(dependency.key);
+            if (readers && readers.witness.fingerprint !== dependency.fingerprint)
+                for (const group of readers.groups)
+                    for (const entry of group.entries)
+                        this.remove(entry);
         }
-        this.#entries.set(key, { result, bytes });
+        let group = basis && this.#groups.get(basis.key);
+        const coordinates = basis && this.#basisCoordinates.get(basis);
+        const groupBytes = basis ? group?.bytes ?? basisBytes(basis, coordinates) : 0;
+        if (groupBytes === undefined)
+            return;
+        let added = bytes;
+        if (basis && !group) {
+            added += groupBytes;
+            for (const dependency of basis.dependencies)
+                if (!this.#readers.has(dependency.key))
+                    added += dependencyBytes(dependency);
+            if (coordinates) {
+                const extra = this.#coordinates.additionalBytes(coordinates);
+                if (extra === undefined)
+                    return;
+                added += extra;
+            }
+        }
+        if (added + this.#frequency.bytes > this.#maximumBytes)
+            return;
+        const victims = [];
+        let released = 0;
+        const frequency = this.#frequency.estimate(key);
+        for (const entry of this.#entries.values()) {
+            if (this.#entries.size - victims.length < this.#maximumEntries && this.bytes - released + added <= this.#maximumBytes)
+                break;
+            // Keep already useful work when a large scan brings equally cold demands.
+            if (frequency <= this.#frequency.estimate(entry.key))
+                return;
+            victims.push(entry);
+            released += entry.bytes;
+        }
+        if (this.#entries.size - victims.length >= this.#maximumEntries || this.bytes - released + added > this.#maximumBytes)
+            return;
+        for (const entry of victims)
+            this.remove(entry);
+        // The last reader of this basis may have been among the evicted entries.
+        group = basis && this.#groups.get(basis.key);
+        if (basis && !group) {
+            group = { basis, entries: new Set(), bytes: groupBytes, ...(coordinates ? { coordinates } : {}), ...(this.#revision ? { lineage: this.#lineage } : {}) };
+            this.#groups.set(basis.key, group);
+            this.#bytes += group.bytes;
+            if (coordinates)
+                this.#coordinates.retain(coordinates);
+            for (const dependency of basis.dependencies) {
+                let readers = this.#readers.get(dependency.key);
+                if (!readers) {
+                    readers = { witness: dependency, groups: new Set(), bytes: dependencyBytes(dependency) };
+                    this.#readers.set(dependency.key, readers);
+                    this.#bytes += readers.bytes;
+                }
+                readers.groups.add(group);
+            }
+        }
+        const entry = { key, result, bytes, ...(group ? { group } : {}) };
+        this.#entries.set(key, entry);
         this.#bytes += bytes;
-        while (this.#entries.size > this.#maximumEntries || this.#bytes > this.#maximumBytes) {
-            const oldest = this.#entries.keys().next().value;
-            this.#bytes -= this.#entries.get(oldest).bytes;
-            this.#entries.delete(oldest);
+        if (group) {
+            group.entries.add(entry);
+            group.lineage = this.#revision ? this.#lineage : undefined;
         }
     }
-    close() { this.#closed = true; this.#entries.clear(); this.#bytes = 0; }
+    advance(revision) {
+        if (this.#revision === revision.token)
+            return;
+        if (this.#revision === undefined || revision.parent !== this.#revision)
+            this.#lineage = {};
+        else
+            for (const key of revision.changed) {
+                const readers = this.#readers.get(key);
+                if (readers)
+                    for (const group of readers.groups)
+                        for (const entry of group.entries)
+                            this.remove(entry);
+            }
+        this.#revision = revision.token;
+    }
+    remove(entry) {
+        if (!this.#entries.delete(entry.key))
+            return;
+        this.#bytes -= entry.bytes;
+        const group = entry.group;
+        if (!group)
+            return;
+        group.entries.delete(entry);
+        if (group.entries.size)
+            return;
+        this.#groups.delete(group.basis.key);
+        this.#bytes -= group.bytes;
+        if (group.coordinates)
+            this.#coordinates.release(group.coordinates);
+        for (const dependency of group.basis.dependencies) {
+            const readers = this.#readers.get(dependency.key);
+            readers.groups.delete(group);
+            if (!readers.groups.size) {
+                this.#readers.delete(dependency.key);
+                this.#bytes -= readers.bytes;
+            }
+        }
+    }
+    clear() { this.#entries.clear(); this.#readers.clear(); this.#groups.clear(); this.#coordinates.clear(); this.#bytes = 0; }
+    close() { this.#closed = true; this.clear(); this.#frequency = undefined; this.#revision = undefined; }
     get size() { return this.#entries.size; }
-    get bytes() { return this.#bytes; }
+    get bytes() { return this.#bytes + this.#coordinates.bytes + (this.#frequency?.bytes ?? 0); }
+}
+function dependencyBytes(dependency) {
+    return 192 + dependency.key.length * 2 + (dependency.fingerprint?.length ?? 0) * 2;
+}
+function basisBytes(basis, coordinates) {
+    if (coordinates)
+        return 512 + basis.key.length * 2 + basis.dependencies.length * 48 + basis.evidence.length * 16;
+    const shared = resolutionResultBytes({ evidence: basis.evidence, limits: basis.limits });
+    return shared === undefined ? undefined : 192 + basis.key.length * 2 + basis.dependencies.length * 48 + shared;
 }
 /** Estimate owned storage only for deeply immutable, portable result graphs. */
-export function resolutionResultBytes(input) {
+export function resolutionResultBytes(input, shared = []) {
     let bytes = 0;
     const seen = new Set();
     const inspect = (value, depth) => {
@@ -72,6 +231,10 @@ export function resolutionResultBytes(input) {
         }
         if (typeof value !== 'object' || types.isProxy(value))
             throw undefined;
+        if (shared.includes(value)) {
+            bytes += 8;
+            return;
+        }
         const prototype = Object.getPrototypeOf(value);
         if (prototype !== Object.prototype && prototype !== null && prototype !== Array.prototype)
             throw undefined;

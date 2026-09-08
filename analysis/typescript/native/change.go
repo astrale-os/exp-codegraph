@@ -5,13 +5,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimcompiler "github.com/microsoft/typescript-go/shim/compiler"
 	"github.com/samchon/ttsc/packages/ttsc/driver"
 )
 
-func (a *analyzer) apply(changed []sourceChange) (refreshSelection, bool, error) {
+func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelection, bool, error) {
 	byPath := map[string]string{}
 	for _, change := range changed {
 		if existing, present := byPath[change.Path]; present && existing != change.Kind {
@@ -37,6 +38,7 @@ func (a *analyzer) apply(changed []sourceChange) (refreshSelection, bool, error)
 	previousFiles := make([]*shimast.SourceFile, 0, len(paths))
 	oldShapes := make(map[string]string, len(paths))
 	full := false
+	phase := time.Now()
 	for _, path := range paths {
 		absolute, err := a.absoluteChangedPath(path)
 		if err != nil {
@@ -64,6 +66,7 @@ func (a *analyzer) apply(changed []sourceChange) (refreshSelection, bool, error)
 		absolutePaths = append(absolutePaths, absolute)
 		previousFiles = append(previousFiles, source)
 	}
+	a.telemetry.record(requestID, "compiler.previous-shapes", phase, map[string]any{"files": len(oldShapes)})
 	trackDiagnostics := a.projection.diagnostics || a.projection.modules
 	previousDiagnostics := diagnosticProjectionFingerprint{}
 	if trackDiagnostics && !full {
@@ -75,6 +78,7 @@ func (a *analyzer) apply(changed []sourceChange) (refreshSelection, bool, error)
 	}
 	selected := make([]string, 0, len(absolutePaths))
 	public := []string{}
+	phase = time.Now()
 	for _, absolute := range absolutePaths {
 		content, err := os.ReadFile(absolute)
 		if err != nil {
@@ -96,10 +100,12 @@ func (a *analyzer) apply(changed []sourceChange) (refreshSelection, bool, error)
 		}
 		selected = append(selected, updated.FileName())
 	}
+	a.telemetry.record(requestID, "compiler.apply", phase, map[string]any{"files": len(absolutePaths), "full": full})
 	if full {
 		return refreshSelection{full: true}, true, nil
 	}
 	updatedFiles := make([]*shimast.SourceFile, 0, len(absolutePaths))
+	phase = time.Now()
 	for _, absolute := range absolutePaths {
 		updated := a.session.Program().SourceFile(absolute)
 		if updated == nil || updated.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(updated) {
@@ -114,10 +120,20 @@ func (a *analyzer) apply(changed []sourceChange) (refreshSelection, bool, error)
 		}
 		updatedFiles = append(updatedFiles, updated)
 	}
+	a.telemetry.record(requestID, "compiler.updated-shapes", phase, map[string]any{"files": len(updatedFiles), "public": len(public)})
 	if len(public) != 0 {
+		phase = time.Now()
 		selected = affectedSourceClosure(a.session.Program(), selected, public)
+		a.telemetry.record(requestID, "compiler.affected-closure", phase, map[string]any{"programSources": len(a.session.Program().SourceFiles()), "selectedSources": len(selected)})
 	}
+	changedFiles := make([]string, 0, len(updatedFiles))
+	for _, file := range updatedFiles {
+		changedFiles = append(changedFiles, file.FileName())
+	}
+	readUpdates, callableOwners := a.revalidateCallableReads(changedFiles, selected, requestID)
+	selected = append(selected, callableOwners...)
 	selection := refreshSelection{
+		callableReads:      readUpdates,
 		files:              sortedUnique(selected),
 		allModules:         len(public) != 0,
 		diagnosticsChanged: len(public) != 0,

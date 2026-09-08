@@ -14,6 +14,7 @@ import type { TypeScriptAnalysisService, TypeScriptSourceFact } from '../model.t
 import { resolveBoundedValueLimits } from '../value/index.ts'
 import { createValueEvaluatorFactory } from '../value/symbolic/engine.ts'
 import { ValueResolutionCache } from '../value/symbolic/cache.ts'
+import { ValueIndexOwner } from '../value/symbolic/owner.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions } from '../value/index.ts'
 import type { TypeScriptProject, TypeScriptProjectOptions, TypeScriptProjectSnapshot, TypeScriptProjectRefresh, TypeScriptProjectUpdate } from './model.ts'
 
@@ -55,6 +56,7 @@ class ResidentProject implements TypeScriptProject {
   readonly #pendingSources = new Set<SourceId>()
   readonly #sourceShards = new Map<ProjectUniverseId, Map<FactShardKey, readonly SourceId[]>>()
   readonly #values = new ValueResolutionCache()
+  readonly #index = new ValueIndexOwner()
 
   constructor(
     descriptor: NativeProjectDescriptor,
@@ -73,6 +75,7 @@ class ResidentProject implements TypeScriptProject {
       dispose: () => Promise.resolve(),
       commit: async (transaction, options) => {
         await store.commit(transaction, options)
+        this.#index.committed(transaction)
         this.#pending.push(transaction)
         let sourcesByShard = this.#sourceShards.get(transaction.next.universe)
         if (!sourcesByShard) this.#sourceShards.set(transaction.next.universe, (sourcesByShard = new Map()))
@@ -144,7 +147,8 @@ class ResidentProject implements TypeScriptProject {
         await query.dispose()
         throw new Error('TypeScript project is disposed.')
       }
-      const makeEvaluator = createValueEvaluatorFactory(query, this.#values)
+      const index = this.#index.acquire(query)
+      const makeEvaluator = createValueEvaluatorFactory(query, this.#values, index.load)
       const evaluators = new Map<unknown, Map<string, Promise<BoundedValueEvaluator<unknown>>>>()
       let disposed = false
       const snapshot: TypeScriptProjectSnapshot = Object.freeze({
@@ -175,6 +179,8 @@ class ResidentProject implements TypeScriptProject {
           disposed = true
           this.#readers.delete(snapshot)
           evaluators.clear()
+          makeEvaluator.dispose()
+          index.release()
           await query.dispose()
           await this.collectSourceShards()
         },
@@ -189,6 +195,7 @@ class ResidentProject implements TypeScriptProject {
     if (this.#closing) return this.#closing
     this.#closed = true
     this.#values.close()
+    this.#index.close()
     this.#lifetime.abort(new Error('TypeScript project is disposed.'))
     this.#closing = (async () => {
       // Stop a running native request before awaiting queued work, then release its pinned evidence.

@@ -93,9 +93,9 @@ func newBodyBuilder(x *extractor, file *shimast.SourceFile, owner, scope string,
 func (x *extractor) bodyShard(builder *bodyBuilder, payload bodyFactPayload, kind string, span sourceSpan) (factShard, error) {
 	completion := payload.Completeness
 	entry := x.newFact(bodyNamespace, kind, builder.owner, payload, []sourceSpan{span}, completion)
-	shard := finishShard(bodyNamespace, builder.owner, completion, []fact{entry})
-	if x.payloadCodecs[typescriptBodyPayloadCodec] {
-		packed, err := packBodyPayload(payload, span)
+	shard := finishShard(bodyNamespace, builder.owner, completion, []preparedFact{entry})
+	if codec := negotiatedBodyPayloadCodec(x.payloadCodecs); codec != "" {
+		packed, err := packBodyPayload(payload, span, codec)
 		if err != nil {
 			return factShard{}, err
 		}
@@ -405,12 +405,9 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	if call == nil {
 		return result
 	}
-	targetSymbol := b.canonicalCallSymbol(call.Expression)
-	result.Target = b.x.symbolID(targetSymbol)
-	result.TargetOrigin = b.x.callTargetOrigin(targetSymbol)
-	if target := b.callbackTarget(call.Expression); target != "" {
-		result.Target = target
-	}
+	target := b.projectCallable(call.Expression, false)
+	result.Target = target.target
+	result.TargetOrigin = target.origin
 	result.Dynamic = result.Target == ""
 	if result.Target == b.owner {
 		b.recursion = true
@@ -443,7 +440,7 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 				binding.Parameter = b.x.symbolID(parameters[parameterIndex])
 			}
 			result.Bindings = append(result.Bindings, binding)
-			if callback := b.callbackTarget(argument); callback != "" {
+			if callback := b.projectCallable(argument, true).callback; callback != "" {
 				result.Callbacks = append(result.Callbacks, callback)
 			}
 			b.values[argumentID] = b.value(argument)
@@ -451,30 +448,6 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	result.Callbacks = sortedUnique(result.Callbacks)
 	return result
-}
-
-func (b *bodyBuilder) callbackTarget(node *shimast.Node) string {
-	for node != nil && node.Kind == shimast.KindParenthesizedExpression {
-		node = node.AsParenthesizedExpression().Expression
-	}
-	if node == nil {
-		return ""
-	}
-	if shimast.IsFunctionLike(node) {
-		return b.x.functionID(node)
-	}
-	symbol := b.canonicalCallSymbol(node)
-	declaration := declarationNode(symbol)
-	if declaration == nil {
-		return ""
-	}
-	if shimast.IsFunctionLike(declaration) {
-		return b.x.functionID(declaration)
-	}
-	if function := functionInitializer(declaration); function != nil {
-		return b.x.functionID(function)
-	}
-	return ""
 }
 
 func (b *bodyBuilder) value(node *shimast.Node) any {

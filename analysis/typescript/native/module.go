@@ -102,7 +102,8 @@ func (x *extractor) moduleShardsFor(
 		sortDependencies(observation.payload.Dependencies)
 		sortDependencies(observation.payload.InboundDependencies)
 	}
-	declarationFacts := map[string]fact{}
+	declarationFacts := map[string]string{}
+	shards := make([]factShard, 0, len(ids)+len(x.moduleDeclarationsByIdentity))
 	declarationIDs := make([]string, 0, len(x.moduleDeclarationsByIdentity))
 	for identity := range x.moduleDeclarationsByIdentity {
 		declarationIDs = append(declarationIDs, identity)
@@ -118,9 +119,9 @@ func (x *extractor) moduleShardsFor(
 			complete(),
 			2,
 		)
-		declarationFacts[identity] = entry
+		declarationFacts[identity] = entry.ID
+		shards = append(shards, finishShardVersion(declarationNamespace, entry.ID, complete(), []preparedFact{entry}, 2))
 	}
-	shards := make([]factShard, 0, len(ids)+len(declarationFacts))
 	for _, id := range ids {
 		observation := observations[id]
 		references := make([]moduleDeclarationReferencePayload, 0, len(observation.declarations))
@@ -130,7 +131,7 @@ func (x *extractor) moduleShardsFor(
 				return nil, fmt.Errorf("normalized declaration %s has no fact", declaration.Identity)
 			}
 			references = append(references, moduleDeclarationReferencePayload{
-				Fact: entry.ID, Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
+				Fact: entry, Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
 			})
 		}
 		sort.Slice(references, func(i, j int) bool { return references[i].Identity < references[j].Identity })
@@ -167,11 +168,7 @@ func (x *extractor) moduleShardsFor(
 			return nil, err
 		}
 		entry.ID = logicalID
-		shards = append(shards, finishShardVersion(moduleNamespace, id, observation.completion, []fact{entry}, 2))
-	}
-	for _, identity := range declarationIDs {
-		entry := declarationFacts[identity]
-		shards = append(shards, finishShardVersion(declarationNamespace, entry.ID, complete(), []fact{entry}, 2))
+		shards = append(shards, finishShardVersion(moduleNamespace, id, observation.completion, []preparedFact{entry}, 2))
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil
@@ -652,7 +649,7 @@ func (x *extractor) publicSourceCoordinate(path string) (string, bool) {
 		}
 		return filepath.ToSlash(relative), true
 	}
-	if coordinate := workspacePackageCoordinate(x.root, absolute); coordinate != "" {
+	if coordinate := x.packageCoordinate(absolute); coordinate != "" {
 		return coordinate, false
 	}
 	return "external:" + filepath.Base(absolute), false
@@ -689,55 +686,7 @@ func (x *extractor) declarationPackageCoordinate(file *shimast.SourceFile) strin
 	if filename := typescriptLibraryFile(file.FileName()); filename != "" {
 		return "package:typescript/lib/" + filename
 	}
-	return canonicalTypeProviderCoordinate(workspacePackageCoordinate(x.root, file.FileName()))
-}
-
-func workspacePackageCoordinate(root, source string) string {
-	absoluteRoot, err := filepath.Abs(root)
-	if err != nil {
-		return ""
-	}
-	absoluteSource, err := filepath.Abs(source)
-	if err != nil {
-		return ""
-	}
-	inside := pathContains(absoluteRoot, absoluteSource)
-	directory := filepath.Dir(absoluteSource)
-	for {
-		if inside && !pathContains(absoluteRoot, directory) {
-			return ""
-		}
-		content, readErr := os.ReadFile(filepath.Join(directory, "package.json"))
-		if readErr == nil {
-			var document struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(content, &document) != nil {
-				return ""
-			}
-			// Nested package metadata is commonly used only to select ESM/CJS
-			// semantics and legitimately has no package name. It is not an
-			// ownership boundary: keep walking to the nearest named manifest.
-			if document.Name != "" {
-				subpath, relativeErr := filepath.Rel(directory, absoluteSource)
-				if relativeErr != nil || subpath == "." {
-					return "package:" + document.Name
-				}
-				return "package:" + document.Name + "/" + filepath.ToSlash(subpath)
-			}
-		}
-		if readErr != nil && !os.IsNotExist(readErr) {
-			return ""
-		}
-		if inside && directory == absoluteRoot {
-			return ""
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			return ""
-		}
-		directory = parent
-	}
+	return canonicalTypeProviderCoordinate(x.packageCoordinate(file.FileName()))
 }
 
 func canonicalTypeProviderCoordinate(coordinate string) string {
@@ -758,11 +707,6 @@ func canonicalTypeProviderCoordinate(coordinate string) string {
 		result += "/" + strings.Join(parts[1:], "/")
 	}
 	return result
-}
-
-func pathContains(root, target string) bool {
-	relative, err := filepath.Rel(root, target)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (x *extractor) moduleFiles(boundary moduleBoundary, sources []*shimast.SourceFile) []string {

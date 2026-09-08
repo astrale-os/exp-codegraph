@@ -3,27 +3,10 @@ import { validateFactShard } from '../facts/index.ts'
 import type {
   AnalysisGenerationId,
   FactShardKey,
-  ProducerId,
-  ProjectUniverseId,
-  SourceManifestId,
 } from '../identity/index.ts'
-import { deriveAnalysisId } from '../identity/index.ts'
-
-export interface ProducerIdentity {
-  readonly id: ProducerId
-  readonly name: string
-  readonly version: string
-  readonly protocolVersion: number
-}
-
-export interface AnalysisGeneration {
-  readonly id: AnalysisGenerationId
-  readonly sequence: number
-  readonly universe: ProjectUniverseId
-  readonly producer: ProducerIdentity
-  readonly sourceManifest: SourceManifestId
-  readonly capabilities: readonly string[]
-}
+import { hashGenerationIdentity } from './identity.ts'
+import type { AnalysisGeneration } from './types.ts'
+export type { AnalysisGeneration, ProducerIdentity } from './types.ts'
 
 export interface FactTransaction {
   readonly protocolVersion: number
@@ -60,13 +43,7 @@ export function generationIdentity(
   generation: Omit<AnalysisGeneration, 'id' | 'sequence'>,
   manifest: readonly FactShardReference[],
 ): AnalysisGenerationId {
-  return deriveAnalysisId('generation', 'astrale.analysis.generation.v1', {
-    universe: generation.universe,
-    producer: generation.producer,
-    sourceManifest: generation.sourceManifest,
-    capabilities: sortedUnique(generation.capabilities),
-    manifest: [...manifest].sort(byKey),
-  })
+  return hashGenerationIdentity(generation, manifest)
 }
 
 export function validateFactTransaction(
@@ -124,14 +101,6 @@ export function validateFactTransaction(
   return [...new Set(diagnostics)].sort()
 }
 
-function sortedUnique(values: readonly string[]): readonly string[] {
-  return [...new Set(values)].sort()
-}
-
 function isSortedUnique(values: readonly string[]): boolean {
   return values.every((value, index) => index === 0 || value.localeCompare(values[index - 1]!) > 0)
-}
-
-function byKey(left: FactShardReference, right: FactShardReference): number {
-  return left.key.localeCompare(right.key)
 }

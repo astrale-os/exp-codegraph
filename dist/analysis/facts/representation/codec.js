@@ -1,7 +1,8 @@
-const PHYSICAL_PAYLOAD = Symbol('codegraph.physical-fact-payload');
+const PHYSICAL_STATES = new WeakMap();
 const ADMITTED_SHARDS = new WeakMap();
 const OWNED_PAYLOAD_CODECS = new WeakSet();
 const IMMUTABLE_PAYLOADS = new WeakSet();
+const OWNED_PHYSICAL_RECORDS = new WeakSet();
 /** Internal composition only: this decoder constructs an owned plain data tree. */
 export function ownFactPayloadCodec(codec) {
     OWNED_PAYLOAD_CODECS.add(codec);
@@ -38,7 +39,20 @@ export function createFactWithPhysicalPayload(fields, input, codecs, owner) {
     return createPhysicalFact(fields, {
         record: deepFreeze(record),
         codec,
+        owned: input !== null && typeof input === 'object' && OWNED_PHYSICAL_RECORDS.has(input),
     });
+}
+/** Internal JSON ingress only: the caller owns this freshly parsed plain tree. */
+export function ownPhysicalPayloadRecord(record) {
+    if (record !== null && typeof record === 'object')
+        OWNED_PHYSICAL_RECORDS.add(record);
+    return record;
+}
+/** An admitted immutable representation belongs to this exact decoder instance. */
+export function physicalPayloadForProjection(fact, codec) {
+    const state = physicalState(fact);
+    return state?.owned && state.admitted && state.codec === codec && OWNED_PAYLOAD_CODECS.has(codec)
+        ? state.record : undefined;
 }
 export function createFactWithStoredPayload(fields, payload, codecs, owner) {
     return payload.kind === 'semantic'
@@ -111,10 +125,15 @@ export function admittedFactShardPayloadBytes(shard) {
 export function certifyFactShard(shard, semanticPayloadBytes) {
     freezeWithoutInvokingGetters(shard);
     ADMITTED_SHARDS.set(shard, semanticPayloadBytes);
+    for (const fact of shard.facts) {
+        const state = physicalState(fact);
+        if (state?.owned)
+            state.admitted = true;
+    }
 }
 function createPhysicalFact(fields, state) {
     const fact = { ...fields };
-    Object.defineProperty(fact, PHYSICAL_PAYLOAD, { value: state });
+    PHYSICAL_STATES.set(fact, state);
     Object.defineProperty(fact, 'payload', {
         enumerable: true,
         get: () => decodedPayload(state),
@@ -142,7 +161,7 @@ function decodedPayload(state) {
     }
 }
 function physicalState(fact) {
-    return fact[PHYSICAL_PAYLOAD];
+    return PHYSICAL_STATES.get(fact);
 }
 function admitPhysicalPayloadRecord(value, owner) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -178,11 +197,6 @@ function freezeWithoutInvokingGetters(value) {
     if (!value || typeof value !== 'object' || Object.isFrozen(value))
         return value;
     for (const key of Reflect.ownKeys(value)) {
-        // The private decode state is intentionally mutable after the public Fact
-        // and its semantic fields become immutable. It memoizes one result/error
-        // without becoming part of the Fact's observable value or identity.
-        if (key === PHYSICAL_PAYLOAD)
-            continue;
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
         if (descriptor && 'value' in descriptor)
             freezeWithoutInvokingGetters(descriptor.value);
