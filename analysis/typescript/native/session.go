@@ -37,8 +37,6 @@ type refreshSelection struct {
 type pendingGeneration struct {
 	state       generationState
 	transaction *factTransaction
-	universe    string
-	rollover    bool
 }
 
 type analyzer struct {
@@ -52,11 +50,12 @@ type analyzer struct {
 	maximumSemanticPayloadBytes int
 	maximumDecodedShardBytes    int
 	session                     *driver.Session
-	states                      map[string]generationState
-	current                     string
-	pendingFull                 bool
-	pending                     *pendingGeneration
-	telemetry                   *nativeTelemetry
+	// Only the acknowledged base and its unpublished candidate belong to this
+	// process. Historical snapshots and reader leases belong to the client store.
+	acknowledged generationState
+	pendingFull  bool
+	pending      *pendingGeneration
+	telemetry    *nativeTelemetry
 }
 
 func newAnalyzer(root, config, universe string, capabilities []string, modules []moduleBoundary, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry) (*analyzer, error) {
@@ -92,11 +91,14 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 		projection:                  planProjections(capabilities),
 		payloadCodecs:               payloadCodecs,
 		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes, maximumDecodedShardBytes: maximumDecodedShardBytes,
-		session: session, states: map[string]generationState{}, telemetry: telemetry,
+		session: session, telemetry: telemetry,
 	}, nil
 }
 
 func (a *analyzer) close() error {
+	a.acknowledged = generationState{}
+	a.pending = nil
+	a.pendingFull = false
 	if a.session == nil {
 		return nil
 	}
@@ -131,13 +133,13 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		a.telemetry.record(input.ID, "refresh.total", started, metrics)
 	}()
 	if a.pending != nil {
-		if input.Base != a.current || input.Invalidate || len(changes) != 0 {
+		if input.Base != a.acknowledged.generation.ID || input.Invalidate || len(changes) != 0 {
 			return nil, "", protocolError("COMMIT_PENDING", "A native generation is awaiting application-store acknowledgement.")
 		}
 		return a.pending.transaction, "", nil
 	}
-	adopting := a.current == "" && input.Base != ""
-	if input.Base != a.current && !adopting {
+	adopting := a.acknowledged.generation.ID == "" && input.Base != ""
+	if input.Base != a.acknowledged.generation.ID && !adopting {
 		return nil, "", protocolError("BASE_STALE", "The requested base is not the resident analyzer's current private generation.")
 	}
 	// Callers own change discovery. Once a resident base exists, an empty
@@ -199,7 +201,11 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	if rollover {
 		baseID = ""
 	}
-	base, hasBase := a.states[baseID]
+	base := generationState{}
+	hasBase := baseID != "" && baseID == a.acknowledged.generation.ID
+	if hasBase {
+		base = a.acknowledged
+	}
 	if !hasBase {
 		selection.full = true
 	}
@@ -336,11 +342,11 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	})
 	if adopting && generationID == input.Base {
 		state.generation.Sequence = input.BaseSequence
-		a.install(state, nextUniverse, rollover)
+		a.install(state)
 		return nil, input.Base, nil
 	}
 	a.pending = &pendingGeneration{
-		state: state, transaction: transaction, universe: nextUniverse, rollover: rollover,
+		state: state, transaction: transaction,
 	}
 	a.telemetry.record(input.ID, "transaction.materialize", materializationStarted, map[string]any{
 		"manifestShards": len(manifest), "upsertShards": len(upserts), "deleteShards": len(deletes),
@@ -349,7 +355,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 }
 
 func (a *analyzer) acknowledge(input request) error {
-	if input.Generation == a.current && a.pending == nil {
+	if input.Generation == a.acknowledged.generation.ID && a.pending == nil {
 		return nil
 	}
 	if a.pending == nil {
@@ -363,20 +369,17 @@ func (a *analyzer) acknowledge(input request) error {
 	}
 	pending := a.pending
 	pending.state.generation.Sequence = input.Sequence
-	a.install(pending.state, pending.universe, pending.rollover)
+	a.install(pending.state)
 	return nil
 }
 
-func (a *analyzer) install(state generationState, universe string, rollover bool) {
-	if rollover || universe != a.universe {
-		a.states = map[string]generationState{}
-	}
-	a.universe = universe
-	a.states[state.generation.ID] = state
-	a.current = state.generation.ID
+// Publication transfers the candidate into the sole acknowledged slot. Keeping
+// the former base would retain complete indexes that no protocol request can read.
+func (a *analyzer) install(state generationState) {
+	a.universe = state.generation.Universe
+	a.acknowledged = state
 	a.pending = nil
 	a.pendingFull = false
-	a.collectStates()
 }
 
 // extract produces a complete snapshot for uncertain changes and only
@@ -791,27 +794,6 @@ func (a *analyzer) rebuild() error {
 	previous := a.session
 	a.session = next
 	return previous.Close()
-}
-
-func (a *analyzer) collectStates() {
-	if len(a.states) <= 16 {
-		return
-	}
-	type candidate struct {
-		id       string
-		sequence int
-	}
-	values := make([]candidate, 0, len(a.states))
-	for id, state := range a.states {
-		if id != a.current {
-			values = append(values, candidate{id: id, sequence: state.generation.Sequence})
-		}
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i].sequence < values[j].sequence })
-	for len(a.states) > 16 && len(values) != 0 {
-		delete(a.states, values[0].id)
-		values = values[1:]
-	}
 }
 
 func admitCapabilities(requested []string) ([]string, error) {

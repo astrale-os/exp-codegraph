@@ -104,7 +104,7 @@ func sameCallableObservation(left, right callableObservation) bool {
 // locator. Failure to recover it conservatively selects that whole owner.
 func (a *analyzer) revalidateCallableReads(changed, selected []string, requestID int) (map[string][]callableRead, []string) {
 	started := time.Now()
-	index := a.states[a.current].callableReads
+	index := a.acknowledged.callableReads
 	updates := map[string][]callableRead{}
 	changedSet, selectedSet, owners := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, owner := range selected {
@@ -123,7 +123,7 @@ func (a *analyzer) revalidateCallableReads(changed, selected []string, requestID
 	}
 	x := &extractor{
 		root: a.root, universe: a.universe, checker: a.session.Program().Checker,
-		sources: maps.Clone(a.states[a.current].sources), symbolIDs: map[*shimast.Symbol]string{}, symbolSeen: map[string]symbolFactPayload{},
+		sources: maps.Clone(a.acknowledged.sources), symbolIDs: map[*shimast.Symbol]string{}, symbolSeen: map[string]symbolFactPayload{},
 	}
 	for _, path := range changed {
 		if previous, exists := x.sources[path]; exists {
@@ -202,7 +202,7 @@ func (a *analyzer) revalidateCallableReads(changed, selected []string, requestID
 }
 
 // Share untouched owner/read slices and copy only affected reverse-index rows.
-// Previous and pending generations retain their independent dependency proofs.
+// The acknowledged base and pending candidate retain independent dependency proofs.
 func mergeCallableReads(base callableReadIndex, updates map[string][]callableRead) callableReadIndex {
 	result := callableReadIndex{owners: maps.Clone(base.owners), dependents: maps.Clone(base.dependents), expressions: base.expressions}
 	if result.owners == nil {
