@@ -248,4 +248,38 @@ describe('streamed generation identity', () => {
     expect(actual!).toBe(expected!)
     expect(actualCalls!).toBe(expectedCalls!)
   })
+
+  it('reuses immutable references when the engine formats native function bodies across lines', async () => {
+    const previous = Object.getOwnPropertyDescriptor(Function.prototype, 'toString')!
+    const toString = Function.prototype.toString
+    Object.defineProperty(Function.prototype, 'toString', { ...previous,
+      value: function(this: (...args: unknown[]) => unknown) {
+        return toString.call(this).replace('{ [native code] }', '{\n    [native code]\n}')
+      },
+    })
+    try {
+      vi.resetModules()
+      const { hashGenerationIdentity } = await import('../analysis/generation/identity.ts')
+      const immutable = (index: number) => Object.freeze({ ...reference(index),
+        capabilities: Object.freeze(['fixture.semantic']) })
+      const references = Array.from({ length: 1024 }, (_, index) => immutable(30000 + index))
+      const changed = immutable(40000)
+      const observed = new Set<object>([...references, changed])
+      const entries = Object.entries
+      let canonicalized = 0
+      const spy = vi.spyOn(Object, 'entries').mockImplementation((value: object) => {
+        if (observed.has(value)) canonicalized++
+        return entries(value)
+      })
+      try {
+        hashGenerationIdentity(generation, references)
+        expect(canonicalized).toBe(1024)
+        canonicalized = 0
+        hashGenerationIdentity(generation, [...references])
+        expect(canonicalized).toBe(0)
+        hashGenerationIdentity(generation, [changed, ...references.slice(1)])
+        expect(canonicalized).toBe(1)
+      } finally { spy.mockRestore() }
+    } finally { Object.defineProperty(Function.prototype, 'toString', previous) }
+  })
 })

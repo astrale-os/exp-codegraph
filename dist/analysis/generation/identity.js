@@ -135,7 +135,7 @@ function ordinaryArrayIntrinsics() {
 }
 function nativeFunction(value, name) {
     return typeof value === 'function' && !types.isProxy(value) &&
-        Function.prototype.toString.call(value) === `function ${name}() { [native code] }`;
+        Function.prototype.toString.call(value).replace(/\s+/gu, ' ').trim() === `function ${name}() { [native code] }`;
 }
 function sameDescriptor(left, right) {
     return left !== undefined && right !== undefined && left.value === right.value &&

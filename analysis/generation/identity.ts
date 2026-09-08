@@ -124,7 +124,7 @@ function ordinaryArrayIntrinsics(): boolean {
 
 function nativeFunction(value: unknown, name: string): boolean {
   return typeof value === 'function' && !types.isProxy(value) &&
-    Function.prototype.toString.call(value) === `function ${name}() { [native code] }`
+    Function.prototype.toString.call(value).replace(/\s+/gu, ' ').trim() === `function ${name}() { [native code] }`
 }
 
 function sameDescriptor(left: PropertyDescriptor | undefined, right: PropertyDescriptor | undefined): boolean {
