@@ -313,7 +313,7 @@ export function loop(flag: boolean) { let request = 'old'; while (flag) { reques
     expect((version3.decode({ ...occurrence, o: [[...occurrence.o[0]!, null]] }) as TypeScriptBodyFacts).body.occurrences[0]!.operator).toBeUndefined()
     const version4 = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((codec) => codec.id === 'typescript.body.packed/4')!
     expect((version4.decode({ ...occurrence, o: [[...occurrence.o[0]!, null, -1]] }) as TypeScriptBodyFacts).body.occurrences[0]!.symbolKind).toBeUndefined()
-    expect((TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'module', ''] }) as TypeScriptBodyFacts).body.scope).toBe('module')
+    expect((TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'module', ''], o: [[], [], []] }) as TypeScriptBodyFacts).body.scope).toBe('module')
     expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'invalid', ''] })).toThrow('scope is invalid')
   })
 

@@ -94,8 +94,8 @@ func (x *extractor) bodyShard(builder *bodyBuilder, payload bodyFactPayload, kin
 	completion := payload.Completeness
 	entry := x.newFact(bodyNamespace, kind, builder.owner, payload, []sourceSpan{span}, completion)
 	shard := finishShard(bodyNamespace, builder.owner, completion, []preparedFact{entry})
-	if x.payloadCodecs[typescriptBodyPayloadCodec] {
-		packed, err := packBodyPayload(payload, span)
+	if codec := negotiatedBodyPayloadCodec(x.payloadCodecs); codec != "" {
+		packed, err := packBodyPayload(payload, span, codec)
 		if err != nil {
 			return factShard{}, err
 		}

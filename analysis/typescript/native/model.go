@@ -7,7 +7,10 @@ const (
 	passVersion     = "1.6.1"
 )
 
-const typescriptBodyPayloadCodec = "typescript.body.packed/5"
+const (
+	typescriptBodyPayloadCodec   = "typescript.body.packed/6"
+	typescriptBodyPayloadCodecV5 = "typescript.body.packed/5"
+)
 
 type request struct {
 	ID           int            `json:"id"`
@@ -420,11 +423,11 @@ type packedBodyData struct {
 	Symbols      []string     `json:"s"`
 	Texts        []string     `json:"t"`
 	Parameters   []int        `json:"p"`
-	Occurrences  [][]any      `json:"o"`
-	Relations    [][]any      `json:"r"`
+	Occurrences  any          `json:"o"` // v5 rows or v6 [identities, numeric fields, origins].
+	Relations    any          `json:"r"` // v5 rows or v6 flat numeric fields.
 	Blocks       [][]any      `json:"b"`
-	Edges        [][]any      `json:"e"`
-	Definitions  [][]any      `json:"d"`
+	Edges        any          `json:"e"`
+	Definitions  any          `json:"d"`
 	Calls        [][]any      `json:"a"`
 	Summary      []any        `json:"u"`
 	Values       [][]any      `json:"v"`
