@@ -118,6 +118,7 @@ type factShardReference struct {
 	Namespace     string `json:"namespace"`
 	SchemaVersion int    `json:"schemaVersion"`
 	Facts         int    `json:"facts"`
+	canonical     []byte
 }
 
 type sourceRecord struct {
@@ -126,6 +127,7 @@ type sourceRecord struct {
 	Source     string
 	Revision   string
 	TextDigest string
+	canonical  []byte
 }
 
 type moduleBoundary struct {

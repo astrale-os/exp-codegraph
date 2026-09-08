@@ -138,9 +138,10 @@ func prepareExtractor(
 		maximumSemanticPayloadBytes: maximumSemanticPayloadBytes,
 		telemetry:                   telemetry, requestID: requestID,
 	}
+	phase := time.Now()
 	files := program.SourceFiles()
 	sort.Slice(files, func(i, j int) bool { return files[i].FileName() < files[j].FileName() })
-	phase := time.Now()
+	reused, hashed := 0, 0
 	for _, file := range files {
 		path, owned := x.ownedPath(file.FileName())
 		if !owned {
@@ -148,16 +149,21 @@ func prepareExtractor(
 		}
 		if record, exists := prior[file.FileName()]; exists && selected != nil && !selected[file.FileName()] {
 			x.sources[file.FileName()] = record
+			reused++
+			continue
+		}
+		digest := hashText(file.Text())
+		hashed++
+		if record, exists := prior[file.FileName()]; exists && record.Path == path && record.TextDigest == digest {
+			x.sources[file.FileName()] = record
 			continue
 		}
 		source := deriveID("source", "typescript:"+universe, map[string]any{"path": path})
-		digest := hashText(file.Text())
 		x.sources[file.FileName()] = sourceRecord{
 			Physical: file.FileName(), Path: path, Source: source, TextDigest: digest,
 			Revision: deriveID("source-revision", source, map[string]any{"digest": digest}),
 		}
 	}
-	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources)})
 	var records []sourceRecord
 	for _, file := range files {
 		record, ok := x.sources[file.FileName()]
@@ -167,6 +173,7 @@ func prepareExtractor(
 		records = append(records, record)
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].Path < records[j].Path })
+	telemetry.record(requestID, "projection.source-inventory", phase, map[string]any{"programSources": len(files), "ownedSources": len(x.sources), "reusedSources": reused, "hashedSources": hashed})
 	return x, files, records
 }
 

@@ -162,7 +162,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		selection.full = true
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": "rebuild"})
 	} else {
-		selection, compilerAdvanced, err = a.apply(changes)
+		selection, compilerAdvanced, err = a.apply(changes, input.ID)
 		if err != nil {
 			return nil, "", err
 		}
@@ -214,14 +214,10 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 
 	materializationStarted := time.Now()
-	sourceEntries := make([]map[string]any, 0, len(sources))
-	for _, source := range sources {
-		sourceEntries = append(sourceEntries, map[string]any{"path": source.Path, "revision": source.Revision})
-	}
-	sourceManifest := deriveID("source-manifest", "typescript:"+nextUniverse, map[string]any{
-		"configuration": configuration,
-		"sources":       sourceEntries,
-	})
+	phase := time.Now()
+	sourceManifest, encodedSources, sourceBytes := nativeSourceManifestIdentity(nextUniverse, configuration, sources)
+	a.telemetry.record(input.ID, "transaction.source-manifest", phase, map[string]any{"sources": len(sources), "encodedSources": encodedSources, "hashedSourceBytes": sourceBytes})
+	phase = time.Now()
 	manifestByKey := make(map[string]factShardReference, len(base.manifest)+len(shards))
 	if hasBase && !selection.full {
 		for _, reference := range base.manifest {
@@ -231,10 +227,17 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		}
 	}
 	for _, shard := range shards {
-		manifestByKey[shard.Key] = factShardReference{
+		reference := factShardReference{
 			Key: shard.Key, Digest: shard.Digest, Namespace: shard.Namespace,
 			SchemaVersion: shard.SchemaVersion, Facts: len(shard.Facts),
 		}
+		if hasBase && base.digests[shard.Key] == shard.Digest {
+			index := sort.Search(len(base.manifest), func(index int) bool { return base.manifest[index].Key >= shard.Key })
+			if index < len(base.manifest) && base.manifest[index].Key == shard.Key {
+				reference = base.manifest[index]
+			}
+		}
+		manifestByKey[shard.Key] = reference
 	}
 	manifest := make([]factShardReference, 0, len(manifestByKey))
 	digests := make(map[string]string, len(manifestByKey))
@@ -243,10 +246,12 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		digests[reference.Key] = reference.Digest
 	}
 	sort.Slice(manifest, func(i, j int) bool { return manifest[i].Key < manifest[j].Key })
+	a.telemetry.record(input.ID, "transaction.manifest", phase, map[string]any{"baseShards": len(base.manifest), "candidateShards": len(manifest), "projectedShards": len(shards)})
 	if hasBase && base.sourceManifest == sourceManifest && stableJSON(base.manifest) == stableJSON(manifest) {
 		return nil, input.Base, nil
 	}
 
+	phase = time.Now()
 	producer := producerIdentity{
 		ID: deriveID("producer", "astrale.analysis.typescript.native", map[string]any{
 			"name": "ttsc-typescript-go", "version": producerVersion,
@@ -258,14 +263,14 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	if hasBase {
 		sequence = base.generation.Sequence + 1
 	}
-	generationID := deriveID("generation", "astrale.analysis.generation.v1", map[string]any{
-		"universe": nextUniverse, "producer": producer, "sourceManifest": sourceManifest,
-		"capabilities": a.capabilities, "manifest": manifest,
-	})
 	generation := analysisGeneration{
-		ID: generationID, Sequence: sequence, Universe: nextUniverse, Producer: producer,
+		Sequence: sequence, Universe: nextUniverse, Producer: producer,
 		SourceManifest: sourceManifest, Capabilities: a.capabilities,
 	}
+	generationID, encodedReferences, manifestBytes := nativeGenerationIdentity(generation, manifest)
+	generation.ID = generationID
+	a.telemetry.record(input.ID, "transaction.generation-identity", phase, map[string]any{"manifestShards": len(manifest), "encodedReferences": encodedReferences, "hashedReferenceBytes": manifestBytes})
+	phase = time.Now()
 	upserts := make([]factShard, 0, len(shards))
 	for _, shard := range shards {
 		if hasBase && base.digests[shard.Key] == shard.Digest {
@@ -297,6 +302,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		moduleDeclarations: mergeModuleDeclarationReferences(base.moduleDeclarations, shards, selection.full),
 		sourceManifest:     sourceManifest,
 	}
+	a.telemetry.record(input.ID, "transaction.state", phase, map[string]any{"manifestShards": len(manifest), "sources": len(sources), "upserts": len(upserts)})
 	if adopting && generationID == input.Base {
 		state.generation.Sequence = input.BaseSequence
 		a.install(state, nextUniverse, rollover)
