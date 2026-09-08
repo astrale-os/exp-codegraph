@@ -6,46 +6,42 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash"
 	"sort"
 )
 
 func deriveID(kind, namespace string, input any) string {
-	digest := sha256.New()
-	digest.Write([]byte("astrale.analysis.identity\x00"))
-	digest.Write([]byte(kind))
-	digest.Write([]byte{0})
-	digest.Write([]byte(namespace))
-	digest.Write([]byte{0})
-	digest.Write([]byte(stableJSON(input)))
+	digest := identityHash(kind, namespace)
+	digest.Write(canonicalJSONEncoding(input))
 	return kind + ":" + hex.EncodeToString(digest.Sum(nil))
 }
 
+func identityHash(kind, namespace string) hash.Hash {
+	digest := sha256.New()
+	digest.Write([]byte("astrale.analysis.identity\x00" + kind + "\x00" + namespace + "\x00"))
+	return digest
+}
+
+func writeCanonicalValue(destination hash.Hash, value any) {
+	destination.Write(canonicalJSONEncoding(value))
+}
+
+func writeCanonicalPart(destination hash.Hash, value string) {
+	destination.Write([]byte(value))
+}
+
 func stableJSON(value any) string {
-	// Round-trip through JSON's data model so structs become maps. encoding/json
-	// sorts valid UTF-8 map keys by Unicode scalar value, matching the portable
-	// TypeScript canonicalizer recursively rather than preserving Go
-	// declaration-field order or applying environment-dependent collation.
-	raw, err := json.Marshal(value)
-	if err != nil {
-		panic(fmt.Errorf("canonical JSON input: %w", err))
-	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var canonical any
-	if err := decoder.Decode(&canonical); err != nil {
-		panic(fmt.Errorf("canonical JSON model: %w", err))
-	}
+	return string(canonicalJSONEncoding(value))
+}
+
+func canonicalJSONEncoding(value any) []byte {
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(canonical); err != nil {
+	if err := encoder.Encode(value); err != nil {
 		panic(fmt.Errorf("canonical JSON: %w", err))
 	}
-	encoded := buffer.Bytes()
-	if len(encoded) != 0 && encoded[len(encoded)-1] == '\n' {
-		encoded = encoded[:len(encoded)-1]
-	}
-	return string(encoded)
+	return canonicalJSONBytes(buffer.Bytes())
 }
 
 func sortedUnique(values []string) []string {
