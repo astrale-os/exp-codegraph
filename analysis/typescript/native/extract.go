@@ -45,7 +45,7 @@ type extractor struct {
 	symbolSeen                   map[string]symbolFactPayload
 	symbolsBySource              map[string][]symbolFactPayload
 	callOrigins                  map[*shimast.Symbol]*callTargetOrigin
-	packageCoordinates           map[string]string
+	packageCoordinates           *packageCoordinateResolver
 	symbolIdentityCounts         map[*shimast.SourceFile]map[string]int
 	signatureIDs                 map[*shimast.Node]string
 	moduleDeclarations           map[*shimast.Symbol]moduleDeclarationObservation
@@ -274,6 +274,9 @@ func (x *extractor) sourceShards(
 			shards = append(shards, bodies...)
 		}
 		telemetry.record(requestID, "projection.bodies", phase, map[string]any{"sources": selectedCount, "shards": bodyShards})
+	}
+	if x.packageCoordinates != nil {
+		telemetry.record(requestID, "projection.package-ownership", time.Now(), map[string]any{"sources": len(x.packageCoordinates.coordinates), "directories": len(x.packageCoordinates.directories), "manifestReads": x.packageCoordinates.reads})
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil

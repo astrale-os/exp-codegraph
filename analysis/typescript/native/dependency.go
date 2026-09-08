@@ -38,8 +38,8 @@ func (x *extractor) observeModuleDependencies(program *driver.Program) ([]depend
 			if sourceOwner == nil && targetOwner == nil {
 				continue
 			}
-			sourceCoordinate := workspacePackageCoordinate(x.root, source.FileName())
-			targetCoordinate := workspacePackageCoordinate(x.root, targetFile)
+			sourceCoordinate := x.packageCoordinate(source.FileName())
+			targetCoordinate := x.packageCoordinate(targetFile)
 			if ownPackageManifest(sourceCoordinate, targetCoordinate) {
 				continue
 			}
@@ -464,7 +464,7 @@ func (x *extractor) publicAPIDependencies(boundary moduleBoundary, exports []obs
 func (x *extractor) externalAPITarget(location sourceLocation) string {
 	coordinate := locationSource(location)
 	if location.File != "" {
-		if packageCoordinate := workspacePackageCoordinate(x.root, filepath.Join(x.root, filepath.FromSlash(location.File))); packageCoordinate != "" {
+		if packageCoordinate := x.packageCoordinate(filepath.Join(x.root, filepath.FromSlash(location.File))); packageCoordinate != "" {
 			coordinate = packageCoordinate
 		}
 	}

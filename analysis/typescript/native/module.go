@@ -652,7 +652,7 @@ func (x *extractor) publicSourceCoordinate(path string) (string, bool) {
 		}
 		return filepath.ToSlash(relative), true
 	}
-	if coordinate := workspacePackageCoordinate(x.root, absolute); coordinate != "" {
+	if coordinate := x.packageCoordinate(absolute); coordinate != "" {
 		return coordinate, false
 	}
 	return "external:" + filepath.Base(absolute), false
@@ -689,55 +689,7 @@ func (x *extractor) declarationPackageCoordinate(file *shimast.SourceFile) strin
 	if filename := typescriptLibraryFile(file.FileName()); filename != "" {
 		return "package:typescript/lib/" + filename
 	}
-	return canonicalTypeProviderCoordinate(workspacePackageCoordinate(x.root, file.FileName()))
-}
-
-func workspacePackageCoordinate(root, source string) string {
-	absoluteRoot, err := filepath.Abs(root)
-	if err != nil {
-		return ""
-	}
-	absoluteSource, err := filepath.Abs(source)
-	if err != nil {
-		return ""
-	}
-	inside := pathContains(absoluteRoot, absoluteSource)
-	directory := filepath.Dir(absoluteSource)
-	for {
-		if inside && !pathContains(absoluteRoot, directory) {
-			return ""
-		}
-		content, readErr := os.ReadFile(filepath.Join(directory, "package.json"))
-		if readErr == nil {
-			var document struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(content, &document) != nil {
-				return ""
-			}
-			// Nested package metadata is commonly used only to select ESM/CJS
-			// semantics and legitimately has no package name. It is not an
-			// ownership boundary: keep walking to the nearest named manifest.
-			if document.Name != "" {
-				subpath, relativeErr := filepath.Rel(directory, absoluteSource)
-				if relativeErr != nil || subpath == "." {
-					return "package:" + document.Name
-				}
-				return "package:" + document.Name + "/" + filepath.ToSlash(subpath)
-			}
-		}
-		if readErr != nil && !os.IsNotExist(readErr) {
-			return ""
-		}
-		if inside && directory == absoluteRoot {
-			return ""
-		}
-		parent := filepath.Dir(directory)
-		if parent == directory {
-			return ""
-		}
-		directory = parent
-	}
+	return canonicalTypeProviderCoordinate(x.packageCoordinate(file.FileName()))
 }
 
 func canonicalTypeProviderCoordinate(coordinate string) string {
@@ -758,11 +710,6 @@ func canonicalTypeProviderCoordinate(coordinate string) string {
 		result += "/" + strings.Join(parts[1:], "/")
 	}
 	return result
-}
-
-func pathContains(root, target string) bool {
-	relative, err := filepath.Rel(root, target)
-	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }
 
 func (x *extractor) moduleFiles(boundary moduleBoundary, sources []*shimast.SourceFile) []string {
