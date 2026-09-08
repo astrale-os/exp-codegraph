@@ -387,8 +387,8 @@ func (a *analyzer) extract(
 				replaced[reference.Key] = true
 			}
 		case projectNamespace:
-			// The compiler universe already proved configuration and root-set
-			// stability, so the project fact is unchanged in this lineage.
+			// Configuration is stable in this lineage. Source membership changes
+			// enter through full extraction, so this project fact remains valid.
 			continue
 		}
 	}
@@ -606,28 +606,26 @@ func (a *analyzer) projectUniverse() (string, []map[string]any, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	roots := make([]map[string]any, 0)
+	project, err := a.portableUniversePath(a.session.Program().ParsedConfig.ConfigName())
+	if err != nil {
+		return "", nil, err
+	}
+	projects := make([]string, 0, len(configs))
 	for _, parsed := range configs {
 		config, err := a.portableUniversePath(parsed.ConfigName())
 		if err != nil {
 			return "", nil, err
 		}
-		for _, path := range parsed.FileNames() {
-			file, err := a.portableUniversePath(path)
-			if err != nil {
-				return "", nil, err
-			}
-			roots = append(roots, map[string]any{"config": config, "file": file})
-		}
+		projects = append(projects, config)
 	}
-	sort.Slice(roots, func(i, j int) bool {
-		left := roots[i]["config"].(string) + "\x00" + roots[i]["file"].(string)
-		right := roots[j]["config"].(string) + "\x00" + roots[j]["file"].(string)
-		return left < right
-	})
-	universe := deriveID("project-universe", "astrale.analysis.typescript.universe.v1", map[string]any{
+	// A compiler universe owns configuration and project-reference identity.
+	// Glob expansion is generation membership, carried by sourceManifest. An
+	// added source still forces a fresh compiler/projection, without renaming
+	// every existing symbol or invalidating unrelated portable proof identities.
+	universe := deriveID("project-universe", "astrale.analysis.typescript.universe.v2", map[string]any{
 		"configuration": configuration,
-		"roots":         roots,
+		"project":       project,
+		"projects":      sortedUnique(projects),
 		"producer": map[string]any{
 			"name": "ttsc-typescript-go", "version": producerVersion,
 			"ttsc": ttscVersion, "typescriptGo": shimcore.Version(), "protocol": protocolVersion,
