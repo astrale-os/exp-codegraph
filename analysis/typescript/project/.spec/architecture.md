@@ -20,5 +20,8 @@ remain explicit caller-controlled extension points.
 An opening signal governs only factory opening. Once the resident process is available, each request
 owns its own cancellation, so finishing a caller's task cannot kill a subsequently reused project.
 
-Value evaluators are shared only within an immutable snapshot and the exact effective reasoning
-budget. Different budgets cannot reuse partial conclusions as complete evidence.
+Value evaluators share one immutable body/symbol index within a snapshot. The call-model function
+identity and exact effective budget select the evaluator; models never share conclusions just
+because their budgets match. Symbolic demand plans preserve closures privately, and independent
+resolutions expose evidence and explicit limits. Different budgets cannot reuse partial
+conclusions as complete evidence.

@@ -46,6 +46,8 @@ export function validateFunctionBodyIR(body) {
             diagnostics.push('BODY_OCCURRENCE_OWNER_MISMATCH');
         if (!occurrence.syntax)
             diagnostics.push('BODY_OCCURRENCE_SYNTAX_REQUIRED');
+        if (occurrence.operator !== undefined && (typeof occurrence.operator !== 'string' || !occurrence.operator))
+            diagnostics.push('BODY_OCCURRENCE_OPERATOR_INVALID');
         if (occurrence.symbolOrigin !== undefined && (!occurrence.symbol || !validSymbolOrigin(occurrence.symbolOrigin))) {
             diagnostics.push('BODY_OCCURRENCE_SYMBOL_ORIGIN_INVALID');
         }

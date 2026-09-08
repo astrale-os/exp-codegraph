@@ -3,7 +3,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createProcessNativeAnalysisSessionFactory, createMemoryAnalysisStore, type AnalysisStore } from '../analysis/index.ts'
-import { openTypeScriptProject, resolvePackagedNativeAnalysis } from '../analysis/typescript/index.ts'
+import { openTypeScriptProject as openProject, resolvePackagedNativeAnalysis as resolvePackaged } from '../analysis/typescript/index.ts'
+
+// Source regressions run against the just-built candidate. Default package resolution
+// is qualified independently after all target artifacts have been assembled and packed.
+const candidate = process.env.CODEGRAPH_TEST_NATIVE_BINARY
+const resolvePackagedNativeAnalysis = () => resolvePackaged(candidate ? { binary: candidate } : {})
+const openTypeScriptProject: typeof openProject = (options) => openProject({
+  ...options,
+  ...(candidate && !options.sessions ? { binary: candidate } : {}),
+})
 
 const roots: string[] = []
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
@@ -26,8 +35,8 @@ describe('resident TypeScript project public API', () => {
       const before = await project.open(initial.generation)
       const original = await before.facts.facts('source')
       const evaluator = await before.values()
-      expect(await before.values({ maximumSteps: 2_000 })).toBe(evaluator)
-      expect(await before.values({ maximumSteps: 10 })).not.toBe(evaluator)
+      expect(await before.values({ limits: { maximumSteps: 2_000 } })).toBe(evaluator)
+      expect(await before.values({ limits: { maximumSteps: 10 } })).not.toBe(evaluator)
       await writeFile(join(root, 'index.ts'), "export function value() { return 'second' }\n")
       const [edited, unchanged] = await Promise.all([
         project.refresh({ changed: ['index.ts'] }), project.refresh(),

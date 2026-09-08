@@ -164,6 +164,8 @@ export function loop(flag: boolean) { let request = 'old'; while (flag) { reques
     const previous = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((codec) => codec.id === 'typescript.body.packed/2')!
     const occurrence = { ...packed, c: [...constants, 'module', ''], t: ['expression', 'Identifier', 'entry'], o: [[constants[0], 0, 0, 1, 1, -1]], b: [[2, [0]]] }
     expect((previous.decode(occurrence) as TypeScriptBodyFacts).body.occurrences[0]!.symbolOrigin).toBeUndefined()
+    const version3 = TYPESCRIPT_FACT_PAYLOAD_CODECS.find((codec) => codec.id === 'typescript.body.packed/3')!
+    expect((version3.decode({ ...occurrence, o: [[...occurrence.o[0]!, null]] }) as TypeScriptBodyFacts).body.occurrences[0]!.operator).toBeUndefined()
     expect((TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'module', ''] }) as TypeScriptBodyFacts).body.scope).toBe('module')
     expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode({ ...packed, c: [...constants, 'invalid', ''] })).toThrow('scope is invalid')
   })
@@ -296,6 +298,24 @@ Query.from(); facade.from();
       expect(origins[0]!.target).toEqual(origins[1]!.target)
       expect(origins[0]!.receiver).toEqual({ package: '@fixture/canonical', file: 'index.d.ts', path: ['Query'] })
       expect(origins[1]!.receiver).toEqual({ package: '@fixture/other', file: 'index.d.ts', path: ['facade'] })
+    } finally { await current.close() }
+  })
+
+  it.each([false, true])('distinguishes direct and compound assignments without source-text inference (packed=%s)', async (packed) => {
+    const text = `export function assignments() {
+  let value: unknown = 'old'
+  value = { kind: 'replacement' }
+  value += 'suffix'
+  value *= 2
+  return value
+}`
+    const current = await fixture(text, packed)
+    try {
+      await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
+      const body = (await current.read()).find((entry) => entry.file === 'index.ts' && entry.body.scope === 'function')!.body
+      const operations = body.occurrences.filter((entry) => entry.syntax === 'BinaryExpression')
+      expect(operations.map((entry) => entry.operator).sort()).toEqual(['AsteriskEqualsToken', 'EqualsToken', 'PlusEqualsToken'])
+      expect(operations.every((entry) => entry.kind === 'assignment')).toBe(true)
     } finally { await current.close() }
   })
 

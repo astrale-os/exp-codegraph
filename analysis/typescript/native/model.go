@@ -2,12 +2,12 @@ package main
 
 const (
 	protocolVersion = 1
-	producerVersion = "0.4.0"
+	producerVersion = "0.5.0"
 	ttscVersion     = "0.25.0"
-	passVersion     = "1.4.0"
+	passVersion     = "1.5.0"
 )
 
-const typescriptBodyPayloadCodec = "typescript.body.packed/3"
+const typescriptBodyPayloadCodec = "typescript.body.packed/4"
 
 type request struct {
 	ID           int            `json:"id"`
@@ -310,6 +310,7 @@ type bodyOccurrence struct {
 	Syntax       string            `json:"syntax"`
 	Symbol       string            `json:"symbol,omitempty"`
 	SymbolOrigin *callTargetOrigin `json:"symbolOrigin,omitempty"`
+	Operator     string            `json:"operator,omitempty"`
 }
 
 type bodyRelation struct {

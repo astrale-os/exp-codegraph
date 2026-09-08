@@ -5,7 +5,8 @@ import { resolvePackagedNativeAnalysis } from '../distribution/index.js';
 import { createTypeScriptAnalysisService } from '../service.js';
 import { createTypeScriptFactReader } from '../facts/index.js';
 import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../physical/index.js';
-import { createBoundedValueEvaluator, resolveBoundedValueLimits } from '../value/index.js';
+import { resolveBoundedValueLimits } from '../value/index.js';
+import { createValueEvaluatorFactory } from '../value/symbolic/engine.js';
 /** Open a headless project using the installed native analyzer and a caller-local memory store. */
 export async function openTypeScriptProject(options) {
     if (options.sessions && options.binary)
@@ -117,24 +118,28 @@ class ResidentProject {
                 await query.dispose();
                 throw new Error('TypeScript project is disposed.');
             }
+            const makeEvaluator = createValueEvaluatorFactory(query);
             const evaluators = new Map();
             let disposed = false;
             const snapshot = Object.freeze({
                 generation: query.generation,
                 query,
                 facts: createTypeScriptFactReader(query),
-                values: (input) => {
+                values: (input = {}) => {
                     if (disposed)
                         return Promise.reject(new Error('TypeScript project snapshot is disposed.'));
-                    const limits = resolveBoundedValueLimits(input);
+                    const limits = resolveBoundedValueLimits(input.limits);
                     const key = `${limits.maximumDepth}/${limits.maximumSteps}/${limits.maximumAlternatives}`;
-                    let evaluator = evaluators.get(key);
+                    let models = evaluators.get(input.call);
+                    if (!models)
+                        evaluators.set(input.call, (models = new Map()));
+                    let evaluator = models.get(key);
                     if (!evaluator) {
-                        evaluator = createBoundedValueEvaluator({ query, limits }).catch((error) => {
-                            evaluators.delete(key);
+                        evaluator = makeEvaluator({ ...input, limits }).catch((error) => {
+                            models.delete(key);
                             throw error;
                         });
-                        evaluators.set(key, evaluator);
+                        models.set(key, evaluator);
                     }
                     return evaluator;
                 },

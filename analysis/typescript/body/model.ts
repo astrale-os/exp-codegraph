@@ -23,6 +23,8 @@ export interface BodyOccurrence {
   readonly symbol?: SymbolId
   /** Canonical value declaration, never inferred from a compatible static type. */
   readonly symbolOrigin?: TypeScriptSymbolOrigin
+  /** Compiler token kind for a binary operator; absent when unavailable. */
+  readonly operator?: string
 }
 
 export interface TypeScriptSymbolOrigin {
@@ -155,6 +157,8 @@ export function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[] 
     if (!BODY_OCCURRENCE_KINDS.has(occurrence.kind)) diagnostics.push('BODY_OCCURRENCE_KIND_INVALID')
     if (occurrence.owner !== body.function) diagnostics.push('BODY_OCCURRENCE_OWNER_MISMATCH')
     if (!occurrence.syntax) diagnostics.push('BODY_OCCURRENCE_SYNTAX_REQUIRED')
+    if (occurrence.operator !== undefined && (typeof occurrence.operator !== 'string' || !occurrence.operator))
+      diagnostics.push('BODY_OCCURRENCE_OPERATOR_INVALID')
     if (occurrence.symbolOrigin !== undefined && (!occurrence.symbol || !validSymbolOrigin(occurrence.symbolOrigin))) {
       diagnostics.push('BODY_OCCURRENCE_SYMBOL_ORIGIN_INVALID')
     }

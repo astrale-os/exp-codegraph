@@ -11,8 +11,9 @@ import { createTypeScriptAnalysisService } from '../service.ts'
 import { createTypeScriptFactReader } from '../facts/index.ts'
 import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../physical/index.ts'
 import type { TypeScriptAnalysisService, TypeScriptSourceFact } from '../model.ts'
-import { createBoundedValueEvaluator, resolveBoundedValueLimits } from '../value/index.ts'
-import type { BoundedValueEvaluator, BoundedValueLimits } from '../value/index.ts'
+import { resolveBoundedValueLimits } from '../value/index.ts'
+import { createValueEvaluatorFactory } from '../value/symbolic/engine.ts'
+import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions } from '../value/index.ts'
 import type { TypeScriptProject, TypeScriptProjectOptions, TypeScriptProjectSnapshot, TypeScriptProjectRefresh, TypeScriptProjectUpdate } from './model.ts'
 
 /** Open a headless project using the installed native analyzer and a caller-local memory store. */
@@ -129,25 +130,28 @@ class ResidentProject implements TypeScriptProject {
         await query.dispose()
         throw new Error('TypeScript project is disposed.')
       }
-      const evaluators = new Map<string, Promise<BoundedValueEvaluator>>()
+      const makeEvaluator = createValueEvaluatorFactory(query)
+      const evaluators = new Map<unknown, Map<string, Promise<BoundedValueEvaluator<unknown>>>>()
       let disposed = false
       const snapshot: TypeScriptProjectSnapshot = Object.freeze({
         generation: query.generation,
         query,
         facts: createTypeScriptFactReader(query),
-        values: (input?: BoundedValueLimits) => {
+        values: <Atom = never>(input: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}): Promise<BoundedValueEvaluator<Atom>> => {
           if (disposed) return Promise.reject(new Error('TypeScript project snapshot is disposed.'))
-          const limits = resolveBoundedValueLimits(input)
+          const limits = resolveBoundedValueLimits(input.limits)
           const key = `${limits.maximumDepth}/${limits.maximumSteps}/${limits.maximumAlternatives}`
-          let evaluator = evaluators.get(key)
+          let models = evaluators.get(input.call)
+          if (!models) evaluators.set(input.call, (models = new Map()))
+          let evaluator = models.get(key)
           if (!evaluator) {
-            evaluator = createBoundedValueEvaluator({ query, limits }).catch((error) => {
-              evaluators.delete(key)
+            evaluator = makeEvaluator({ ...input, limits }).catch((error) => {
+              models.delete(key)
               throw error
             })
-            evaluators.set(key, evaluator)
+            models.set(key, evaluator)
           }
-          return evaluator
+          return evaluator as Promise<BoundedValueEvaluator<Atom>>
         },
         dispose: async () => {
           if (disposed) return

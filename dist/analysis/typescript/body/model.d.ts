@@ -10,6 +10,8 @@ export interface BodyOccurrence {
     readonly symbol?: SymbolId;
     /** Canonical value declaration, never inferred from a compatible static type. */
     readonly symbolOrigin?: TypeScriptSymbolOrigin;
+    /** Compiler token kind for a binary operator; absent when unavailable. */
+    readonly operator?: string;
 }
 export interface TypeScriptSymbolOrigin {
     readonly package: string;
