@@ -3,7 +3,6 @@ import { readFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { selectAnalysisStore } from '../../analysis/index.js';
 import { dispatchAnalysisTelemetry } from '../../analysis/profiling/dispatch.js';
-import { createSQLiteAnalysisStore } from '../../analysis/sqlite/index.js';
 import { createFileWorkspaceCheckpointStore, } from '../../workspace/checkpoint/index.js';
 import { resolveApplicationRoot } from '../discovery/index.js';
 import { createTypeSpecApplicationServiceWithDependencies } from '../service.js';
@@ -18,13 +17,16 @@ export async function createNodeTypeSpecApplicationService(options) {
         persistence: 'advisory',
         ...((options.persistence ?? 'advisory') === 'advisory'
             ? {
-                openDurable: () => createSQLiteAnalysisStore({
-                    file: join(options.cacheDirectory, 'analysis-v2.sqlite'),
-                    // Physical isolation belongs to the store namespace, never semantic identities.
-                    namespace: `worktree:${createHash('sha256').update(root).digest('hex')}`,
-                    maximumRetainedGenerations,
-                    ...(options.telemetry ? { telemetry: options.telemetry } : {}),
-                }),
+                openDurable: async () => {
+                    const { createSQLiteAnalysisStore } = await import('../../analysis/sqlite/index.js');
+                    return createSQLiteAnalysisStore({
+                        file: join(options.cacheDirectory, 'analysis-v2.sqlite'),
+                        // Physical isolation belongs to the store namespace, never semantic identities.
+                        namespace: `worktree:${createHash('sha256').update(root).digest('hex')}`,
+                        maximumRetainedGenerations,
+                        ...(options.telemetry ? { telemetry: options.telemetry } : {}),
+                    });
+                },
             }
             : {}),
     });

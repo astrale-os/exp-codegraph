@@ -23,6 +23,7 @@ const supported = [
   'darwin-x64',
   'linux-arm64',
   'linux-x64',
+  'win32-x64',
 ]
 assert(supported.includes(target), `Unsupported packed-consumer target ${target}.`)
 
@@ -52,19 +53,16 @@ try {
       packageManager: 'pnpm@11.13.1',
     }),
   )
-  await execFile(
-    'pnpm',
-    [
-      'add',
-      '--dir',
-      consumer,
-      '--prefer-offline',
-      '--ignore-scripts',
-      '--save-exact',
-      ...archives.map((archive) => resolve(releaseDirectory, archive)),
-    ],
-    { cwd: repositoryRoot, env: dependencyEnvironment },
-  )
+  const pnpmArguments = [
+    'add',
+    '--dir',
+    consumer,
+    '--prefer-offline',
+    '--ignore-scripts',
+    '--save-exact',
+    ...archives.map((archive) => resolve(releaseDirectory, archive)),
+  ]
+  await installConsumer(pnpmArguments, repositoryRoot, dependencyEnvironment)
   const lock = await readFile(join(consumer, 'pnpm-lock.yaml'), 'utf8')
   await assertPackedConsumerLock(lock, consumer, releaseDirectory, archives)
 
@@ -90,7 +88,7 @@ try {
   assert.deepEqual(nativeFiles.sort(), [
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
-    'bin/codegraph-native',
+    target === 'win32-x64' ? 'bin/codegraph-native.exe' : 'bin/codegraph-native',
     'manifest.json',
     'package.json',
   ])
@@ -173,8 +171,10 @@ try {
     await store.dispose()
   }
 
+  await qualifyResidentProject(typescript, join(temporary, 'resident'))
+
   process.stdout.write(
-    `${JSON.stringify({ packageVersion: rootManifest.version, target, nativeSha256: native.sha256, source: 'github-artifact' })}\n`,
+    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: 'github-artifact' })}\n`,
   )
 } finally {
   await rm(temporary, { recursive: true, force: true })
@@ -279,4 +279,41 @@ async function filesUnder(directory) {
 
 async function assertMissing(path) {
   await assert.rejects(stat(path), { code: 'ENOENT' })
+}
+
+async function installConsumer(arguments_, cwd, env) {
+  if (process.platform !== 'win32') return execFile('pnpm', arguments_, { cwd, env })
+  // Pass paths as JSON data: pnpm may be a .cmd shim, which execFile cannot execute on Windows.
+  return execFile('powershell.exe', [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+    '$arguments = ConvertFrom-Json $env:CODEGRAPH_PNPM_ARGUMENTS; & pnpm @arguments; exit $LASTEXITCODE',
+  ], { cwd, env: { ...env, CODEGRAPH_PNPM_ARGUMENTS: JSON.stringify(arguments_) } })
+}
+
+async function qualifyResidentProject(typescript, root) {
+  await mkdir(root)
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { noLib: true, target: 'ES2022' }, include: ['*.ts'],
+  }))
+  await writeFile(join(root, 'index.ts'), "export const helper = () => 'first'; export function value() { return helper() }\n")
+  const project = await typescript.openTypeScriptProject({ root })
+  try {
+    const initial = await project.refresh()
+    assert.equal(initial.transactions.length, 1)
+    const before = await project.open(initial.generation)
+    try {
+      const original = await before.facts.facts('source')
+      const bodies = await before.facts.facts('body')
+      assert.equal(bodies.facts.length, 3)
+      assert.equal(bodies.facts.filter((fact) => fact.payload.body.scope === 'module').length, 1)
+      const values = await before.values()
+      assert.equal(await before.values(), values)
+      await writeFile(join(root, 'index.ts'), "export const helper = () => 'second'; export function value() { return helper() }\n")
+      const edited = await project.refresh({ changed: ['index.ts'] })
+      assert.notEqual(edited.generation.id, initial.generation.id)
+      assert.equal((await project.refresh()).generation.id, edited.generation.id)
+      assert.deepEqual((await project.refresh()).transactions, [])
+      assert.deepEqual(await before.facts.facts('source'), original)
+    } finally { await before.dispose() }
+  } finally { await project.dispose() }
 }

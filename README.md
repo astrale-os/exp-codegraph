@@ -1,6 +1,6 @@
 # Astrale Codegraph
 
-Codegraph is distributed from GitHub at an exact source revision. Its root package and four native
+Codegraph is distributed from GitHub at an exact source revision. Its root package and five native
 platform packages are private packing units qualified together as one GitHub Actions artifact; no
 workflow publishes them to a package registry. See [GitHub artifact distribution](docs/github-artifacts.md).
 
@@ -20,6 +20,9 @@ Repository discovery prunes generated `benchmark/artifacts` and `evidence/artifa
 plus archived `qualification/evidence`, before traversing them. These evidence trees remain
 inspectable when opened as the catalog root. Explicit `--exclude` trees are likewise pruned during
 discovery rather than loaded and filtered afterward.
+
+Node 22.13+, 24 and 26 are supported. Native analysis runs on macOS and Linux (x64/arm64)
+and Windows (x64). The Node 22.13 minimum also supports the optional SQLite store without flags.
 
 ## Start with the minimum
 

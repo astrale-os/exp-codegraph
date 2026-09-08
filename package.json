@@ -135,9 +135,10 @@
     "@astrale-os/codegraph-native-darwin-arm64": "workspace:*",
     "@astrale-os/codegraph-native-darwin-x64": "workspace:*",
     "@astrale-os/codegraph-native-linux-arm64": "workspace:*",
-    "@astrale-os/codegraph-native-linux-x64": "workspace:*"
+    "@astrale-os/codegraph-native-linux-x64": "workspace:*",
+    "@astrale-os/codegraph-native-win32-x64": "workspace:*"
   },
   "engines": {
-    "node": ">=24 <25 || >=26 <27"
+    "node": ">=22.13 <23 || >=24 <25 || >=26 <27"
   }
 }

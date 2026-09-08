@@ -15,7 +15,7 @@ export interface ProcessNativeAnalysisSessionFactoryOptions {
     readonly maximumResidentBytes?: number;
     /** Low-level adapter seam used to qualify resource monitoring without OS-specific test access. */
     readonly sampleResidentBytes?: (pid: number) => Promise<number>;
-    /** Opt-in diagnostic attribution received over a dedicated process descriptor. */
+    /** Opt-in diagnostic attribution, with a marked stderr stream on Windows. */
     readonly telemetry?: AnalysisTelemetrySink;
     /** Explicit physical payload capabilities negotiated with the native producer. */
     readonly payloadCodecs?: readonly FactPayloadCodec[];

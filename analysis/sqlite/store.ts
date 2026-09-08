@@ -56,11 +56,11 @@ export async function createSQLiteAnalysisStore(
   const database = new DatabaseSync(file, {
     enableForeignKeyConstraints: true,
     readOnly: false,
-    timeout: options.busyTimeoutMs ?? 5_000,
   })
   try {
     database.exec(
-      `PRAGMA journal_mode = WAL;
+      `PRAGMA busy_timeout = ${options.busyTimeoutMs ?? 5_000};
+       PRAGMA journal_mode = WAL;
        PRAGMA synchronous = ${options.requireDurability === false ? 'NORMAL' : 'FULL'};
        PRAGMA foreign_keys = ON;`,
     )
@@ -271,6 +271,10 @@ function validateOptions(options: SQLiteAnalysisStoreOptions): void {
   if (!options.file) throw new TypeError('SQLite analysis store file is required.')
   if (!/^[A-Za-z0-9._:-]+$/u.test(options.namespace)) {
     throw new TypeError('SQLite analysis store namespace contains unsupported characters.')
+  }
+  const busyTimeout = options.busyTimeoutMs ?? 5_000
+  if (!Number.isSafeInteger(busyTimeout) || busyTimeout < 0 || busyTimeout > 2_147_483_647) {
+    throw new RangeError('busyTimeoutMs must be an integer between 0 and 2147483647.')
   }
   const leaseTimeout = options.leaseTimeoutMs ?? 60_000
   if (!Number.isSafeInteger(leaseTimeout) || leaseTimeout < 1_000) {

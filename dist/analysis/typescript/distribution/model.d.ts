@@ -1,4 +1,4 @@
-export type NativeAnalysisTarget = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64';
+export type NativeAnalysisTarget = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-x64';
 export interface NativeAnalysisArtifact {
     readonly target: NativeAnalysisTarget;
     readonly package: string;

@@ -11,10 +11,11 @@ const nativePackages = [
   ['darwin-x64', '@astrale-os/codegraph-native-darwin-x64'],
   ['linux-arm64', '@astrale-os/codegraph-native-linux-arm64'],
   ['linux-x64', '@astrale-os/codegraph-native-linux-x64'],
+  ['win32-x64', '@astrale-os/codegraph-native-win32-x64'],
 ] as const
 
 describe('GitHub-only artifact policy', () => {
-  it('keeps the root and four native packing units private and version-aligned', async () => {
+  it('keeps the root and native packing units private and version-aligned', async () => {
     const root = await manifest('package.json')
     expect(root).toMatchObject({
       name: '@astrale-os/codegraph',

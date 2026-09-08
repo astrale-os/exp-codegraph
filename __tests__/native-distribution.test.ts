@@ -20,6 +20,7 @@ const targets = {
   'darwin-x64': '@astrale-os/codegraph-native-darwin-x64',
   'linux-arm64': '@astrale-os/codegraph-native-linux-arm64',
   'linux-x64': '@astrale-os/codegraph-native-linux-x64',
+  'win32-x64': '@astrale-os/codegraph-native-win32-x64',
 } as const
 
 afterEach(async () => {
@@ -79,7 +80,7 @@ describe('native analysis distribution', () => {
     await expect(fixture.resolve()).rejects.toMatchObject({ code: 'NATIVE_ARTIFACT_INVALID' })
   })
 
-  it('rejects a non-executable explicit file', async () => {
+  it.skipIf(process.platform === 'win32')('rejects a non-executable explicit file', async () => {
     const root = await directory('codegraph-non-executable-native-')
     const binary = join(root, 'native')
     await writeFile(binary, 'not executable\n')
@@ -114,7 +115,7 @@ async function packagedFixture(options: {
   )
   const packageName = targets[target]
   if (!packageName) throw new Error(`Unsupported native distribution test target ${target}.`)
-  const executable = 'bin/codegraph-native'
+  const executable = process.platform === 'win32' ? 'bin/codegraph-native.exe' : 'bin/codegraph-native'
   const packageDirectory = join(root, 'node_modules', ...packageName.split('/'))
   const binary = join(packageDirectory, executable)
   const outside = join(root, 'outside')

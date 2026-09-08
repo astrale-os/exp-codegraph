@@ -59,6 +59,7 @@ export function createProcessNativeAnalysisSessionFactory(options) {
             openOptions.signal?.throwIfAborted();
             validateProject(project);
             const telemetry = options.telemetry;
+            const telemetryOnStderr = Boolean(telemetry) && process.platform === 'win32';
             const child = spawn(options.command, [
                 ...(options.arguments ?? []),
                 'serve',
@@ -84,13 +85,13 @@ export function createProcessNativeAnalysisSessionFactory(options) {
                 String(maximumTransactionBytes),
                 '--maximum-physical-transaction-bytes',
                 String(maximumPhysicalTransactionBytes),
-                ...(telemetry ? ['--telemetry-fd', '3'] : []),
+                ...(telemetry ? (telemetryOnStderr ? ['--telemetry-stderr'] : ['--telemetry-fd', '3']) : []),
             ], {
                 cwd: project.root,
                 env: { ...process.env, ...options.environment },
-                stdio: telemetry ? ['pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
+                stdio: telemetry && !telemetryOnStderr ? ['pipe', 'pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
             });
-            if (telemetry) {
+            if (telemetry && !telemetryOnStderr) {
                 const channel = child.stdio[3];
                 if (channel) {
                     const lines = createInterface({ input: channel, crlfDelay: Infinity });
@@ -127,11 +128,21 @@ class ProcessNativeAnalysisSession {
         this.#telemetry = telemetry;
         this.#payloadCodecs = payloadCodecs;
         child.stderr.setEncoding('utf8');
-        child.stderr.on('data', (chunk) => {
+        const retainDiagnostic = (chunk) => {
             if (this.#stderr.length < maximumErrorBytes) {
                 this.#stderr += chunk.slice(0, maximumErrorBytes - this.#stderr.length);
             }
-        });
+        };
+        let flushDiagnostics;
+        if (telemetry) {
+            const diagnostics = nativeDiagnosticStream(telemetry, maximumErrorBytes, retainDiagnostic);
+            flushDiagnostics = diagnostics.end;
+            child.stderr.on('data', diagnostics.write);
+            child.stderr.on('end', diagnostics.end);
+        }
+        else {
+            child.stderr.on('data', retainDiagnostic);
+        }
         const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
         lines.on('line', (line) => {
             const started = telemetry ? process.hrtime.bigint() : 0n;
@@ -147,6 +158,7 @@ class ProcessNativeAnalysisSession {
         });
         child.once('error', (error) => this.fail(error));
         child.once('exit', (code, signal) => {
+            flushDiagnostics?.();
             this.stopResidentMonitor();
             if (!this.#disposed || this.#pending.size) {
                 this.fail(new Error(`Native analysis process exited code=${String(code)} signal=${String(signal)}${this.#stderr ? `: ${this.#stderr}` : ''}`));
@@ -516,28 +528,62 @@ function encodedPhysicalPayloadBytes(value) {
         };
     return Buffer.byteLength(JSON.stringify(encoded));
 }
+const NATIVE_STDERR_TELEMETRY_PREFIX = '@astrale/codegraph/telemetry ';
+/** Bound each candidate frame independently, and retain ordinary or malformed diagnostics. */
+function nativeDiagnosticStream(sink, maximumLineLength, retain) {
+    let pending = '';
+    let truncated = false;
+    const flush = (newline) => {
+        if (truncated ||
+            !pending.startsWith(NATIVE_STDERR_TELEMETRY_PREFIX) ||
+            !receiveTelemetry(pending.slice(NATIVE_STDERR_TELEMETRY_PREFIX.length), sink))
+            retain(pending + newline);
+        pending = '';
+        truncated = false;
+    };
+    return {
+        write(chunk) {
+            let offset = 0;
+            while (offset < chunk.length) {
+                const newline = chunk.indexOf('\n', offset);
+                const end = newline < 0 ? chunk.length : newline;
+                const available = maximumLineLength - pending.length;
+                pending += chunk.slice(offset, Math.min(end, offset + available));
+                truncated ||= end - offset > available;
+                if (newline < 0)
+                    return;
+                flush('\n');
+                offset = newline + 1;
+            }
+        },
+        end() { if (pending || truncated)
+            flush(''); },
+    };
+}
 function receiveTelemetry(line, sink) {
     try {
         const input = JSON.parse(line);
         if (!input || typeof input !== 'object' || Array.isArray(input))
-            return;
+            return false;
         const value = input;
         if (value.format !== 'astrale.codegraph.analysis-telemetry' ||
             value.version !== 1 ||
             value.component !== 'native' ||
             typeof value.phase !== 'string' ||
             !value.phase)
-            return;
+            return false;
         try {
             sink(value);
         }
         catch {
             // Telemetry observers are diagnostic-only.
         }
+        return true;
     }
     catch {
         // A malformed diagnostic stream never invalidates the semantic protocol stream.
     }
+    return false;
 }
 function validateProject(project) {
     if (!isAbsolute(project.root))
