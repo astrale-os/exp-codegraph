@@ -309,6 +309,18 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 	b.occurrences = append(b.occurrences, bodyOccurrence{
 		ID: id, Kind: kind, Span: span, Owner: b.owner, Syntax: strings.TrimPrefix(node.KindString(), "Kind"),
 	})
+	if node.Kind == shimast.KindPropertyAccessExpression && node.Name() != nil {
+		b.occurrences[len(b.occurrences)-1].PropertyName = node.Name().Text()
+		member := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(node.Name()))
+		// Only exported module members need a namespace join. Avoid computing the
+		// receiver type for ordinary fluent calls and structural object properties.
+		if member != nil && (isModuleNamespaceSymbol(member.Parent) || isModuleNamespaceSymbol(member)) {
+			receiverType := b.x.checker.GetTypeAtLocation(node.AsPropertyAccessExpression().Expression)
+			if receiverType != nil && isModuleNamespaceSymbol(receiverType.Symbol()) {
+				b.occurrences[len(b.occurrences)-1].PropertyNamespace = b.x.symbolID(receiverType.Symbol())
+			}
+		}
+	}
 	if node.Kind == shimast.KindBinaryExpression {
 		if operator := node.AsBinaryExpression().OperatorToken; operator != nil {
 			b.occurrences[len(b.occurrences)-1].Operator = strings.TrimPrefix(operator.KindString(), "Kind")
@@ -318,7 +330,17 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 }
 
 func (b *bodyBuilder) identifier(node *shimast.Node) {
-	symbol := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(node))
+	symbol := b.x.checker.GetSymbolAtLocation(node)
+	typeOnly := false
+	seen := map[*shimast.Symbol]bool{}
+	for symbol != nil && symbol.Flags&shimast.SymbolFlagsAlias != 0 && !seen[symbol] {
+		seen[symbol] = true
+		if b.x.checker.GetTypeOnlyAliasDeclaration(symbol) != nil {
+			typeOnly = true
+		}
+		symbol = b.x.checker.GetImmediateAliasedSymbol(symbol)
+	}
+	symbol = unalias(b.x.checker, symbol)
 	if symbol == nil {
 		return
 	}
@@ -333,12 +355,31 @@ func (b *bodyBuilder) identifier(node *shimast.Node) {
 	}
 	id := b.addOccurrence(node, kind)
 	b.setOccurrenceSymbol(id, symbolID)
-	b.occurrences[b.occurrenceIndex[id]].SymbolOrigin = b.x.callTargetOrigin(symbol)
+	if !typeOnly {
+		b.occurrences[b.occurrenceIndex[id]].SymbolOrigin = b.x.callTargetOrigin(symbol)
+	}
+	// Namespace import aliases resolve to their actual module symbol. An object
+	// with `typeof import(...)` has a variable declaration instead of SourceFile.
+	if !typeOnly && isModuleNamespaceSymbol(symbol) {
+		b.occurrences[b.occurrenceIndex[id]].SymbolKind = "module-namespace"
+	}
 	if declaration {
 		b.defs[symbolID] = append(b.defs[symbolID], id)
 		return
 	}
 	b.uses[symbolID] = append(b.uses[symbolID], id)
+}
+
+func isModuleNamespaceSymbol(symbol *shimast.Symbol) bool {
+	if symbol == nil || len(symbol.Declarations) == 0 {
+		return false
+	}
+	for _, declaration := range symbol.Declarations {
+		if declaration.Kind != shimast.KindSourceFile {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *bodyBuilder) setOccurrenceSymbol(id, symbol string) {

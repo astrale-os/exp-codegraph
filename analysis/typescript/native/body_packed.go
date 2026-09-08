@@ -76,9 +76,21 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		if occurrence.Operator != "" {
 			operator = internText(occurrence.Operator)
 		}
+		symbolKind := -1
+		if occurrence.SymbolKind != "" {
+			symbolKind = internText(occurrence.SymbolKind)
+		}
+		propertyName := -1
+		if occurrence.PropertyName != "" {
+			propertyName = internText(occurrence.PropertyName)
+		}
+		propertyNamespace, namespaceErr := internSymbol(occurrence.PropertyNamespace)
+		if namespaceErr != nil {
+			return physicalPayloadEnvelope{}, namespaceErr
+		}
 		occurrences = append(occurrences, []any{
 			compact, internText(occurrence.Kind), occurrence.Span.Start, occurrence.Span.End,
-			internText(occurrence.Syntax), symbol, occurrence.SymbolOrigin, operator,
+			internText(occurrence.Syntax), symbol, occurrence.SymbolOrigin, operator, symbolKind, propertyName, propertyNamespace,
 		})
 	}
 	occurrenceRef := func(value string) (int, error) {

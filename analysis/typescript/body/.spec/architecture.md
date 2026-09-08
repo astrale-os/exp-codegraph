@@ -52,6 +52,26 @@ definite. Branches, loops, and incomplete CFGs retain possible-definition edges
 until their reaching sets are proved; source order alone does not establish
 dominance through those constructs.
 
-The packed body codec is version 2 and carries scope and target origin. Readers
-continue admitting version 1 as function bodies with no target-origin metadata;
-older producers can therefore be read without assigning new meaning to old facts.
+The packed body codec is version 5. Readers continue admitting versions 1–4 without
+assigning new meaning to absent fields. Versions 2–4 introduced execution scope,
+value-symbol origins, and binary operators. Version 5 adds `symbolKind` as a witness
+that an occurrence denotes an actual module namespace: every declaration of the
+unaliased compiler symbol is a SourceFile and its import/export alias chain has
+no type-only declaration. A variable with a compatible namespace
+type never receives this witness. Native producer 0.6 / pass 1.6 owns this fact.
+
+The symbolic evaluator can project the canonical origin of a member occurrence
+only when its receiver is proved to be a module namespace value. Local aliases
+preserve that value; casts and structural type compatibility do not establish it.
+A reexport may resolve to a different package's canonical member declaration.
+
+Property-access occurrences preserve their authored `propertyName`, separately from
+the member's canonical symbol origin. An exported alias can be spelled `Alias` while
+its declaration is named `marker`; static casts do not rename the actual local
+object's property. Version 5 stores this name as an interned text ordinal.
+
+`propertyNamespace` is the static receiver type's SourceFile module symbol, emitted
+only for exported module members. It is an expectation, not runtime evidence. The
+evaluator joins it to the resolved runtime namespace's symbol before trusting the
+member origin. Casting a different real namespace to `typeof SDK` therefore cannot
+manufacture SDK exports. No module-wide export map or type rendering is required.
