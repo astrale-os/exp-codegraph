@@ -16,6 +16,10 @@ it('shares package ownership walks only within one compiler snapshot', async () 
   await goTest(['package_coordinate.go', 'package_coordinate_test.go'])
 }, 95_000)
 
+it('shares prepared payload bytes across exact native fact and shard identities', async () => {
+  await goTest(['canonical.go', 'identity.go', 'fact_identity.go', 'fact_identity_test.go', 'model.go', 'framing.go', 'framing_records.go', 'telemetry.go'])
+}, 95_000)
+
 async function goTest(files: readonly string[]): Promise<void> {
   const require = createRequire(import.meta.url)
   const ttsc = createRequire(require.resolve('ttsc/package.json'))

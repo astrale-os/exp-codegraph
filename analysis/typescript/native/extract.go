@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -301,12 +300,12 @@ func (x *extractor) projectShard(program *driver.Program) factShard {
 		ProjectReferences:  sortedUnique(references),
 	}
 	entry := x.newFact(projectNamespace, "typescript-project", x.universe, payload, nil, complete())
-	return finishShard(projectNamespace, x.universe, complete(), []fact{entry})
+	return finishShard(projectNamespace, x.universe, complete(), []preparedFact{entry})
 }
 
 func (x *extractor) diagnosticShard(program *driver.Program) factShard {
 	diagnostics := program.Diagnostics()
-	facts := make([]fact, 0, len(diagnostics))
+	facts := make([]preparedFact, 0, len(diagnostics))
 	for _, diagnostic := range diagnostics {
 		severity := "error"
 		if diagnostic.Severity == driver.SeverityWarning {
@@ -348,7 +347,7 @@ func (x *extractor) sourceShard(file *shimast.SourceFile, record sourceRecord) f
 		Declaration: file.IsDeclarationFile, ProjectOwned: true,
 	}
 	entry := x.newFact(sourceNamespace, "source", record.Source, payload, nil, complete())
-	return finishShard(sourceNamespace, record.Source, complete(), []fact{entry})
+	return finishShard(sourceNamespace, record.Source, complete(), []preparedFact{entry})
 }
 
 func (x *extractor) discoverSymbols(file *shimast.SourceFile) {
@@ -372,7 +371,7 @@ func (x *extractor) symbolShard(file *shimast.SourceFile, record sourceRecord) f
 			}
 		}
 	}
-	var facts []fact
+	var facts []preparedFact
 	for _, payload := range x.symbolsBySource[record.Source] {
 		facts = append(facts, x.newFact(
 			symbolNamespace, "symbol", payload.Symbol, payload, payload.Declarations, complete(),
@@ -382,7 +381,7 @@ func (x *extractor) symbolShard(file *shimast.SourceFile, record sourceRecord) f
 }
 
 func (x *extractor) occurrenceShard(file *shimast.SourceFile, record sourceRecord) factShard {
-	var facts []fact
+	var facts []preparedFact
 	walkFile(file, func(node *shimast.Node) bool {
 		kind, reference := occurrenceKind(node)
 		if kind == "" {
@@ -408,7 +407,7 @@ func (x *extractor) newFact(
 	payload any,
 	evidence []sourceSpan,
 	completion completeness,
-) fact {
+) preparedFact {
 	return x.newFactVersion(namespace, kind, subject, payload, evidence, completion, 1)
 }
 
@@ -418,69 +417,33 @@ func (x *extractor) newFactVersion(
 	evidence []sourceSpan,
 	completion completeness,
 	schemaVersion int,
-) fact {
-	return x.newFactVersionWithIdentityPayload(
-		namespace, kind, subject, payload, payload, evidence, completion, schemaVersion,
-	)
-}
-
-func (x *extractor) newFactVersionWithIdentityPayload(
-	namespace, kind, subject string,
-	payload any,
-	identityPayload any,
-	evidence []sourceSpan,
-	completion completeness,
-	schemaVersion int,
-) fact {
-	semanticBytes := 0
-	if x.payloadEncodingError == nil {
-		encoded, err := json.Marshal(payload)
-		if err != nil {
-			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)
-		} else {
-			semanticBytes = len(encoded)
-			x.semanticPayloadBytes += semanticBytes
-			if x.maximumDecodedShardBytes > 0 && semanticBytes > x.maximumDecodedShardBytes {
-				x.payloadEncodingError = fmt.Errorf("semantic fact payload exceeds decoded shard limit: bytes=%d limit=%d", semanticBytes, x.maximumDecodedShardBytes)
-			}
-			if x.maximumSemanticPayloadBytes > 0 && x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
-				x.payloadEncodingError = fmt.Errorf(
-					"semantic fact payloads exceed configured limit: bytes=%d limit=%d",
-					x.semanticPayloadBytes,
-					x.maximumSemanticPayloadBytes,
-				)
-			}
-		}
-	}
+) preparedFact {
 	if evidence == nil {
 		evidence = []sourceSpan{}
 	}
 	pass := deriveID("pass", "astrale.analysis.typescript.native", map[string]any{
 		"namespace": namespace, "version": passVersion,
 	})
-	id := deriveID("fact", namespace, map[string]any{
-		"kind": kind, "subject": subject, "payload": identityPayload, "evidence": evidence,
-	})
-	return fact{
-		ID: id, Namespace: namespace, SchemaVersion: schemaVersion, Kind: kind, Subject: subject,
+	entry, err := prepareFact(fact{
+		Namespace: namespace, SchemaVersion: schemaVersion, Kind: kind, Subject: subject,
 		Completeness: completion,
 		Provenance:   provenance{Pass: pass, PassVersion: passVersion, Evidence: evidence, Inputs: []string{}},
-		Payload:      payload, semanticBytes: semanticBytes,
+		Payload:      payload,
+	})
+	if x.payloadEncodingError == nil {
+		if err != nil {
+			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)
+		} else {
+			x.semanticPayloadBytes += entry.semanticBytes
+			if x.maximumDecodedShardBytes > 0 && entry.semanticBytes > x.maximumDecodedShardBytes {
+				x.payloadEncodingError = fmt.Errorf("semantic fact payload exceeds decoded shard limit: bytes=%d limit=%d", entry.semanticBytes, x.maximumDecodedShardBytes)
+			}
+			if x.maximumSemanticPayloadBytes > 0 && x.semanticPayloadBytes > x.maximumSemanticPayloadBytes {
+				x.payloadEncodingError = fmt.Errorf("semantic fact payloads exceed configured limit: bytes=%d limit=%d", x.semanticPayloadBytes, x.maximumSemanticPayloadBytes)
+			}
+		}
 	}
-}
-
-func finishShard(namespace, owner string, completion completeness, facts []fact) factShard {
-	return finishShardVersion(namespace, owner, completion, facts, 1)
-}
-
-func finishShardVersion(namespace, owner string, completion completeness, facts []fact, schemaVersion int) factShard {
-	sort.Slice(facts, func(i, j int) bool { return facts[i].ID < facts[j].ID })
-	shard := factShard{
-		Key:       deriveID("fact-shard-key", namespace, map[string]any{"owner": owner}),
-		Namespace: namespace, SchemaVersion: schemaVersion, Completion: completion, Facts: facts,
-	}
-	shard.Digest = shardDigest(shard)
-	return shard
+	return entry
 }
 
 func (x *extractor) symbolID(symbol *shimast.Symbol) string {

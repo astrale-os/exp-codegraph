@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createProcessNativeAnalysisSessionFactory, createMemoryAnalysisStore, type AnalysisStore } from '../analysis/index.ts'
-import { openTypeScriptProject as openProject, resolvePackagedNativeAnalysis as resolvePackaged } from '../analysis/typescript/index.ts'
+import { openTypeScriptProject as openProject, resolvePackagedNativeAnalysis as resolvePackaged, TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/index.ts'
 
 // Source regressions run against the just-built candidate. Default package resolution
 // is qualified independently after all target artifacts have been assembled and packed.
@@ -104,6 +104,37 @@ describe('resident TypeScript project public API', () => {
     await started
     await project.dispose()
     await rejected
+  })
+
+  it('keeps the committed generation after semantic budget rejection and repairs with exact fresh identities', async () => {
+    const root = await fixture()
+    const native = await resolvePackagedNativeAnalysis()
+    const store = createMemoryAnalysisStore()
+    const project = await openTypeScriptProject({ root, store, sessions: createProcessNativeAnalysisSessionFactory({
+      command: native.command, maximumTransactionBytes: 64 * 1024,
+      payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS,
+    }) })
+    try {
+      const initial = await project.refresh()
+      const pinned = await project.open(initial.generation)
+      try {
+        const original = await pinned.facts.facts('body')
+        // Escaped semantic JSON exceeds admission even though its canonical
+        // spelling and physical string table are substantially smaller.
+        await writeFile(join(root, 'index.ts'), `export function value() { return '${'<&>'.repeat(10_000)}' }\n`)
+        await expect(project.refresh({ changed: ['index.ts'] })).rejects.toThrow('semantic fact payloads exceed')
+        expect(await store.current(initial.generation.universe)).toEqual(initial.generation)
+        expect(await pinned.facts.facts('body')).toEqual(original)
+        await writeFile(join(root, 'index.ts'), "export function value() { return 'repaired' }\n")
+        const repaired = await project.refresh({ changed: ['index.ts'] })
+        expect(repaired.generation.id).not.toBe(initial.generation.id)
+        const fresh = await openTypeScriptProject({ root })
+        try { expect((await fresh.refresh()).generation.id).toBe(repaired.generation.id) }
+        finally { await fresh.dispose() }
+        expect(await pinned.facts.facts('body')).toEqual(original)
+        expect((await project.refresh()).transactions).toEqual([])
+      } finally { await pinned.dispose() }
+    } finally { await project.dispose(); await store.dispose() }
   })
 
   it('does not keep a completed opening request signal attached to the resident process', async () => {

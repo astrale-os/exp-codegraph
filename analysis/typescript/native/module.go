@@ -102,7 +102,8 @@ func (x *extractor) moduleShardsFor(
 		sortDependencies(observation.payload.Dependencies)
 		sortDependencies(observation.payload.InboundDependencies)
 	}
-	declarationFacts := map[string]fact{}
+	declarationFacts := map[string]string{}
+	shards := make([]factShard, 0, len(ids)+len(x.moduleDeclarationsByIdentity))
 	declarationIDs := make([]string, 0, len(x.moduleDeclarationsByIdentity))
 	for identity := range x.moduleDeclarationsByIdentity {
 		declarationIDs = append(declarationIDs, identity)
@@ -118,9 +119,9 @@ func (x *extractor) moduleShardsFor(
 			complete(),
 			2,
 		)
-		declarationFacts[identity] = entry
+		declarationFacts[identity] = entry.ID
+		shards = append(shards, finishShardVersion(declarationNamespace, entry.ID, complete(), []preparedFact{entry}, 2))
 	}
-	shards := make([]factShard, 0, len(ids)+len(declarationFacts))
 	for _, id := range ids {
 		observation := observations[id]
 		references := make([]moduleDeclarationReferencePayload, 0, len(observation.declarations))
@@ -130,7 +131,7 @@ func (x *extractor) moduleShardsFor(
 				return nil, fmt.Errorf("normalized declaration %s has no fact", declaration.Identity)
 			}
 			references = append(references, moduleDeclarationReferencePayload{
-				Fact: entry.ID, Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
+				Fact: entry, Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
 			})
 		}
 		sort.Slice(references, func(i, j int) bool { return references[i].Identity < references[j].Identity })
@@ -167,11 +168,7 @@ func (x *extractor) moduleShardsFor(
 			return nil, err
 		}
 		entry.ID = logicalID
-		shards = append(shards, finishShardVersion(moduleNamespace, id, observation.completion, []fact{entry}, 2))
-	}
-	for _, identity := range declarationIDs {
-		entry := declarationFacts[identity]
-		shards = append(shards, finishShardVersion(declarationNamespace, entry.ID, complete(), []fact{entry}, 2))
+		shards = append(shards, finishShardVersion(moduleNamespace, id, observation.completion, []preparedFact{entry}, 2))
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil
