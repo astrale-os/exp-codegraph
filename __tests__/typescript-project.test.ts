@@ -56,6 +56,36 @@ describe('resident TypeScript project public API', () => {
     await expect(project.refresh()).rejects.toThrow('disposed')
   })
 
+  it('keeps old client snapshots exact beyond the former native history window and across reopening', async () => {
+    const root = await fixture()
+    const store = createMemoryAnalysisStore({ maximumRetainedGenerations: 1 })
+    const project = await openTypeScriptProject({ root, store })
+    try {
+      const initial = await project.refresh()
+      const pinned = await store.open(initial.generation.universe, initial.generation.id)
+      try {
+        const original = await pinned.facts()
+        let current = initial
+        for (let revision = 1; revision <= 20; revision++) {
+          await writeFile(join(root, 'index.ts'), `export function value() { return 'revision-${revision}' }\n`)
+          const next = await project.refresh({ changes: [{ path: 'index.ts', kind: 'change' }] })
+          expect(next.transactions).toHaveLength(1)
+          expect(next.transactions[0]!.base).toBe(current.generation.id)
+          expect(next.generation.sequence).toBe(current.generation.sequence + 1)
+          current = next
+        }
+        expect(await pinned.facts()).toEqual(original)
+        await project.dispose()
+        const reopened = await openTypeScriptProject({ root, store })
+        try {
+          expect((await reopened.refresh()).generation).toEqual(current.generation)
+          expect(await pinned.facts()).toEqual(original)
+          expect((await reopened.refresh()).transactions).toEqual([])
+        } finally { await reopened.dispose() }
+      } finally { await pinned.dispose() }
+    } finally { await project.dispose(); await store.dispose() }
+  })
+
   it('reopens the native process after a request failure and keeps caller stores available', async () => {
     const root = await fixture()
     const native = await resolvePackagedNativeAnalysis()

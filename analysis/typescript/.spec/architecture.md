@@ -59,7 +59,7 @@ or commit failure therefore cannot expose a native-only intermediate generation.
 Incremental extraction is ownership-driven. The resident compiler proves whether an edit preserved
 its import graph and declaration shape. Callable projection also records the foreign declarations
 actually read while following runtime const aliases and locating callback bodies; declaration emit
-alone cannot describe those values. Each committed generation retains these portable observations
+alone cannot describe those values. The acknowledged native generation retains these portable observations
 and their reverse source dependencies, without retaining Checker objects. A private edit revalidates
 only expressions which read its source, using the current Checker and the same projector. Recorded
 expressions are located in one syntax walk per affected owner, without a separate scan per call. An unchanged
@@ -77,6 +77,21 @@ owners from current owner inputs plus retained canonical outbound dependencies. 
 global-diagnostic, public-shape, topology, configuration, plugin, or uncertain changes conservatively
 expand the module projection. Native transport sends only the resulting delta, and the process
 advances its private base only after application-store acknowledgement.
+
+The resident process owns exactly one acknowledged generation and, during publication, one pending
+candidate with its replay transaction. Refresh accepts only the acknowledged base, so retaining
+historical native indexes would serve no reader. Acknowledgement transfers the candidate into the
+base slot and releases the previous manifest, source ownership, and dependency indexes; closing the
+session releases both slots. Candidate construction still preserves the base's immutable evidence
+until publication succeeds. A rejected store commit can replay the exact candidate, an interrupted
+process recovers from the client store, and a universe rollover remains a complete snapshot whose
+sequence is adopted only after acknowledgement. Historical snapshots and reader leases belong to
+the client store and survive independently of the native process.
+
+This removes the former sixteen-generation multiplier on retained index containers. One generation
+still requires project-sized metadata, and a pending refresh temporarily owns both generations.
+Immutable unchanged entries remain shared; complete manifest hashing and index construction retain
+their existing project-sized work. This change does not reduce the cold compiler's own heap.
 
 Record-stream admission bounds each encoded JSON record (including its newline) and the sum of
 expanded semantic payload bytes within each shard. Explicit aggregate budgets apply to the actual
