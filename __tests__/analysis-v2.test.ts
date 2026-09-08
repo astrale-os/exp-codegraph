@@ -62,7 +62,7 @@ import {
   validateFunctionBodyIR,
   type FunctionBodyIR,
 } from '../analysis/typescript/body/index.ts'
-import { TYPESCRIPT_BODY_PAYLOAD_CODEC } from '../analysis/typescript/physical/index.ts'
+import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/physical/index.ts'
 import {
   createTypeScriptFactReader,
   createTypeScriptAnalysisPipeline,
@@ -2918,9 +2918,17 @@ process.exit(0)
     ])
   })
 
-  it('decodes compact bodies exactly and rejects corrupt dictionaries and ordinals', () => {
+  it.each([5, 6])('decodes packed/%i bodies exactly and rejects corrupt dictionaries and ordinals', (version) => {
+    const codec = TYPESCRIPT_FACT_PAYLOAD_CODECS.find(entry => entry.id === `typescript.body.packed/${version}`)!
+    const decode = (input: ReturnType<typeof packedBodyFixture>) => codec.decode(version === 5 ? input : {
+      ...input,
+      o: [input.o.map(row => row[0]),
+        input.o.flatMap(row => [row[1], row[2], row[3], row[4], row[5], row[7], row[8], row[9], row[10]]),
+        input.o.map(row => row[6])],
+      r: input.r.flat(), e: input.e.flat(), d: input.d.flat(),
+    })
     const packed = packedBodyFixture()
-    const decoded = TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(packed) as {
+    const decoded = decode(packed) as {
       readonly body: FunctionBodyIR
       readonly values: Readonly<Record<string, ValueResult<unknown>>>
     }
@@ -2939,48 +2947,48 @@ process.exit(0)
 
     const duplicated = structuredClone(packed)
     duplicated.t.push(duplicated.t[0]!)
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(duplicated)).toThrow('duplicated')
+    expect(() => decode(duplicated)).toThrow('duplicated')
 
     const outside = structuredClone(packed)
     outside.p.push(0)
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(outside)).toThrow('outside')
+    expect(() => decode(outside)).toThrow('outside')
 
     const malformed = structuredClone(packed)
     malformed.c[0] = 'not-an-identity'
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(malformed)).toThrow('identity is invalid')
+    expect(() => decode(malformed)).toThrow('identity is invalid')
 
     const repeatedValue = structuredClone(packed)
     repeatedValue.v.push(
       [0, { kind: 'known', value: 1, evidence: [] }],
       [0, { kind: 'known', value: 1, evidence: [] }],
     )
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(repeatedValue)).toThrow(
+    expect(() => decode(repeatedValue)).toThrow(
       'repeats a value occurrence',
     )
 
     const invalidCompleteness = structuredClone(packed)
     invalidCompleteness.q = { kind: 'mystery' }
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidCompleteness)).toThrow(
+    expect(() => decode(invalidCompleteness)).toThrow(
       'completeness.kind is invalid',
     )
 
     const invalidValue = structuredClone(packed)
     invalidValue.v.push([0, { kind: 'mystery', evidence: [] }])
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidValue)).toThrow(
+    expect(() => decode(invalidValue)).toThrow(
       'value.kind is invalid',
     )
 
     const invalidOccurrenceKind = structuredClone(packed)
     invalidOccurrenceKind.t.push('not-an-occurrence-kind')
     invalidOccurrenceKind.o[0]![1] = invalidOccurrenceKind.t.length - 1
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidOccurrenceKind)).toThrow(
+    expect(() => decode(invalidOccurrenceKind)).toThrow(
       'BODY_OCCURRENCE_KIND_INVALID',
     )
 
     const invalidSpan = structuredClone(packed)
     invalidSpan.o[0]![2] = 2
     invalidSpan.o[0]![3] = 1
-    expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalidSpan)).toThrow(
+    expect(() => decode(invalidSpan)).toThrow(
       'BODY_OCCURRENCE_SPAN_INVALID',
     )
   })

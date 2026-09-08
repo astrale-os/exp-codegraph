@@ -15,16 +15,21 @@ import type {
 } from '../../identity/index.ts'
 import type { ValueResult } from '../value/model.ts'
 import { validateFunctionBodyIR, type FunctionBodyIR } from '../body/model.ts'
+import { PackedNumericRows, PackedOccurrenceRows } from './body-rows.ts'
 
-export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/5'
+export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/6'
 
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC: FactPayloadCodec = Object.freeze({
   id: TYPESCRIPT_BODY_PAYLOAD_CODEC_ID,
-  decode: (input: unknown) => decodePackedTypeScriptBody(input, 5),
+  decode: (input: unknown) => decodePackedTypeScriptBody(input, 6),
 })
 
 export const TYPESCRIPT_FACT_PAYLOAD_CODECS: readonly FactPayloadCodec[] = Object.freeze([
   TYPESCRIPT_BODY_PAYLOAD_CODEC,
+  Object.freeze({
+    id: 'typescript.body.packed/5',
+    decode: (input: unknown) => decodePackedTypeScriptBody(input, 5),
+  }),
   Object.freeze({
     id: 'typescript.body.packed/4',
     decode: (input: unknown) => decodePackedTypeScriptBody(input, 4),
@@ -59,7 +64,7 @@ interface PackedBodyData {
   readonly q: unknown
 }
 
-function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4 | 5): unknown {
+function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4 | 5 | 6): unknown {
   const packed = exactRecord(input, ['c', 's', 't', 'p', 'o', 'r', 'b', 'e', 'd', 'a', 'u', 'v', 'q'], 'body payload') as unknown as PackedBodyData
   const constants = exactTuple(packed.c, version === 1 ? 3 : 5, 'constants')
   const scope = version === 1 ? undefined : constants[3]
@@ -82,15 +87,18 @@ function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4 | 5):
   const text = (value: unknown, path: string): string =>
     texts[ordinal(value, texts.length, path)]!
 
-  const occurrences = Array.from(array(packed.o, 'occurrences'), (value, index) =>
-    decodeOccurrence(value, index, version, source, revision, owner, symbols, texts))
+  const occurrenceRows = new PackedOccurrenceRows(packed.o, version === 6)
+  const scratch: unknown[] = []
+  const occurrences = Array.from({ length: occurrenceRows.length }, (_, index) =>
+    decodeOccurrence(occurrenceRows.row(index, scratch), index, version, source, revision, owner, symbols, texts))
   unique(occurrences.map((entry) => entry.id), 'occurrence identities')
   const occurrence = (value: unknown, path: string): OccurrenceId =>
     occurrences[ordinal(value, occurrences.length, path)]!.id
 
   const parameters = Array.from(array(packed.p, 'parameters'), (entry, index) => symbol(entry, `parameters[${index}]`))
-  const relations = Array.from(array(packed.r, 'relations'), (value, index) => {
-    const row = exactTuple(value, 3, `relations[${index}]`)
+  const relationRows = new PackedNumericRows(packed.r, 3, version === 6, 'relations')
+  const relations = Array.from({ length: relationRows.length }, (_, index) => {
+    const row = exactTuple(relationRows.row(index, scratch), 3, `relations[${index}]`)
     return {
       parent: occurrence(row[0], `relations[${index}].parent`),
       child: occurrence(row[1], `relations[${index}].child`),
@@ -109,8 +117,9 @@ function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4 | 5):
   unique(blocks.map((entry) => entry.id), 'block identities')
   const block = (value: unknown, path: string): string =>
     blocks[ordinal(value, blocks.length, path)]!.id
-  const edges = Array.from(array(packed.e, 'edges'), (value, index) => {
-    const row = exactTuple(value, 4, `edges[${index}]`)
+  const edgeRows = new PackedNumericRows(packed.e, 4, version === 6, 'edges')
+  const edges = Array.from({ length: edgeRows.length }, (_, index) => {
+    const row = exactTuple(edgeRows.row(index, scratch), 4, `edges[${index}]`)
     const evidence = optionalOrdinal(row[3], occurrences.length, `edges[${index}].evidence`)
     return {
       from: block(row[0], `edges[${index}].from`),
@@ -119,8 +128,9 @@ function decodePackedTypeScriptBody(input: unknown, version: 1 | 2 | 3 | 4 | 5):
       ...(evidence === undefined ? {} : { evidence: occurrences[evidence]!.id }),
     }
   }) as FunctionBodyIR['edges']
-  const definitions = Array.from(array(packed.d, 'definitions'), (value, index) => {
-    const row = exactTuple(value, 4, `definitions[${index}]`)
+  const definitionRows = new PackedNumericRows(packed.d, 4, version === 6, 'definitions')
+  const definitions = Array.from({ length: definitionRows.length }, (_, index) => {
+    const row = exactTuple(definitionRows.row(index, scratch), 4, `definitions[${index}]`)
     const definitionSymbol = optionalOrdinal(row[2], symbols.length, `definitions[${index}].symbol`)
     return {
       definition: occurrence(row[0], `definitions[${index}].definition`),
@@ -486,6 +496,9 @@ export class PackedTypeScriptBodyProjection {
   readonly effectCandidates: readonly number[]
   readonly #packed: PackedBodyData
   readonly #version: number
+  readonly #occurrenceRows: PackedOccurrenceRows
+  readonly #relationsTable: PackedNumericRows
+  readonly #definitionsTable: PackedNumericRows
   readonly #symbols: readonly SymbolId[]
   readonly #texts: readonly string[]
   readonly #nodes = new Map<number, FunctionBodyIR['occurrences'][number]>()
@@ -501,23 +514,32 @@ export class PackedTypeScriptBodyProjection {
     this.#packed = record.data as PackedBodyData
     this.#version = version
     const packed = this.#packed
+    this.#occurrenceRows = new PackedOccurrenceRows(packed.o, version === 6)
+    this.#relationsTable = new PackedNumericRows(packed.r, 3, version === 6, 'relations')
+    this.#definitionsTable = new PackedNumericRows(packed.d, 4, version === 6, 'definitions')
     this.owner = expandId(packed.c[2], 'symbol') as SymbolId
     this.source = expandId(packed.c[0], 'source') as SourceId
     this.revision = expandId(packed.c[1], 'source-revision') as SourceRevisionId
     this.#symbols = (packed.s as string[]).map((entry) => expandId(entry, 'symbol') as SymbolId)
     this.#texts = packed.t as string[]
-    this.occurrences = (packed.o as unknown[][]).map((row) => expandId(row[0], 'occurrence') as OccurrenceId)
+    this.occurrences = Array.from({ length: this.#occurrenceRows.length }, (_, row) =>
+      expandId(this.#occurrenceRows.field(row, 0), 'occurrence') as OccurrenceId)
     this.calls = (packed.a as number[][]).map((row) => row[0]!)
-    this.effectCandidates = (packed.o as unknown[][]).flatMap((row, index) =>
-      this.#texts[row[4] as number] === 'VariableDeclaration' || this.#texts[row[4] as number] === 'DeleteExpression' ||
-      this.#texts[row[1] as number] === 'assignment' ? [index] : [])
+    const effects: number[] = []
+    for (let row = 0; row < this.#occurrenceRows.length; row++) {
+      const syntax = this.#texts[this.#occurrenceRows.field(row, 4) as number]
+      if (syntax === 'VariableDeclaration' || syntax === 'DeleteExpression' ||
+        this.#texts[this.#occurrenceRows.field(row, 1) as number] === 'assignment') effects.push(row)
+    }
+    this.effectCandidates = effects
   }
 
   effectNode(index: number): Pick<FunctionBodyIR['occurrences'][number], 'id' | 'kind' | 'syntax' | 'symbol' | 'owner'> {
-    const row = this.#packed.o[index] as unknown[]
+    const rows = this.#occurrenceRows
+    const symbol = rows.field(index, 5) as number
     return { id: this.occurrences[index]!, owner: this.owner,
-      kind: this.#texts[row[1] as number] as FunctionBodyIR['occurrences'][number]['kind'],
-      syntax: this.#texts[row[4] as number]!, ...(row[5] === -1 ? {} : { symbol: this.#symbols[row[5] as number] }) }
+      kind: this.#texts[rows.field(index, 1) as number] as FunctionBodyIR['occurrences'][number]['kind'],
+      syntax: this.#texts[rows.field(index, 4) as number]!, ...(symbol === -1 ? {} : { symbol: this.#symbols[symbol] }) }
   }
 
   effectCall(index: number): Pick<FunctionBodyIR['calls'][number], 'occurrence' | 'target' | 'dynamic' | 'arguments' | 'bindings'> {
@@ -532,7 +554,7 @@ export class PackedTypeScriptBodyProjection {
   occurrence(index: number): FunctionBodyIR['occurrences'][number] {
     let value = this.#nodes.get(index)
     if (!value) {
-      value = freezeProjection(decodeOccurrence(this.#packed.o[index], index, this.#version,
+      value = freezeProjection(decodeOccurrence(this.#occurrenceRows.row(index, []), index, this.#version,
         this.source, this.revision, this.owner, this.#symbols, this.#texts))
       this.#nodes.set(index, value)
     }
@@ -558,8 +580,8 @@ export class PackedTypeScriptBodyProjection {
     const children = new Map<string, OccurrenceId>()
     const base = this.occurrences.length + 1
     for (let cursor = rows[index]!; cursor < end!; cursor++) {
-      const row = this.#packed.r[rows[base + cursor]!] as number[]
-      children.set(this.#texts[row[2]!]!, this.occurrences[row[1]!]!)
+      const row = rows[base + cursor]!
+      children.set(this.#texts[this.#relationsTable.field(row, 2)]!, this.occurrences[this.#relationsTable.field(row, 1)]!)
     }
     return children
   }
@@ -573,8 +595,8 @@ export class PackedTypeScriptBodyProjection {
     const parents = []
     const base = this.occurrences.length + 1
     for (let cursor = rows[index]!; cursor < end!; cursor++) {
-      const row = this.#packed.r[rows[base + cursor]!] as number[]
-      parents.push({ parent: this.occurrences[row[0]!]!, role: this.#texts[row[2]!]! })
+      const row = rows[base + cursor]!
+      parents.push({ parent: this.occurrences[this.#relationsTable.field(row, 0)]!, role: this.#texts[this.#relationsTable.field(row, 2)]! })
     }
     return parents
   }
@@ -588,8 +610,8 @@ export class PackedTypeScriptBodyProjection {
     const definitions = []
     const base = this.occurrences.length + 1
     for (let cursor = rows[index]!; cursor < end!; cursor++) {
-      const row = this.#packed.d[rows[base + cursor]!] as number[]
-      definitions.push(this.occurrences[row[0]!]!)
+      const row = rows[base + cursor]!
+      definitions.push(this.occurrences[this.#definitionsTable.field(row, 0)]!)
     }
     return definitions
   }
@@ -608,7 +630,7 @@ export class PackedTypeScriptBodyProjection {
 
   private relations(): void {
     if (this.#children) return
-    const rows = this.#packed.r as number[][]
+    const rows = this.#relationsTable
     const children = indexBodyRows(rows, this.occurrences.length, 0)
     if (rows.length) {
       // Collapse repeated roles once, retaining their first position and last
@@ -622,7 +644,7 @@ export class PackedTypeScriptBodyProjection {
         const start = children[parent]!, end = children[parent + 1]!
         children[parent] = cursor
         for (let entry = start; entry < end; entry++) {
-          const row = children[base + entry]!, role = rows[row]![2]!
+          const row = children[base + entry]!, role = rows.field(row, 2)
           if (owners[role] !== parent + 1) {
             owners[role] = parent + 1
             positions[role] = cursor++
@@ -639,11 +661,11 @@ export class PackedTypeScriptBodyProjection {
 
   private definitionRows(): void {
     if (this.#definitions) return
-    const rows = this.#packed.d as number[][]
+    const rows = this.#definitionsTable
     const definite = new Uint8Array(rows.length ? Math.ceil(this.occurrences.length / 8) : 0)
-    for (const row of rows) {
-      const use = row[1]!
-      if (this.#texts[row[3]!] === 'definite') definite[use >>> 3]! |= 1 << (use & 7)
+    for (let row = 0; row < rows.length; row++) {
+      const use = rows.field(row, 1)
+      if (this.#texts[rows.field(row, 3)] === 'definite') definite[use >>> 3]! |= 1 << (use & 7)
     }
     this.#definitions = indexBodyRows(rows, this.occurrences.length, 1)
     this.#definite = definite
@@ -655,11 +677,11 @@ export class PackedTypeScriptBodyProjection {
 // construction needs no cursor array or per-link objects. Only admitted local
 // ordinals enter this index. Packed rows are never mutated; buffers stay private
 // to the projection owned by that exact admitted physical record.
-function indexBodyRows(rows: readonly (readonly number[])[], occurrenceCount: number, key: 0 | 1): Uint32Array {
+function indexBodyRows(rows: PackedNumericRows, occurrenceCount: number, key: 0 | 1): Uint32Array {
   if (!rows.length) return new Uint32Array(0)
   const base = occurrenceCount + 1
   const index = new Uint32Array(base + rows.length)
-  for (const row of rows) index[row[key]!]!++
+  for (let row = 0; row < rows.length; row++) index[rows.field(row, key)]!++
   let end = 0
   for (let occurrence = 0; occurrence < occurrenceCount; occurrence++) {
     end += index[occurrence]!
@@ -667,7 +689,7 @@ function indexBodyRows(rows: readonly (readonly number[])[], occurrenceCount: nu
   }
   index[occurrenceCount] = rows.length
   for (let row = rows.length - 1; row >= 0; row--) {
-    const cursor = --index[rows[row]![key]!]!
+    const cursor = --index[rows.field(row, key)]!
     index[base + cursor] = row
   }
   return index
@@ -680,7 +702,7 @@ export function projectPackedTypeScriptBody(fact: Fact): PackedTypeScriptBodyPro
     if (!record) continue
     let projection = BODY_PROJECTIONS.get(record)
     if (!projection) {
-      projection = new PackedTypeScriptBodyProjection(record, 5 - index)
+      projection = new PackedTypeScriptBodyProjection(record, 6 - index)
       BODY_PROJECTIONS.set(record, projection)
     }
     return projection

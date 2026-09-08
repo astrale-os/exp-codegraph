@@ -1,12 +1,17 @@
 import { ownFactPayloadCodec, physicalPayloadForProjection } from '../../facts/representation/index.js';
 import { validateFunctionBodyIR } from '../body/model.js';
-export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/5';
+import { PackedNumericRows, PackedOccurrenceRows } from './body-rows.js';
+export const TYPESCRIPT_BODY_PAYLOAD_CODEC_ID = 'typescript.body.packed/6';
 export const TYPESCRIPT_BODY_PAYLOAD_CODEC = Object.freeze({
     id: TYPESCRIPT_BODY_PAYLOAD_CODEC_ID,
-    decode: (input) => decodePackedTypeScriptBody(input, 5),
+    decode: (input) => decodePackedTypeScriptBody(input, 6),
 });
 export const TYPESCRIPT_FACT_PAYLOAD_CODECS = Object.freeze([
     TYPESCRIPT_BODY_PAYLOAD_CODEC,
+    Object.freeze({
+        id: 'typescript.body.packed/5',
+        decode: (input) => decodePackedTypeScriptBody(input, 5),
+    }),
     Object.freeze({
         id: 'typescript.body.packed/4',
         decode: (input) => decodePackedTypeScriptBody(input, 4),
@@ -42,12 +47,15 @@ function decodePackedTypeScriptBody(input, version) {
     const texts = uniqueStrings(packed.t, 'texts');
     const symbol = (value, path) => symbols[ordinal(value, symbols.length, path)];
     const text = (value, path) => texts[ordinal(value, texts.length, path)];
-    const occurrences = Array.from(array(packed.o, 'occurrences'), (value, index) => decodeOccurrence(value, index, version, source, revision, owner, symbols, texts));
+    const occurrenceRows = new PackedOccurrenceRows(packed.o, version === 6);
+    const scratch = [];
+    const occurrences = Array.from({ length: occurrenceRows.length }, (_, index) => decodeOccurrence(occurrenceRows.row(index, scratch), index, version, source, revision, owner, symbols, texts));
     unique(occurrences.map((entry) => entry.id), 'occurrence identities');
     const occurrence = (value, path) => occurrences[ordinal(value, occurrences.length, path)].id;
     const parameters = Array.from(array(packed.p, 'parameters'), (entry, index) => symbol(entry, `parameters[${index}]`));
-    const relations = Array.from(array(packed.r, 'relations'), (value, index) => {
-        const row = exactTuple(value, 3, `relations[${index}]`);
+    const relationRows = new PackedNumericRows(packed.r, 3, version === 6, 'relations');
+    const relations = Array.from({ length: relationRows.length }, (_, index) => {
+        const row = exactTuple(relationRows.row(index, scratch), 3, `relations[${index}]`);
         return {
             parent: occurrence(row[0], `relations[${index}].parent`),
             child: occurrence(row[1], `relations[${index}].child`),
@@ -63,8 +71,9 @@ function decodePackedTypeScriptBody(input, version) {
     });
     unique(blocks.map((entry) => entry.id), 'block identities');
     const block = (value, path) => blocks[ordinal(value, blocks.length, path)].id;
-    const edges = Array.from(array(packed.e, 'edges'), (value, index) => {
-        const row = exactTuple(value, 4, `edges[${index}]`);
+    const edgeRows = new PackedNumericRows(packed.e, 4, version === 6, 'edges');
+    const edges = Array.from({ length: edgeRows.length }, (_, index) => {
+        const row = exactTuple(edgeRows.row(index, scratch), 4, `edges[${index}]`);
         const evidence = optionalOrdinal(row[3], occurrences.length, `edges[${index}].evidence`);
         return {
             from: block(row[0], `edges[${index}].from`),
@@ -73,8 +82,9 @@ function decodePackedTypeScriptBody(input, version) {
             ...(evidence === undefined ? {} : { evidence: occurrences[evidence].id }),
         };
     });
-    const definitions = Array.from(array(packed.d, 'definitions'), (value, index) => {
-        const row = exactTuple(value, 4, `definitions[${index}]`);
+    const definitionRows = new PackedNumericRows(packed.d, 4, version === 6, 'definitions');
+    const definitions = Array.from({ length: definitionRows.length }, (_, index) => {
+        const row = exactTuple(definitionRows.row(index, scratch), 4, `definitions[${index}]`);
         const definitionSymbol = optionalOrdinal(row[2], symbols.length, `definitions[${index}].symbol`);
         return {
             definition: occurrence(row[0], `definitions[${index}].definition`),
@@ -390,6 +400,9 @@ export class PackedTypeScriptBodyProjection {
     effectCandidates;
     #packed;
     #version;
+    #occurrenceRows;
+    #relationsTable;
+    #definitionsTable;
     #symbols;
     #texts;
     #nodes = new Map();
@@ -404,21 +417,31 @@ export class PackedTypeScriptBodyProjection {
         this.#packed = record.data;
         this.#version = version;
         const packed = this.#packed;
+        this.#occurrenceRows = new PackedOccurrenceRows(packed.o, version === 6);
+        this.#relationsTable = new PackedNumericRows(packed.r, 3, version === 6, 'relations');
+        this.#definitionsTable = new PackedNumericRows(packed.d, 4, version === 6, 'definitions');
         this.owner = expandId(packed.c[2], 'symbol');
         this.source = expandId(packed.c[0], 'source');
         this.revision = expandId(packed.c[1], 'source-revision');
         this.#symbols = packed.s.map((entry) => expandId(entry, 'symbol'));
         this.#texts = packed.t;
-        this.occurrences = packed.o.map((row) => expandId(row[0], 'occurrence'));
+        this.occurrences = Array.from({ length: this.#occurrenceRows.length }, (_, row) => expandId(this.#occurrenceRows.field(row, 0), 'occurrence'));
         this.calls = packed.a.map((row) => row[0]);
-        this.effectCandidates = packed.o.flatMap((row, index) => this.#texts[row[4]] === 'VariableDeclaration' || this.#texts[row[4]] === 'DeleteExpression' ||
-            this.#texts[row[1]] === 'assignment' ? [index] : []);
+        const effects = [];
+        for (let row = 0; row < this.#occurrenceRows.length; row++) {
+            const syntax = this.#texts[this.#occurrenceRows.field(row, 4)];
+            if (syntax === 'VariableDeclaration' || syntax === 'DeleteExpression' ||
+                this.#texts[this.#occurrenceRows.field(row, 1)] === 'assignment')
+                effects.push(row);
+        }
+        this.effectCandidates = effects;
     }
     effectNode(index) {
-        const row = this.#packed.o[index];
+        const rows = this.#occurrenceRows;
+        const symbol = rows.field(index, 5);
         return { id: this.occurrences[index], owner: this.owner,
-            kind: this.#texts[row[1]],
-            syntax: this.#texts[row[4]], ...(row[5] === -1 ? {} : { symbol: this.#symbols[row[5]] }) };
+            kind: this.#texts[rows.field(index, 1)],
+            syntax: this.#texts[rows.field(index, 4)], ...(symbol === -1 ? {} : { symbol: this.#symbols[symbol] }) };
     }
     effectCall(index) {
         const row = this.#packed.a[index];
@@ -431,7 +454,7 @@ export class PackedTypeScriptBodyProjection {
     occurrence(index) {
         let value = this.#nodes.get(index);
         if (!value) {
-            value = freezeProjection(decodeOccurrence(this.#packed.o[index], index, this.#version, this.source, this.revision, this.owner, this.#symbols, this.#texts));
+            value = freezeProjection(decodeOccurrence(this.#occurrenceRows.row(index, []), index, this.#version, this.source, this.revision, this.owner, this.#symbols, this.#texts));
             this.#nodes.set(index, value);
         }
         return value;
@@ -455,8 +478,8 @@ export class PackedTypeScriptBodyProjection {
         const children = new Map();
         const base = this.occurrences.length + 1;
         for (let cursor = rows[index]; cursor < end; cursor++) {
-            const row = this.#packed.r[rows[base + cursor]];
-            children.set(this.#texts[row[2]], this.occurrences[row[1]]);
+            const row = rows[base + cursor];
+            children.set(this.#texts[this.#relationsTable.field(row, 2)], this.occurrences[this.#relationsTable.field(row, 1)]);
         }
         return children;
     }
@@ -471,8 +494,8 @@ export class PackedTypeScriptBodyProjection {
         const parents = [];
         const base = this.occurrences.length + 1;
         for (let cursor = rows[index]; cursor < end; cursor++) {
-            const row = this.#packed.r[rows[base + cursor]];
-            parents.push({ parent: this.occurrences[row[0]], role: this.#texts[row[2]] });
+            const row = rows[base + cursor];
+            parents.push({ parent: this.occurrences[this.#relationsTable.field(row, 0)], role: this.#texts[this.#relationsTable.field(row, 2)] });
         }
         return parents;
     }
@@ -487,8 +510,8 @@ export class PackedTypeScriptBodyProjection {
         const definitions = [];
         const base = this.occurrences.length + 1;
         for (let cursor = rows[index]; cursor < end; cursor++) {
-            const row = this.#packed.d[rows[base + cursor]];
-            definitions.push(this.occurrences[row[0]]);
+            const row = rows[base + cursor];
+            definitions.push(this.occurrences[this.#definitionsTable.field(row, 0)]);
         }
         return definitions;
     }
@@ -504,7 +527,7 @@ export class PackedTypeScriptBodyProjection {
     relations() {
         if (this.#children)
             return;
-        const rows = this.#packed.r;
+        const rows = this.#relationsTable;
         const children = indexBodyRows(rows, this.occurrences.length, 0);
         if (rows.length) {
             // Collapse repeated roles once, retaining their first position and last
@@ -518,7 +541,7 @@ export class PackedTypeScriptBodyProjection {
                 const start = children[parent], end = children[parent + 1];
                 children[parent] = cursor;
                 for (let entry = start; entry < end; entry++) {
-                    const row = children[base + entry], role = rows[row][2];
+                    const row = children[base + entry], role = rows.field(row, 2);
                     if (owners[role] !== parent + 1) {
                         owners[role] = parent + 1;
                         positions[role] = cursor++;
@@ -535,11 +558,11 @@ export class PackedTypeScriptBodyProjection {
     definitionRows() {
         if (this.#definitions)
             return;
-        const rows = this.#packed.d;
+        const rows = this.#definitionsTable;
         const definite = new Uint8Array(rows.length ? Math.ceil(this.occurrences.length / 8) : 0);
-        for (const row of rows) {
-            const use = row[1];
-            if (this.#texts[row[3]] === 'definite')
+        for (let row = 0; row < rows.length; row++) {
+            const use = rows.field(row, 1);
+            if (this.#texts[rows.field(row, 3)] === 'definite')
                 definite[use >>> 3] |= 1 << (use & 7);
         }
         this.#definitions = indexBodyRows(rows, this.occurrences.length, 1);
@@ -556,8 +579,8 @@ function indexBodyRows(rows, occurrenceCount, key) {
         return new Uint32Array(0);
     const base = occurrenceCount + 1;
     const index = new Uint32Array(base + rows.length);
-    for (const row of rows)
-        index[row[key]]++;
+    for (let row = 0; row < rows.length; row++)
+        index[rows.field(row, key)]++;
     let end = 0;
     for (let occurrence = 0; occurrence < occurrenceCount; occurrence++) {
         end += index[occurrence];
@@ -565,7 +588,7 @@ function indexBodyRows(rows, occurrenceCount, key) {
     }
     index[occurrenceCount] = rows.length;
     for (let row = rows.length - 1; row >= 0; row--) {
-        const cursor = --index[rows[row][key]];
+        const cursor = --index[rows.field(row, key)];
         index[base + cursor] = row;
     }
     return index;
@@ -578,7 +601,7 @@ export function projectPackedTypeScriptBody(fact) {
             continue;
         let projection = BODY_PROJECTIONS.get(record);
         if (!projection) {
-            projection = new PackedTypeScriptBodyProjection(record, 5 - index);
+            projection = new PackedTypeScriptBodyProjection(record, 6 - index);
             BODY_PROJECTIONS.set(record, projection);
         }
         return projection;

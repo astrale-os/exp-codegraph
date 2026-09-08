@@ -100,6 +100,16 @@ private refresh request negotiates those record budgets so older binaries can ig
 and retain their bounded legacy aggregate protocol. Package and compiler telemetry still report
 all projection work; disabling an implicit aggregate project-size cap does not hide its cost.
 
+Physical body codec 6 stores occurrence identities, nine numeric fields and declaration origins
+in three parallel columns. Relations, control-flow edges and definitions use flat numeric tables
+with fixed strides. The native producer constructs these columns directly; the admitted JSON
+record remains the single authoritative storage and transport representation. Integer values
+retain their full safe range rather than being narrowed to 32 bits. Semantic decoding reuses
+invocation-local scratch rows without retaining those rows in the decoded tree. Projection and
+adjacency reads address column cells directly, without rebuilding the tables of rows. Readers
+retain codecs 1–5; native negotiation prefers 6, then 5, then logical payloads. Physical codec
+selection does not change semantic fact, shard or generation identities and admission budgets.
+
 Each admitted packed body owns its lazy adjacency projection. Relations and definition uses are
 indexed by private numeric offset and row-ordinal tables, rather than per-occurrence maps and link
 objects. Construction is linear in local occurrences, links, and the body's text dictionary;
@@ -109,8 +119,8 @@ definitions and self-edges. Child roles retain their first insertion position an
 collapsing replacements once so reads visit only the resulting children. Definite reaching uses
 occupy a local bitset. The raw packed rows remain immutable and authoritative, and returned maps
 and arrays are independent reader values. Unchanged physical records reuse their projection;
-changed records own new tables while pinned snapshots keep the old ones. Codecs 1–5, logical
-identity, semantic admission, and unowned or foreign-codec fallback are unchanged.
+changed records own new tables while pinned snapshots keep the old ones. All six codecs preserve
+logical identity, semantic admission, and unowned or foreign-codec fallback.
 
 The symbolic index owns one immutable contribution per admitted packed occurrence or call. Its
 fact identity, body fragment, and row ordinal also serve as the column's singleton entry; the

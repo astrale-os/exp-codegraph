@@ -6,7 +6,21 @@ import (
 	"fmt"
 )
 
-func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayloadEnvelope, error) {
+func negotiatedBodyPayloadCodec(codecs map[string]bool) string {
+	if codecs[typescriptBodyPayloadCodec] {
+		return typescriptBodyPayloadCodec
+	}
+	if codecs[typescriptBodyPayloadCodecV5] {
+		return typescriptBodyPayloadCodecV5
+	}
+	return ""
+}
+
+func packBodyPayload(payload bodyFactPayload, evidence sourceSpan, codec string) (physicalPayloadEnvelope, error) {
+	columnar := codec == typescriptBodyPayloadCodec
+	if !columnar && codec != typescriptBodyPayloadCodecV5 {
+		return physicalPayloadEnvelope{}, fmt.Errorf("unsupported body payload codec %q", codec)
+	}
 	body := payload.Body
 	constants := make([]string, 5)
 	constants[3] = body.Scope
@@ -55,7 +69,21 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		return index
 	}
 	occurrenceIndex := make(map[string]int, len(body.Occurrences))
-	occurrences := make([][]any, 0, len(body.Occurrences))
+	var occurrenceRows [][]any
+	var occurrenceIDs []string
+	var occurrenceFields []int
+	var occurrenceOrigins []*callTargetOrigin
+	if columnar {
+		capacity, capacityErr := packedFieldCapacity(len(body.Occurrences), 9)
+		if capacityErr != nil {
+			return physicalPayloadEnvelope{}, capacityErr
+		}
+		occurrenceIDs = make([]string, 0, len(body.Occurrences))
+		occurrenceFields = make([]int, 0, capacity)
+		occurrenceOrigins = make([]*callTargetOrigin, 0, len(body.Occurrences))
+	} else {
+		occurrenceRows = make([][]any, 0, len(body.Occurrences))
+	}
 	for index, occurrence := range body.Occurrences {
 		if _, exists := occurrenceIndex[occurrence.ID]; exists {
 			return physicalPayloadEnvelope{}, fmt.Errorf("body occurrence %s is duplicated", occurrence.ID)
@@ -88,10 +116,18 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		if namespaceErr != nil {
 			return physicalPayloadEnvelope{}, namespaceErr
 		}
-		occurrences = append(occurrences, []any{
-			compact, internText(occurrence.Kind), occurrence.Span.Start, occurrence.Span.End,
-			internText(occurrence.Syntax), symbol, occurrence.SymbolOrigin, operator, symbolKind, propertyName, propertyNamespace,
-		})
+		kind, syntax := internText(occurrence.Kind), internText(occurrence.Syntax)
+		if columnar {
+			occurrenceIDs = append(occurrenceIDs, compact)
+			occurrenceFields = append(occurrenceFields, kind, occurrence.Span.Start, occurrence.Span.End,
+				syntax, symbol, operator, symbolKind, propertyName, propertyNamespace)
+			occurrenceOrigins = append(occurrenceOrigins, occurrence.SymbolOrigin)
+		} else {
+			occurrenceRows = append(occurrenceRows, []any{
+				compact, kind, occurrence.Span.Start, occurrence.Span.End,
+				syntax, symbol, occurrence.SymbolOrigin, operator, symbolKind, propertyName, propertyNamespace,
+			})
+		}
 	}
 	occurrenceRef := func(value string) (int, error) {
 		index, ok := occurrenceIndex[value]
@@ -134,7 +170,17 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 	if err != nil {
 		return physicalPayloadEnvelope{}, err
 	}
-	relations := make([][]any, 0, len(body.Relations))
+	var relationRows [][]any
+	var relationFields []int
+	if columnar {
+		capacity, capacityErr := packedFieldCapacity(len(body.Relations), 3)
+		if capacityErr != nil {
+			return physicalPayloadEnvelope{}, capacityErr
+		}
+		relationFields = make([]int, 0, capacity)
+	} else {
+		relationRows = make([][]any, 0, len(body.Relations))
+	}
 	for _, relation := range body.Relations {
 		parent, refErr := occurrenceRef(relation.Parent)
 		if refErr != nil {
@@ -144,7 +190,12 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		if refErr != nil {
 			return physicalPayloadEnvelope{}, refErr
 		}
-		relations = append(relations, []any{parent, child, internText(relation.Role)})
+		role := internText(relation.Role)
+		if columnar {
+			relationFields = append(relationFields, parent, child, role)
+		} else {
+			relationRows = append(relationRows, []any{parent, child, role})
+		}
 	}
 	blocks := make([][]any, 0, len(body.Blocks))
 	blockIndex := make(map[string]int, len(body.Blocks))
@@ -159,7 +210,17 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		blockIndex[block.ID] = index
 		blocks = append(blocks, []any{internText(block.ID), refs})
 	}
-	edges := make([][]any, 0, len(body.Edges))
+	var edgeRows [][]any
+	var edgeFields []int
+	if columnar {
+		capacity, capacityErr := packedFieldCapacity(len(body.Edges), 4)
+		if capacityErr != nil {
+			return physicalPayloadEnvelope{}, capacityErr
+		}
+		edgeFields = make([]int, 0, capacity)
+	} else {
+		edgeRows = make([][]any, 0, len(body.Edges))
+	}
 	for _, edge := range body.Edges {
 		from, fromOK := blockIndex[edge.From]
 		to, toOK := blockIndex[edge.To]
@@ -172,9 +233,24 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 				return physicalPayloadEnvelope{}, err
 			}
 		}
-		edges = append(edges, []any{from, to, internText(edge.Kind), evidence})
+		kind := internText(edge.Kind)
+		if columnar {
+			edgeFields = append(edgeFields, from, to, kind, evidence)
+		} else {
+			edgeRows = append(edgeRows, []any{from, to, kind, evidence})
+		}
 	}
-	definitions := make([][]any, 0, len(body.Definitions))
+	var definitionRows [][]any
+	var definitionFields []int
+	if columnar {
+		capacity, capacityErr := packedFieldCapacity(len(body.Definitions), 4)
+		if capacityErr != nil {
+			return physicalPayloadEnvelope{}, capacityErr
+		}
+		definitionFields = make([]int, 0, capacity)
+	} else {
+		definitionRows = make([][]any, 0, len(body.Definitions))
+	}
 	for _, definition := range body.Definitions {
 		defined, refErr := occurrenceRef(definition.Definition)
 		if refErr != nil {
@@ -188,7 +264,12 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		if symbolErr != nil {
 			return physicalPayloadEnvelope{}, symbolErr
 		}
-		definitions = append(definitions, []any{defined, used, symbol, internText(definition.Reaching)})
+		reaching := internText(definition.Reaching)
+		if columnar {
+			definitionFields = append(definitionFields, defined, used, symbol, reaching)
+		} else {
+			definitionRows = append(definitionRows, []any{defined, used, symbol, reaching})
+		}
 	}
 	calls := make([][]any, 0, len(body.Calls))
 	for _, call := range body.Calls {
@@ -277,16 +358,29 @@ func packBodyPayload(payload bodyFactPayload, evidence sourceSpan) (physicalPayl
 		return physicalPayloadEnvelope{}, fmt.Errorf("body values contain an unknown occurrence")
 	}
 
-	return physicalPayloadEnvelope{
-		Codec: typescriptBodyPayloadCodec,
-		Data: packedBodyData{
-			Constants: constants, Symbols: symbols, Texts: texts, Parameters: parameters,
-			Occurrences: occurrences, Relations: relations, Blocks: blocks, Edges: edges,
-			Definitions: definitions, Calls: calls,
-			Summary: []any{returns, throws, captures, summaryCalls, escapes, recursion},
-			Values:  values, Completeness: payload.Completeness,
-		},
-	}, nil
+	packed := packedBodyData{
+		Constants: constants, Symbols: symbols, Texts: texts, Parameters: parameters,
+		Occurrences: occurrenceRows, Relations: relationRows, Blocks: blocks, Edges: edgeRows,
+		Definitions: definitionRows, Calls: calls,
+		Summary: []any{returns, throws, captures, summaryCalls, escapes, recursion},
+		Values:  values, Completeness: payload.Completeness,
+	}
+	if columnar {
+		packed.Occurrences = []any{occurrenceIDs, occurrenceFields, occurrenceOrigins}
+		packed.Relations = relationFields
+		packed.Edges = edgeFields
+		packed.Definitions = definitionFields
+	}
+	return physicalPayloadEnvelope{Codec: codec, Data: packed}, nil
+}
+
+// A column cannot silently wrap its allocation size. This checks machine-int
+// arithmetic only; values and ordinals retain their existing integer domain.
+func packedFieldCapacity(rows, stride int) (int, error) {
+	if rows < 0 || stride < 1 || rows > int(^uint(0)>>1)/stride {
+		return 0, fmt.Errorf("packed body column capacity overflows")
+	}
+	return rows * stride, nil
 }
 
 func compactAnalysisID(value, kind string) (string, error) {

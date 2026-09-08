@@ -24,7 +24,7 @@ const definitions = [
 function fixture(version: number, edges = relations, uses = definitions, count = 19) {
   const compact = (name: string) => Buffer.from(deriveAnalysisId('occurrence', 'adjacency', name).split(':')[1]!, 'hex').toString('base64url')
   const constants = [compact('source'), compact('revision'), compact('owner')]
-  return {
+  const data = {
     c: version === 1 ? constants : [...constants, 'function', 'sync'],
     s: [], t: ['expression', 'Identifier', 'entry', 'left', 'right', 'self', 'definite', 'possible'], p: [],
     o: Array.from({ length: count }, (_, row) => [compact(`occurrence-${row}`), 0, row, row + 1, 1, -1,
@@ -32,6 +32,10 @@ function fixture(version: number, edges = relations, uses = definitions, count =
     r: edges, b: [[2, Array.from({ length: count }, (_, row) => row)]], e: [], d: uses, a: [],
     u: [[], [], [], [], [], 0], v: [], q: { kind: 'complete' },
   }
+  return version === 6 ? { ...data,
+    o: [data.o.map(row => row[0]), data.o.flatMap(row => [row[1], row[2], row[3], row[4], row[5], row[7], row[8], row[9], row[10]]), data.o.map(row => row[6])],
+    r: edges.flat(), d: uses.flat(),
+  } : data
 }
 
 function admit(version: number, data: ReturnType<typeof fixture>, own = true) {
@@ -80,7 +84,7 @@ function compare(fact: Fact) {
 }
 
 describe('packed body adjacency', () => {
-  for (const version of [1, 2, 3, 4, 5]) {
+  for (const version of [1, 2, 3, 4, 5, 6]) {
     it(`matches logical adjacency including order, repeated roles and definitions in codec ${version}`, () => {
       for (const reversed of [false, true]) {
         const fact = admit(version, fixture(version, reversed ? [...relations].reverse() : relations,
@@ -110,19 +114,19 @@ describe('packed body adjacency', () => {
     })
   }
 
-  it('retains admission boundaries and rejects an exact duplicate relation tuple', () => {
-    expect(projectPackedTypeScriptBody(admit(5, fixture(5), false))).toBeUndefined()
-    expect(() => admit(5, fixture(5, [...relations, relations[0]!]))).toThrow('BODY_RELATION_DUPLICATE')
-    const earlier = admit(5, fixture(5)), expected = compare(earlier)
-    const later = admit(5, fixture(5, [...relations].reverse(), [...definitions].reverse()))
+  it.each([5, 6])('retains admission boundaries and rejects an exact duplicate relation tuple in codec %i', (version) => {
+    expect(projectPackedTypeScriptBody(admit(version, fixture(version), false))).toBeUndefined()
+    expect(() => admit(version, fixture(version, [...relations, relations[0]!]))).toThrow('BODY_RELATION_DUPLICATE')
+    const earlier = admit(version, fixture(version)), expected = compare(earlier)
+    const later = admit(version, fixture(version, [...relations].reverse(), [...definitions].reverse()))
     expect(projectPackedTypeScriptBody(later)).not.toBe(projectPackedTypeScriptBody(earlier))
     expect(compare(later)).not.toEqual(expected)
     expect(compare(earlier)).toEqual(expected)
   })
 
-  it('reads a wide replaced role in work proportional to the resulting children', () => {
+  it.each([5, 6])('reads a wide replaced role in work proportional to the resulting children in codec %i', (version) => {
     const edges = Array.from({ length: 1023 }, (_, child) => [1023, child, 3])
-    const fact = admit(5, fixture(5, edges, [], 1024))
+    const fact = admit(version, fixture(version, edges, [], 1024))
     const projection = projectPackedTypeScriptBody(fact)!
     projection.parents(0) // Build adjacency before measuring a requested result.
     const writes = vi.spyOn(Map.prototype, 'set')
@@ -136,8 +140,8 @@ describe('packed body adjacency', () => {
     expect(projection.parents(0)).toEqual([{ parent: projection.occurrences[1023], role: 'left' }])
   })
 
-  it('retries a failed lazy build without publishing half of the adjacency', () => {
-    const fact = admit(5, fixture(5))
+  it.each([5, 6])('retries a failed lazy build without publishing half of the adjacency in codec %i', (version) => {
+    const fact = admit(version, fixture(version))
     const projection = projectPackedTypeScriptBody(fact)!
     let allocations = 0
     vi.stubGlobal('Uint32Array', new Proxy(Uint32Array, {
