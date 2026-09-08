@@ -47,6 +47,7 @@ import {
 import { combineCompleteness } from '../analysis/facts/index.ts'
 import { materializeTransaction, serializeMaterialized } from '../analysis/internal/state.ts'
 import { stableJson } from '../analysis/identity/model.ts'
+import { TransactionRecordDecoder } from '../analysis/protocol/transaction-records.ts'
 import {
   admitFactPayloadCodecs,
   bindPhysicalFact,
@@ -599,7 +600,7 @@ lines.on('line', (line) => {
   })
 
   /** @evidence CODEGRAPH-PROTOCOL-BOUNDED-FRAMES */
-  it('assembles bounded native transaction frames and rejects unsafe stream sequences', async () => {
+  it.each(['base64-json', 'base64-json-records/1'] as const)('assembles %s frames and rejects unsafe stream sequences', async (encoding) => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-native-framing-'))
     temporary.push(root)
     const sidecar = join(root, 'sidecar.mjs')
@@ -607,7 +608,13 @@ lines.on('line', (line) => {
       sequence: 1,
       values: [`bounded-${'payload'.repeat(900)}`],
     })
-    const serialized = JSON.stringify(transaction)
+    const { manifest, upserts, deletes, ...header } = transaction
+    const serialized = encoding === 'base64-json' ? JSON.stringify(transaction) : [
+      ['header', header, [manifest.length, upserts.length, deletes.length]],
+      ...manifest.map((reference) => ['manifest', reference]),
+      ...upserts.map((shard) => ['upsert', shard]),
+      ...deletes.map((key) => ['delete', key]),
+    ].map((record) => JSON.stringify(record) + '\n').join('')
     const digest = createHash('sha256').update(serialized).digest('hex')
     await writeFile(
       sidecar,
@@ -622,7 +629,7 @@ const start = (id, overrides = {}) => ({
   id,
   protocolVersion: 1,
   kind: 'transaction-start',
-  encoding: 'base64-json',
+  encoding: ${JSON.stringify(encoding)},
   bytes: encoded.length,
   chunks,
   sha256: digest,
@@ -641,7 +648,8 @@ lines.on('line', (line) => {
     frame(start(request.id, { bytes: 40000 }))
     return
   }
-  frame(start(request.id))
+  const announcedDigest = mode === 'bad-digest' ? '0'.repeat(64) : digest
+  frame(start(request.id, { sha256: announcedDigest }))
   if (mode === 'incomplete') {
     process.stdout.write('', () => process.exit(0))
     return
@@ -671,7 +679,7 @@ lines.on('line', (line) => {
     kind: 'transaction-end',
     bytes: encoded.length,
     chunks,
-    sha256: digest,
+    sha256: announcedDigest,
   })
 })
 `,
@@ -704,6 +712,12 @@ lines.on('line', (line) => {
     ).rejects.toThrow('invalid protocol frame')
     await outOfOrder.dispose()
 
+    const badDigest = await factory.open(project)
+    await expect(
+      badDigest.request({ id: 1, kind: 'refresh', changed: ['bad-digest'] }),
+    ).rejects.toMatchObject({ cause: expect.objectContaining({ message: 'Transaction stream digest is invalid.' }) })
+    await badDigest.dispose()
+
     const incomplete = await factory.open(project)
     await expect(
       incomplete.request({ id: 1, kind: 'refresh', changed: ['incomplete'] }),
@@ -724,7 +738,51 @@ lines.on('line', (line) => {
   })
 
   /** @evidence CODEGRAPH-PROTOCOL-SEMANTIC-PAYLOAD-LIMIT */
-  it('enforces decoded semantic payload limits independently of compact wire size', async () => {
+  it('admits complete records before receiving the rest and rejects invalid record boundaries', () => {
+    const transaction = buildTransaction({ sequence: 1, values: ['é𐀀\n'.repeat(64)] })
+    const { manifest, upserts, deletes, ...header } = transaction
+    let admitted = 0
+    const decoder = () => new TransactionRecordDecoder(32 * 1_024, {
+      header: () => header,
+      reference: (input) => input as typeof manifest[number],
+      deletion: (input) => input as typeof deletes[number],
+      shard: (input) => {
+        const shard = input as typeof upserts[number]
+        expect(validateFactShard(shard)).toEqual([])
+        admitted++
+        return shard
+      },
+    })
+    const record = (value: unknown) => Buffer.from(JSON.stringify(value) + '\n')
+    const prefix = record(['header', header, [1, 1, 0]])
+    const reference = record(['manifest', manifest[0]])
+    const shard = record(['upsert', upserts[0]])
+    const successful = decoder()
+    successful.append(prefix)
+    successful.append(reference)
+    for (const byte of shard) successful.append(Uint8Array.of(byte))
+    expect(admitted).toBe(1)
+    expect(successful.finish()).toEqual(transaction)
+    expect(() => successful.append(prefix)).toThrow('already finished')
+
+    const outOfOrder = decoder()
+    outOfOrder.append(prefix)
+    expect(() => outOfOrder.append(shard)).toThrow('order or count')
+    const incomplete = decoder()
+    incomplete.append(prefix)
+    expect(() => incomplete.finish()).toThrow('incomplete')
+    const duplicate = decoder()
+    duplicate.append(Buffer.concat([prefix, reference, shard]))
+    expect(() => duplicate.append(shard)).toThrow('order or count')
+    const partial = decoder()
+    partial.append(prefix.subarray(0, prefix.length - 1))
+    expect(() => partial.finish()).toThrow('unterminated')
+    expect(() => decoder().append(Buffer.from([0xff, 10]))).toThrow()
+    expect(() => decoder().append(record(['header', header, [-1, 0, 0]]))).toThrow('header is invalid')
+    expect(() => decoder().append(Buffer.alloc(32 * 1_024 + 1, 32))).toThrow('physical byte limit')
+  })
+
+  it.each(['direct', 'records'] as const)('enforces decoded semantic limits for %s payloads independently of compact wire size', async (encoding) => {
     const root = await mkdtemp(join(tmpdir(), 'codegraph-native-semantic-limit-'))
     temporary.push(root)
     const sidecar = join(root, 'sidecar.mjs')
@@ -746,11 +804,29 @@ lines.on('line', (line) => {
       sidecar,
       `
 import { createInterface } from 'node:readline'
+import { createHash } from 'node:crypto'
 const transaction = ${JSON.stringify(wire)}
+const records = ${JSON.stringify(encoding)} === 'records'
+const { manifest, upserts, deletes, ...header } = transaction
+const data = Buffer.from([
+  ['header', header, [manifest.length, upserts.length, deletes.length]],
+  ...manifest.map(value => ['manifest', value]),
+  ...upserts.map(value => ['upsert', value]),
+  ...deletes.map(value => ['delete', value]),
+].map(value => JSON.stringify(value) + '\\n').join(''))
+const sha256 = createHash('sha256').update(data).digest('hex')
+const frame = value => process.stdout.write(JSON.stringify(value) + '\\n')
 const lines = createInterface({ input: process.stdin })
 lines.on('line', (line) => {
   const request = JSON.parse(line)
   if (request.kind === 'dispose') process.exit(0)
+  if (records) {
+    const common = { id: request.id, protocolVersion: 1, payloadKind: 'transaction', bytes: data.length, chunks: 1, sha256 }
+    frame({ ...common, kind: 'transaction-start', encoding: 'base64-json-records/1' })
+    frame({ id: request.id, protocolVersion: 1, kind: 'transaction-chunk', sequence: 0, data: data.toString('base64') })
+    frame({ ...common, kind: 'transaction-end' })
+    return
+  }
   process.stdout.write(JSON.stringify({
     id: request.id,
     protocolVersion: 1,
