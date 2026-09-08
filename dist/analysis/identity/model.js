@@ -57,23 +57,35 @@ function canonical(value) {
         return value;
     if (value instanceof Date)
         return { $date: value.toISOString() };
-    return Object.fromEntries(Object.entries(value)
-        .filter(([, entry]) => entry !== undefined)
-        // Go's encoding/json orders valid UTF-8 map keys by Unicode scalar value.
-        // Locale collation is machine-dependent and, even for ASCII, places
-        // `callables` before `callSignatureCount`; that made native digests fail
-        // only once a real surface contained both keys.
-        .sort(([left], [right]) => compareUnicodeScalars(left, right))
-        .map(([key, entry]) => [key, canonical(entry)]));
+    // Read properties once, before descending, and reuse their entry tuples.
+    // This preserves accessor ordering and Object.fromEntries semantics (including
+    // integer keys and __proto__) without three intermediate entry collections.
+    const entries = Object.entries(value);
+    let length = 0;
+    for (const entry of entries) {
+        if (entry[1] !== undefined)
+            entries[length++] = entry;
+    }
+    entries.length = length;
+    // Go's encoding/json orders valid UTF-8 map keys by Unicode scalar value.
+    // Locale collation is machine-dependent; UTF-16 order differs for astral keys.
+    entries.sort(([left], [right]) => compareUnicodeScalars(left, right));
+    for (const entry of entries)
+        entry[1] = canonical(entry[1]);
+    return Object.fromEntries(entries);
 }
 function compareUnicodeScalars(left, right) {
-    const a = [...left];
-    const b = [...right];
-    for (let index = 0; index < Math.min(a.length, b.length); index++) {
-        const difference = a[index].codePointAt(0) - b[index].codePointAt(0);
+    let a = 0;
+    let b = 0;
+    while (a < left.length && b < right.length) {
+        const leftPoint = left.codePointAt(a);
+        const rightPoint = right.codePointAt(b);
+        const difference = leftPoint - rightPoint;
         if (difference)
             return difference;
+        a += leftPoint > 0xffff ? 2 : 1;
+        b += rightPoint > 0xffff ? 2 : 1;
     }
-    return a.length - b.length;
+    return a < left.length ? 1 : b < right.length ? -1 : 0;
 }
 //# sourceMappingURL=model.js.map

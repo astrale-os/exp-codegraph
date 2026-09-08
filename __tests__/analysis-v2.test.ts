@@ -110,6 +110,32 @@ describe('TypeSpec V2 generic analysis foundation', () => {
     )
   })
 
+  it('preserves canonical identity bytes for sparse values and scalar-ordered special keys', () => {
+    const sparse = new Array<unknown>(3)
+    sparse[1] = undefined
+    sparse[2] = 42n
+    const input = Object.fromEntries([
+      ['𐀀tail', 1], ['𐀀', 2], ['\uE000', 3], ['\uD800', 4],
+      ['__proto__', 'own data'], ['10', 'ten'], ['2', 'two'],
+      ['absent', undefined], ['date', new Date('2026-09-08T00:00:00.000Z')],
+      ['sparse', sparse],
+    ])
+    expect(stableJson(input)).toBe(
+      '{"2":"two","10":"ten","__proto__":"own data","date":{"$date":"2026-09-08T00:00:00.000Z"},"sparse":[null,{"$undefined":true},{"$bigint":"42"}],"\\ud800":4,"\uE000":3,"𐀀":2,"𐀀tail":1}',
+    )
+  })
+
+  it('reads identity accessors once before descending in canonical key order', () => {
+    const reads: string[] = []
+    const input = {
+      get z() { reads.push('z'); return { get child() { reads.push('z.child'); return 2 } } },
+      get a() { reads.push('a'); return { get child() { reads.push('a.child'); return 1 } } },
+      get omitted() { reads.push('omitted'); return undefined },
+    }
+    expect(stableJson(input)).toBe('{"a":{"child":1},"z":{"child":2}}')
+    expect(reads).toEqual(['z', 'a', 'omitted', 'a.child', 'z.child'])
+  })
+
   it('publishes and validates the effective bounded-value evaluator budget', () => {
     expect(DEFAULT_BOUNDED_VALUE_LIMITS).toEqual({
       maximumDepth: 12,
