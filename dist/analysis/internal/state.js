@@ -3,7 +3,7 @@ import { factHeader, shardReference } from '../facts/index.js';
 import { TransactionError, validateFactTransaction } from '../generation/index.js';
 import { deriveAnalysisId } from '../identity/index.js';
 import { stableJson } from '../identity/model.js';
-import { combineCompleteness } from '../facts/index.js';
+import { MemoryFactIndex } from './query-index.js';
 import { bindPhysicalFact, immutableFact } from '../facts/representation/index.js';
 export function materializeTransaction(current, transaction) {
     const diagnostics = [...validateFactTransaction(transaction, current?.generation.id)];
@@ -48,7 +48,10 @@ export function materializeTransaction(current, transaction) {
     // immutable physical shard objects across generations and bind their facts
     // only when a generation-pinned reader observes them. Commit work therefore
     // scales with the delta rather than recreating every unaffected fact.
-    return immutable(new MaterializedSnapshot(transaction.next, shards));
+    const inherited = current instanceof MaterializedSnapshot ? current.indexedFacts() : undefined;
+    const removed = inherited ? [...new Set([...transaction.deletes, ...transaction.upserts.map((shard) => shard.key)])]
+        .flatMap((key) => { const shard = current.shards.get(key); return shard ? [shard] : []; }) : [];
+    return immutable(new MaterializedSnapshot(transaction.next, shards, inherited?.update(removed, transaction.upserts)));
 }
 export function serializeMaterialized(value) {
     return stableJson({
@@ -105,78 +108,58 @@ export function createSnapshotSet(values, inventory, open, release) {
 /** Query indexes belong to the retained generation, never to a process-global cache. */
 class MaterializedSnapshot {
     #index;
+    #facts;
     generation;
     shards;
-    constructor(generation, shards) {
+    constructor(generation, shards, facts) {
+        this.#facts = facts;
         this.generation = generation;
         this.shards = shards;
     }
     queryIndex() {
-        return this.#index ??= new MemoryQueryIndex(this);
+        return this.#index ??= new MemoryQueryIndex(this, this.#facts ??= MemoryFactIndex.build(this.shards));
     }
+    indexedFacts() { return this.#facts; }
 }
 class MemoryQueryIndex {
     generation;
-    facts;
-    headers;
-    manifest;
-    #ordered;
-    #postings = new Map();
-    #shardCompletion;
-    #namespaceCapabilities;
+    #data;
+    #facts = new Map();
+    #headers = new Map();
     #capabilities;
-    constructor(materialized) {
+    constructor(materialized, data = MemoryFactIndex.build(materialized.shards)) {
         this.generation = materialized.generation;
-        const facts = [...materialized.shards.values()]
-            .flatMap((shard) => shard.facts.map((fact) => immutableFact(bindFact(fact, materialized.generation.id))))
-            .sort((left, right) => left.id.localeCompare(right.id));
-        this.#ordered = facts.map((fact) => Object.freeze(factHeader(fact)));
-        this.facts = new Map(facts.map((fact) => [fact.id, fact]));
-        this.headers = new Map(this.#ordered.map((header) => [header.id, header]));
-        this.manifest = immutable([...materialized.shards.values()].map(shardReference).sort(byKey));
-        this.#shardCompletion = [...materialized.shards.values()].map((shard) => [
-            shard.namespace,
-            shard.completion,
-            shard.capabilities ?? [],
-        ]);
-        const capabilities = new Map();
-        for (const shard of materialized.shards.values()) {
-            const values = capabilities.get(shard.namespace) ?? new Set();
-            for (const capability of shard.capabilities ?? [])
-                values.add(capability);
-            capabilities.set(shard.namespace, values);
+        this.#data = data;
+    }
+    get manifest() { return this.#data.manifest(); }
+    fact(input) {
+        const id = typeof input === 'string' ? input : input.id;
+        let value = this.#facts.get(id);
+        if (!value) {
+            const fact = typeof input === 'string' ? this.#data.facts.get(id) : input;
+            if (!fact)
+                return;
+            value = immutableFact(bindFact(fact, this.generation.id));
+            this.#facts.set(id, value);
         }
-        this.#namespaceCapabilities = new Map([...capabilities].map(([namespace, values]) => [namespace, [...values].sort()]));
+        return value;
+    }
+    header(input) {
+        const id = typeof input === 'string' ? input : input.id;
+        let value = this.#headers.get(id);
+        if (!value) {
+            const fact = typeof input === 'string' ? this.#data.facts.get(id) : input;
+            if (!fact)
+                return;
+            value = Object.freeze({ ...factHeader(fact), generation: this.generation.id });
+            this.#headers.set(id, value);
+        }
+        return value;
     }
     capabilities() {
-        if (this.#capabilities)
-            return this.#capabilities;
-        const completion = new Map();
-        for (const capability of this.generation.capabilities)
-            completion.set(capability, { kind: 'complete' });
-        for (const [namespace, value, capabilities] of this.#shardCompletion) {
-            completion.set(namespace, combineCompleteness(completion.get(namespace), value));
-            for (const capability of capabilities) {
-                completion.set(capability, combineCompleteness(completion.get(capability), value));
-            }
-        }
-        for (const header of this.#ordered) {
-            const current = completion.get(header.namespace);
-            completion.set(header.namespace, combineCompleteness(current, header.completeness));
-            for (const capability of this.#namespaceCapabilities.get(header.namespace) ?? []) {
-                completion.set(capability, combineCompleteness(completion.get(capability), header.completeness));
-            }
-        }
-        return this.#capabilities = immutable([...completion]
-            .sort(([left], [right]) => left.localeCompare(right))
-            .map(([capability, value]) => ({ capability, completeness: value })));
+        return this.#capabilities ??= immutable(this.#data.capabilities(this.generation.capabilities));
     }
-    *matching(filter) {
-        for (const header of this.candidates(filter)) {
-            if (matchesHeader(header, filter))
-                yield header;
-        }
-    }
+    matching(filter) { return this.#data.matching(filter); }
     page(filter, page) {
         const limit = page.limit;
         if (!Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
@@ -187,12 +170,12 @@ class MemoryQueryIndex {
         const headers = [];
         let total = 0;
         let hasNext = false;
-        for (const header of this.matching(filter)) {
+        for (const fact of this.matching(filter)) {
             const position = total++;
             if (position < start)
                 continue;
             if (headers.length < limit)
-                headers.push(header);
+                headers.push(this.header(fact));
             else {
                 hasNext = true;
                 if (!page.includeTotal)
@@ -201,73 +184,10 @@ class MemoryQueryIndex {
         }
         return {
             headers,
-            ...(hasNext
-                ? { nextCursor: encodeCursor(this.generation.id, signature, start + headers.length) }
-                : {}),
+            ...(hasNext ? { nextCursor: encodeCursor(this.generation.id, signature, start + headers.length) } : {}),
             ...(page.includeTotal ? { total } : {}),
         };
     }
-    candidates(filter) {
-        let selected;
-        let size = this.#ordered.length;
-        for (const [field, values] of [
-            ['subject', filter.subjects],
-            ['subject', filter.symbols],
-            ['source', filter.sources],
-            ['namespace', filter.namespaces],
-            ['kind', filter.kinds],
-            ['completeness', filter.completeness],
-        ]) {
-            if (!values)
-                continue;
-            if (!values.length)
-                return [];
-            const index = this.postings(field);
-            const groups = [...new Set(values)].map((value) => index.get(value) ?? []);
-            const count = groups.reduce((total, group) => total + group.length, 0);
-            if (count === 0)
-                return [];
-            if (count < size) {
-                size = count;
-                selected = groups;
-                // A single candidate is cheaper to check against the remaining filters
-                // than building another project-wide secondary index.
-                if (count === 1)
-                    break;
-            }
-        }
-        if (!selected)
-            return this.#ordered;
-        if (selected.length === 1)
-            return selected[0];
-        return [...new Map(selected.flatMap((group) => group.map((header) => [header.id, header]))).values()]
-            .sort((left, right) => left.id.localeCompare(right.id));
-    }
-    postings(field) {
-        const existing = this.#postings.get(field);
-        if (existing)
-            return existing;
-        const index = new Map();
-        for (const header of this.#ordered) {
-            if (field === 'source') {
-                for (const source of new Set(header.provenance.evidence.map((span) => span.source))) {
-                    appendHeader(index, source, header);
-                }
-            }
-            else {
-                appendHeader(index, field === 'completeness' ? header.completeness.kind : header[field], header);
-            }
-        }
-        this.#postings.set(field, index);
-        return index;
-    }
-}
-function appendHeader(index, key, header) {
-    const bucket = index.get(key);
-    if (bucket)
-        bucket.push(header);
-    else
-        index.set(key, [header]);
 }
 class PinnedQuery {
     generation;
@@ -296,7 +216,7 @@ class PinnedQuery {
     async headersById(ids) {
         this.assertOpen();
         return [...new Set(ids)].sort().flatMap((id) => {
-            const header = this.#index.headers.get(id);
+            const header = this.#index.header(id);
             return header ? [header] : [];
         });
     }
@@ -304,14 +224,14 @@ class PinnedQuery {
         this.assertOpen();
         for (const header of this.#index.matching(filter)) {
             this.assertOpen();
-            yield header;
+            yield this.#index.header(header);
         }
     }
     async facts(filter = {}, page = { limit: 100 }) {
         this.assertOpen();
         const result = this.#index.page(filter, page);
         return {
-            facts: result.headers.map((header) => this.#index.facts.get(header.id)),
+            facts: result.headers.map((header) => this.#index.fact(header.id)),
             ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
             ...(result.total !== undefined ? { total: result.total } : {}),
         };
@@ -319,7 +239,7 @@ class PinnedQuery {
     async factsById(ids) {
         this.assertOpen();
         return [...new Set(ids)].sort().flatMap((id) => {
-            const fact = this.#index.facts.get(id);
+            const fact = this.#index.fact(id);
             return fact ? [fact] : [];
         });
     }
@@ -327,7 +247,7 @@ class PinnedQuery {
         this.assertOpen();
         for (const header of this.#index.matching(filter)) {
             this.assertOpen();
-            yield this.#index.facts.get(header.id);
+            yield this.#index.fact(header);
         }
     }
     async [Symbol.asyncDispose]() {
@@ -379,23 +299,6 @@ class PinnedSnapshotSet {
         this.#disposed = true;
         await this.#release();
     }
-}
-function matchesHeader(header, filter) {
-    if (filter.namespaces && !filter.namespaces.includes(header.namespace))
-        return false;
-    if (filter.kinds && !filter.kinds.includes(header.kind))
-        return false;
-    if (filter.subjects && !filter.subjects.includes(header.subject))
-        return false;
-    if (filter.completeness && !filter.completeness.includes(header.completeness.kind))
-        return false;
-    if (filter.sources &&
-        !header.provenance.evidence.some((evidence) => filter.sources.includes(evidence.source))) {
-        return false;
-    }
-    if (filter.symbols && !filter.symbols.some((symbol) => header.subject === symbol))
-        return false;
-    return true;
 }
 function filterSignature(filter) {
     return deriveAnalysisId('fact', 'astrale.analysis.query-filter.v1', filter);
