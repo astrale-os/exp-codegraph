@@ -2,7 +2,7 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "allowImportingTsExtensions": true,
-    "declaration": false,
+    "declaration": true,
     "declarationMap": false,
     "noEmit": false,
     "outDir": "dist",
@@ -26,7 +26,12 @@
     "source",
     "specification",
     "typescript",
-    "viewer-host"
+    "viewer-host",
+    "workspace"
   ],
-  "exclude": ["__tests__", "viewer", "analysis/typescript/ttsc"]
+  "exclude": [
+    "__tests__",
+    "viewer",
+    "analysis/typescript/ttsc"
+  ]
 }

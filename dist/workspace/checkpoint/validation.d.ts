@@ -1,0 +1,14 @@
+import type { FileWorkspaceCheckpointStoreOptions, NormalizedLimits, PreparedPublication, WorkspaceCheckpointManifest, WorkspaceCheckpointPublishInput } from './model.ts';
+export declare const SHA256: RegExp;
+export declare const MAX_SCOPE_LENGTH = 128;
+export declare const MAX_ARTIFACT_KEY_BYTES: number;
+export declare function normalizeLimits(options: FileWorkspaceCheckpointStoreOptions): NormalizedLimits;
+export declare function validateScope(scope: string): string;
+export declare function preparePublication(scope: string, input: WorkspaceCheckpointPublishInput, limits: NormalizedLimits): PreparedPublication;
+export declare function validateStoredManifest(value: unknown, scope: string, limits: NormalizedLimits): WorkspaceCheckpointManifest;
+export declare function canonicalJson(value: unknown, active?: WeakSet<object>): string;
+export declare function compareCodePoints(left: string, right: string): number;
+export declare function sha256(value: Uint8Array): string;
+export declare function isRecord(value: unknown): value is Record<string, any>;
+export declare function isAbort(error: unknown): boolean;
+export declare function throwIfAborted(signal: AbortSignal | undefined, error?: unknown): void;
