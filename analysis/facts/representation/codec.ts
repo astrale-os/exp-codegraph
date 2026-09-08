@@ -1,10 +1,11 @@
 import type { Fact } from '../types.ts'
 import type { AnalysisGenerationId } from '../../identity/index.ts'
 
-const PHYSICAL_PAYLOAD = Symbol('codegraph.physical-fact-payload')
+const PHYSICAL_STATES = new WeakMap<object, PhysicalPayloadState>()
 const ADMITTED_SHARDS = new WeakMap<object, number>()
 const OWNED_PAYLOAD_CODECS = new WeakSet<FactPayloadCodec>()
 const IMMUTABLE_PAYLOADS = new WeakSet<object>()
+const OWNED_PHYSICAL_RECORDS = new WeakSet<object>()
 
 export interface PhysicalPayloadRecord {
   readonly codec: string
@@ -38,6 +39,8 @@ export type StoredFactPayload =
 interface PhysicalPayloadState {
   readonly record: PhysicalPayloadRecord
   readonly codec: FactPayloadCodec
+  readonly owned: boolean
+  admitted?: true
   decoded?: unknown
   failure?: unknown
   status?: 'decoded' | 'failed'
@@ -83,7 +86,21 @@ export function createFactWithPhysicalPayload(
   return createPhysicalFact(fields, {
     record: deepFreeze(record),
     codec,
+    owned: input !== null && typeof input === 'object' && OWNED_PHYSICAL_RECORDS.has(input),
   })
+}
+
+/** Internal JSON ingress only: the caller owns this freshly parsed plain tree. */
+export function ownPhysicalPayloadRecord<Value>(record: Value): Value {
+  if (record !== null && typeof record === 'object') OWNED_PHYSICAL_RECORDS.add(record)
+  return record
+}
+
+/** An admitted immutable representation belongs to this exact decoder instance. */
+export function physicalPayloadForProjection(fact: Fact, codec: FactPayloadCodec): PhysicalPayloadRecord | undefined {
+  const state = physicalState(fact)
+  return state?.owned && state.admitted && state.codec === codec && OWNED_PAYLOAD_CODECS.has(codec)
+    ? state.record : undefined
 }
 
 export function createFactWithStoredPayload(
@@ -169,17 +186,21 @@ export function admittedFactShardPayloadBytes(shard: object): number | undefined
   return ADMITTED_SHARDS.get(shard)
 }
 
-export function certifyFactShard(shard: object, semanticPayloadBytes: number): void {
+export function certifyFactShard(shard: { readonly facts: readonly Fact[] }, semanticPayloadBytes: number): void {
   freezeWithoutInvokingGetters(shard)
   ADMITTED_SHARDS.set(shard, semanticPayloadBytes)
+  for (const fact of shard.facts) {
+    const state = physicalState(fact)
+    if (state?.owned) state.admitted = true
+  }
 }
 
 function createPhysicalFact(
   fields: Omit<Fact, 'payload'>,
   state: PhysicalPayloadState,
 ): Fact {
-  const fact = { ...fields } as Fact & { [PHYSICAL_PAYLOAD]?: PhysicalPayloadState }
-  Object.defineProperty(fact, PHYSICAL_PAYLOAD, { value: state })
+  const fact = { ...fields } as Fact
+  PHYSICAL_STATES.set(fact, state)
   Object.defineProperty(fact, 'payload', {
     enumerable: true,
     get: () => decodedPayload(state),
@@ -206,7 +227,7 @@ function decodedPayload(state: PhysicalPayloadState): unknown {
 }
 
 function physicalState(fact: Fact): PhysicalPayloadState | undefined {
-  return (fact as Fact & { [PHYSICAL_PAYLOAD]?: PhysicalPayloadState })[PHYSICAL_PAYLOAD]
+  return PHYSICAL_STATES.get(fact)
 }
 
 function admitPhysicalPayloadRecord(value: unknown, owner: string): PhysicalPayloadRecord {
@@ -242,10 +263,6 @@ function deepFreeze<Value>(value: Value, owned = false): Value {
 function freezeWithoutInvokingGetters<Value>(value: Value): Value {
   if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
   for (const key of Reflect.ownKeys(value)) {
-    // The private decode state is intentionally mutable after the public Fact
-    // and its semantic fields become immutable. It memoizes one result/error
-    // without becoming part of the Fact's observable value or identity.
-    if (key === PHYSICAL_PAYLOAD) continue
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     if (descriptor && 'value' in descriptor) freezeWithoutInvokingGetters(descriptor.value)
   }

@@ -28,6 +28,10 @@ export type FactPayloadCodecMap = ReadonlyMap<string, FactPayloadCodec>;
 export declare function admitFactPayloadCodecs(codecs: readonly FactPayloadCodec[] | undefined): FactPayloadCodecMap;
 export declare function createFactWithSemanticPayload(fields: Omit<Fact, 'payload'>, payload: unknown): Fact;
 export declare function createFactWithPhysicalPayload(fields: Omit<Fact, 'payload'>, input: unknown, codecs: FactPayloadCodecMap, owner: string): Fact;
+/** Internal JSON ingress only: the caller owns this freshly parsed plain tree. */
+export declare function ownPhysicalPayloadRecord<Value>(record: Value): Value;
+/** An admitted immutable representation belongs to this exact decoder instance. */
+export declare function physicalPayloadForProjection(fact: Fact, codec: FactPayloadCodec): PhysicalPayloadRecord | undefined;
 export declare function createFactWithStoredPayload(fields: Omit<Fact, 'payload'>, payload: StoredFactPayload, codecs: FactPayloadCodecMap, owner: string): Fact;
 /** Private transport representation, kept out-of-band from semantic payload values. */
 export declare function physicalPayloadForTransport(fact: Fact): PhysicalPayloadRecord | undefined;
@@ -40,4 +44,6 @@ export declare function bindPhysicalFact(fact: Fact, generation: AnalysisGenerat
 /** Freeze a fact without invoking a lazily decoded semantic payload. */
 export declare function immutableFact(fact: Fact): Fact;
 export declare function admittedFactShardPayloadBytes(shard: object): number | undefined;
-export declare function certifyFactShard(shard: object, semanticPayloadBytes: number): void;
+export declare function certifyFactShard(shard: {
+    readonly facts: readonly Fact[];
+}, semanticPayloadBytes: number): void;
