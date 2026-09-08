@@ -104,6 +104,11 @@ filters select source buckets before materializing call sites. Helpers outside t
 through the same function lookup. Global mutation, initializer, alias and escape inputs are projected
 from compact columns regardless of the selected sources, so filtering cannot conceal an effect.
 
+Trie branches use a bitmap and compact child arrays. A bounded slot string preserves each branch's
+existing insertion order independently of its lookup positions. Edits copy shared branches before
+writing; publishing an edit prevents later mutation of pinned roots. Digest words only route lookups:
+leaves and collision buckets compare complete keys, including arbitrary non-coordinate strings.
+
 The packed fast path requires an exact physical fact state, a known composed decoder instance,
 freshly parsed owned JSON input and successful shard admission. Codec names, inherited wrappers
 and caller-frozen objects do not establish ownership. Uncertified/custom representations retain

@@ -11,7 +11,10 @@ type Collision<Key, Value> = {
 };
 type Branch<Key, Value> = {
     readonly kind: 'branch';
-    readonly children: ReadonlyMap<number, Node<Key, Value>>;
+    bitmap: number;
+    children: Node<Key, Value>[];
+    /** At most 32 slot characters preserve the original branch traversal order. */
+    order: string;
 };
 type Node<Key, Value> = Leaf<Key, Value> | Collision<Key, Value> | Branch<Key, Value>;
 /** Immutable lookup tables share untouched hash-trie branches between pinned revisions. */
