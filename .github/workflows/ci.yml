@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 permissions:
   contents: read
@@ -30,5 +29,9 @@ jobs:
         run: pnpm typecheck
       - name: Validate governed architecture and negative scans
         run: pnpm check
+      - name: Build the exact native candidate before running tests
+        run: pnpm native:build
       - name: Run the complete package suite
         run: pnpm test
+        env:
+          CODEGRAPH_TEST_NATIVE_BINARY: ${{ github.workspace }}/.cache/native/linux-x64/bin/codegraph-native

@@ -23,6 +23,17 @@ export function validateFunctionBodyIR(body) {
     const diagnostics = [];
     if (!body.function)
         diagnostics.push('BODY_FUNCTION_REQUIRED');
+    if (body.scope !== undefined && body.scope !== 'function' && body.scope !== 'module') {
+        diagnostics.push('BODY_SCOPE_INVALID');
+    }
+    if (body.execution !== undefined && !['sync', 'async', 'generator', 'async-generator'].includes(body.execution)) {
+        diagnostics.push('BODY_EXECUTION_INVALID');
+    }
+    if (body.scope === 'module' && body.execution !== undefined)
+        diagnostics.push('BODY_MODULE_EXECUTION_INVALID');
+    if (body.scope === 'module' && (body.parameters.length || body.summary.returns.length || body.summary.recursion)) {
+        diagnostics.push('BODY_MODULE_FUNCTION_STATE');
+    }
     const occurrences = new Set(body.occurrences.map((occurrence) => occurrence.id));
     if (occurrences.size !== body.occurrences.length)
         diagnostics.push('BODY_OCCURRENCE_DUPLICATE');
@@ -90,6 +101,10 @@ export function validateFunctionBodyIR(body) {
         }
     }
     for (const call of body.calls) {
+        if (call.targetOrigin !== undefined && (!call.target || !call.targetOrigin || typeof call.targetOrigin.package !== 'string' || !call.targetOrigin.package || typeof call.targetOrigin.file !== 'string' || !call.targetOrigin.file ||
+            !Array.isArray(call.targetOrigin.path) || !call.targetOrigin.path.length || call.targetOrigin.path.some((part) => typeof part !== 'string' || !part))) {
+            diagnostics.push('BODY_CALL_TARGET_ORIGIN_INVALID');
+        }
         if (!occurrences.has(call.occurrence))
             diagnostics.push('BODY_CALL_OCCURRENCE_UNKNOWN');
         if (call.receiver && !occurrences.has(call.receiver))

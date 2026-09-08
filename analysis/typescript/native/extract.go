@@ -43,6 +43,8 @@ type extractor struct {
 	sources                      map[string]sourceRecord
 	symbolIDs                    map[*shimast.Symbol]string
 	symbolSeen                   map[string]symbolFactPayload
+	callOrigins                  map[*shimast.Symbol]*callTargetOrigin
+	packageCoordinates           map[string]string
 	moduleDeclarations           map[*shimast.Symbol]moduleDeclarationObservation
 	moduleDeclarationsByIdentity map[string]moduleDeclarationObservation
 	moduleDeclarationCacheHits   int

@@ -16,6 +16,7 @@ type bodyBuilder struct {
 	x           *extractor
 	file        *shimast.SourceFile
 	owner       string
+	scope       string
 	body        *shimast.Node
 	occurrences []bodyOccurrence
 	occurrence  map[*shimast.Node]string
@@ -34,6 +35,22 @@ type bodyBuilder struct {
 
 func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([]factShard, error) {
 	var shards []factShard
+	// Module evaluation owns initializers just as a function owns its body.
+	// Nested functions remain opaque values here and get independent shards.
+	if !file.IsDeclarationFile && len(file.Text()) != 0 {
+		owner := deriveID("symbol", "typescript:"+x.universe, map[string]any{
+			"source": record.Source, "scope": "module",
+		})
+		builder := newBodyBuilder(x, file, owner, "module", file.AsNode())
+		payload := builder.build(nil)
+		if len(payload.Body.Occurrences) != 0 {
+			shard, err := x.bodyShard(builder, payload, "module-body", x.span(file, file.AsNode()))
+			if err != nil {
+				return nil, err
+			}
+			shards = append(shards, shard)
+		}
+	}
 	walkFile(file, func(node *shimast.Node) bool {
 		if !shimast.IsFunctionLike(node) || node.Body() == nil {
 			return true
@@ -42,29 +59,13 @@ func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([
 		if owner == "" {
 			return true
 		}
-		builder := &bodyBuilder{
-			x: x, file: file, owner: owner, body: node.Body(),
-			occurrences: []bodyOccurrence{}, relations: []bodyRelation{},
-			occurrence: map[*shimast.Node]string{}, definitions: []definitionUse{},
-			defs: map[string][]string{}, uses: map[string][]string{}, calls: []resolvedCall{},
-			values: map[string]any{}, captures: map[string]bool{},
-			returns: []string{}, throws: []string{}, escapes: []string{},
-		}
+		builder := newBodyBuilder(x, file, owner, "function", node.Body())
 		payload := builder.build(node)
-		completion := payload.Completeness
-		span := x.span(file, node)
-		entry := x.newFact(bodyNamespace, "function-body", owner, payload, []sourceSpan{span}, completion)
-		shard := finishShard(bodyNamespace, owner, completion, []fact{entry})
-		if x.payloadCodecs[typescriptBodyPayloadCodec] {
-			packed, err := packBodyPayload(payload, span)
-			if err != nil {
-				// The walker cannot return an error directly; retain it for the
-				// enclosing source projection to report after traversal.
-				x.bodyPackingError = err
-				return false
-			}
-			shard.Facts[0].Payload = nil
-			shard.Facts[0].PhysicalPayload = &packed
+		shard, err := x.bodyShard(builder, payload, "function-body", x.span(file, node))
+		if err != nil {
+			// The walker cannot return an error directly.
+			x.bodyPackingError = err
+			return false
 		}
 		shards = append(shards, shard)
 		// A nested function owns its body and will be visited by the outer file
@@ -77,6 +78,32 @@ func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
 	return shards, nil
+}
+
+func newBodyBuilder(x *extractor, file *shimast.SourceFile, owner, scope string, body *shimast.Node) *bodyBuilder {
+	return &bodyBuilder{
+		x: x, file: file, owner: owner, scope: scope, body: body,
+		occurrences: []bodyOccurrence{}, relations: []bodyRelation{},
+		occurrence: map[*shimast.Node]string{}, definitions: []definitionUse{},
+		defs: map[string][]string{}, uses: map[string][]string{}, calls: []resolvedCall{},
+		values: map[string]any{}, captures: map[string]bool{},
+		returns: []string{}, throws: []string{}, escapes: []string{},
+	}
+}
+
+func (x *extractor) bodyShard(builder *bodyBuilder, payload bodyFactPayload, kind string, span sourceSpan) (factShard, error) {
+	completion := payload.Completeness
+	entry := x.newFact(bodyNamespace, kind, builder.owner, payload, []sourceSpan{span}, completion)
+	shard := finishShard(bodyNamespace, builder.owner, completion, []fact{entry})
+	if x.payloadCodecs[typescriptBodyPayloadCodec] {
+		packed, err := packBodyPayload(payload, span)
+		if err != nil {
+			return factShard{}, err
+		}
+		shard.Facts[0].Payload = nil
+		shard.Facts[0].PhysicalPayload = &packed
+	}
+	return shard, nil
 }
 
 func (x *extractor) functionID(node *shimast.Node) string {
@@ -104,7 +131,11 @@ func (x *extractor) functionID(node *shimast.Node) string {
 
 func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	parameters := []string{}
-	for _, parameter := range function.Parameters() {
+	var parameterNodes []*shimast.ParameterDeclarationNode
+	if function != nil {
+		parameterNodes = function.Parameters()
+	}
+	for _, parameter := range parameterNodes {
 		parameterNode := parameter.AsNode()
 		id := b.x.resolveSymbol(parameterNode.Name())
 		if id == "" {
@@ -122,7 +153,7 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	// An expression-bodied arrow semantically returns its root expression. A
 	// nested function literal is opaque to the outer body: retain one value
 	// occurrence for the literal, never its independently owned occurrences.
-	if function.Kind == shimast.KindArrowFunction && b.body.Kind != shimast.KindBlock {
+	if function != nil && function.Kind == shimast.KindArrowFunction && b.body.Kind != shimast.KindBlock {
 		returned := b.occurrence[b.body]
 		if returned == "" {
 			returned = b.addOccurrence(b.body, "expression")
@@ -158,7 +189,8 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	})
 
 	ir := functionBodyIR{
-		Function: b.owner, Parameters: uniqueInOrder(parameters), Occurrences: b.occurrences,
+		Function: b.owner, Scope: b.scope, Parameters: uniqueInOrder(parameters), Occurrences: b.occurrences,
+		Execution: functionExecution(function),
 		Relations: b.relations, Blocks: controlFlow.blocks,
 		Edges: controlFlow.edges, Definitions: b.definitions, Calls: b.calls,
 		Summary: functionSummary{
@@ -169,6 +201,32 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	return bodyFactPayload{
 		Body: ir, Values: b.values, Completeness: controlFlow.completion,
 	}
+}
+
+func functionExecution(function *shimast.Node) string {
+	if function == nil {
+		return ""
+	}
+	async := shimast.GetCombinedModifierFlags(function)&shimast.ModifierFlagsAsync != 0
+	generator := false
+	switch function.Kind {
+	case shimast.KindFunctionDeclaration:
+		generator = function.AsFunctionDeclaration().AsteriskToken != nil
+	case shimast.KindFunctionExpression:
+		generator = function.AsFunctionExpression().AsteriskToken != nil
+	case shimast.KindMethodDeclaration:
+		generator = function.AsMethodDeclaration().AsteriskToken != nil
+	}
+	if async && generator {
+		return "async-generator"
+	}
+	if async {
+		return "async"
+	}
+	if generator {
+		return "generator"
+	}
+	return "sync"
 }
 
 func (b *bodyBuilder) buildRelations(node *shimast.Node) {
@@ -198,7 +256,23 @@ func (b *bodyBuilder) walkOwned(node *shimast.Node) {
 	if node == nil {
 		return
 	}
+	if shimast.IsPartOfTypeNode(node) {
+		return
+	}
+	switch node.Kind {
+	case shimast.KindInterfaceDeclaration, shimast.KindTypeAliasDeclaration,
+		shimast.KindImportDeclaration, shimast.KindExportDeclaration,
+		shimast.KindClassDeclaration, shimast.KindClassExpression, shimast.KindModuleDeclaration:
+		return
+	}
 	if shimast.IsFunctionLike(node) {
+		// A function literal is a value in the enclosing scope, but its
+		// execution belongs only to the separately indexed function body.
+		if node.Body() != nil {
+			id := b.addOccurrence(node, "expression")
+			b.setOccurrenceSymbol(id, b.x.functionID(node))
+			b.values[id] = b.value(node)
+		}
 		return
 	}
 	kind := bodyKind(node)
@@ -296,7 +370,12 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	if call == nil {
 		return result
 	}
-	result.Target = b.x.resolveSymbol(call.Expression)
+	targetSymbol := b.canonicalCallSymbol(call.Expression)
+	result.Target = b.x.symbolID(targetSymbol)
+	result.TargetOrigin = b.x.callTargetOrigin(targetSymbol)
+	if target := b.callbackTarget(call.Expression); target != "" {
+		result.Target = target
+	}
 	result.Dynamic = result.Target == ""
 	if result.Target == b.owner {
 		b.recursion = true
@@ -446,13 +525,16 @@ func (b *bodyBuilder) callbackTarget(node *shimast.Node) string {
 	if shimast.IsFunctionLike(node) {
 		return b.x.functionID(node)
 	}
-	symbol := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(node))
+	symbol := b.canonicalCallSymbol(node)
 	declaration := declarationNode(symbol)
 	if declaration == nil {
 		return ""
 	}
-	if shimast.IsFunctionLike(declaration) || findFunctionBody(declaration) != nil {
-		return b.x.symbolID(symbol)
+	if shimast.IsFunctionLike(declaration) {
+		return b.x.functionID(declaration)
+	}
+	if function := functionInitializer(declaration); function != nil {
+		return b.x.functionID(function)
 	}
 	return ""
 }
@@ -538,27 +620,6 @@ func isAssignmentTarget(node *shimast.Node) bool {
 		binary.OperatorToken.Kind <= shimast.KindLastAssignment
 }
 
-func findFunctionBody(declaration *shimast.Node) *shimast.Node {
-	if declaration == nil {
-		return nil
-	}
-	if body := declaration.Body(); body != nil {
-		return body
-	}
-	var found *shimast.Node
-	walk(declaration, func(node *shimast.Node) bool {
-		if found != nil {
-			return false
-		}
-		if node != declaration && shimast.IsFunctionLike(node) {
-			found = node.Body()
-			return false
-		}
-		return true
-	})
-	return found
-}
-
 func bodyKind(node *shimast.Node) string {
 	switch node.Kind {
 	case shimast.KindBlock, shimast.KindEmptyStatement, shimast.KindVariableStatement,
@@ -572,7 +633,10 @@ func bodyKind(node *shimast.Node) string {
 	case shimast.KindPropertyAssignment, shimast.KindShorthandPropertyAssignment:
 		return "assignment"
 	case shimast.KindObjectLiteralExpression, shimast.KindArrayLiteralExpression,
+		shimast.KindSpreadAssignment, shimast.KindSpreadElement,
 		shimast.KindPropertyAccessExpression, shimast.KindElementAccessExpression,
+		shimast.KindParenthesizedExpression, shimast.KindAsExpression, shimast.KindSatisfiesExpression,
+		shimast.KindNonNullExpression, shimast.KindTypeAssertionExpression,
 		shimast.KindStringLiteral, shimast.KindNoSubstitutionTemplateLiteral,
 		shimast.KindNumericLiteral, shimast.KindTrueKeyword, shimast.KindFalseKeyword:
 		return "expression"
@@ -609,6 +673,12 @@ func valueCandidate(node *shimast.Node) bool {
 
 func childRole(parent, child *shimast.Node, index int) string {
 	switch parent.Kind {
+	case shimast.KindSpreadAssignment, shimast.KindSpreadElement,
+		shimast.KindParenthesizedExpression, shimast.KindAsExpression, shimast.KindSatisfiesExpression,
+		shimast.KindNonNullExpression, shimast.KindTypeAssertionExpression:
+		if parent.Expression() == child {
+			return "expression"
+		}
 	case shimast.KindCallExpression:
 		call := parent.AsCallExpression()
 		if call.Expression == child {

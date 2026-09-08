@@ -66,6 +66,12 @@ export interface ParameterBinding {
 export interface ResolvedCall {
   readonly occurrence: OccurrenceId
   readonly target?: SymbolId
+  /** Canonical declaration origin; absent when package/declaration identity cannot be proved. */
+  readonly targetOrigin?: {
+    readonly package: string
+    readonly file: string
+    readonly path: readonly string[]
+  }
   readonly signature?: string
   readonly receiver?: OccurrenceId
   readonly typeArguments: readonly string[]
@@ -86,6 +92,11 @@ export interface FunctionSummary {
 }
 
 export interface FunctionBodyIR {
+  /** Lexical execution owner. Older body facts omit this and describe a function. */
+  readonly scope?: 'function' | 'module'
+  /** Function execution form; absence in older facts does not prove synchronous execution. */
+  readonly execution?: 'sync' | 'async' | 'generator' | 'async-generator'
+  /** Stable owner identity, also used for a module's evaluation scope. */
   readonly function: SymbolId
   readonly parameters: readonly SymbolId[]
   readonly occurrences: readonly BodyOccurrence[]
@@ -122,6 +133,16 @@ const CONTROL_FLOW_EDGE_KINDS = new Set<ControlFlowEdgeKind>([
 export function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[] {
   const diagnostics: string[] = []
   if (!body.function) diagnostics.push('BODY_FUNCTION_REQUIRED')
+  if (body.scope !== undefined && body.scope !== 'function' && body.scope !== 'module') {
+    diagnostics.push('BODY_SCOPE_INVALID')
+  }
+  if (body.execution !== undefined && !['sync', 'async', 'generator', 'async-generator'].includes(body.execution)) {
+    diagnostics.push('BODY_EXECUTION_INVALID')
+  }
+  if (body.scope === 'module' && body.execution !== undefined) diagnostics.push('BODY_MODULE_EXECUTION_INVALID')
+  if (body.scope === 'module' && (body.parameters.length || body.summary.returns.length || body.summary.recursion)) {
+    diagnostics.push('BODY_MODULE_FUNCTION_STATE')
+  }
   const occurrences = new Set(body.occurrences.map((occurrence) => occurrence.id))
   if (occurrences.size !== body.occurrences.length) diagnostics.push('BODY_OCCURRENCE_DUPLICATE')
   for (const occurrence of body.occurrences) {
@@ -176,6 +197,10 @@ export function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[] 
     }
   }
   for (const call of body.calls) {
+    if (call.targetOrigin !== undefined && (!call.target || !call.targetOrigin || typeof call.targetOrigin.package !== 'string' || !call.targetOrigin.package || typeof call.targetOrigin.file !== 'string' || !call.targetOrigin.file ||
+      !Array.isArray(call.targetOrigin.path) || !call.targetOrigin.path.length || call.targetOrigin.path.some((part) => typeof part !== 'string' || !part))) {
+      diagnostics.push('BODY_CALL_TARGET_ORIGIN_INVALID')
+    }
     if (!occurrences.has(call.occurrence)) diagnostics.push('BODY_CALL_OCCURRENCE_UNKNOWN')
     if (call.receiver && !occurrences.has(call.receiver)) diagnostics.push('BODY_CALL_RECEIVER_UNKNOWN')
     for (const argument of call.arguments) {

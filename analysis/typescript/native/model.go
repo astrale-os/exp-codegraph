@@ -2,12 +2,12 @@ package main
 
 const (
 	protocolVersion = 1
-	producerVersion = "0.1.0"
+	producerVersion = "0.2.0"
 	ttscVersion     = "0.25.0"
-	passVersion     = "1.1.0"
+	passVersion     = "1.2.0"
 )
 
-const typescriptBodyPayloadCodec = "typescript.body.packed/1"
+const typescriptBodyPayloadCodec = "typescript.body.packed/2"
 
 type request struct {
 	ID           int            `json:"id"`
@@ -346,6 +346,7 @@ type parameterBinding struct {
 type resolvedCall struct {
 	Occurrence    string             `json:"occurrence"`
 	Target        string             `json:"target,omitempty"`
+	TargetOrigin  *callTargetOrigin  `json:"targetOrigin,omitempty"`
 	Signature     string             `json:"signature,omitempty"`
 	Receiver      string             `json:"receiver,omitempty"`
 	TypeArguments []string           `json:"typeArguments"`
@@ -353,6 +354,12 @@ type resolvedCall struct {
 	Bindings      []parameterBinding `json:"bindings"`
 	Callbacks     []string           `json:"callbacks"`
 	Dynamic       bool               `json:"dynamic"`
+}
+
+type callTargetOrigin struct {
+	Package string   `json:"package"`
+	File    string   `json:"file"`
+	Path    []string `json:"path"`
 }
 
 type functionSummary struct {
@@ -367,6 +374,8 @@ type functionSummary struct {
 
 type functionBodyIR struct {
 	Function    string             `json:"function"`
+	Scope       string             `json:"scope"`
+	Execution   string             `json:"execution,omitempty"`
 	Parameters  []string           `json:"parameters"`
 	Occurrences []bodyOccurrence   `json:"occurrences"`
 	Relations   []bodyRelation     `json:"relations"`

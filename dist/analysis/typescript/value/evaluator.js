@@ -55,11 +55,9 @@ class PortableBoundedValueEvaluator {
         const call = this.#index.calls.get(occurrence);
         if (call) {
             const result = this.evaluateCall(call, depth, nextActive, state, signal, evidence, environment);
-            if (cacheable && (result.kind !== 'unknown' || direct === undefined)) {
+            if (cacheable)
                 state.memo.set(occurrence, result);
-            }
-            if (result.kind !== 'unknown' || direct === undefined)
-                return result;
+            return result;
         }
         const occurrenceValue = indexed.occurrence;
         const candidates = [];
@@ -76,11 +74,19 @@ class PortableBoundedValueEvaluator {
         for (const parent of this.#index.parents.get(occurrence) ?? []) {
             if (parent.role !== 'name')
                 continue;
+            const syntax = this.#index.occurrences.get(parent.parent)?.occurrence.syntax;
+            if (syntax !== 'VariableDeclaration' && syntax !== 'PropertyAssignment')
+                continue;
             candidates.push(...this.children(parent.parent, 'initializer'));
         }
-        candidates.push(...this.children(occurrence, 'initializer'));
-        candidates.push(...this.children(occurrence, 'expression'));
-        candidates.push(...this.children(occurrence, 'right'));
+        if (occurrenceValue.syntax === 'VariableDeclaration' || occurrenceValue.syntax === 'PropertyAssignment') {
+            candidates.push(...this.children(occurrence, 'initializer'));
+        }
+        // Relation names identify operands, not transfer functions. A binary right
+        // operand, property receiver, or spread expression is not the parent's value.
+        if (TRANSPARENT_EXPRESSIONS.has(occurrenceValue.syntax)) {
+            candidates.push(...this.children(occurrence, 'expression'));
+        }
         if (candidates.length) {
             const result = this.combine(unique(candidates).map((candidate) => this.visit(candidate, depth + 1, nextActive, state, signal, environment)), evidence);
             if (cacheable)
@@ -108,7 +114,18 @@ class PortableBoundedValueEvaluator {
         if (target.body.summary.recursion) {
             return unknown('VALUE_RECURSION', 'The target function is recursive.', [...evidence, target.fact]);
         }
-        const returned = target.body.summary.returns.flatMap((occurrence) => this.children(occurrence, 'expression'));
+        if (call.bindings.some((binding) => binding.rest) ||
+            call.arguments.some((argument) => this.#index.occurrences.get(argument)?.occurrence.syntax === 'SpreadElement')) {
+            return unknown('VALUE_ARGUMENT_BINDING_UNSUPPORTED', 'Spread and rest arguments require an aggregate argument binding.', [...evidence, target.fact]);
+        }
+        const returned = target.body.summary.returns.flatMap((occurrence) => {
+            const value = this.#index.occurrences.get(occurrence)?.occurrence;
+            // Block-bodied functions point at return statements. Concise arrows point
+            // directly at their returned expression, which can itself be a call.
+            return value?.kind === 'return'
+                ? this.children(occurrence, 'expression')
+                : [occurrence];
+        });
         if (!returned.length) {
             return unknown('VALUE_RETURN_MISSING', 'The target function has no value-bearing return occurrence.', [...evidence, target.fact]);
         }
@@ -161,6 +178,14 @@ class PortableBoundedValueEvaluator {
         return this.#index.children.get(parent)?.get(role) ?? [];
     }
 }
+const TRANSPARENT_EXPRESSIONS = new Set([
+    'ReturnStatement',
+    'ParenthesizedExpression',
+    'AsExpression',
+    'TypeAssertionExpression',
+    'NonNullExpression',
+    'SatisfiesExpression',
+]);
 function indexFacts(facts) {
     const occurrences = new Map();
     const children = new Map();
