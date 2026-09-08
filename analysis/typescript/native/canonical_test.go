@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 )
@@ -47,6 +48,24 @@ func TestCanonicalJSONPreservesIdentityPreimage(t *testing.T) {
 		if actual, expected := stableJSON(value), referenceCanonicalJSON(value); actual != expected {
 			t.Fatalf("case %d: canonical identity preimage changed\nactual: %s\nexpected: %s", index, actual, expected)
 		}
+	}
+}
+
+func TestCanonicalJSONKeepsParentAndSiblingFieldsAcrossNestedArenaGrowth(t *testing.T) {
+	wide := map[string]any{}
+	for index := 0; index < 96; index++ {
+		wide[fmt.Sprintf("field-%03d", 95-index)] = map[string]any{"z": index, "a": []any{index, nil, "<&>"}}
+	}
+	encoded, err := json.Marshal(wide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A wide child grows the workspace while its parent's fields are still
+	// live. Later siblings reuse that space, including duplicate escaped keys
+	// whose stable last-value semantics are part of the identity contract.
+	value := json.RawMessage(fmt.Sprintf(`{"z":%s,"a":{"same":1,"\u0073ame":2},"m":[%s,{}, {"z":9,"a":2}],"after":true}`, encoded, encoded))
+	if actual, expected := stableJSON(value), referenceCanonicalJSON(value); actual != expected {
+		t.Fatalf("nested canonical identity preimage changed\nactual: %s\nexpected: %s", actual, expected)
 	}
 }
 

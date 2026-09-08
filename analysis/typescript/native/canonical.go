@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"sort"
+	"slices"
 	"unicode/utf8"
 )
 
@@ -13,6 +13,7 @@ import (
 type canonicalJSON struct {
 	input  []byte
 	output []byte
+	fields []canonicalField
 }
 
 type canonicalField struct {
@@ -116,7 +117,11 @@ func (w *canonicalJSON) value(position int) int {
 }
 
 func (w *canonicalJSON) object(position int) int {
-	var fields []canonicalField
+	// Nested objects borrow one encoder-owned arena. Their field descriptors
+	// are needed only until that object has emitted its ordered byte spans;
+	// allocating an independent growing slice for every object retains no
+	// useful state and dominates large semantic identity encodings.
+	base := len(w.fields)
 	position = w.space(position + 1)
 	for w.input[position] != '}' {
 		field := canonicalField{nameStart: position, nameEnd: w.stringEnd(position)}
@@ -131,13 +136,14 @@ func (w *canonicalJSON) object(position int) int {
 		position = w.space(field.nameEnd)
 		field.valueStart = w.space(position + 1)
 		field.valueEnd = w.end(field.valueStart)
-		fields = append(fields, field)
+		w.fields = append(w.fields, field)
 		position = w.space(field.valueEnd)
 		if w.input[position] == ',' {
 			position = w.space(position + 1)
 		}
 	}
-	sort.SliceStable(fields, func(i, j int) bool { return bytes.Compare(fields[i].key, fields[j].key) < 0 })
+	fields := w.fields[base:]
+	slices.SortStableFunc(fields, func(left, right canonicalField) int { return bytes.Compare(left.key, right.key) })
 	w.output = append(w.output, '{')
 	written := false
 	for index, field := range fields {
@@ -155,6 +161,7 @@ func (w *canonicalJSON) object(position int) int {
 		w.value(field.valueStart)
 	}
 	w.output = append(w.output, '}')
+	w.fields = w.fields[:base]
 	return position + 1
 }
 
