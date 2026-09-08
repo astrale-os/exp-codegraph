@@ -152,7 +152,7 @@ describe('symbolic values through the public project API', () => {
     const marker = markers[0]!
     model = (context) => {
       if (context.call.target !== marker) return
-      const value = context.argument(0)
+      const value = context.argument(0)?.resolve()
       return value?.kind === 'known' && value.value.kind === 'literal' && typeof value.value.value === 'string'
         ? { kind: 'atom', value: value.value.value }
         : { kind: 'unknown', reason: 'Marker argument is not a known string.' }
@@ -193,7 +193,7 @@ describe('symbolic values through the public project API', () => {
       expect(result.kind !== 'known' || result.value.kind !== 'external').toBe(true)
     }
     const modeled = await snapshot.values({ call: (context) => {
-      const callee = context.callee()
+      const callee = context.callee().resolve()
       if (callee.kind === 'known' && callee.value.kind === 'external' && callee.value.symbolOrigin?.package === '@fixture/canonical') {
         return { kind: 'atom', value: 'actual-module-export' }
       }
@@ -325,7 +325,7 @@ describe('symbolic values through the public project API', () => {
     const left = Object.freeze({ identity: 'same-fields' })
     const right = Object.freeze({ identity: 'same-fields' })
     const values = await snapshot.values({ call: (context) => {
-      const label = context.argument(0)
+      const label = context.argument(0)?.resolve()
       return { kind: 'atom', value: label?.kind === 'known' && label.value.kind === 'literal' && label.value.value === 'left' ? left : right }
     } })
     const distinct = await values.value(declaration('branch')).invoke().resolve()
@@ -361,7 +361,7 @@ describe('symbolic values through the public project API', () => {
 
   it('does not let a custom model overwrite exhausted operand budgets', async () => {
     const values = await snapshot.values({ limits: { maximumSteps: 2 }, call: (context) => {
-      context.argument(0)
+      context.argument(0)?.resolve()
       return { kind: 'atom', value: 'cannot erase a hard limit' }
     } })
     expect(await values.value(declaration('direct')).resolve()).toMatchObject({ kind: 'unknown', reasons: [expect.objectContaining({ code: 'VALUE_STEP_LIMIT' })] })

@@ -8,6 +8,8 @@ workflow publishes them to a package registry. See [GitHub artifact distribution
 conformance engine. It exposes reusable analysis, persistence, repository, specification, and
 policy modules; the `cg` command is one consumer of those APIs.
 
+For semantic TypeScript consumers, see [call discovery, contextual values and automatic proof reuse](docs/typescript-values.md).
+
 The optional specification authoring model is the convention-based module contract rooted by
 `.spec/api.d.ts`. The package API, authoring primitives, viewer, and diagnostics are designed
 around that model.

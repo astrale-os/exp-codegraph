@@ -76,18 +76,31 @@ export type SymbolicValue<Atom = never> = {
 export interface SymbolicCallContext<Atom> {
     readonly call: ResolvedCall;
     /** Demand operands only when the model needs them; all reads use the current proof budget. */
-    callee(): ValueResult<SymbolicValue<Atom>>;
-    receiver(): ValueResult<SymbolicValue<Atom>> | undefined;
-    argument(index: number): ValueResult<SymbolicValue<Atom>> | undefined;
+    callee(): SymbolicOperandPlan<Atom>;
+    receiver(): SymbolicOperandPlan<Atom> | undefined;
+    argument(index: number): SymbolicOperandPlan<Atom> | undefined;
 }
-/** Undefined delegates ordinary TypeScript calls to the generic evaluator. */
+/**
+ * Lazy operand in the current call environment. Resolution is synchronous and
+ * shares the enclosing proof's budget and dependencies; it never starts a proof.
+ * Plans may only be resolved while their synchronous call model is running.
+ */
+export interface SymbolicOperandPlan<Atom = never> {
+    property(name: string): SymbolicOperandPlan<Atom>;
+    invoke(): SymbolicOperandPlan<Atom>;
+    resolve(): ValueResult<SymbolicValue<Atom>>;
+}
+/**
+ * Undefined delegates ordinary TypeScript calls to the generic evaluator.
+ * Returning an operand plan transfers its symbolic value, preserving closures.
+ */
 export type SymbolicCallModel<Atom> = (context: SymbolicCallContext<Atom>) => {
     readonly kind: 'atom';
     readonly value: Atom;
 } | {
     readonly kind: 'unknown';
     readonly reason: string;
-} | undefined;
+} | SymbolicOperandPlan<Atom> | undefined;
 export interface SymbolicValueResolveOptions {
     readonly signal?: AbortSignal;
     readonly limits?: BoundedValueLimits;

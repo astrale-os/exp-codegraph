@@ -5,7 +5,7 @@ import type { BodyOccurrence, ResolvedCall, TypeScriptCallInventory, TypeScriptC
 import { createTypeScriptFactReader, type TypeScriptFact } from '../../facts/index.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions, BoundedValueLimits, EvaluatedValueResult, ValueResult } from '../model.ts'
 import { resolveBoundedValueLimits } from '../limits.ts'
-import type { SymbolicCallModel, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from './model.ts'
+import type { SymbolicCallModel, SymbolicOperandPlan, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from './model.ts'
 import { createCallProjection } from './calls.ts'
 import { resolutionResultBytes, type ValueResolutionCache } from './cache.ts'
 
@@ -53,6 +53,7 @@ interface State {
 
 type Plan<Atom> =
   | { readonly kind: 'value'; readonly occurrence: OccurrenceId }
+  | { readonly kind: 'unavailable'; readonly code: string; readonly reason: string }
   | { readonly kind: 'property'; readonly input: Plan<Atom>; readonly name: string }
   | { readonly kind: 'invoke'; readonly input: Plan<Atom> }
 
@@ -87,6 +88,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   readonly #model: SymbolicCallModel<Atom> | undefined
   readonly #limits: Readonly<Required<BoundedValueLimits>>
   readonly #cache: ValueResolutionCache | undefined
+  readonly #operands = new WeakMap<SymbolicOperandPlan<Atom>, { readonly state: State; readonly read: () => RuntimeValue<Atom> }>()
 
   constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, cache?: ValueResolutionCache) {
     this.#index = index
@@ -156,11 +158,29 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     return frozen
   }
 
-  private evaluatePlan(plan: Plan<Atom>, state: State): RuntimeValue<Atom> {
-    if (plan.kind === 'value') return this.visit(plan.occurrence, new Map(), state, 0)
-    const input = this.evaluatePlan(plan.input, state)
-    if (plan.kind === 'property') return this.property(input, plan.name, state, 0)
-    return this.invoke(input, state, 0)
+  private evaluatePlan(plan: Plan<Atom>, state: State, environment: Environment<Atom> = new Map(), depth = 0): RuntimeValue<Atom> {
+    if (state.exhausted) return state.exhausted
+    if (depth > state.limits.maximumDepth) return exhaust(state, 'VALUE_DEPTH_LIMIT', 'Bounded value evaluation exceeded its depth limit.')
+    if (plan.kind === 'unavailable') return uncertain(plan.code, plan.reason)
+    if (plan.kind === 'value') return this.visit(plan.occurrence, environment, state, depth)
+    const input = this.evaluatePlan(plan.input, state, environment, depth + 1)
+    if (plan.kind === 'property') return this.property(input, plan.name, state, depth)
+    return this.invoke(input, state, depth)
+  }
+
+  private operandPlan(node: Plan<Atom>, environment: Environment<Atom>, state: State, depth: number, active: () => boolean): SymbolicOperandPlan<Atom> {
+    const read = () => {
+      if (!active()) throw new Error('A symbolic operand can only be resolved during its call model.')
+      const value = this.evaluatePlan(node, state, environment, depth)
+      return state.exhausted ?? value
+    }
+    const plan = Object.freeze({
+      property: (name: string) => this.operandPlan({ kind: 'property', input: node, name }, environment, state, depth, active),
+      invoke: () => this.operandPlan({ kind: 'invoke', input: node }, environment, state, depth, active),
+      resolve: () => this.result(read(), state, false) as ValueResult<SymbolicValue<Atom>>,
+    })
+    this.#operands.set(plan, { state, read })
+    return plan
   }
 
   private visit(id: OccurrenceId, environment: Environment<Atom>, state: State, depth: number): RuntimeValue<Atom> {
@@ -300,15 +320,27 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
 
   private call(call: ResolvedCall, environment: Environment<Atom>, state: State, depth: number): RuntimeValue<Atom> {
     const callee = this.#index.children.get(call.occurrence)?.get('callee')
-    const operand = (id: OccurrenceId) => this.result(this.visit(id, environment, state, depth + 1), state, false) as ValueResult<SymbolicValue<Atom>>
-    const modeled = this.#model?.({
-      call,
-      callee: () => callee ? operand(callee) : this.result(uncertain('VALUE_CALLEE_MISSING', 'The call has no callee occurrence.'), state, false) as ValueResult<SymbolicValue<Atom>>,
-      receiver: () => call.receiver ? operand(call.receiver) : undefined,
-      argument: (index) => call.arguments[index] ? operand(call.arguments[index]!) : undefined,
-    })
+    let active = true
+    const operand = (id: OccurrenceId) => this.operandPlan({ kind: 'value', occurrence: id }, environment, state, depth + 1, () => active)
+    let modeled: RuntimeValue<Atom> | undefined
+    try {
+      const output = this.#model?.({
+        call,
+        callee: () => callee ? operand(callee) : this.operandPlan({ kind: 'unavailable', code: 'VALUE_CALLEE_MISSING', reason: 'The call has no callee occurrence.' }, environment, state, depth + 1, () => active),
+        receiver: () => call.receiver ? operand(call.receiver) : undefined,
+        argument: (index) => call.arguments[index] ? operand(call.arguments[index]!) : undefined,
+      })
+      if (output) {
+        if ('kind' in output) modeled = output.kind === 'atom' ? output : uncertain('VALUE_MODEL_UNKNOWN', output.reason)
+        else {
+          const transfer = this.#operands.get(output)
+          if (!transfer || transfer.state !== state) throw new Error('A call model can only return an operand from its active proof.')
+          modeled = transfer.read()
+        }
+      }
+    } finally { active = false }
     if (state.exhausted) return state.exhausted
-    if (modeled) return modeled.kind === 'atom' ? modeled : uncertain('VALUE_MODEL_UNKNOWN', modeled.reason)
+    if (modeled) return modeled
     if (call.bindings.some((binding) => binding.rest) || call.arguments.some((id) => this.#index.occurrences.get(id)?.syntax === 'SpreadElement')) {
       return uncertain('VALUE_ARGUMENT_BINDING_UNSUPPORTED', 'Spread and rest arguments require an aggregate argument binding.')
     }

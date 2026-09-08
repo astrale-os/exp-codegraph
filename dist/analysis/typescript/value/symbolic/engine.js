@@ -18,6 +18,7 @@ class Evaluator {
     #model;
     #limits;
     #cache;
+    #operands = new WeakMap();
     constructor(index, model, limits, cache) {
         this.#index = index;
         this.#model = model;
@@ -80,13 +81,34 @@ class Evaluator {
         }
         return frozen;
     }
-    evaluatePlan(plan, state) {
+    evaluatePlan(plan, state, environment = new Map(), depth = 0) {
+        if (state.exhausted)
+            return state.exhausted;
+        if (depth > state.limits.maximumDepth)
+            return exhaust(state, 'VALUE_DEPTH_LIMIT', 'Bounded value evaluation exceeded its depth limit.');
+        if (plan.kind === 'unavailable')
+            return uncertain(plan.code, plan.reason);
         if (plan.kind === 'value')
-            return this.visit(plan.occurrence, new Map(), state, 0);
-        const input = this.evaluatePlan(plan.input, state);
+            return this.visit(plan.occurrence, environment, state, depth);
+        const input = this.evaluatePlan(plan.input, state, environment, depth + 1);
         if (plan.kind === 'property')
-            return this.property(input, plan.name, state, 0);
-        return this.invoke(input, state, 0);
+            return this.property(input, plan.name, state, depth);
+        return this.invoke(input, state, depth);
+    }
+    operandPlan(node, environment, state, depth, active) {
+        const read = () => {
+            if (!active())
+                throw new Error('A symbolic operand can only be resolved during its call model.');
+            const value = this.evaluatePlan(node, state, environment, depth);
+            return state.exhausted ?? value;
+        };
+        const plan = Object.freeze({
+            property: (name) => this.operandPlan({ kind: 'property', input: node, name }, environment, state, depth, active),
+            invoke: () => this.operandPlan({ kind: 'invoke', input: node }, environment, state, depth, active),
+            resolve: () => this.result(read(), state, false),
+        });
+        this.#operands.set(plan, { state, read });
+        return plan;
     }
     visit(id, environment, state, depth) {
         state.signal?.throwIfAborted();
@@ -274,17 +296,34 @@ class Evaluator {
     }
     call(call, environment, state, depth) {
         const callee = this.#index.children.get(call.occurrence)?.get('callee');
-        const operand = (id) => this.result(this.visit(id, environment, state, depth + 1), state, false);
-        const modeled = this.#model?.({
-            call,
-            callee: () => callee ? operand(callee) : this.result(uncertain('VALUE_CALLEE_MISSING', 'The call has no callee occurrence.'), state, false),
-            receiver: () => call.receiver ? operand(call.receiver) : undefined,
-            argument: (index) => call.arguments[index] ? operand(call.arguments[index]) : undefined,
-        });
+        let active = true;
+        const operand = (id) => this.operandPlan({ kind: 'value', occurrence: id }, environment, state, depth + 1, () => active);
+        let modeled;
+        try {
+            const output = this.#model?.({
+                call,
+                callee: () => callee ? operand(callee) : this.operandPlan({ kind: 'unavailable', code: 'VALUE_CALLEE_MISSING', reason: 'The call has no callee occurrence.' }, environment, state, depth + 1, () => active),
+                receiver: () => call.receiver ? operand(call.receiver) : undefined,
+                argument: (index) => call.arguments[index] ? operand(call.arguments[index]) : undefined,
+            });
+            if (output) {
+                if ('kind' in output)
+                    modeled = output.kind === 'atom' ? output : uncertain('VALUE_MODEL_UNKNOWN', output.reason);
+                else {
+                    const transfer = this.#operands.get(output);
+                    if (!transfer || transfer.state !== state)
+                        throw new Error('A call model can only return an operand from its active proof.');
+                    modeled = transfer.read();
+                }
+            }
+        }
+        finally {
+            active = false;
+        }
         if (state.exhausted)
             return state.exhausted;
         if (modeled)
-            return modeled.kind === 'atom' ? modeled : uncertain('VALUE_MODEL_UNKNOWN', modeled.reason);
+            return modeled;
         if (call.bindings.some((binding) => binding.rest) || call.arguments.some((id) => this.#index.occurrences.get(id)?.syntax === 'SpreadElement')) {
             return uncertain('VALUE_ARGUMENT_BINDING_UNSUPPORTED', 'Spread and rest arguments require an aggregate argument binding.');
         }
