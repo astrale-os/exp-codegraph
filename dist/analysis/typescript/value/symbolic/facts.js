@@ -1,5 +1,8 @@
 import { createHash } from 'node:crypto';
-import { createTypeScriptFactReader } from '../../facts/index.js';
+import { physicalPayloadForTransport } from '../../../facts/representation/index.js';
+import { createTypeScriptFactReader, TypeScriptFactContractError } from '../../facts/index.js';
+import { projectPackedTypeScriptBody } from '../../physical/index.js';
+import { bodyFragment } from './fragment.js';
 import { ValueIndexTable } from './table.js';
 /** Most lookups have one contributing fact; uncommon overlaps retain their precise ordered owners. */
 class Column {
@@ -26,6 +29,9 @@ class Column {
             return;
         return 'owner' in slot ? facts.get(slot.owner) : [...slot.owners.keys()].sort();
     }
+    project(key, project, merge = last) {
+        return projectSlot(this.slots.get(key), project, merge);
+    }
     edit() { return new ColumnEdit(this.slots.edit(), this.merge); }
     *entries() { for (const [key, slot] of this.slots)
         yield [key, slot.value]; }
@@ -41,12 +47,34 @@ class Column {
 class ColumnEdit {
     slots;
     merge;
+    #owners = new Map();
+    #finished = false;
+    contributionWork = 0;
     constructor(slots, merge) {
         this.slots = slots;
         this.merge = merge;
     }
-    get(key) { return this.slots.get(key)?.value; }
+    get(key) {
+        const owners = this.#owners.get(key);
+        if (!owners)
+            return this.slots.get(key)?.value;
+        return owners.size ? this.merged(owners) : undefined;
+    }
+    project(key, project, merge = last) {
+        const owners = this.#owners.get(key);
+        if (!owners)
+            return projectSlot(this.slots.get(key), project, merge);
+        if (!owners.size)
+            return;
+        return projectSlot({ owners }, project, merge);
+    }
     set(key, owner, value) {
+        this.assertActive();
+        const pending = this.#owners.get(key);
+        if (pending) {
+            pending.set(owner, value);
+            return;
+        }
         const old = this.slots.get(key);
         if (!old || 'owner' in old && old.owner === owner) {
             this.slots.set(key, { owner, value });
@@ -54,9 +82,15 @@ class ColumnEdit {
         }
         const owners = 'owner' in old ? new Map([[old.owner, old.value]]) : new Map(old.owners);
         owners.set(owner, value);
-        this.slots.set(key, { owners, value: this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, item]) => item)) });
+        this.#owners.set(key, owners);
     }
     delete(key, owner) {
+        this.assertActive();
+        const pending = this.#owners.get(key);
+        if (pending) {
+            pending.delete(owner);
+            return;
+        }
         const old = this.slots.get(key);
         if (!old)
             return;
@@ -69,14 +103,29 @@ class ColumnEdit {
             return;
         const owners = new Map(old.owners);
         owners.delete(owner);
-        if (owners.size === 1) {
-            const [remaining, value] = owners.entries().next().value;
-            this.slots.set(key, { owner: remaining, value });
-        }
-        else
-            this.slots.set(key, { owners, value: this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, item]) => item)) });
+        this.#owners.set(key, owners);
     }
-    finish() { return new Column(this.slots.finish(), this.merge); }
+    finish() {
+        this.assertActive();
+        for (const [key, owners] of this.#owners) {
+            if (!owners.size)
+                this.slots.delete(key);
+            else if (owners.size === 1) {
+                const [owner, value] = owners.entries().next().value;
+                this.slots.set(key, { owner, value });
+            }
+            else
+                this.slots.set(key, { owners, value: this.merged(owners) });
+        }
+        this.#finished = true;
+        return new Column(this.slots.finish(), this.merge);
+    }
+    merged(owners) {
+        this.contributionWork += owners.size;
+        return this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value));
+    }
+    assertActive() { if (this.#finished)
+        throw new Error('Value index column edit is already published.'); }
 }
 export class IndexedValues {
     work;
@@ -91,6 +140,7 @@ export class IndexedValues {
     direct;
     symbols;
     sources;
+    callsBySource;
     mutations;
     escapes;
     aliases;
@@ -106,7 +156,7 @@ export class IndexedValues {
     #aggregateEvidence;
     #mutationOwners;
     #aliasSources;
-    constructor(facts, columns, derived, hashes, factEvidence, witnesses, aggregateEvidence, mutationOwners, aliasSources, revision, work = { facts: 0, bodies: 0 }) {
+    constructor(facts, columns, derived, hashes, factEvidence, witnesses, aggregateEvidence, mutationOwners, aliasSources, revision, work = { facts: 0, bodies: 0, contributions: 0 }) {
         this.#facts = facts;
         this.#columns = columns;
         this.#derived = derived;
@@ -119,14 +169,15 @@ export class IndexedValues {
         this.revision = revision;
         this.work = Object.freeze(work);
         this.bodies = columns.bodies;
-        this.occurrences = columns.occurrences;
-        this.children = columns.children;
-        this.parents = columns.parents;
-        this.definitions = columns.definitions;
-        this.definiteDefinitions = keysSet(columns.definite);
+        this.occurrences = projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row));
+        this.children = projectColumn(columns.occurrences, (ref) => ref.fragment.children(ref.row), mergeChildren);
+        this.parents = projectColumn(columns.occurrences, (ref) => ref.fragment.parents(ref.row), flatten);
+        this.definitions = projectColumn(columns.occurrences, (ref) => ref.fragment.definitions(ref.row), flatten);
+        this.definiteDefinitions = keysSet(projectColumn(columns.occurrences, (ref) => ref.fragment.definite(ref.row) ? true : undefined));
         this.initializers = columns.initializers;
-        this.calls = columns.calls;
-        this.direct = columns.direct;
+        this.calls = projectColumn(columns.calls, (ref) => ref.fragment.call(ref.row));
+        this.callsBySource = columns.callsBySource;
+        this.direct = projectColumn(columns.occurrences, (ref) => ref.fragment.value(ref.row));
         this.symbols = columns.symbols;
         this.sources = columns.sources;
         this.mutations = mutationOwners;
@@ -145,9 +196,8 @@ export class IndexedValues {
     }
     static empty() {
         const columns = {
-            bodies: new Column(), occurrences: new Column(), children: new Column(undefined, (values) => new Map(values.flatMap((value) => [...value]))),
-            parents: new Column(undefined, flatten), definitions: new Column(undefined, flatten), definite: new Column(),
-            calls: new Column(), direct: new Column(), symbols: new Column(), sources: new Column(),
+            bodies: new Column(), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
+            symbols: new Column(), sources: new Column(),
             initializers: new Column(undefined, flatten), mutations: new Column(undefined, flatten), escapes: new Column(undefined, flatten),
             aliases: new Column(undefined, flatten), dependents: new Column(undefined, flatten),
         };
@@ -184,9 +234,10 @@ export class IndexedValues {
         for (const id of deletes)
             if (this.#facts.has(id))
                 changed.set(id, undefined);
-        for (const fact of upserts) {
+        for (const input of upserts) {
+            const fact = input.namespace === 'typescript.body' ? bodyFragment(input).fact : input;
             const previous = this.#facts.get(fact.id);
-            if (previous?.payload === fact.payload && previous.completeness === fact.completeness && previous.provenance === fact.provenance) {
+            if (previous && samePayload(previous, fact) && previous.completeness === fact.completeness && previous.provenance === fact.provenance) {
                 changed.delete(fact.id);
                 continue;
             }
@@ -269,7 +320,7 @@ export class IndexedValues {
                     fingerprint = JSON.stringify(ids.map((id) => [`occurrence:${id}`, occurrenceFingerprint(id)]));
                     aggregateEvidence.set(key, occurrenceEvidence(ids));
                     if (kind === 'mutation')
-                        mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id).owner))]);
+                        mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id).fragment.owner))]);
                     if (kind === 'aliases')
                         aliasSources.set(symbol, [...new Set(aliases.map((alias) => alias.from))]);
                 }
@@ -293,12 +344,12 @@ export class IndexedValues {
             else if (this.#witnesses.get(key)?.fingerprint !== fingerprint)
                 witnesses.set(key, Object.freeze({ key, fingerprint }));
         }
-        return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(), aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(), { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys }, { facts: changed.size, bodies: affected.size });
+        return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(), aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(), { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys }, { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) });
     }
 }
 export async function loadValueIndex(query) {
     const reader = createTypeScriptFactReader(query);
-    const facts = await Promise.all([collect(reader.export('body')), collect(reader.export('symbol')), collect(reader.export('source'))]);
+    const facts = await Promise.all([readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source'))]);
     return IndexedValues.empty().update(facts.flat(), [], true);
 }
 function primary(columns, fact, add, touched, inputs) {
@@ -318,53 +369,29 @@ function primary(columns, fact, add, touched, inputs) {
         apply(columns.sources, fact.payload.source, fact);
         return;
     }
-    const body = fact.payload.body;
-    apply(columns.bodies, body.function, fact);
-    touched.add(`function:${body.function}`);
-    inputs.add(`function:${body.function}`);
-    for (const occurrence of body.occurrences) {
-        const previous = columns.occurrences.get(occurrence.id);
-        if (add && previous && previous.owner !== occurrence.owner)
-            throw new Error(`Occurrence ${occurrence.id} has multiple function owners.`);
-        apply(columns.occurrences, occurrence.id, occurrence);
-        touched.add(`occurrence:${occurrence.id}`);
-        inputs.add(`occurrence:${occurrence.id}`);
+    const fragment = bodyFragment(fact);
+    apply(columns.bodies, fragment.owner, fact);
+    touched.add(`function:${fragment.owner}`);
+    inputs.add(`function:${fragment.owner}`);
+    for (const reference of fragment.nodes) {
+        const id = fragment.id(reference.row);
+        const previous = columns.occurrences.get(id);
+        if (add && previous && previous.fragment.owner !== fragment.owner)
+            throw new Error(`Occurrence ${id} has multiple function owners.`);
+        apply(columns.occurrences, id, reference);
+        touched.add(`occurrence:${id}`);
+        inputs.add(`occurrence:${id}`);
+        inputs.add(`children:${id}`);
     }
-    const children = new Map();
-    const parents = new Map();
-    for (const relation of body.relations) {
-        let values = children.get(relation.parent);
-        if (!values)
-            children.set(relation.parent, (values = new Map()));
-        values.set(relation.role, relation.child);
-        append(parents, relation.child, { parent: relation.parent, role: relation.role });
-    }
-    for (const [key, value] of children) {
-        apply(columns.children, key, value);
-        inputs.add(`children:${key}`);
-    }
-    for (const [key, value] of parents)
-        apply(columns.parents, key, value);
-    const definitions = new Map();
-    const definite = new Set();
-    for (const definition of body.definitions) {
-        append(definitions, definition.use, definition.definition);
-        if (definition.reaching === 'definite')
-            definite.add(definition.use);
-    }
-    for (const [key, value] of definitions)
-        apply(columns.definitions, key, value);
-    for (const key of definite)
-        apply(columns.definite, key, true);
-    for (const call of body.calls)
-        apply(columns.calls, call.occurrence, call);
-    for (const [key, value] of Object.entries(fact.payload.values))
-        apply(columns.direct, key, value);
+    for (const reference of fragment.calls)
+        apply(columns.calls, fragment.callId(reference.row), reference);
+    for (const [source, calls] of fragment.callsBySource)
+        apply(columns.callsBySource, source, calls);
 }
 function derive(fact, columns) {
     const inputs = new Set();
-    const occurrence = (id) => { inputs.add(`occurrence:${id}`); return columns.occurrences.get(id); };
-    const children = (id) => { inputs.add(`children:${id}`); return columns.children.get(id); };
+    const occurrence = (id) => { inputs.add(`occurrence:${id}`); return columns.occurrences.project(id, (ref) => ref.fragment.effectNode(ref.row)); };
+    const children = (id) => { inputs.add(`children:${id}`); return columns.occurrences.project(id, (ref) => ref.fragment.children(ref.row), mergeChildren); };
     const rootSymbol = (id) => {
         const seen = new Set();
         while (id && !seen.has(id)) {
@@ -388,7 +415,9 @@ function derive(fact, columns) {
     const mutations = new Map();
     const escapes = new Map();
     const aliases = new Map();
-    for (const node of fact.payload.body.occurrences) {
+    const fragment = bodyFragment(fact);
+    for (const row of fragment.effects) {
+        const node = fragment.effectNode(row);
         if (node.syntax === 'VariableDeclaration') {
             const links = children(node.id);
             const name = links?.get('name');
@@ -407,7 +436,8 @@ function derive(fact, columns) {
         if (symbol)
             append(mutations, symbol, node.id);
     }
-    for (const call of fact.payload.body.calls) {
+    for (const reference of fragment.calls) {
+        const call = fragment.effectCall(reference.row);
         for (const binding of call.bindings) {
             const argument = rootSymbol(binding.argument);
             if (binding.parameter && argument && binding.parameter !== argument)
@@ -453,7 +483,9 @@ function derivedColumns(columns, owner, value, add, touched) {
     }
 }
 function hashFact(fact) {
-    return createHash('sha256').update(JSON.stringify({ id: fact.id, payload: fact.payload, completeness: fact.completeness })).digest('hex');
+    const packed = fact.namespace === 'typescript.body' && projectPackedTypeScriptBody(fact);
+    return createHash('sha256').update(JSON.stringify({ id: fact.id,
+        ...(packed ? { physical: packed.record } : { payload: fact.payload }), completeness: fact.completeness })).digest('hex');
 }
 function last(values) { return values.at(-1); }
 function flatten(values) { return values.flat(); }
@@ -471,7 +503,7 @@ async function collect(values) {
 }
 function keysSet(map) {
     return {
-        size: map.size, has: (key) => map.has(key), keys: () => map.keys(), values: () => map.keys(),
+        get size() { return map.size; }, has: (key) => map.has(key), keys: () => map.keys(), values: () => map.keys(),
         *entries() { for (const key of map.keys())
             yield [key, key]; },
         [Symbol.iterator]: () => map.keys(),
@@ -480,4 +512,65 @@ function keysSet(map) {
     };
 }
 const TRANSPARENT_SYNTAX = new Set(['ParenthesizedExpression', 'NonNullExpression', 'SatisfiesExpression', 'AsExpression', 'TypeAssertionExpression']);
+function mergeChildren(values) {
+    return new Map(values.flatMap((value) => [...value]));
+}
+function projectColumn(column, project, merge = last) {
+    const get = (key) => column.project(key, project, merge);
+    const result = {
+        get, has: (key) => get(key) !== undefined,
+        get size() { let count = 0; for (const _ of result)
+            count++; return count; },
+        *entries() { for (const key of column.keys()) {
+            const value = get(key);
+            if (value !== undefined)
+                yield [key, value];
+        } },
+        *keys() { for (const [key] of result)
+            yield key; },
+        *values() { for (const [, value] of result)
+            yield value; },
+        [Symbol.iterator]() { return this.entries(); },
+        forEach(callback, thisArg) { for (const [key, value] of result)
+            callback.call(thisArg, value, key, result); },
+    };
+    return result;
+}
+function samePayload(left, right) {
+    if (left === right)
+        return true;
+    const physical = physicalPayloadForTransport(left);
+    return physical ? physical === physicalPayloadForTransport(right) : left.payload === right.payload;
+}
+export async function readIndexedBodies(query, ids) {
+    const facts = ids ? await query.factsById(ids) : await collect(query.export({ namespaces: ['typescript.body'] }));
+    const result = [];
+    const remaining = [];
+    for (const fact of facts) {
+        if (!projectPackedTypeScriptBody(fact)) {
+            remaining.push(fact.id);
+            continue;
+        }
+        const diagnostics = [];
+        if (fact.namespace !== 'typescript.body')
+            diagnostics.push(`namespace:${fact.namespace}`);
+        if (fact.schemaVersion !== 1)
+            diagnostics.push(`schema-version:${fact.schemaVersion}`);
+        if (diagnostics.length)
+            throw new TypeScriptFactContractError('body', fact.id, diagnostics);
+        result.push(fact);
+    }
+    if (remaining.length)
+        result.push(...await createTypeScriptFactReader(query).factsById('body', remaining));
+    return result.sort((left, right) => left.id.localeCompare(right.id));
+}
+function projectSlot(slot, project, merge) {
+    if (!slot)
+        return;
+    if ('owner' in slot)
+        return project(slot.value);
+    const values = [...slot.owners].sort(([a], [b]) => a.localeCompare(b))
+        .flatMap(([, value]) => { const result = project(value); return result === undefined ? [] : [result]; });
+    return values.length ? merge(values) : undefined;
+}
 //# sourceMappingURL=facts.js.map

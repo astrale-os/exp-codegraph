@@ -19,7 +19,7 @@ export function createCallProjection(query, loadIndex) {
             const [index, capabilities] = await Promise.all([loadIndex(), query.capabilities()]);
             const sourceFacts = index.sources ? [...index.sources.values()] : await collect(reader.export('source'));
             const paths = new Map(sourceFacts.map((fact) => [fact.payload.source, fact.payload.logicalPath]));
-            const calls = new Map();
+            let calls = index.callsBySource ?? new Map();
             const bySource = new Map();
             let completion = { kind: 'complete' };
             const attributed = new Set([...index.bodies.values()].flatMap((fact) => fact.completeness.kind === 'partial' ? fact.completeness.reasons.map(reasonKey) : []));
@@ -39,14 +39,18 @@ export function createCallProjection(query, loadIndex) {
                 else
                     completion = combineCompleteness(completion, completeness);
             }
-            for (const call of index.calls.values()) {
-                const occurrence = index.occurrences.get(call.occurrence);
-                if (!occurrence)
-                    throw new Error(`Call ${call.occurrence} has no admitted occurrence.`);
-                let values = calls.get(occurrence.span.source);
-                if (!values)
-                    calls.set(occurrence.span.source, (values = []));
-                values.push(call);
+            if (!index.callsBySource) {
+                const discovered = new Map();
+                for (const call of index.calls.values()) {
+                    const occurrence = index.occurrences.get(call.occurrence);
+                    if (!occurrence)
+                        throw new Error(`Call ${call.occurrence} has no admitted occurrence.`);
+                    let values = discovered.get(occurrence.span.source);
+                    if (!values)
+                        discovered.set(occurrence.span.source, (values = []));
+                    values.push(call.occurrence);
+                }
+                calls = discovered;
             }
             return { index, paths, calls, completion, bySource };
         })().catch((error) => { pending = undefined; throw error; });
@@ -76,16 +80,21 @@ export function createCallProjection(query, loadIndex) {
         for (const [source, calls] of inventory.calls) {
             if (!selected(source))
                 continue;
-            for (const call of calls) {
+            for (const id of new Set(calls)) {
                 signal?.throwIfAborted();
+                const call = inventory.index.calls.get(id);
                 let site = sites.get(call.occurrence);
                 if (!site) {
                     const occurrence = inventory.index.occurrences.get(call.occurrence);
+                    if (occurrence.span.source !== source)
+                        continue;
                     const callee = inventory.index.children.get(call.occurrence)?.get('callee');
                     const path = inventory.paths.get(source);
                     site = Object.freeze({ call, occurrence, ...(callee ? { callee } : {}), ...(path !== undefined ? { path } : {}) });
                     sites.set(call.occurrence, site);
                 }
+                if (site.occurrence.span.source !== source)
+                    continue;
                 if (!site.callee || site.path === undefined)
                     completeness = combineCompleteness(completeness, {
                         kind: 'partial', reasons: [{ code: 'CALL_SITE_RELATION_MISSING',

@@ -1,9 +1,12 @@
 import { createHash } from 'node:crypto'
+import { physicalPayloadForTransport } from '../../../facts/representation/index.ts'
 import type { FactId, OccurrenceId, SourceId, SymbolId } from '../../../identity/index.ts'
 import type { AnalysisQuery } from '../../../query/index.ts'
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts'
-import { createTypeScriptFactReader, type TypeScriptFact } from '../../facts/index.ts'
+import { createTypeScriptFactReader, TypeScriptFactContractError, type TypeScriptFact } from '../../facts/index.ts'
 import type { ValueResult } from '../model.ts'
+import { projectPackedTypeScriptBody } from '../../physical/index.ts'
+import { bodyFragment, type NodeReference } from './fragment.ts'
 import { ValueIndexTable, type ValueIndexTableEdit } from './table.ts'
 
 type Body = TypeScriptFact<'body'>
@@ -26,6 +29,7 @@ export interface ValueIndex {
   readonly direct: ReadonlyMap<OccurrenceId, ValueResult<unknown>>
   readonly symbols: ReadonlyMap<SymbolId, TypeScriptFact<'symbol'>>
   readonly sources: ReadonlyMap<SourceId, TypeScriptFact<'source'>>
+  readonly callsBySource: ReadonlyMap<SourceId, readonly OccurrenceId[]>
   readonly mutations: ReadonlyMap<SymbolId, readonly SymbolId[]>
   readonly escapes: ReadonlySet<SymbolId>
   readonly aliases: ReadonlyMap<SymbolId, readonly SymbolId[]>
@@ -61,6 +65,10 @@ class Column<Key extends string, Value> implements ReadonlyMap<Key, Value> {
     if (!slot) return
     return 'owner' in slot ? facts.get(slot.owner) : [...slot.owners.keys()].sort()
   }
+  project<Result>(key: Key, project: (value: Value) => Result | undefined,
+    merge: (values: readonly Result[]) => Result = last): Result | undefined {
+    return projectSlot(this.slots.get(key), project, merge)
+  }
   edit(): ColumnEdit<Key, Value> { return new ColumnEdit(this.slots.edit(), this.merge) }
   *entries(): MapIterator<[Key, Value]> { for (const [key, slot] of this.slots) yield [key, slot.value] }
   *keys(): MapIterator<Key> { yield* this.slots.keys() }
@@ -74,31 +82,64 @@ class Column<Key extends string, Value> implements ReadonlyMap<Key, Value> {
 class ColumnEdit<Key extends string, Value> {
   readonly slots: ValueIndexTableEdit<Key, Slot<Value>>
   readonly merge: (values: readonly Value[]) => Value
+  readonly #owners = new Map<Key, Map<FactId, Value>>()
+  #finished = false
+  contributionWork = 0
   constructor(slots: ValueIndexTableEdit<Key, Slot<Value>>, merge: (values: readonly Value[]) => Value) {
     this.slots = slots
     this.merge = merge
   }
-  get(key: Key): Value | undefined { return this.slots.get(key)?.value }
+  get(key: Key): Value | undefined {
+    const owners = this.#owners.get(key)
+    if (!owners) return this.slots.get(key)?.value
+    return owners.size ? this.merged(owners) : undefined
+  }
+  project<Result>(key: Key, project: (value: Value) => Result | undefined,
+    merge: (values: readonly Result[]) => Result = last): Result | undefined {
+    const owners = this.#owners.get(key)
+    if (!owners) return projectSlot(this.slots.get(key), project, merge)
+    if (!owners.size) return
+    return projectSlot({ owners }, project, merge)
+  }
   set(key: Key, owner: FactId, value: Value): void {
+    this.assertActive()
+    const pending = this.#owners.get(key)
+    if (pending) { pending.set(owner, value); return }
     const old = this.slots.get(key)
     if (!old || 'owner' in old && old.owner === owner) { this.slots.set(key, { owner, value }); return }
     const owners = 'owner' in old ? new Map([[old.owner, old.value]]) : new Map(old.owners)
     owners.set(owner, value)
-    this.slots.set(key, { owners, value: this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, item]) => item)) })
+    this.#owners.set(key, owners)
   }
   delete(key: Key, owner: FactId): void {
+    this.assertActive()
+    const pending = this.#owners.get(key)
+    if (pending) { pending.delete(owner); return }
     const old = this.slots.get(key)
     if (!old) return
     if ('owner' in old) { if (old.owner === owner) this.slots.delete(key); return }
     if (!old.owners.has(owner)) return
     const owners = new Map(old.owners)
     owners.delete(owner)
-    if (owners.size === 1) {
-      const [remaining, value] = owners.entries().next().value!
-      this.slots.set(key, { owner: remaining, value })
-    } else this.slots.set(key, { owners, value: this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, item]) => item)) })
+    this.#owners.set(key, owners)
   }
-  finish(): Column<Key, Value> { return new Column(this.slots.finish(), this.merge) }
+  finish(): Column<Key, Value> {
+    this.assertActive()
+    for (const [key, owners] of this.#owners) {
+      if (!owners.size) this.slots.delete(key)
+      else if (owners.size === 1) {
+        const [owner, value] = owners.entries().next().value!
+        this.slots.set(key, { owner, value })
+      } else this.slots.set(key, { owners, value: this.merged(owners) })
+    }
+    this.#finished = true
+    return new Column(this.slots.finish(), this.merge)
+  }
+  private merged(owners: ReadonlyMap<FactId, Value>): Value {
+    this.contributionWork += owners.size
+    return this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value))
+  }
+  private assertActive(): void { if (this.#finished) throw new Error('Value index column edit is already published.') }
 }
 
 interface Alias { readonly from: SymbolId; readonly occurrence: OccurrenceId }
@@ -111,13 +152,9 @@ interface Derived {
 }
 interface Columns {
   readonly bodies: Column<SymbolId, Body>
-  readonly occurrences: Column<OccurrenceId, BodyOccurrence>
-  readonly children: Column<OccurrenceId, ReadonlyMap<string, OccurrenceId>>
-  readonly parents: Column<OccurrenceId, readonly { parent: OccurrenceId; role: string }[]>
-  readonly definitions: Column<OccurrenceId, readonly OccurrenceId[]>
-  readonly definite: Column<OccurrenceId, true>
-  readonly calls: Column<OccurrenceId, ResolvedCall>
-  readonly direct: Column<OccurrenceId, ValueResult<unknown>>
+  readonly occurrences: Column<OccurrenceId, NodeReference>
+  readonly calls: Column<OccurrenceId, NodeReference>
+  readonly callsBySource: Column<SourceId, readonly OccurrenceId[]>
   readonly symbols: Column<SymbolId, TypeScriptFact<'symbol'>>
   readonly sources: Column<SourceId, TypeScriptFact<'source'>>
   readonly initializers: Column<SymbolId, readonly OccurrenceId[]>
@@ -129,7 +166,7 @@ interface Columns {
 type Edits = { [Key in keyof Columns]: ReturnType<Columns[Key]['edit']> }
 
 export class IndexedValues implements ValueIndex {
-  readonly work: { readonly facts: number; readonly bodies: number }
+  readonly work: { readonly facts: number; readonly bodies: number; readonly contributions: number }
   readonly bodies: ValueIndex['bodies']
   readonly occurrences: ValueIndex['occurrences']
   readonly children: ValueIndex['children']
@@ -141,6 +178,7 @@ export class IndexedValues implements ValueIndex {
   readonly direct: ValueIndex['direct']
   readonly symbols: ValueIndex['symbols']
   readonly sources: ValueIndex['sources']
+  readonly callsBySource: ValueIndex['callsBySource']
   readonly mutations: ValueIndex['mutations']
   readonly escapes: ValueIndex['escapes']
   readonly aliases: ValueIndex['aliases']
@@ -163,7 +201,7 @@ export class IndexedValues implements ValueIndex {
     witnesses: ValueIndexTable<string, ValueDependency>, aggregateEvidence: ValueIndexTable<string, readonly FactId[]>,
     mutationOwners: ValueIndexTable<SymbolId, readonly SymbolId[]>, aliasSources: ValueIndexTable<SymbolId, readonly SymbolId[]>,
     revision: ValueIndexRevision,
-    work = { facts: 0, bodies: 0 },
+    work = { facts: 0, bodies: 0, contributions: 0 },
   ) {
     this.#facts = facts; this.#columns = columns; this.#derived = derived
     this.#hashes = hashes; this.#factEvidence = factEvidence
@@ -171,9 +209,16 @@ export class IndexedValues implements ValueIndex {
     this.#mutationOwners = mutationOwners; this.#aliasSources = aliasSources
     this.revision = revision
     this.work = Object.freeze(work)
-    this.bodies = columns.bodies; this.occurrences = columns.occurrences; this.children = columns.children
-    this.parents = columns.parents; this.definitions = columns.definitions; this.definiteDefinitions = keysSet(columns.definite)
-    this.initializers = columns.initializers; this.calls = columns.calls; this.direct = columns.direct
+    this.bodies = columns.bodies
+    this.occurrences = projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row))
+    this.children = projectColumn(columns.occurrences, (ref) => ref.fragment.children(ref.row), mergeChildren)
+    this.parents = projectColumn(columns.occurrences, (ref) => ref.fragment.parents(ref.row), flatten)
+    this.definitions = projectColumn(columns.occurrences, (ref) => ref.fragment.definitions(ref.row), flatten)
+    this.definiteDefinitions = keysSet(projectColumn(columns.occurrences, (ref) => ref.fragment.definite(ref.row) ? true : undefined))
+    this.initializers = columns.initializers
+    this.calls = projectColumn(columns.calls, (ref) => ref.fragment.call(ref.row))
+    this.callsBySource = columns.callsBySource
+    this.direct = projectColumn(columns.occurrences, (ref) => ref.fragment.value(ref.row))
     this.symbols = columns.symbols; this.sources = columns.sources
     this.mutations = mutationOwners; this.escapes = keysSet(columns.escapes); this.aliases = aliasSources
     this.fingerprints = { get: (key) => this.fingerprint(key) }
@@ -187,9 +232,8 @@ export class IndexedValues implements ValueIndex {
 
   static empty(): IndexedValues {
     const columns: Columns = {
-      bodies: new Column(), occurrences: new Column(), children: new Column(undefined, (values) => new Map(values.flatMap((value) => [...value]))),
-      parents: new Column(undefined, flatten), definitions: new Column(undefined, flatten), definite: new Column(),
-      calls: new Column(), direct: new Column(), symbols: new Column(), sources: new Column(),
+      bodies: new Column(), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
+      symbols: new Column(), sources: new Column(),
       initializers: new Column(undefined, flatten), mutations: new Column(undefined, flatten), escapes: new Column(undefined, flatten),
       aliases: new Column(undefined, flatten), dependents: new Column(undefined, flatten),
     }
@@ -225,9 +269,10 @@ export class IndexedValues implements ValueIndex {
     const inputs = new Set<string>()
     const changed = new Map<FactId, IndexedFact | undefined>()
     for (const id of deletes) if (this.#facts.has(id)) changed.set(id, undefined)
-    for (const fact of upserts) {
+    for (const input of upserts) {
+      const fact = input.namespace === 'typescript.body' ? bodyFragment(input).fact : input
       const previous = this.#facts.get(fact.id)
-      if (previous?.payload === fact.payload && previous.completeness === fact.completeness && previous.provenance === fact.provenance) {
+      if (previous && samePayload(previous, fact) && previous.completeness === fact.completeness && previous.provenance === fact.provenance) {
         changed.delete(fact.id)
         continue
       }
@@ -295,7 +340,7 @@ export class IndexedValues implements ValueIndex {
           const ids = [...new Set(values)].sort()
           fingerprint = JSON.stringify(ids.map((id) => [`occurrence:${id}`, occurrenceFingerprint(id)]))
           aggregateEvidence.set(key, occurrenceEvidence(ids))
-          if (kind === 'mutation') mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id)!.owner))])
+          if (kind === 'mutation') mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id)!.fragment.owner))])
           if (kind === 'aliases') aliasSources.set(symbol, [...new Set(aliases!.map((alias) => alias.from))])
         } else {
           aggregateEvidence.delete(key)
@@ -314,13 +359,13 @@ export class IndexedValues implements ValueIndex {
     return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(),
       aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(),
       { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys },
-      { facts: changed.size, bodies: affected.size })
+      { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) })
   }
 }
 
 export async function loadValueIndex(query: AnalysisQuery): Promise<IndexedValues> {
   const reader = createTypeScriptFactReader(query)
-  const facts = await Promise.all([collect(reader.export('body')), collect(reader.export('symbol')), collect(reader.export('source'))])
+  const facts = await Promise.all([readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source'))])
   return IndexedValues.empty().update(facts.flat(), [], true)
 }
 
@@ -336,41 +381,25 @@ function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<s
     return
   }
   if (fact.namespace === 'typescript.source') { apply(columns.sources, fact.payload.source, fact); return }
-  const body = fact.payload.body
-  apply(columns.bodies, body.function, fact)
-  touched.add(`function:${body.function}`); inputs.add(`function:${body.function}`)
-  for (const occurrence of body.occurrences) {
-    const previous = columns.occurrences.get(occurrence.id)
-    if (add && previous && previous.owner !== occurrence.owner) throw new Error(`Occurrence ${occurrence.id} has multiple function owners.`)
-    apply(columns.occurrences, occurrence.id, occurrence)
-    touched.add(`occurrence:${occurrence.id}`); inputs.add(`occurrence:${occurrence.id}`)
+  const fragment = bodyFragment(fact)
+  apply(columns.bodies, fragment.owner, fact)
+  touched.add(`function:${fragment.owner}`); inputs.add(`function:${fragment.owner}`)
+  for (const reference of fragment.nodes) {
+    const id = fragment.id(reference.row)
+    const previous = columns.occurrences.get(id)
+    if (add && previous && previous.fragment.owner !== fragment.owner) throw new Error(`Occurrence ${id} has multiple function owners.`)
+    apply(columns.occurrences, id, reference)
+    touched.add(`occurrence:${id}`); inputs.add(`occurrence:${id}`); inputs.add(`children:${id}`)
   }
-  const children = new Map<OccurrenceId, Map<string, OccurrenceId>>()
-  const parents = new Map<OccurrenceId, { parent: OccurrenceId; role: string }[]>()
-  for (const relation of body.relations) {
-    let values = children.get(relation.parent)
-    if (!values) children.set(relation.parent, (values = new Map()))
-    values.set(relation.role, relation.child)
-    append(parents, relation.child, { parent: relation.parent, role: relation.role })
-  }
-  for (const [key, value] of children) { apply(columns.children, key, value); inputs.add(`children:${key}`) }
-  for (const [key, value] of parents) apply(columns.parents, key, value)
-  const definitions = new Map<OccurrenceId, OccurrenceId[]>()
-  const definite = new Set<OccurrenceId>()
-  for (const definition of body.definitions) {
-    append(definitions, definition.use, definition.definition)
-    if (definition.reaching === 'definite') definite.add(definition.use)
-  }
-  for (const [key, value] of definitions) apply(columns.definitions, key, value)
-  for (const key of definite) apply(columns.definite, key, true)
-  for (const call of body.calls) apply(columns.calls, call.occurrence, call)
-  for (const [key, value] of Object.entries(fact.payload.values)) apply(columns.direct, key as OccurrenceId, value)
+  for (const reference of fragment.calls) apply(columns.calls, fragment.callId(reference.row), reference)
+  for (const [source, calls] of fragment.callsBySource) apply(columns.callsBySource, source, calls)
+
 }
 
 function derive(fact: Body, columns: Edits): Derived {
   const inputs = new Set<string>()
-  const occurrence = (id: OccurrenceId) => { inputs.add(`occurrence:${id}`); return columns.occurrences.get(id) }
-  const children = (id: OccurrenceId) => { inputs.add(`children:${id}`); return columns.children.get(id) }
+  const occurrence = (id: OccurrenceId) => { inputs.add(`occurrence:${id}`); return columns.occurrences.project(id, (ref) => ref.fragment.effectNode(ref.row)) }
+  const children = (id: OccurrenceId) => { inputs.add(`children:${id}`); return columns.occurrences.project(id, (ref) => ref.fragment.children(ref.row), mergeChildren) }
   const rootSymbol = (id: OccurrenceId | undefined): SymbolId | undefined => {
     const seen = new Set<OccurrenceId>()
     while (id && !seen.has(id)) {
@@ -389,7 +418,9 @@ function derive(fact: Body, columns: Edits): Derived {
   const mutations = new Map<SymbolId, OccurrenceId[]>()
   const escapes = new Map<SymbolId, OccurrenceId[]>()
   const aliases = new Map<SymbolId, Alias[]>()
-  for (const node of fact.payload.body.occurrences) {
+  const fragment = bodyFragment(fact)
+  for (const row of fragment.effects) {
+    const node = fragment.effectNode(row)
     if (node.syntax === 'VariableDeclaration') {
       const links = children(node.id)
       const name = links?.get('name')
@@ -406,7 +437,8 @@ function derive(fact: Body, columns: Edits): Derived {
     const symbol = rootSymbol(target)
     if (symbol) append(mutations, symbol, node.id)
   }
-  for (const call of fact.payload.body.calls) {
+  for (const reference of fragment.calls) {
+    const call = fragment.effectCall(reference.row)
     for (const binding of call.bindings) {
       const argument = rootSymbol(binding.argument)
       if (binding.parameter && argument && binding.parameter !== argument) append(aliases, argument, { from: binding.parameter, occurrence: call.occurrence })
@@ -444,7 +476,9 @@ function derivedColumns(columns: Edits, owner: FactId, value: Derived, add: bool
 }
 
 function hashFact(fact: IndexedFact): string {
-  return createHash('sha256').update(JSON.stringify({ id: fact.id, payload: fact.payload, completeness: fact.completeness })).digest('hex')
+  const packed = fact.namespace === 'typescript.body' && projectPackedTypeScriptBody(fact)
+  return createHash('sha256').update(JSON.stringify({ id: fact.id,
+    ...(packed ? { physical: packed.record } : { payload: fact.payload }), completeness: fact.completeness })).digest('hex')
 }
 function last<Value>(values: readonly Value[]): Value { return values.at(-1)! }
 function flatten<Value>(values: readonly (readonly Value[])[]): readonly Value[] { return values.flat() }
@@ -460,10 +494,60 @@ async function collect<Value>(values: AsyncIterable<Value>): Promise<Value[]> {
 }
 function keysSet<Key extends string>(map: ReadonlyMap<Key, unknown>): ReadonlySet<Key> {
   return {
-    size: map.size, has: (key) => map.has(key), keys: () => map.keys(), values: () => map.keys(),
+    get size() { return map.size }, has: (key) => map.has(key), keys: () => map.keys(), values: () => map.keys(),
     *entries(): SetIterator<[Key, Key]> { for (const key of map.keys()) yield [key, key] },
     [Symbol.iterator]: () => map.keys(),
     forEach(callback, thisArg) { for (const key of map.keys()) callback.call(thisArg, key, key, this) },
   }
 }
 const TRANSPARENT_SYNTAX = new Set(['ParenthesizedExpression', 'NonNullExpression', 'SatisfiesExpression', 'AsExpression', 'TypeAssertionExpression'])
+
+function mergeChildren(values: readonly ReadonlyMap<string, OccurrenceId>[]): ReadonlyMap<string, OccurrenceId> {
+  return new Map(values.flatMap((value) => [...value]))
+}
+
+function projectColumn<Key extends string, Value, Result>(column: Column<Key, Value>, project: (value: Value) => Result | undefined,
+  merge: (values: readonly Result[]) => Result = last): ReadonlyMap<Key, Result> {
+  const get = (key: Key) => column.project(key, project, merge)
+  const result: ReadonlyMap<Key, Result> = {
+    get, has: (key) => get(key) !== undefined,
+    get size() { let count = 0; for (const _ of result) count++; return count },
+    *entries(): MapIterator<[Key, Result]> { for (const key of column.keys()) { const value = get(key); if (value !== undefined) yield [key, value] } },
+    *keys(): MapIterator<Key> { for (const [key] of result) yield key },
+    *values(): MapIterator<Result> { for (const [, value] of result) yield value },
+    [Symbol.iterator]() { return this.entries() },
+    forEach(callback, thisArg) { for (const [key, value] of result) callback.call(thisArg, value, key, result) },
+  }
+  return result
+}
+
+function samePayload(left: IndexedFact, right: IndexedFact): boolean {
+  if (left === right) return true
+  const physical = physicalPayloadForTransport(left)
+  return physical ? physical === physicalPayloadForTransport(right) : left.payload === right.payload
+}
+
+export async function readIndexedBodies(query: AnalysisQuery, ids?: readonly FactId[]): Promise<readonly TypeScriptFact<'body'>[]> {
+  const facts = ids ? await query.factsById(ids) : await collect(query.export({ namespaces: ['typescript.body'] }))
+  const result: TypeScriptFact<'body'>[] = []
+  const remaining: FactId[] = []
+  for (const fact of facts) {
+    if (!projectPackedTypeScriptBody(fact)) { remaining.push(fact.id); continue }
+    const diagnostics = []
+    if (fact.namespace !== 'typescript.body') diagnostics.push(`namespace:${fact.namespace}`)
+    if (fact.schemaVersion !== 1) diagnostics.push(`schema-version:${fact.schemaVersion}`)
+    if (diagnostics.length) throw new TypeScriptFactContractError('body', fact.id, diagnostics)
+    result.push(fact as TypeScriptFact<'body'>)
+  }
+  if (remaining.length) result.push(...await createTypeScriptFactReader(query).factsById('body', remaining))
+  return result.sort((left, right) => left.id.localeCompare(right.id))
+}
+
+function projectSlot<Value, Result>(slot: Slot<Value> | { readonly owners: ReadonlyMap<FactId, Value> } | undefined, project: (value: Value) => Result | undefined,
+  merge: (values: readonly Result[]) => Result): Result | undefined {
+  if (!slot) return
+  if ('owner' in slot) return project(slot.value)
+  const values = [...slot.owners].sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([, value]) => { const result = project(value); return result === undefined ? [] : [result] })
+  return values.length ? merge(values) : undefined
+}

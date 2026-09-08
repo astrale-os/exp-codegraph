@@ -29,6 +29,7 @@ export interface ValueIndex {
     readonly direct: ReadonlyMap<OccurrenceId, ValueResult<unknown>>;
     readonly symbols: ReadonlyMap<SymbolId, TypeScriptFact<'symbol'>>;
     readonly sources: ReadonlyMap<SourceId, TypeScriptFact<'source'>>;
+    readonly callsBySource: ReadonlyMap<SourceId, readonly OccurrenceId[]>;
     readonly mutations: ReadonlyMap<SymbolId, readonly SymbolId[]>;
     readonly escapes: ReadonlySet<SymbolId>;
     readonly aliases: ReadonlyMap<SymbolId, readonly SymbolId[]>;
@@ -42,6 +43,7 @@ export declare class IndexedValues implements ValueIndex {
     readonly work: {
         readonly facts: number;
         readonly bodies: number;
+        readonly contributions: number;
     };
     readonly bodies: ValueIndex['bodies'];
     readonly occurrences: ValueIndex['occurrences'];
@@ -54,6 +56,7 @@ export declare class IndexedValues implements ValueIndex {
     readonly direct: ValueIndex['direct'];
     readonly symbols: ValueIndex['symbols'];
     readonly sources: ValueIndex['sources'];
+    readonly callsBySource: ValueIndex['callsBySource'];
     readonly mutations: ValueIndex['mutations'];
     readonly escapes: ValueIndex['escapes'];
     readonly aliases: ValueIndex['aliases'];
@@ -67,4 +70,5 @@ export declare class IndexedValues implements ValueIndex {
     update(upserts: readonly IndexedFact[], deletes: readonly FactId[], initial?: boolean): IndexedValues;
 }
 export declare function loadValueIndex(query: AnalysisQuery): Promise<IndexedValues>;
+export declare function readIndexedBodies(query: AnalysisQuery, ids?: readonly FactId[]): Promise<readonly TypeScriptFact<'body'>[]>;
 export {};

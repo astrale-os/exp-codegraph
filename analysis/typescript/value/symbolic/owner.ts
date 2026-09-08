@@ -3,7 +3,7 @@ import type { FactTransaction } from '../../../generation/index.ts'
 import type { AnalysisGenerationId, FactId, FactShardKey } from '../../../identity/index.ts'
 import type { AnalysisQuery } from '../../../query/index.ts'
 import { createTypeScriptFactReader } from '../../facts/index.ts'
-import { IndexedValues, loadValueIndex, type IndexedFact } from './facts.ts'
+import { IndexedValues, loadValueIndex, readIndexedBodies, type IndexedFact } from './facts.ts'
 import { ValueIndexTable } from './table.ts'
 
 type Kind = 'body' | 'symbol' | 'source'
@@ -113,7 +113,7 @@ export class ValueIndexOwner {
       if (shard) ids[shard.kind].push(...shard.facts)
     }
     const [bodies, symbols, sources] = await Promise.all([
-      reader.factsById('body', ids.body), reader.factsById('symbol', ids.symbol), reader.factsById('source', ids.source),
+      readIndexedBodies(query, ids.body), reader.factsById('symbol', ids.symbol), reader.factsById('source', ids.source),
     ])
     if (bodies.length !== ids.body.length || symbols.length !== ids.symbol.length || sources.length !== ids.source.length) {
       throw new Error('A committed value index shard is missing facts in its pinned query.')

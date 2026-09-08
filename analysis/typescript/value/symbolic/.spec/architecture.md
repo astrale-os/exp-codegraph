@@ -85,9 +85,24 @@ when its domain semantics declare those alternatives equivalent.
 
 Committed shard membership drives incremental value indexing. Only facts from changed shards are
 read and admitted again; untouched lookup branches, facts and witnesses are shared through immutable
-hash tries. Direct-effect projections record their positive and negative lookup inputs, so adding or
-removing a callee body also recomputes affected escape/alias joins. The initial index remains a global
-admission and projection; call path filters currently select output sites, not body materialization.
+hash tries. Multiple contributor writes to one slot are grouped within the transaction and merged
+once at publication, avoiding quadratic call catalogues for wide source files. Direct-effect projections record their positive and negative lookup inputs, so adding or
+removing a callee body also recomputes affected escape/alias joins. Initial admission remains global
+and atomic. The value index retains occurrence-to-fragment routes and source-to-call identifiers;
+logical occurrences, relations, definitions and values are projected only when demanded. Call path
+filters select source buckets before materializing call sites. Helpers outside those paths resolve
+through the same function lookup. Global mutation, initializer, alias and escape inputs are projected
+from compact columns regardless of the selected sources, so filtering cannot conceal an effect.
+
+The packed fast path requires an exact physical fact state, a known composed decoder instance,
+freshly parsed owned JSON input and successful shard admission. Codec names, inherited wrappers
+and caller-frozen objects do not establish ownership. Uncertified/custom representations retain
+full semantic admission and an index-owned copy of their data containers, without freezing caller state.
+Fallback call grouping uses each occurrence’s actual source; only the packed format attests one source
+per body. Changed owned body fingerprints use their exact immutable representation
+and fact header; unchanged fragments and hashes are shared. Full bodies are expanded only when
+a semantic demand needs function execution metadata. Private fragment caches are retained by their
+immutable facts and leased indices, with no strong reference to a preceding index or query.
 
 The project retains its current index and explicit snapshot leases. Undemanded changes compact by
 shard relative to the last demanded index, rather than retaining an unbounded transaction chain.
@@ -96,7 +111,7 @@ fall back to a fresh pinned query. Closing a snapshot clears its factory/project
 its index lease; caller-held evaluators and plans may retain their own immutable evidence.
 
 Dependency witnesses preserve exact lookup membership. A present occurrence shares its function
-witness only when both selected fingerprints are equal; overlapping fact owners retain an exact
+witness only when both contributing fingerprints are equal; overlapping fact owners retain an exact
 occurrence witness. Initializer fingerprints include the referenced occurrence fingerprints, so
 proofs cut short by a budget cannot retain evidence from a removed fact. Revision deltas report every
 changed fingerprint, including added and removed lookup keys, without scanning untouched tables.

@@ -8,6 +8,7 @@ interface CallIndex {
     readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>;
     readonly calls: ReadonlyMap<OccurrenceId, ResolvedCall>;
     readonly sources?: ReadonlyMap<SourceId, TypeScriptFact<'source'>>;
+    readonly callsBySource?: ReadonlyMap<SourceId, readonly OccurrenceId[]>;
 }
 export declare function createCallProjection(query: AnalysisQuery, loadIndex: () => Promise<CallIndex>): ((options?: TypeScriptCallQuery) => Promise<TypeScriptCallInventory>) & {
     dispose(): void;
