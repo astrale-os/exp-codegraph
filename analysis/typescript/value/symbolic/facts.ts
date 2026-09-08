@@ -6,7 +6,7 @@ import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts'
 import { createTypeScriptFactReader, TypeScriptFactContractError, type TypeScriptFact } from '../../facts/index.ts'
 import type { ValueResult } from '../model.ts'
 import { projectPackedTypeScriptBody } from '../../physical/index.ts'
-import { bodyFragment, type NodeReference } from './fragment.ts'
+import { bodyFragment, type BodyFragment, type NodeReference } from './fragment.ts'
 import { ValueIndexTable, type ValueIndexTableEdit } from './table.ts'
 
 type Body = TypeScriptFact<'body'>
@@ -39,8 +39,9 @@ export interface ValueIndex {
   dependency(key: string): ValueDependency
 }
 
-type Slot<Value> = { readonly owner: FactId; readonly value: Value } |
-  { readonly owners: ReadonlyMap<FactId, Value>; readonly value: Value }
+interface Contribution<Value> { readonly owner: FactId; readonly value: Value }
+type Slot<Value> = Contribution<Value> |
+  { readonly owners: ReadonlyMap<FactId, Contribution<Value>>; readonly value: Value }
 
 /** Most lookups have one contributing fact; uncommon overlaps retain their precise ordered owners. */
 class Column<Key extends string, Value> implements ReadonlyMap<Key, Value> {
@@ -82,7 +83,7 @@ class Column<Key extends string, Value> implements ReadonlyMap<Key, Value> {
 class ColumnEdit<Key extends string, Value> {
   readonly slots: ValueIndexTableEdit<Key, Slot<Value>>
   readonly merge: (values: readonly Value[]) => Value
-  readonly #owners = new Map<Key, Map<FactId, Value>>()
+  readonly #owners = new Map<Key, Map<FactId, Contribution<Value>>>()
   #finished = false
   contributionWork = 0
   constructor(slots: ValueIndexTableEdit<Key, Slot<Value>>, merge: (values: readonly Value[]) => Value) {
@@ -102,13 +103,17 @@ class ColumnEdit<Key extends string, Value> {
     return projectSlot({ owners }, project, merge)
   }
   set(key: Key, owner: FactId, value: Value): void {
+    this.contribute(key, Object.freeze({ owner, value }))
+  }
+  contribute(key: Key, contribution: Contribution<Value>): void {
     this.assertActive()
+    const { owner } = contribution
     const pending = this.#owners.get(key)
-    if (pending) { pending.set(owner, value); return }
+    if (pending) { pending.set(owner, contribution); return }
     const old = this.slots.get(key)
-    if (!old || 'owner' in old && old.owner === owner) { this.slots.set(key, { owner, value }); return }
-    const owners = 'owner' in old ? new Map([[old.owner, old.value]]) : new Map(old.owners)
-    owners.set(owner, value)
+    if (!old || 'owner' in old && old.owner === owner) { this.slots.set(key, contribution); return }
+    const owners = 'owner' in old ? new Map([[old.owner, old]]) : new Map(old.owners)
+    owners.set(owner, contribution)
     this.#owners.set(key, owners)
   }
   delete(key: Key, owner: FactId): void {
@@ -128,16 +133,15 @@ class ColumnEdit<Key extends string, Value> {
     for (const [key, owners] of this.#owners) {
       if (!owners.size) this.slots.delete(key)
       else if (owners.size === 1) {
-        const [owner, value] = owners.entries().next().value!
-        this.slots.set(key, { owner, value })
+        this.slots.set(key, owners.values().next().value!)
       } else this.slots.set(key, { owners, value: this.merged(owners) })
     }
     this.#finished = true
     return new Column(this.slots.finish(), this.merge)
   }
-  private merged(owners: ReadonlyMap<FactId, Value>): Value {
+  private merged(owners: ReadonlyMap<FactId, Contribution<Value>>): Value {
     this.contributionWork += owners.size
-    return this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value))
+    return this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, contribution]) => contribution.value))
   }
   private assertActive(): void { if (this.#finished) throw new Error('Value index column edit is already published.') }
 }
@@ -399,16 +403,39 @@ function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<s
   const fragment = bodyFragment(fact)
   apply(columns.bodies, fragment.owner, fact)
   touched.add(`function:${fragment.owner}`); inputs.add(`function:${fragment.owner}`)
-  for (const reference of fragment.nodes) {
-    const id = fragment.id(reference.row)
+  const occurrence = (row: number) => {
+    const id = fragment.id(row)
     const previous = columns.occurrences.get(id)
     if (add && previous && previous.fragment.owner !== fragment.owner) throw new Error(`Occurrence ${id} has multiple function owners.`)
-    apply(columns.occurrences, id, reference)
     touched.add(`occurrence:${id}`); inputs.add(`occurrence:${id}`); inputs.add(`children:${id}`)
+    return id
   }
-  for (const reference of fragment.calls) apply(columns.calls, fragment.callId(reference.row), reference)
+  if (fragment.packed) {
+    for (let row = 0; row < fragment.packed.occurrences.length; row++) {
+      const id = occurrence(row)
+      if (add) columns.occurrences.contribute(id, rowContribution(owner, fragment, row))
+      else columns.occurrences.delete(id, owner)
+    }
+    for (let row = 0; row < fragment.packed.calls.length; row++) {
+      const id = fragment.callId(row)
+      if (add) columns.calls.contribute(id, rowContribution(owner, fragment, row))
+      else columns.calls.delete(id, owner)
+    }
+  } else {
+    for (const reference of fragment.logicalNodes()) apply(columns.occurrences, occurrence(reference.row), reference)
+    for (const reference of fragment.logicalCalls()) apply(columns.calls, fragment.callId(reference.row), reference)
+  }
   for (const [source, calls] of fragment.callsBySource) apply(columns.callsBySource, source, calls)
 
+}
+
+function rowContribution(owner: FactId, fragment: BodyFragment, row: number): Contribution<NodeReference> {
+  // Only a private, owned column entry contains this cycle. The projected value
+  // remains the body's node/call, never this entry; providers and codecs keep
+  // their original payloads. A data field avoids a getter on each column read.
+  const contribution = { owner, fragment, row, value: undefined as unknown as NodeReference }
+  contribution.value = contribution
+  return Object.freeze(contribution)
 }
 
 function derive(fact: Body, columns: Edits): Derived {
@@ -452,19 +479,21 @@ function derive(fact: Body, columns: Edits): Derived {
     const symbol = rootSymbol(target)
     if (symbol) append(mutations, symbol, node.id)
   }
-  for (const reference of fragment.calls) {
-    const call = fragment.effectCall(reference.row)
+  const deriveCall = (row: number) => {
+    const call = fragment.effectCall(row)
     for (const binding of call.bindings) {
       const argument = rootSymbol(binding.argument)
       if (binding.parameter && argument && binding.parameter !== argument) append(aliases, argument, { from: binding.parameter, occurrence: call.occurrence })
     }
     if (call.target) inputs.add(`function:${call.target}`)
-    if (call.target && columns.bodies.get(call.target) && !call.dynamic) continue
+    if (call.target && columns.bodies.get(call.target) && !call.dynamic) return
     for (const argument of call.arguments) {
       const symbol = rootSymbol(argument)
       if (symbol) append(escapes, symbol, call.occurrence)
     }
   }
+  if (fragment.packed) for (let row = 0; row < fragment.packed.calls.length; row++) deriveCall(row)
+  else for (const reference of fragment.logicalCalls()) deriveCall(reference.row)
   return { initializers, mutations, escapes, aliases, inputs }
 }
 
@@ -558,11 +587,11 @@ export async function readIndexedBodies(query: AnalysisQuery, ids?: readonly Fac
   return result.sort((left, right) => left.id.localeCompare(right.id))
 }
 
-function projectSlot<Value, Result>(slot: Slot<Value> | { readonly owners: ReadonlyMap<FactId, Value> } | undefined, project: (value: Value) => Result | undefined,
+function projectSlot<Value, Result>(slot: Slot<Value> | { readonly owners: ReadonlyMap<FactId, Contribution<Value>> } | undefined, project: (value: Value) => Result | undefined,
   merge: (values: readonly Result[]) => Result): Result | undefined {
   if (!slot) return
   if ('owner' in slot) return project(slot.value)
   const values = [...slot.owners].sort(([a], [b]) => a.localeCompare(b))
-    .flatMap(([, value]) => { const result = project(value); return result === undefined ? [] : [result] })
+    .flatMap(([, contribution]) => { const result = project(contribution.value); return result === undefined ? [] : [result] })
   return values.length ? merge(values) : undefined
 }

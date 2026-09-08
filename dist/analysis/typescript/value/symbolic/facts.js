@@ -69,19 +69,23 @@ class ColumnEdit {
         return projectSlot({ owners }, project, merge);
     }
     set(key, owner, value) {
+        this.contribute(key, Object.freeze({ owner, value }));
+    }
+    contribute(key, contribution) {
         this.assertActive();
+        const { owner } = contribution;
         const pending = this.#owners.get(key);
         if (pending) {
-            pending.set(owner, value);
+            pending.set(owner, contribution);
             return;
         }
         const old = this.slots.get(key);
         if (!old || 'owner' in old && old.owner === owner) {
-            this.slots.set(key, { owner, value });
+            this.slots.set(key, contribution);
             return;
         }
-        const owners = 'owner' in old ? new Map([[old.owner, old.value]]) : new Map(old.owners);
-        owners.set(owner, value);
+        const owners = 'owner' in old ? new Map([[old.owner, old]]) : new Map(old.owners);
+        owners.set(owner, contribution);
         this.#owners.set(key, owners);
     }
     delete(key, owner) {
@@ -111,8 +115,7 @@ class ColumnEdit {
             if (!owners.size)
                 this.slots.delete(key);
             else if (owners.size === 1) {
-                const [owner, value] = owners.entries().next().value;
-                this.slots.set(key, { owner, value });
+                this.slots.set(key, owners.values().next().value);
             }
             else
                 this.slots.set(key, { owners, value: this.merged(owners) });
@@ -122,7 +125,7 @@ class ColumnEdit {
     }
     merged(owners) {
         this.contributionWork += owners.size;
-        return this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, value]) => value));
+        return this.merge([...owners].sort(([a], [b]) => a.localeCompare(b)).map(([, contribution]) => contribution.value));
     }
     assertActive() { if (this.#finished)
         throw new Error('Value index column edit is already published.'); }
@@ -390,20 +393,48 @@ function primary(columns, fact, add, touched, inputs) {
     apply(columns.bodies, fragment.owner, fact);
     touched.add(`function:${fragment.owner}`);
     inputs.add(`function:${fragment.owner}`);
-    for (const reference of fragment.nodes) {
-        const id = fragment.id(reference.row);
+    const occurrence = (row) => {
+        const id = fragment.id(row);
         const previous = columns.occurrences.get(id);
         if (add && previous && previous.fragment.owner !== fragment.owner)
             throw new Error(`Occurrence ${id} has multiple function owners.`);
-        apply(columns.occurrences, id, reference);
         touched.add(`occurrence:${id}`);
         inputs.add(`occurrence:${id}`);
         inputs.add(`children:${id}`);
+        return id;
+    };
+    if (fragment.packed) {
+        for (let row = 0; row < fragment.packed.occurrences.length; row++) {
+            const id = occurrence(row);
+            if (add)
+                columns.occurrences.contribute(id, rowContribution(owner, fragment, row));
+            else
+                columns.occurrences.delete(id, owner);
+        }
+        for (let row = 0; row < fragment.packed.calls.length; row++) {
+            const id = fragment.callId(row);
+            if (add)
+                columns.calls.contribute(id, rowContribution(owner, fragment, row));
+            else
+                columns.calls.delete(id, owner);
+        }
     }
-    for (const reference of fragment.calls)
-        apply(columns.calls, fragment.callId(reference.row), reference);
+    else {
+        for (const reference of fragment.logicalNodes())
+            apply(columns.occurrences, occurrence(reference.row), reference);
+        for (const reference of fragment.logicalCalls())
+            apply(columns.calls, fragment.callId(reference.row), reference);
+    }
     for (const [source, calls] of fragment.callsBySource)
         apply(columns.callsBySource, source, calls);
+}
+function rowContribution(owner, fragment, row) {
+    // Only a private, owned column entry contains this cycle. The projected value
+    // remains the body's node/call, never this entry; providers and codecs keep
+    // their original payloads. A data field avoids a getter on each column read.
+    const contribution = { owner, fragment, row, value: undefined };
+    contribution.value = contribution;
+    return Object.freeze(contribution);
 }
 function derive(fact, columns) {
     const inputs = new Set();
@@ -453,8 +484,8 @@ function derive(fact, columns) {
         if (symbol)
             append(mutations, symbol, node.id);
     }
-    for (const reference of fragment.calls) {
-        const call = fragment.effectCall(reference.row);
+    const deriveCall = (row) => {
+        const call = fragment.effectCall(row);
         for (const binding of call.bindings) {
             const argument = rootSymbol(binding.argument);
             if (binding.parameter && argument && binding.parameter !== argument)
@@ -463,13 +494,19 @@ function derive(fact, columns) {
         if (call.target)
             inputs.add(`function:${call.target}`);
         if (call.target && columns.bodies.get(call.target) && !call.dynamic)
-            continue;
+            return;
         for (const argument of call.arguments) {
             const symbol = rootSymbol(argument);
             if (symbol)
                 append(escapes, symbol, call.occurrence);
         }
-    }
+    };
+    if (fragment.packed)
+        for (let row = 0; row < fragment.packed.calls.length; row++)
+            deriveCall(row);
+    else
+        for (const reference of fragment.logicalCalls())
+            deriveCall(reference.row);
     return { initializers, mutations, escapes, aliases, inputs };
 }
 function derivedColumns(columns, owner, value, add, touched) {
@@ -587,7 +624,7 @@ function projectSlot(slot, project, merge) {
     if ('owner' in slot)
         return project(slot.value);
     const values = [...slot.owners].sort(([a], [b]) => a.localeCompare(b))
-        .flatMap(([, value]) => { const result = project(value); return result === undefined ? [] : [result]; });
+        .flatMap(([, contribution]) => { const result = project(contribution.value); return result === undefined ? [] : [result]; });
     return values.length ? merge(values) : undefined;
 }
 //# sourceMappingURL=facts.js.map

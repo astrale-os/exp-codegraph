@@ -112,6 +112,19 @@ and arrays are independent reader values. Unchanged physical records reuse their
 changed records own new tables while pinned snapshots keep the old ones. Codecs 1–5, logical
 identity, semantic admission, and unowned or foreign-codec fallback are unchanged.
 
+The symbolic index owns one immutable contribution per admitted packed occurrence or call. Its
+fact identity, body fragment, and row ordinal also serve as the column's singleton entry; the
+fragment keeps no second array of row references. A private self-valued data field lets ordinary
+column reads use that same object without a getter or a second lookup. Projected occurrences,
+calls, portable proofs, and transport payloads never expose these entries. Overlapping facts retain
+their individual contributions and project them in fact-identity order, so promotion and demotion preserve the exact
+surviving entry and pinned index roots. Function identity never replaces contributing fact identity.
+Generic overlapping columns also retain their contribution wrappers, and their cost belongs in any
+net memory comparison. Logical or custom bodies own their original captured row references and
+adjacency containers separately; packed bodies allocate none of those fallback containers. Deleting
+a packed body visits its row ordinals without constructing replacements. This removes redundant
+row storage, while the shared hash trie, lookup keys, physical records, and other columns remain.
+
 Native identity encoding retains immutable canonical bytes for acknowledged source and shard
 references. A refresh encodes replacement entries only and streams the complete ordered preimage
 into the existing v1 identity hash. This preserves exact portable generation validation and older
