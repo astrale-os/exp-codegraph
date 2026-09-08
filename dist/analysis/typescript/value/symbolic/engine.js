@@ -6,24 +6,61 @@ const PROOF = Symbol('Codegraph value proof');
 const UNDEFINED = Object.freeze({ kind: 'literal', value: undefined });
 export function createValueEvaluatorFactory(query, cache, load) {
     let pending;
+    let context;
     const index = load ?? (() => {
         pending ??= loadValueIndex(query).catch((error) => { pending = undefined; throw error; });
         return pending;
     });
     const calls = createCallProjection(query, index);
-    return Object.assign(async (options = {}) => new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache), { calls, dispose() { pending = undefined; calls.dispose(); } });
+    return Object.assign(async (options = {}) => {
+        const materialized = await index();
+        context ??= createProofContext(materialized, cache);
+        return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache);
+    }, { calls, dispose() { pending = undefined; context = undefined; calls.dispose(); } });
+}
+function createProofContext(index, cache) {
+    const witnesses = new Map();
+    const validations = new WeakMap();
+    return {
+        revision: index.revision,
+        dependency(key) {
+            const supplied = index.dependency(key);
+            if (supplied.fingerprint !== undefined)
+                return cache?.dependency(supplied) ?? supplied;
+            let witness = witnesses.get(supplied.key);
+            if (!witness) {
+                witness = supplied;
+                witnesses.set(supplied.key, witness);
+            }
+            return cache?.dependency(witness) ?? witness;
+        },
+        valid(basis) {
+            const previous = validations.get(basis);
+            if (previous !== undefined)
+                return previous;
+            for (const { key, fingerprint } of basis.dependencies)
+                if (index.fingerprints.get(key) !== fingerprint) {
+                    validations.set(basis, false);
+                    return false;
+                }
+            validations.set(basis, true);
+            return true;
+        },
+    };
 }
 class Evaluator {
     #index;
     #model;
     #limits;
     #cache;
+    #context;
     #operands = new WeakMap();
-    constructor(index, model, limits, cache) {
+    constructor(index, model, limits, context, cache) {
         this.#index = index;
         this.#model = model;
         this.#limits = limits;
         this.#cache = cache;
+        this.#context = context;
     }
     value(occurrence) { return this.plan({ kind: 'value', occurrence }); }
     canReuse(proof) {
@@ -31,8 +68,11 @@ class Evaluator {
     }
     reusable(proof, limits) {
         const metadata = proof[PROOF];
-        return !!metadata && metadata.model === this.#model && metadata.limits === JSON.stringify(limits) &&
-            [...metadata.dependencies].every(([key, fingerprint]) => this.#index.fingerprints.get(key) === fingerprint);
+        if (!metadata || metadata.model !== this.#model ||
+            proof.limits.maximumDepth !== limits.maximumDepth || proof.limits.maximumSteps !== limits.maximumSteps ||
+            proof.limits.maximumAlternatives !== limits.maximumAlternatives)
+            return false;
+        return this.#context.valid(metadata.basis);
     }
     async evaluate(occurrence, options = {}) {
         return this.resolve({ kind: 'value', occurrence }, options, true);
@@ -48,8 +88,9 @@ class Evaluator {
     resolve(plan, options, scalar) {
         const limits = options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits;
         options.signal?.throwIfAborted();
-        const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits, plan]);
-        const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits));
+        const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits.maximumDepth,
+            limits.maximumSteps, limits.maximumAlternatives, ...planParts(plan)]);
+        const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits), this.#context.revision);
         if (cached)
             return cached;
         const state = { limits,
@@ -65,19 +106,20 @@ class Evaluator {
                 ...(evaluated.candidates ? { candidates: evaluated.candidates } : {}),
             } : {}),
         } : evaluated;
-        const result = { ...freezeResult(bounded, scalar), limits: state.limits };
-        const metadata = {
+        const basis = this.#cache?.basis(state.dependencies, bounded.evidence, state.limits) ?? Object.freeze({
+            key: '', dependencies: Object.freeze([...state.dependencies]), evidence: Object.freeze([...bounded.evidence]), limits: state.limits,
+        });
+        const result = { ...freezeResult(bounded, scalar, basis.evidence), limits: basis.limits };
+        const metadata = Object.freeze({
             model: this.#model,
-            limits: JSON.stringify(state.limits),
-            dependencies: new Map([...state.dependencies].map((key) => [key, this.#index.fingerprints.get(key)])),
-        };
-        const resultBytes = key ? resolutionResultBytes(result) : undefined;
+            basis,
+        });
+        const resultBytes = key ? resolutionResultBytes(result, [basis.evidence, basis.limits]) : undefined;
         Object.defineProperty(result, PROOF, { value: metadata });
         const frozen = Object.freeze(result);
         state.signal?.throwIfAborted();
         if (key && resultBytes !== undefined) {
-            const dependencyBytes = [...metadata.dependencies].reduce((bytes, [name, fingerprint]) => bytes + 96 + name.length * 2 + (fingerprint?.length ?? 0) * 2, 0);
-            this.#cache.put(key, frozen, resultBytes + dependencyBytes);
+            this.#cache.put(key, frozen, resultBytes, basis);
         }
         return frozen;
     }
@@ -461,7 +503,7 @@ class Evaluator {
     }
     depend(state, ...keys) {
         for (const key of keys) {
-            state.dependencies.add(key);
+            state.dependencies.add(this.#context.dependency(key));
             for (const fact of this.#index.evidence.get(key) ?? [])
                 state.evidence.add(fact);
         }
@@ -469,6 +511,20 @@ class Evaluator {
 }
 const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration']);
 const TRANSPARENT_SYNTAX = new Set(['ParenthesizedExpression', 'NonNullExpression', 'SatisfiesExpression', 'AsExpression', 'TypeAssertionExpression']);
+function planParts(plan, parts = []) {
+    if (plan.kind === 'value')
+        parts.push('value', plan.occurrence);
+    else if (plan.kind === 'unavailable')
+        parts.push('unavailable', plan.code, plan.reason);
+    else {
+        planParts(plan.input, parts);
+        if (plan.kind === 'property')
+            parts.push('property', plan.name);
+        else
+            parts.push('invoke');
+    }
+    return parts;
+}
 function uncertain(code, reason) { return { kind: 'unknown', code, reason }; }
 function exhaust(state, code, reason) {
     state.exhausted ??= { kind: 'unknown', code, reason };
@@ -489,7 +545,7 @@ function escaped(value, state) {
         ? { kind: 'unknown', code: 'VALUE_ESCAPE_UNSUPPORTED', reason: 'This value was passed to an unmodeled call that may mutate it.', candidates: [value] } : value;
 }
 /** Freeze only containers created by the engine; opaque values keep their identity. */
-function freezeResult(result, scalar) {
+function freezeResult(result, scalar, sharedEvidence) {
     const value = (input) => {
         if (scalar)
             return input;
@@ -498,7 +554,7 @@ function freezeResult(result, scalar) {
             ? { ...symbolic, properties: Object.freeze([...symbolic.properties]) }
             : { ...symbolic });
     };
-    const evidence = Object.freeze([...result.evidence]);
+    const evidence = sharedEvidence ?? Object.freeze([...result.evidence]);
     if (result.kind === 'known')
         return { ...result, value: value(result.value), evidence };
     if (result.kind === 'unsupported')

@@ -7,7 +7,7 @@ import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions, BoundedValueL
 import { resolveBoundedValueLimits } from '../limits.ts'
 import type { SymbolicCallModel, SymbolicOperandPlan, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from './model.ts'
 import { createCallProjection } from './calls.ts'
-import { resolutionResultBytes, type ValueResolutionCache } from './cache.ts'
+import { resolutionResultBytes, type ValueDependency, type ValueIndexRevision, type ValueProofBasis, type ValueResolutionCache } from './cache.ts'
 
 type Environment<Atom> = ReadonlyMap<SymbolId, Reference<Atom>>
 interface Reference<Atom> { readonly occurrence: OccurrenceId; readonly environment: Environment<Atom> }
@@ -26,7 +26,7 @@ type RuntimeValue<Atom> =
 interface State {
   readonly limits: Readonly<Required<BoundedValueLimits>>
   readonly signal?: AbortSignal
-  readonly dependencies: Set<string>
+  readonly dependencies: Set<ValueDependency>
   readonly evidence: Set<FactId>
   readonly active: Map<OccurrenceId, Set<object>>
   readonly effects: Map<string, 'none' | 'local' | 'other'>
@@ -43,8 +43,7 @@ type Plan<Atom> =
 const PROOF = Symbol('Codegraph value proof')
 interface ProofMetadata {
   readonly model: unknown
-  readonly limits: string
-  readonly dependencies: ReadonlyMap<string, string | undefined>
+  readonly basis: ValueProofBasis
 }
 type Proof = { readonly [PROOF]?: ProofMetadata }
 const UNDEFINED = Object.freeze({ kind: 'literal' as const, value: undefined })
@@ -58,14 +57,52 @@ interface ValueEvaluatorFactory {
 
 export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueResolutionCache, load?: () => Promise<Index>): ValueEvaluatorFactory {
   let pending: Promise<Index> | undefined
+  let context: ProofContext | undefined
   const index = load ?? (() => {
     pending ??= loadValueIndex(query).catch((error) => { pending = undefined; throw error })
     return pending
   })
   const calls = createCallProjection(query, index)
-  return Object.assign(async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) =>
-    new Evaluator(await index(), options.call, resolveBoundedValueLimits(options.limits), cache),
-  { calls, dispose() { pending = undefined; calls.dispose() } })
+  return Object.assign(async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) => {
+    const materialized = await index()
+    context ??= createProofContext(materialized, cache)
+    return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache)
+  },
+  { calls, dispose() { pending = undefined; context = undefined; calls.dispose() } })
+}
+
+interface ProofContext {
+  readonly revision: ValueIndexRevision
+  dependency(key: string): ValueDependency
+  valid(basis: ValueProofBasis): boolean
+}
+
+function createProofContext(index: Index, cache?: ValueResolutionCache): ProofContext {
+  const witnesses = new Map<string, ValueDependency>()
+  const validations = new WeakMap<ValueProofBasis, boolean>()
+  return {
+    revision: index.revision,
+    dependency(key) {
+      const supplied = index.dependency(key)
+      if (supplied.fingerprint !== undefined) return cache?.dependency(supplied) ?? supplied
+      let witness = witnesses.get(supplied.key)
+      if (!witness) {
+        witness = supplied
+        witnesses.set(supplied.key, witness)
+      }
+      return cache?.dependency(witness) ?? witness
+    },
+    valid(basis) {
+      const previous = validations.get(basis)
+      if (previous !== undefined) return previous
+      for (const { key, fingerprint } of basis.dependencies) if (index.fingerprints.get(key) !== fingerprint) {
+        validations.set(basis, false)
+        return false
+      }
+      validations.set(basis, true)
+      return true
+    },
+  }
 }
 
 class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
@@ -73,13 +110,15 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   readonly #model: SymbolicCallModel<Atom> | undefined
   readonly #limits: Readonly<Required<BoundedValueLimits>>
   readonly #cache: ValueResolutionCache | undefined
+  readonly #context: ProofContext
   readonly #operands = new WeakMap<SymbolicOperandPlan<Atom>, { readonly state: State; readonly read: () => RuntimeValue<Atom> }>()
 
-  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, cache?: ValueResolutionCache) {
+  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, context: ProofContext, cache?: ValueResolutionCache) {
     this.#index = index
     this.#model = model
     this.#limits = limits
     this.#cache = cache
+    this.#context = context
   }
 
   value(occurrence: OccurrenceId): SymbolicValuePlan<Atom> { return this.plan({ kind: 'value', occurrence }) }
@@ -90,8 +129,10 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
 
   private reusable(proof: EvaluatedValueResult<unknown>, limits: Readonly<Required<BoundedValueLimits>>): boolean {
     const metadata = (proof as Proof)[PROOF]
-    return !!metadata && metadata.model === this.#model && metadata.limits === JSON.stringify(limits) &&
-      [...metadata.dependencies].every(([key, fingerprint]) => this.#index.fingerprints.get(key) === fingerprint)
+    if (!metadata || metadata.model !== this.#model ||
+      proof.limits.maximumDepth !== limits.maximumDepth || proof.limits.maximumSteps !== limits.maximumSteps ||
+      proof.limits.maximumAlternatives !== limits.maximumAlternatives) return false
+    return this.#context.valid(metadata.basis)
   }
 
   async evaluate<Value = unknown>(occurrence: OccurrenceId, options: { readonly signal?: AbortSignal } = {}): Promise<EvaluatedValueResult<Value>> {
@@ -110,8 +151,9 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   private resolve(plan: Plan<Atom>, options: SymbolicValueResolveOptions, scalar: boolean): EvaluatedValueResult<unknown> {
     const limits = options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits
     options.signal?.throwIfAborted()
-    const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits, plan])
-    const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits))
+    const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits.maximumDepth,
+      limits.maximumSteps, limits.maximumAlternatives, ...planParts(plan)])
+    const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits), this.#context.revision)
     if (cached) return cached
     const state: State = { limits,
       signal: options.signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 }
@@ -126,19 +168,20 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         ...(evaluated.candidates ? { candidates: evaluated.candidates } : {}),
       } : {}),
     } as ValueResult<unknown> : evaluated
-    const result = { ...freezeResult(bounded, scalar), limits: state.limits }
-    const metadata: ProofMetadata = {
+    const basis = this.#cache?.basis(state.dependencies, bounded.evidence, state.limits) ?? Object.freeze({
+      key: '', dependencies: Object.freeze([...state.dependencies]), evidence: Object.freeze([...bounded.evidence]), limits: state.limits,
+    })
+    const result = { ...freezeResult(bounded, scalar, basis.evidence), limits: basis.limits }
+    const metadata: ProofMetadata = Object.freeze({
       model: this.#model,
-      limits: JSON.stringify(state.limits),
-      dependencies: new Map([...state.dependencies].map((key) => [key, this.#index.fingerprints.get(key)])),
-    }
-    const resultBytes = key ? resolutionResultBytes(result) : undefined
+      basis,
+    })
+    const resultBytes = key ? resolutionResultBytes(result, [basis.evidence, basis.limits]) : undefined
     Object.defineProperty(result, PROOF, { value: metadata })
     const frozen = Object.freeze(result)
     state.signal?.throwIfAborted()
     if (key && resultBytes !== undefined) {
-      const dependencyBytes = [...metadata.dependencies].reduce((bytes, [name, fingerprint]) => bytes + 96 + name.length * 2 + (fingerprint?.length ?? 0) * 2, 0)
-      this.#cache!.put(key, frozen, resultBytes + dependencyBytes)
+      this.#cache!.put(key, frozen, resultBytes, basis)
     }
     return frozen
   }
@@ -447,7 +490,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
 
   private depend(state: State, ...keys: readonly string[]): void {
     for (const key of keys) {
-      state.dependencies.add(key)
+      state.dependencies.add(this.#context.dependency(key))
       for (const fact of this.#index.evidence.get(key) ?? []) state.evidence.add(fact)
     }
   }
@@ -455,6 +498,17 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
 
 const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration'])
 const TRANSPARENT_SYNTAX = new Set(['ParenthesizedExpression', 'NonNullExpression', 'SatisfiesExpression', 'AsExpression', 'TypeAssertionExpression'])
+
+function planParts<Atom>(plan: Plan<Atom>, parts: string[] = []): string[] {
+  if (plan.kind === 'value') parts.push('value', plan.occurrence)
+  else if (plan.kind === 'unavailable') parts.push('unavailable', plan.code, plan.reason)
+  else {
+    planParts(plan.input, parts)
+    if (plan.kind === 'property') parts.push('property', plan.name)
+    else parts.push('invoke')
+  }
+  return parts
+}
 
 function uncertain(code: string, reason: string): RuntimeValue<never> { return { kind: 'unknown', code, reason } }
 
@@ -477,7 +531,7 @@ function escaped<Atom>(value: RuntimeValue<Atom>, state: State): RuntimeValue<At
 }
 
 /** Freeze only containers created by the engine; opaque values keep their identity. */
-function freezeResult(result: ValueResult<unknown>, scalar: boolean): ValueResult<unknown> {
+function freezeResult(result: ValueResult<unknown>, scalar: boolean, sharedEvidence?: readonly FactId[]): ValueResult<unknown> {
   const value = (input: unknown): unknown => {
     if (scalar) return input
     const symbolic = input as SymbolicValue<unknown>
@@ -485,7 +539,7 @@ function freezeResult(result: ValueResult<unknown>, scalar: boolean): ValueResul
       ? { ...symbolic, properties: Object.freeze([...symbolic.properties]) }
       : { ...symbolic })
   }
-  const evidence = Object.freeze([...result.evidence])
+  const evidence = sharedEvidence ?? Object.freeze([...result.evidence])
   if (result.kind === 'known') return { ...result, value: value(result.value), evidence }
   if (result.kind === 'unsupported') return { ...result, evidence }
   const reasons = Object.freeze(result.reasons.map((reason) => Object.freeze({ ...reason,
