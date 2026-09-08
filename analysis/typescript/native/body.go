@@ -93,7 +93,7 @@ func newBodyBuilder(x *extractor, file *shimast.SourceFile, owner, scope string,
 func (x *extractor) bodyShard(builder *bodyBuilder, payload bodyFactPayload, kind string, span sourceSpan) (factShard, error) {
 	completion := payload.Completeness
 	entry := x.newFact(bodyNamespace, kind, builder.owner, payload, []sourceSpan{span}, completion)
-	shard := finishShard(bodyNamespace, builder.owner, completion, []fact{entry})
+	shard := finishShard(bodyNamespace, builder.owner, completion, []preparedFact{entry})
 	if x.payloadCodecs[typescriptBodyPayloadCodec] {
 		packed, err := packBodyPayload(payload, span)
 		if err != nil {

@@ -96,6 +96,15 @@ completion. Its storage follows the active nesting path, while a typed stable so
 duplicate-key last-value semantics. The workspace ends with that encoding and retains no project
 or generation state.
 
+Identity construction serializes each newly projected logical payload once. A private prepared fact
+owns the canonical payload bytes until its shard is finalized; exact v1 fact and shard envelopes stream
+those same bytes into their full SHA-256 preimages. Admission retains the original semantic JSON
+byte count, including HTML escapes, independently of its canonical spelling. Final module logical
+IDs enter the shard envelope after normalization; generation and physical codec metadata stay
+excluded. Finalization publishes ordinary facts without the temporary bytes, and normalized
+declaration shards finalize individually so their canonical payloads never accumulate across the
+project. A failed encoding or budget admission cannot advance the acknowledged generation.
+
 The caller describes requested project inputs but never supplies a universe identifier. After the
 resident compiler loads the complete configuration chain, referenced project configurations, compiler and
 plugin semantics, exact toolchain and protocol, and platform, the native adapter derives the

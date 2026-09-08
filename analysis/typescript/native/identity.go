@@ -62,20 +62,3 @@ func hashText(text string) string {
 	digest := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(digest[:])
 }
-
-func shardDigest(shard factShard) string {
-	facts := make([]map[string]any, 0, len(shard.Facts))
-	for _, entry := range shard.Facts {
-		facts = append(facts, map[string]any{
-			"id": entry.ID, "namespace": entry.Namespace,
-			"schemaVersion": entry.SchemaVersion, "kind": entry.Kind,
-			"subject": entry.Subject, "completeness": entry.Completeness,
-			"provenance": entry.Provenance, "payload": entry.Payload,
-		})
-	}
-	return deriveID("fact-shard-digest", shard.Namespace, map[string]any{
-		"key": shard.Key, "namespace": shard.Namespace,
-		"schemaVersion": shard.SchemaVersion, "completion": shard.Completion,
-		"facts": facts,
-	})
-}
