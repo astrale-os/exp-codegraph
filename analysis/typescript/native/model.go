@@ -2,9 +2,9 @@ package main
 
 const (
 	protocolVersion = 1
-	producerVersion = "0.6.0"
+	producerVersion = "0.6.1"
 	ttscVersion     = "0.25.0"
-	passVersion     = "1.6.0"
+	passVersion     = "1.6.1"
 )
 
 const typescriptBodyPayloadCodec = "typescript.body.packed/5"

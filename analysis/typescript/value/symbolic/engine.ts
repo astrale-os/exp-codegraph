@@ -218,7 +218,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         const nameSymbol = nameNode?.symbol ?? (node.syntax === 'MethodDeclaration' ? node.symbol : undefined)
         if (nameSymbol) this.depend(state, `symbol:${nameSymbol}`)
         const directName = nameId && this.#index.direct.get(nameId)
-        const name = (nameSymbol && this.#index.symbols.get(nameSymbol)?.payload.name) ||
+        const name = node.propertyName || (nameSymbol && this.#index.symbols.get(nameSymbol)?.payload.name) ||
           (directName?.kind === 'known' && typeof directName.value === 'string' ? directName.value : undefined)
         if (!name) { properties.clear(); incomplete = true; continue }
         const value = node.syntax === 'MethodDeclaration' ? property : links?.get('initializer') ??

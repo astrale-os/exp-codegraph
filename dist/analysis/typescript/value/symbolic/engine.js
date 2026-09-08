@@ -162,7 +162,7 @@ class Evaluator {
                 if (nameSymbol)
                     this.depend(state, `symbol:${nameSymbol}`);
                 const directName = nameId && this.#index.direct.get(nameId);
-                const name = (nameSymbol && this.#index.symbols.get(nameSymbol)?.payload.name) ||
+                const name = node.propertyName || (nameSymbol && this.#index.symbols.get(nameSymbol)?.payload.name) ||
                     (directName?.kind === 'known' && typeof directName.value === 'string' ? directName.value : undefined);
                 if (!name) {
                     properties.clear();
