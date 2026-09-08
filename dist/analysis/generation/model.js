@@ -1,5 +1,5 @@
 import { validateFactShard } from '../facts/index.js';
-import { deriveAnalysisId } from '../identity/index.js';
+import { hashGenerationIdentity } from './identity.js';
 export class TransactionError extends Error {
     name = 'TransactionError';
     code;
@@ -9,13 +9,7 @@ export class TransactionError extends Error {
     }
 }
 export function generationIdentity(generation, manifest) {
-    return deriveAnalysisId('generation', 'astrale.analysis.generation.v1', {
-        universe: generation.universe,
-        producer: generation.producer,
-        sourceManifest: generation.sourceManifest,
-        capabilities: sortedUnique(generation.capabilities),
-        manifest: [...manifest].sort(byKey),
-    });
+    return hashGenerationIdentity(generation, manifest);
 }
 export function validateFactTransaction(transaction, current) {
     const diagnostics = [];
@@ -71,13 +65,7 @@ export function validateFactTransaction(transaction, current) {
         diagnostics.push('GENERATION_ID_MISMATCH');
     return [...new Set(diagnostics)].sort();
 }
-function sortedUnique(values) {
-    return [...new Set(values)].sort();
-}
 function isSortedUnique(values) {
     return values.every((value, index) => index === 0 || value.localeCompare(values[index - 1]) > 0);
-}
-function byKey(left, right) {
-    return left.key.localeCompare(right.key);
 }
 //# sourceMappingURL=model.js.map
