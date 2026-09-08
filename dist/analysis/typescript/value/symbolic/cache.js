@@ -1,11 +1,14 @@
 import { types } from 'node:util';
 import { RequestFrequency } from './frequency.js';
+import { ResidentProofCoordinates } from './coordinates.js';
 /** Project-owned, byte-bounded admission and invalidation across models and budgets. */
 export class ValueResolutionCache {
     #entries = new Map();
     #readers = new Map();
     #groups = new Map();
     #witnessIds = new WeakMap();
+    #coordinates = new ResidentProofCoordinates();
+    #basisCoordinates = new WeakMap();
     #models = new WeakMap();
     #maximumEntries;
     #maximumBytes;
@@ -42,9 +45,16 @@ export class ValueResolutionCache {
                 this.#witnessIds.set(dependency, (id = ++this.#nextWitness));
             return id;
         });
-        const key = JSON.stringify([limits.maximumDepth, limits.maximumSteps, limits.maximumAlternatives, ids, evidence]);
-        return this.#groups.get(key)?.basis ?? Object.freeze({ key,
-            dependencies: Object.freeze(ordered), evidence: Object.freeze([...evidence]), limits });
+        const coordinates = this.#coordinates.prepare(evidence, limits);
+        const key = JSON.stringify([limits.maximumDepth, limits.maximumSteps, limits.maximumAlternatives, ids,
+            coordinates.evidence.map(token => token.id)]);
+        const existing = this.#groups.get(key)?.basis;
+        if (existing)
+            return existing;
+        const basis = Object.freeze({ key, dependencies: Object.freeze(ordered),
+            evidence: Object.freeze(coordinates.evidence.map(token => token.fact)), limits: coordinates.budget.limits });
+        this.#basisCoordinates.set(basis, coordinates);
+        return basis;
     }
     get(key, valid, revision) {
         if (this.#closed)
@@ -91,7 +101,8 @@ export class ValueResolutionCache {
                         this.remove(entry);
         }
         let group = basis && this.#groups.get(basis.key);
-        const groupBytes = basis ? group?.bytes ?? basisBytes(basis) : 0;
+        const coordinates = basis && this.#basisCoordinates.get(basis);
+        const groupBytes = basis ? group?.bytes ?? basisBytes(basis, coordinates) : 0;
         if (groupBytes === undefined)
             return;
         let added = bytes;
@@ -100,6 +111,12 @@ export class ValueResolutionCache {
             for (const dependency of basis.dependencies)
                 if (!this.#readers.has(dependency.key))
                     added += dependencyBytes(dependency);
+            if (coordinates) {
+                const extra = this.#coordinates.additionalBytes(coordinates);
+                if (extra === undefined)
+                    return;
+                added += extra;
+            }
         }
         if (added + this.#frequency.bytes > this.#maximumBytes)
             return;
@@ -122,9 +139,11 @@ export class ValueResolutionCache {
         // The last reader of this basis may have been among the evicted entries.
         group = basis && this.#groups.get(basis.key);
         if (basis && !group) {
-            group = { basis, entries: new Set(), bytes: groupBytes, ...(this.#revision ? { lineage: this.#lineage } : {}) };
+            group = { basis, entries: new Set(), bytes: groupBytes, ...(coordinates ? { coordinates } : {}), ...(this.#revision ? { lineage: this.#lineage } : {}) };
             this.#groups.set(basis.key, group);
             this.#bytes += group.bytes;
+            if (coordinates)
+                this.#coordinates.retain(coordinates);
             for (const dependency of basis.dependencies) {
                 let readers = this.#readers.get(dependency.key);
                 if (!readers) {
@@ -170,6 +189,8 @@ export class ValueResolutionCache {
             return;
         this.#groups.delete(group.basis.key);
         this.#bytes -= group.bytes;
+        if (group.coordinates)
+            this.#coordinates.release(group.coordinates);
         for (const dependency of group.basis.dependencies) {
             const readers = this.#readers.get(dependency.key);
             readers.groups.delete(group);
@@ -179,15 +200,17 @@ export class ValueResolutionCache {
             }
         }
     }
-    clear() { this.#entries.clear(); this.#readers.clear(); this.#groups.clear(); this.#bytes = 0; }
+    clear() { this.#entries.clear(); this.#readers.clear(); this.#groups.clear(); this.#coordinates.clear(); this.#bytes = 0; }
     close() { this.#closed = true; this.clear(); this.#frequency = undefined; this.#revision = undefined; }
     get size() { return this.#entries.size; }
-    get bytes() { return this.#bytes + (this.#frequency?.bytes ?? 0); }
+    get bytes() { return this.#bytes + this.#coordinates.bytes + (this.#frequency?.bytes ?? 0); }
 }
 function dependencyBytes(dependency) {
     return 192 + dependency.key.length * 2 + (dependency.fingerprint?.length ?? 0) * 2;
 }
-function basisBytes(basis) {
+function basisBytes(basis, coordinates) {
+    if (coordinates)
+        return 512 + basis.key.length * 2 + basis.dependencies.length * 48 + basis.evidence.length * 16;
     const shared = resolutionResultBytes({ evidence: basis.evidence, limits: basis.limits });
     return shared === undefined ? undefined : 192 + basis.key.length * 2 + basis.dependencies.length * 48 + shared;
 }
