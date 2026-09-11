@@ -1,13 +1,10 @@
 import type { EvaluatedValueResult } from '../model.ts';
 import type { FactId } from '../../../identity/index.ts';
+import type { ValueIndexRevision } from './facts.ts';
+export type { ValueIndexRevision } from './facts.ts';
 export interface ValueDependency {
     readonly key: string;
     readonly fingerprint: string | undefined;
-}
-export interface ValueIndexRevision {
-    readonly token: object;
-    readonly parent?: object;
-    readonly changed: ReadonlySet<string>;
 }
 export interface ValueProofBasis {
     readonly key: string;

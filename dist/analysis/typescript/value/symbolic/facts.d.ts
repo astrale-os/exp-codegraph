@@ -1,8 +1,9 @@
 import type { FactId, OccurrenceId, SourceId, SymbolId } from '../../../identity/index.ts';
-import type { AnalysisQuery } from '../../../query/index.ts';
+import type { AnalysisQuery, CapabilityStatus } from '../../../query/index.ts';
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts';
 import { type TypeScriptFact } from '../../facts/index.ts';
 import type { ValueResult } from '../model.ts';
+import { CALL_SELECTION, CallSelection } from './selection.ts';
 type Body = TypeScriptFact<'body'>;
 export type IndexedFact = Body | TypeScriptFact<'symbol'> | TypeScriptFact<'source'>;
 export interface ValueDependency {
@@ -13,8 +14,10 @@ export interface ValueIndexRevision {
     readonly token: object;
     readonly parent?: object;
     readonly changed: ReadonlySet<string>;
+    readonly selection?: typeof CALL_SELECTION;
 }
 export interface ValueIndex {
+    readonly callsSelection?: CallSelection;
     readonly bodies: ReadonlyMap<SymbolId, Body>;
     readonly occurrences: ReadonlyMap<OccurrenceId, BodyOccurrence>;
     readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>;
@@ -40,6 +43,7 @@ export interface ValueIndex {
 }
 export declare class IndexedValues implements ValueIndex {
     #private;
+    readonly callsSelection: CallSelection | undefined;
     readonly work: {
         readonly facts: number;
         readonly bodies: number;
@@ -67,7 +71,7 @@ export declare class IndexedValues implements ValueIndex {
     static empty(): IndexedValues;
     dependency(key: string): ValueDependency;
     private fingerprint;
-    update(upserts: readonly IndexedFact[], deletes: readonly FactId[], initial?: boolean): IndexedValues;
+    update(upserts: readonly IndexedFact[], deletes: readonly FactId[], initial?: boolean, capabilities?: readonly CapabilityStatus[]): IndexedValues;
 }
 export declare function loadValueIndex(query: AnalysisQuery): Promise<IndexedValues>;
 export declare function readIndexedBodies(query: AnalysisQuery, ids?: readonly FactId[]): Promise<readonly TypeScriptFact<'body'>[]>;

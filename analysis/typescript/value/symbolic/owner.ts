@@ -112,13 +112,14 @@ export class ValueIndexOwner {
       deleted.push(...base.shards.get(key)?.facts ?? [])
       if (shard) ids[shard.kind].push(...shard.facts)
     }
-    const [bodies, symbols, sources] = await Promise.all([
+    const [bodies, symbols, sources, capabilities] = await Promise.all([
       readIndexedBodies(query, ids.body), reader.factsById('symbol', ids.symbol), reader.factsById('source', ids.source),
+      query.capabilities(),
     ])
     if (bodies.length !== ids.body.length || symbols.length !== ids.symbol.length || sources.length !== ids.source.length) {
       throw new Error('A committed value index shard is missing facts in its pinned query.')
     }
-    const next = index.update([...bodies, ...symbols, ...sources] as IndexedFact[], deleted)
+    const next = index.update([...bodies, ...symbols, ...sources] as IndexedFact[], deleted, false, capabilities)
     // Resolved indices and trie roots stand alone. A quiet watch cannot retain a
     // linked list of previous revisions, transactions, queries or deleted shards.
     record.base = undefined

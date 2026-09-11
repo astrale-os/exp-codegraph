@@ -1,13 +1,14 @@
 import { createHash } from 'node:crypto'
 import { physicalPayloadForTransport } from '../../../facts/representation/index.ts'
 import type { FactId, OccurrenceId, SourceId, SymbolId } from '../../../identity/index.ts'
-import type { AnalysisQuery } from '../../../query/index.ts'
+import type { AnalysisQuery, CapabilityStatus } from '../../../query/index.ts'
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts'
 import { createTypeScriptFactReader, TypeScriptFactContractError, type TypeScriptFact } from '../../facts/index.ts'
 import type { ValueResult } from '../model.ts'
 import { projectPackedTypeScriptBody } from '../../physical/index.ts'
 import { bodyFragment, type BodyFragment, type NodeReference } from './fragment.ts'
 import { ValueIndexTable, type ValueIndexTableEdit } from './table.ts'
+import { CALL_SELECTION, CallSelection } from './selection.ts'
 
 type Body = TypeScriptFact<'body'>
 export type IndexedFact = Body | TypeScriptFact<'symbol'> | TypeScriptFact<'source'>
@@ -16,8 +17,10 @@ export interface ValueIndexRevision {
   readonly token: object
   readonly parent?: object
   readonly changed: ReadonlySet<string>
+  readonly selection?: typeof CALL_SELECTION
 }
 export interface ValueIndex {
+  readonly callsSelection?: CallSelection
   readonly bodies: ReadonlyMap<SymbolId, Body>
   readonly occurrences: ReadonlyMap<OccurrenceId, BodyOccurrence>
   readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>
@@ -170,6 +173,7 @@ interface Columns {
 type Edits = { [Key in keyof Columns]: ReturnType<Columns[Key]['edit']> }
 
 export class IndexedValues implements ValueIndex {
+  readonly callsSelection: CallSelection | undefined
   readonly work: { readonly facts: number; readonly bodies: number; readonly contributions: number }
   readonly bodies: ValueIndex['bodies']
   readonly occurrences: ValueIndex['occurrences']
@@ -198,6 +202,7 @@ export class IndexedValues implements ValueIndex {
   readonly #aggregateEvidence: ValueIndexTable<string, readonly FactId[]>
   readonly #mutationOwners: ValueIndexTable<SymbolId, readonly SymbolId[]>
   readonly #aliasSources: ValueIndexTable<SymbolId, readonly SymbolId[]>
+  readonly #selection: CallSelection
 
   private constructor(
     facts: ValueIndexTable<FactId, IndexedFact>, columns: Columns, derived: ValueIndexTable<FactId, Derived>,
@@ -206,12 +211,15 @@ export class IndexedValues implements ValueIndex {
     mutationOwners: ValueIndexTable<SymbolId, readonly SymbolId[]>, aliasSources: ValueIndexTable<SymbolId, readonly SymbolId[]>,
     revision: ValueIndexRevision,
     work = { facts: 0, bodies: 0, contributions: 0 },
+    selection = new CallSelection(),
   ) {
     this.#facts = facts; this.#columns = columns; this.#derived = derived
     this.#hashes = hashes; this.#factEvidence = factEvidence
     this.#witnesses = witnesses; this.#aggregateEvidence = aggregateEvidence
     this.#mutationOwners = mutationOwners; this.#aliasSources = aliasSources
     this.revision = revision
+    this.#selection = selection
+    this.callsSelection = revision.selection === CALL_SELECTION ? selection : undefined
     this.work = Object.freeze(work)
     this.bodies = columns.bodies
     this.occurrences = projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row))
@@ -278,7 +286,8 @@ export class IndexedValues implements ValueIndex {
     return this.#witnesses.get(key)?.fingerprint
   }
 
-  update(upserts: readonly IndexedFact[], deletes: readonly FactId[], initial = false): IndexedValues {
+  update(upserts: readonly IndexedFact[], deletes: readonly FactId[], initial = false,
+    capabilities?: readonly CapabilityStatus[]): IndexedValues {
     const facts = this.#facts.edit()
     const hashes = this.#hashes.edit()
     const factEvidence = this.#factEvidence.edit()
@@ -287,6 +296,7 @@ export class IndexedValues implements ValueIndex {
     const touched = new Set<string>()
     const inputs = new Set<string>()
     const changed = new Map<FactId, IndexedFact | undefined>()
+    const bodyOwners = new Set<SymbolId>(), mappingSources = new Set<SourceId>(), siteSources = new Set<SourceId>()
     for (const id of deletes) if (this.#facts.has(id)) changed.set(id, undefined)
     for (const input of upserts) {
       const fact = input.namespace === 'typescript.body' ? bodyFragment(input).fact : input
@@ -299,6 +309,14 @@ export class IndexedValues implements ValueIndex {
     }
     for (const [id, next] of changed) {
       const previous = this.#facts.get(id)
+      for (const fact of [previous, next]) {
+        if (fact?.namespace === 'typescript.source') mappingSources.add(fact.payload.source)
+        else if (fact?.namespace === 'typescript.body') {
+          const fragment = bodyFragment(fact)
+          bodyOwners.add(fragment.owner)
+          for (const source of fragment.callsBySource.keys()) siteSources.add(source)
+        }
+      }
       if (previous) primary(columns, previous, false, touched, inputs)
       if (next) {
         primary(columns, next, true, touched, inputs)
@@ -375,17 +393,48 @@ export class IndexedValues implements ValueIndex {
       if (fingerprint === undefined) witnesses.delete(key)
       else if (this.#witnesses.get(key)?.fingerprint !== fingerprint) witnesses.set(key, Object.freeze({ key, fingerprint }))
     }
+    for (const source of mappingSources) {
+      if (this.#columns.sources.get(source)?.payload.logicalPath !== nextColumns.sources.get(source)?.payload.logicalPath) siteSources.add(source)
+    }
+    // A contributor may change the effective call occurrence/callee without owning
+    // any calls. Recover source buckets from each call owner's own occurrence.
+    if (!initial) for (const key of touched) if (key.startsWith('occurrence:')) {
+      const id = key.slice(11) as OccurrenceId
+      callOwnerSources(this.#columns, id, siteSources)
+      callOwnerSources(nextColumns, id, siteSources)
+    }
+    const previousBodies = this.#columns.bodies, nextBodies = nextColumns.bodies
+    const selection = this.#selection.update((function* () {
+      for (const owner of bodyOwners) yield [previousBodies.get(owner), nextBodies.get(owner)] as const
+    })(), siteSources, this.#columns, nextColumns, capabilities, initial ? undefined : changedKeys)
     return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(),
       aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(),
-      { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys },
-      { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) })
+      { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys,
+        ...(capabilities ? { selection: CALL_SELECTION } : {}) },
+      { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) }, selection)
   }
 }
 
 export async function loadValueIndex(query: AnalysisQuery): Promise<IndexedValues> {
   const reader = createTypeScriptFactReader(query)
-  const facts = await Promise.all([readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source'))])
-  return IndexedValues.empty().update(facts.flat(), [], true)
+  const [bodies, symbols, sources, capabilities] = await Promise.all([
+    readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source')), query.capabilities(),
+  ])
+  return IndexedValues.empty().update([...bodies, ...symbols, ...sources], [], true, capabilities)
+}
+
+function callOwnerSources(columns: Columns, id: OccurrenceId, sources: Set<SourceId>): void {
+  const calls = columns.calls.slots.get(id)
+  if (!calls) return
+  const occurrences = columns.occurrences.slots.get(id)
+  if (!occurrences) return
+  const add = (owner: FactId) => {
+    const value = 'owner' in occurrences ? occurrences.owner === owner ? occurrences.value : undefined
+      : occurrences.owners.get(owner)?.value
+    if (value) sources.add(value.fragment.packed ? value.fragment.packed.source : value.fragment.node(value.row).span.source)
+  }
+  if ('owner' in calls) add(calls.owner)
+  else for (const owner of calls.owners.keys()) add(owner)
 }
 
 function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<string>, inputs: Set<string>): void {

@@ -3,17 +3,14 @@ import type { FactId } from '../../../identity/index.ts'
 import { types } from 'node:util'
 import { RequestFrequency } from './frequency.ts'
 import { ResidentProofCoordinates, type ProofCoordinates } from './coordinates.ts'
+import type { ValueIndexRevision } from './facts.ts'
+export type { ValueIndexRevision } from './facts.ts'
 
 export interface ValueDependency {
   readonly key: string
   readonly fingerprint: string | undefined
 }
 
-export interface ValueIndexRevision {
-  readonly token: object
-  readonly parent?: object
-  readonly changed: ReadonlySet<string>
-}
 
 export interface ValueProofBasis {
   readonly key: string
