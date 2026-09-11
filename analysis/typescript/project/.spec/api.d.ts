@@ -26,13 +26,31 @@ export interface TypeScriptProjectSnapshot {
   readonly facts: TypeScriptFactReader
   /** Generic extensions consume the same pinned evidence as the typed reader. */
   readonly query: AnalysisQuery
-  /** Indexed call inventory, including unresolved calls. */
+  /** Indexed call inventory. Selection precedes site projection, including unresolved calls. */
   calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
   /** Shares one index; evaluator reuse requires the same call model and effective budget. */
   values<Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>): Promise<BoundedValueEvaluator<Atom>>
+  /**
+   * Reuses a semantic computation when none of its reads changed. Keep the
+   * callback stable and pass every variable external parameter through input.
+   * Plain data inputs are captured before yielding; admitted results are owned,
+   * deeply frozen plain data. Other inputs/results still execute without reuse.
+   * The reader and its evaluators/plans expire when the callback settles.
+   */
+  compute<Input, Result>(observe: TypeScriptComputation<Input, Result>, input: Input,
+    options?: { readonly signal?: AbortSignal }): Promise<Result>
   dispose(): Promise<void>
   [Symbol.asyncDispose](): Promise<void>
 }
+
+/** Tracked semantic reads, with the computation's cancellation and lifetime. */
+export interface TypeScriptSemanticReader {
+  calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
+  values<Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>): Promise<BoundedValueEvaluator<Atom>>
+}
+
+export type TypeScriptComputation<Input, Result> =
+  (read: TypeScriptSemanticReader, input: Input) => Result | Promise<Result>
 
 /** A resident compiler and its immutable readers, with serialized refresh and recoverable failure. */
 export interface TypeScriptProject {

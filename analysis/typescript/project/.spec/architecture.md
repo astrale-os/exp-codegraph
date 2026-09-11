@@ -52,3 +52,35 @@ Published indices structurally share untouched lookup branches while pinned read
 revision. Undemanded deltas compact without retaining a chain of snapshots; unknown external-writer
 lineages fall back to full query admission. A failed pending predecessor cannot poison subsequent
 indices. Initial admission remains project-wide and is distinct from incremental update work.
+
+
+`compute(observer, input, { signal })` runs an ordinary semantic observer over tracked
+`calls` and `values` readers. Callback identity is stable; all variable external
+parameters belong in the explicit input. The callback may capture module constants,
+not mutable external state, files or time that Codegraph cannot observe. No keys,
+dependency lists, rule registry or cache lifecycle are required downstream.
+
+Plain object/array inputs are copied, normalized to a stable property order and deeply
+frozen before the first yield. The callback sees exactly the data used for its key,
+including undefined, absent properties, array holes, shared references and signed zero.
+Plain results are owned frozen data; cache hits need not preserve object identity.
+Accessors, proxies, classes and symbol properties run without retention. Raw value
+proofs include private symbol metadata and should be projected to portable observations.
+Readers, evaluators and plans from a computation expire when its callback settles.
+
+The project retains serialized portable results and compact read receipts within the
+same 8 MiB envelope as value proofs. Temporary receipt construction also reserves that
+envelope. Saturated receipts, oversized results and unavailable admission finish the
+computation without retaining a partial entry. Failed or cancelled computations cannot
+publish results. Cancellation rejects without waiting for arbitrary observer work;
+escaped reads expire and late work remains handled. Each caller owns its cancellation;
+in-flight work is not deduplicated. Cached proofs retain opaque weak model identities,
+not model closures that could capture a computation reader.
+
+Receipt collection includes value cache hits, unknowns, budgets and absent reads, plus
+complete call-selection membership and completeness. A negative filter answer for every
+key of a direct, atomic index delta permits reuse without rerunning the observer or
+resolutions. Possible intersections force recomputation. Missing lineage and old readers
+recompute conservatively; a late old computation cannot replace a current entry. Results
+can outlive cache eviction and project disposal. An affected edit still recomputes the
+whole observer; per-candidate differential evaluation is a separate future capability.

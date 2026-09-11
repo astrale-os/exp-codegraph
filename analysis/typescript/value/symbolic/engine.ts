@@ -41,8 +41,9 @@ type Plan<Atom> =
   | { readonly kind: 'invoke'; readonly input: Plan<Atom> }
 
 const PROOF = Symbol('Codegraph value proof')
+const MODEL_IDENTITIES = new WeakMap<object, object>()
 interface ProofMetadata {
-  readonly model: unknown
+  readonly model: object | undefined
   readonly basis: ValueProofBasis
 }
 type Proof = { readonly [PROOF]?: ProofMetadata }
@@ -55,7 +56,16 @@ interface ValueEvaluatorFactory {
   dispose(): void
 }
 
-export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueResolutionCache, load?: () => Promise<Index>): ValueEvaluatorFactory {
+/** Explicitly scoped collection; independent computations share no ambient state. */
+export interface ValueReadScope {
+  readonly signal?: AbortSignal
+  check(): void
+  fail(): void
+  proof(basis: ValueProofBasis): void
+  selection(revision: ValueIndexRevision | undefined, keys: readonly string[]): void
+}
+
+export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueResolutionCache, load?: () => Promise<Index>, scope?: ValueReadScope): ValueEvaluatorFactory {
   let pending: Promise<Index> | undefined
   let context: ProofContext | undefined
   const index = load ?? (() => {
@@ -64,11 +74,20 @@ export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueR
   })
   const calls = createCallProjection(query, index)
   return Object.assign(async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) => {
-    const materialized = await index()
+    scope?.check()
+    const materialized = await index().catch((error) => { scope?.fail(); throw error })
+    scope?.check()
     context ??= createProofContext(materialized, cache)
-    return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache)
+    return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache, scope)
   },
-  { calls, dispose() { pending = undefined; context = undefined; calls.dispose() } })
+  { calls: async (options: TypeScriptCallQuery = {}) => {
+    scope?.check()
+    const signal = scope?.signal && options.signal ? AbortSignal.any([scope.signal, options.signal]) : scope?.signal ?? options.signal
+    const result = await calls({ ...options, ...(signal ? { signal } : {}) }, scope?.selection)
+      .catch((error) => { scope?.fail(); throw error })
+    scope?.check()
+    return result
+  }, dispose() { pending = undefined; context = undefined; calls.dispose() } })
 }
 
 interface ProofContext {
@@ -108,55 +127,73 @@ function createProofContext(index: Index, cache?: ValueResolutionCache): ProofCo
 class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   readonly #index: Index
   readonly #model: SymbolicCallModel<Atom> | undefined
+  readonly #modelIdentity: object | undefined
   readonly #limits: Readonly<Required<BoundedValueLimits>>
   readonly #cache: ValueResolutionCache | undefined
   readonly #context: ProofContext
+  readonly #scope: ValueReadScope | undefined
   readonly #operands = new WeakMap<SymbolicOperandPlan<Atom>, { readonly state: State; readonly read: () => RuntimeValue<Atom> }>()
 
-  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, context: ProofContext, cache?: ValueResolutionCache) {
+  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, context: ProofContext, cache?: ValueResolutionCache, scope?: ValueReadScope) {
     this.#index = index
     this.#model = model
+    this.#modelIdentity = model && modelIdentity(model)
     this.#limits = limits
     this.#cache = cache
     this.#context = context
+    this.#scope = scope
   }
 
   value(occurrence: OccurrenceId): SymbolicValuePlan<Atom> { return this.plan({ kind: 'value', occurrence }) }
 
   canReuse(proof: EvaluatedValueResult<unknown>): boolean {
+    this.#scope?.check()
+    const basis = (proof as Proof)[PROOF]?.basis
+    if (basis) this.#scope?.proof(basis)
     return this.reusable(proof, this.#limits)
   }
 
   private reusable(proof: EvaluatedValueResult<unknown>, limits: Readonly<Required<BoundedValueLimits>>): boolean {
     const metadata = (proof as Proof)[PROOF]
-    if (!metadata || metadata.model !== this.#model ||
+    if (!metadata || metadata.model !== this.#modelIdentity ||
       proof.limits.maximumDepth !== limits.maximumDepth || proof.limits.maximumSteps !== limits.maximumSteps ||
       proof.limits.maximumAlternatives !== limits.maximumAlternatives) return false
     return this.#context.valid(metadata.basis)
   }
 
   async evaluate<Value = unknown>(occurrence: OccurrenceId, options: { readonly signal?: AbortSignal } = {}): Promise<EvaluatedValueResult<Value>> {
-    return this.resolve({ kind: 'value', occurrence }, options, true) as EvaluatedValueResult<Value>
+    try { return this.resolve({ kind: 'value', occurrence }, options, true) as EvaluatedValueResult<Value> }
+    catch (error) { this.#scope?.fail(); throw error }
   }
 
   private plan(node: Plan<Atom>): SymbolicValuePlan<Atom> {
+    this.#scope?.check()
     const plan: SymbolicValuePlan<Atom> = Object.freeze({
       property: (name: string) => this.plan({ kind: 'property', input: node, name }),
       invoke: () => this.plan({ kind: 'invoke', input: node }),
-      resolve: async (options: SymbolicValueResolveOptions = {}) => this.resolve(node, options, false) as EvaluatedValueResult<SymbolicValue<Atom>>,
+      resolve: async (options: SymbolicValueResolveOptions = {}) => {
+        try { return this.resolve(node, options, false) as EvaluatedValueResult<SymbolicValue<Atom>> }
+        catch (error) { this.#scope?.fail(); throw error }
+      },
     })
     return plan
   }
 
   private resolve(plan: Plan<Atom>, options: SymbolicValueResolveOptions, scalar: boolean): EvaluatedValueResult<unknown> {
+    this.#scope?.check()
+    const signal = this.#scope?.signal && options.signal ? AbortSignal.any([this.#scope.signal, options.signal]) : this.#scope?.signal ?? options.signal
     const limits = options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits
-    options.signal?.throwIfAborted()
+    signal?.throwIfAborted()
     const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits.maximumDepth,
       limits.maximumSteps, limits.maximumAlternatives, ...planParts(plan)])
     const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits), this.#context.revision)
-    if (cached) return cached
+    if (cached) {
+      const basis = (cached as Proof)[PROOF]?.basis
+      if (basis) this.#scope?.proof(basis)
+      return cached
+    }
     const state: State = { limits,
-      signal: options.signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 }
+      signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 }
     state.signal?.throwIfAborted()
     const value = this.evaluatePlan(plan, state)
     const evaluated = this.result(value, state, scalar)
@@ -173,7 +210,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     })
     const result = { ...freezeResult(bounded, scalar, basis.evidence), limits: basis.limits }
     const metadata: ProofMetadata = Object.freeze({
-      model: this.#model,
+      model: this.#modelIdentity,
       basis,
     })
     const resultBytes = key ? resolutionResultBytes(result, [basis.evidence, basis.limits]) : undefined
@@ -183,6 +220,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     if (key && resultBytes !== undefined) {
       this.#cache!.put(key, frozen, resultBytes, basis)
     }
+    this.#scope?.proof(basis)
     return frozen
   }
 
@@ -515,6 +553,13 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
       for (const fact of this.#index.evidence.get(key) ?? []) state.evidence.add(fact)
     }
   }
+}
+
+/** Proof receipts preserve identity without retaining a model's captured readers. */
+function modelIdentity(model: object): object {
+  let identity = MODEL_IDENTITIES.get(model)
+  if (!identity) MODEL_IDENTITIES.set(model, (identity = Object.freeze({})))
+  return identity
 }
 
 const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration'])

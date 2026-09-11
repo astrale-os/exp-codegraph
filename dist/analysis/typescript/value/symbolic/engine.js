@@ -3,8 +3,9 @@ import { resolveBoundedValueLimits } from '../limits.js';
 import { createCallProjection } from './calls.js';
 import { resolutionResultBytes } from './cache.js';
 const PROOF = Symbol('Codegraph value proof');
+const MODEL_IDENTITIES = new WeakMap();
 const UNDEFINED = Object.freeze({ kind: 'literal', value: undefined });
-export function createValueEvaluatorFactory(query, cache, load) {
+export function createValueEvaluatorFactory(query, cache, load, scope) {
     let pending;
     let context;
     const index = load ?? (() => {
@@ -13,10 +14,19 @@ export function createValueEvaluatorFactory(query, cache, load) {
     });
     const calls = createCallProjection(query, index);
     return Object.assign(async (options = {}) => {
-        const materialized = await index();
+        scope?.check();
+        const materialized = await index().catch((error) => { scope?.fail(); throw error; });
+        scope?.check();
         context ??= createProofContext(materialized, cache);
-        return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache);
-    }, { calls, dispose() { pending = undefined; context = undefined; calls.dispose(); } });
+        return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache, scope);
+    }, { calls: async (options = {}) => {
+            scope?.check();
+            const signal = scope?.signal && options.signal ? AbortSignal.any([scope.signal, options.signal]) : scope?.signal ?? options.signal;
+            const result = await calls({ ...options, ...(signal ? { signal } : {}) }, scope?.selection)
+                .catch((error) => { scope?.fail(); throw error; });
+            scope?.check();
+            return result;
+        }, dispose() { pending = undefined; context = undefined; calls.dispose(); } });
 }
 function createProofContext(index, cache) {
     const witnesses = new Map();
@@ -51,50 +61,79 @@ function createProofContext(index, cache) {
 class Evaluator {
     #index;
     #model;
+    #modelIdentity;
     #limits;
     #cache;
     #context;
+    #scope;
     #operands = new WeakMap();
-    constructor(index, model, limits, context, cache) {
+    constructor(index, model, limits, context, cache, scope) {
         this.#index = index;
         this.#model = model;
+        this.#modelIdentity = model && modelIdentity(model);
         this.#limits = limits;
         this.#cache = cache;
         this.#context = context;
+        this.#scope = scope;
     }
     value(occurrence) { return this.plan({ kind: 'value', occurrence }); }
     canReuse(proof) {
+        this.#scope?.check();
+        const basis = proof[PROOF]?.basis;
+        if (basis)
+            this.#scope?.proof(basis);
         return this.reusable(proof, this.#limits);
     }
     reusable(proof, limits) {
         const metadata = proof[PROOF];
-        if (!metadata || metadata.model !== this.#model ||
+        if (!metadata || metadata.model !== this.#modelIdentity ||
             proof.limits.maximumDepth !== limits.maximumDepth || proof.limits.maximumSteps !== limits.maximumSteps ||
             proof.limits.maximumAlternatives !== limits.maximumAlternatives)
             return false;
         return this.#context.valid(metadata.basis);
     }
     async evaluate(occurrence, options = {}) {
-        return this.resolve({ kind: 'value', occurrence }, options, true);
+        try {
+            return this.resolve({ kind: 'value', occurrence }, options, true);
+        }
+        catch (error) {
+            this.#scope?.fail();
+            throw error;
+        }
     }
     plan(node) {
+        this.#scope?.check();
         const plan = Object.freeze({
             property: (name) => this.plan({ kind: 'property', input: node, name }),
             invoke: () => this.plan({ kind: 'invoke', input: node }),
-            resolve: async (options = {}) => this.resolve(node, options, false),
+            resolve: async (options = {}) => {
+                try {
+                    return this.resolve(node, options, false);
+                }
+                catch (error) {
+                    this.#scope?.fail();
+                    throw error;
+                }
+            },
         });
         return plan;
     }
     resolve(plan, options, scalar) {
+        this.#scope?.check();
+        const signal = this.#scope?.signal && options.signal ? AbortSignal.any([this.#scope.signal, options.signal]) : this.#scope?.signal ?? options.signal;
         const limits = options.limits ? resolveBoundedValueLimits({ ...this.#limits, ...options.limits }) : this.#limits;
-        options.signal?.throwIfAborted();
+        signal?.throwIfAborted();
         const key = this.#cache && JSON.stringify([this.#cache.model(this.#model), scalar, limits.maximumDepth,
             limits.maximumSteps, limits.maximumAlternatives, ...planParts(plan)]);
         const cached = key && this.#cache?.get(key, (proof) => this.reusable(proof, limits), this.#context.revision);
-        if (cached)
+        if (cached) {
+            const basis = cached[PROOF]?.basis;
+            if (basis)
+                this.#scope?.proof(basis);
             return cached;
+        }
         const state = { limits,
-            signal: options.signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 };
+            signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 };
         state.signal?.throwIfAborted();
         const value = this.evaluatePlan(plan, state);
         const evaluated = this.result(value, state, scalar);
@@ -111,7 +150,7 @@ class Evaluator {
         });
         const result = { ...freezeResult(bounded, scalar, basis.evidence), limits: basis.limits };
         const metadata = Object.freeze({
-            model: this.#model,
+            model: this.#modelIdentity,
             basis,
         });
         const resultBytes = key ? resolutionResultBytes(result, [basis.evidence, basis.limits]) : undefined;
@@ -121,6 +160,7 @@ class Evaluator {
         if (key && resultBytes !== undefined) {
             this.#cache.put(key, frozen, resultBytes, basis);
         }
+        this.#scope?.proof(basis);
         return frozen;
     }
     evaluatePlan(plan, state, environment = new Map(), depth = 0) {
@@ -536,6 +576,13 @@ class Evaluator {
                 state.evidence.add(fact);
         }
     }
+}
+/** Proof receipts preserve identity without retaining a model's captured readers. */
+function modelIdentity(model) {
+    let identity = MODEL_IDENTITIES.get(model);
+    if (!identity)
+        MODEL_IDENTITIES.set(model, (identity = Object.freeze({})));
+    return identity;
 }
 const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration']);
 const TRANSPARENT_SYNTAX = new Set(['ParenthesizedExpression', 'NonNullExpression', 'SatisfiesExpression', 'AsExpression', 'TypeAssertionExpression']);

@@ -15,8 +15,9 @@ import { resolveBoundedValueLimits } from '../value/index.ts'
 import { createValueEvaluatorFactory } from '../value/symbolic/engine.ts'
 import { ValueResolutionCache } from '../value/symbolic/cache.ts'
 import { ValueIndexOwner } from '../value/symbolic/owner.ts'
+import { SemanticComputationCache } from './compute.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions } from '../value/index.ts'
-import type { TypeScriptProject, TypeScriptProjectOptions, TypeScriptProjectSnapshot, TypeScriptProjectRefresh, TypeScriptProjectUpdate } from './model.ts'
+import type { TypeScriptComputation, TypeScriptProject, TypeScriptProjectOptions, TypeScriptProjectSnapshot, TypeScriptProjectRefresh, TypeScriptProjectUpdate } from './model.ts'
 
 /** Open a headless project using the installed native analyzer and a caller-local memory store. */
 export async function openTypeScriptProject(options: TypeScriptProjectOptions): Promise<TypeScriptProject> {
@@ -56,6 +57,7 @@ class ResidentProject implements TypeScriptProject {
   readonly #pendingSources = new Set<SourceId>()
   readonly #sourceShards = new Map<ProjectUniverseId, Map<FactShardKey, readonly SourceId[]>>()
   readonly #values = new ValueResolutionCache()
+  readonly #computations = new SemanticComputationCache(this.#values)
   readonly #index = new ValueIndexOwner()
 
   constructor(
@@ -76,6 +78,7 @@ class ResidentProject implements TypeScriptProject {
       commit: async (transaction, options) => {
         await store.commit(transaction, options)
         this.#index.committed(transaction)
+        this.#computations.committed(transaction.next)
         this.#pending.push(transaction)
         let sourcesByShard = this.#sourceShards.get(transaction.next.universe)
         if (!sourcesByShard) this.#sourceShards.set(transaction.next.universe, (sourcesByShard = new Map()))
@@ -111,6 +114,7 @@ class ResidentProject implements TypeScriptProject {
         })
         request.signal.throwIfAborted()
         const result = await this.#service.refresh(request)
+        this.#computations.committed(result.generation)
         this.#universe = result.generation.universe
         if (this.#currentReader?.generation.id !== result.generation.id) {
           const next = await this.#store.open(result.generation.universe, result.generation.id)
@@ -151,6 +155,7 @@ class ResidentProject implements TypeScriptProject {
       const makeEvaluator = createValueEvaluatorFactory(query, this.#values, index.load)
       const evaluators = new Map<unknown, Map<string, Promise<BoundedValueEvaluator<unknown>>>>()
       let disposed = false
+      const lifetime = new AbortController()
       const snapshot: TypeScriptProjectSnapshot = Object.freeze({
         generation: query.generation,
         query,
@@ -174,9 +179,14 @@ class ResidentProject implements TypeScriptProject {
           }
           return evaluator as Promise<BoundedValueEvaluator<Atom>>
         },
+        compute: <Input, Result>(observe: TypeScriptComputation<Input, Result>, input: Input, options: { readonly signal?: AbortSignal } = {}) => this.#computations.run(query, index.load, observe, input, () => {
+          if (disposed) throw new Error('TypeScript project snapshot is disposed.')
+        }, options.signal ? AbortSignal.any([options.signal, lifetime.signal, this.#lifetime.signal])
+          : AbortSignal.any([lifetime.signal, this.#lifetime.signal])),
         dispose: async () => {
           if (disposed) return
           disposed = true
+          lifetime.abort(new Error('TypeScript project snapshot is disposed.'))
           this.#readers.delete(snapshot)
           evaluators.clear()
           makeEvaluator.dispose()
@@ -194,6 +204,7 @@ class ResidentProject implements TypeScriptProject {
   dispose(): Promise<void> {
     if (this.#closing) return this.#closing
     this.#closed = true
+    this.#computations.close()
     this.#values.close()
     this.#index.close()
     this.#lifetime.abort(new Error('TypeScript project is disposed.'))

@@ -9,6 +9,7 @@ import { resolveBoundedValueLimits } from '../value/index.js';
 import { createValueEvaluatorFactory } from '../value/symbolic/engine.js';
 import { ValueResolutionCache } from '../value/symbolic/cache.js';
 import { ValueIndexOwner } from '../value/symbolic/owner.js';
+import { SemanticComputationCache } from './compute.js';
 /** Open a headless project using the installed native analyzer and a caller-local memory store. */
 export async function openTypeScriptProject(options) {
     if (options.sessions && options.binary)
@@ -47,6 +48,7 @@ class ResidentProject {
     #pendingSources = new Set();
     #sourceShards = new Map();
     #values = new ValueResolutionCache();
+    #computations = new SemanticComputationCache(this.#values);
     #index = new ValueIndexOwner();
     constructor(descriptor, sessions, store, ownsStore) {
         this.#descriptor = descriptor;
@@ -61,6 +63,7 @@ class ResidentProject {
             commit: async (transaction, options) => {
                 await store.commit(transaction, options);
                 this.#index.committed(transaction);
+                this.#computations.committed(transaction.next);
                 this.#pending.push(transaction);
                 let sourcesByShard = this.#sourceShards.get(transaction.next.universe);
                 if (!sourcesByShard)
@@ -99,6 +102,7 @@ class ResidentProject {
                 });
                 request.signal.throwIfAborted();
                 const result = await this.#service.refresh(request);
+                this.#computations.committed(result.generation);
                 this.#universe = result.generation.universe;
                 if (this.#currentReader?.generation.id !== result.generation.id) {
                     const next = await this.#store.open(result.generation.universe, result.generation.id);
@@ -144,6 +148,7 @@ class ResidentProject {
             const makeEvaluator = createValueEvaluatorFactory(query, this.#values, index.load);
             const evaluators = new Map();
             let disposed = false;
+            const lifetime = new AbortController();
             const snapshot = Object.freeze({
                 generation: query.generation,
                 query,
@@ -169,10 +174,16 @@ class ResidentProject {
                     }
                     return evaluator;
                 },
+                compute: (observe, input, options = {}) => this.#computations.run(query, index.load, observe, input, () => {
+                    if (disposed)
+                        throw new Error('TypeScript project snapshot is disposed.');
+                }, options.signal ? AbortSignal.any([options.signal, lifetime.signal, this.#lifetime.signal])
+                    : AbortSignal.any([lifetime.signal, this.#lifetime.signal])),
                 dispose: async () => {
                     if (disposed)
                         return;
                     disposed = true;
+                    lifetime.abort(new Error('TypeScript project snapshot is disposed.'));
                     this.#readers.delete(snapshot);
                     evaluators.clear();
                     makeEvaluator.dispose();
@@ -190,6 +201,7 @@ class ResidentProject {
         if (this.#closing)
             return this.#closing;
         this.#closed = true;
+        this.#computations.close();
         this.#values.close();
         this.#index.close();
         this.#lifetime.abort(new Error('TypeScript project is disposed.'));

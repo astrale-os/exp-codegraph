@@ -18,6 +18,8 @@ export declare class ValueResolutionCache {
     constructor(maximumEntries?: number, maximumBytes?: number);
     model(model: object | undefined): number;
     dependency(witness: ValueDependency): ValueDependency;
+    /** Aggregate computations share this cache's existing retention envelope. */
+    reserve(bytes: number): (() => void) | undefined;
     /** Only resident bases are interned; rejected demands add no retained registry entry. */
     basis(dependencies: Iterable<ValueDependency>, evidence: readonly FactId[], limits: ValueProofBasis['limits']): ValueProofBasis;
     get(key: string, valid: (result: EvaluatedValueResult<unknown>) => boolean, revision?: ValueIndexRevision): EvaluatedValueResult<unknown> | undefined;
@@ -27,6 +29,7 @@ export declare class ValueResolutionCache {
     private clear;
     close(): void;
     get size(): number;
+    get capacity(): number;
     get bytes(): number;
 }
 /** Estimate owned storage only for deeply immutable, portable result graphs. */
