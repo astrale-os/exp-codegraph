@@ -125,8 +125,11 @@ export class ValueResolutionCache {
     return entry.result
   }
 
-  put(key: string, result: EvaluatedValueResult<unknown>, bytes: number, basis?: ValueProofBasis): void {
+  put(key: string, result: EvaluatedValueResult<unknown>, bytes: number, basis?: ValueProofBasis, revision?: ValueIndexRevision): void {
     if (this.#closed) return
+    // A model may reenter another pinned evaluator between get and put. Only
+    // certify the producer's revision, never whichever reader last used get.
+    const lineage = this.#revision && (!revision || revision.token === this.#revision) ? this.#lineage : undefined
     // One inverse membership per entry; shared bases own the dependency graph.
     bytes += key.length * 2 + 224
     if (bytes + this.#frequency!.bytes > this.#maximumBytes) return
@@ -169,7 +172,7 @@ export class ValueResolutionCache {
     // The last reader of this basis may have been among the evicted entries.
     group = basis && this.#groups.get(basis.key)
     if (basis && !group) {
-      group = { basis, entries: new Set(), bytes: groupBytes, ...(coordinates ? { coordinates } : {}), ...(this.#revision ? { lineage: this.#lineage } : {}) }
+      group = { basis, entries: new Set(), bytes: groupBytes, ...(coordinates ? { coordinates } : {}), ...(lineage ? { lineage } : {}) }
       this.#groups.set(basis.key, group)
       this.#bytes += group.bytes
       if (coordinates) this.#coordinates.retain(coordinates)
@@ -188,7 +191,7 @@ export class ValueResolutionCache {
     this.#bytes += bytes
     if (group) {
       group.entries.add(entry)
-      group.lineage = this.#revision ? this.#lineage : undefined
+      group.lineage = lineage
     }
   }
 

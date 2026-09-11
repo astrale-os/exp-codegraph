@@ -151,3 +151,9 @@ provenance changes without a value fingerprint change. Capability-only transacti
 global witness. Old pins retain immutable selection metadata; compacted updates compare against
 their actual demanded base. Read-time path matching still selects among source buckets, whereas
 maintaining the selection journal never scans the unchanged body or source catalogue.
+
+
+A proof is admitted with its producing index revision. If a model reenters an older
+evaluator between lookup and publication, the outer proof cannot inherit that older
+reader's fast-validation lineage. A mismatched producer remains uncertified until
+its full dependency basis is checked against the requesting immutable index.

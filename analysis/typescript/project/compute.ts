@@ -95,7 +95,8 @@ export class SemanticComputationCache {
   private get(key: string, revision: ValueIndexRevision): Entry | undefined {
     const entry = this.#entries.get(key)
     if (!entry) return
-    if (entry.revision !== revision.token && (revision.parent !== entry.revision || entry.receipt.intersects(revision.changed))) {
+    if (entry.revision !== revision.token && (revision.selection !== 'typescript.calls/v1' ||
+      revision.parent !== entry.revision || entry.receipt.intersects(revision.changed))) {
       this.remove(key, entry)
       return
     }

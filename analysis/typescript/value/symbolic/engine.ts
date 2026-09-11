@@ -218,7 +218,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     const frozen = Object.freeze(result)
     state.signal?.throwIfAborted()
     if (key && resultBytes !== undefined) {
-      this.#cache!.put(key, frozen, resultBytes, basis)
+      this.#cache!.put(key, frozen, resultBytes, basis, this.#context.revision)
     }
     this.#scope?.proof(basis)
     return frozen

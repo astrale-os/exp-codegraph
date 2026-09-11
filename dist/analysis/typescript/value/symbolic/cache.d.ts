@@ -23,7 +23,7 @@ export declare class ValueResolutionCache {
     /** Only resident bases are interned; rejected demands add no retained registry entry. */
     basis(dependencies: Iterable<ValueDependency>, evidence: readonly FactId[], limits: ValueProofBasis['limits']): ValueProofBasis;
     get(key: string, valid: (result: EvaluatedValueResult<unknown>) => boolean, revision?: ValueIndexRevision): EvaluatedValueResult<unknown> | undefined;
-    put(key: string, result: EvaluatedValueResult<unknown>, bytes: number, basis?: ValueProofBasis): void;
+    put(key: string, result: EvaluatedValueResult<unknown>, bytes: number, basis?: ValueProofBasis, revision?: ValueIndexRevision): void;
     private advance;
     private remove;
     private clear;
