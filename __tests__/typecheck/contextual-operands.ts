@@ -6,6 +6,9 @@ declare const occurrence: OccurrenceId
 
 const values = await snapshot.values<{ readonly route: string }>({
   call(context) {
+    context.propertyName satisfies string | undefined
+    // @ts-expect-error Call metadata is read-only.
+    context.propertyName = 'changed'
     const callee = context.callee().resolve()
     if (callee.kind !== 'known' || callee.value.kind !== 'external') return
     const origin = callee.value.symbolOrigin

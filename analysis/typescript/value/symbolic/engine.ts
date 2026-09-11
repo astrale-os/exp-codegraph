@@ -348,12 +348,23 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
 
   private call(call: ResolvedCall, environment: Environment<Atom>, state: State, depth: number): RuntimeValue<Atom> {
     const callee = this.#index.children.get(call.occurrence)?.get('callee')
+    const evaluator = this
     let active = true
+    let propertyRead = false
+    let propertyName: string | undefined
     const operand = (id: OccurrenceId) => this.operandPlan({ kind: 'value', occurrence: id }, environment, state, depth + 1, () => active)
     let modeled: RuntimeValue<Atom> | undefined
     try {
       const output = this.#model?.({
         call,
+        get propertyName() {
+          if (!active) throw new Error('A call property can only be read during its call model.')
+          if (!propertyRead) {
+            propertyRead = true
+            propertyName = callee ? evaluator.callPropertyName(callee, state, depth + 1) : undefined
+          }
+          return propertyName
+        },
         callee: () => callee ? operand(callee) : this.operandPlan({ kind: 'unavailable', code: 'VALUE_CALLEE_MISSING', reason: 'The call has no callee occurrence.' }, environment, state, depth + 1, () => active),
         receiver: () => call.receiver ? operand(call.receiver) : undefined,
         argument: (index) => call.arguments[index] ? operand(call.arguments[index]!) : undefined,
@@ -382,6 +393,16 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         : call.target ? { kind: 'unsupported' as const, construct: 'external-or-bodyless-call' }
           : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.')
     return this.invoke(target, state, depth + 1, call, environment)
+  }
+
+  private callPropertyName(callee: OccurrenceId, state: State, depth: number): string | undefined {
+    state.signal?.throwIfAborted()
+    if (state.exhausted) return
+    if (++state.steps > state.limits.maximumSteps) { exhaust(state, 'VALUE_STEP_LIMIT', 'Bounded value evaluation exceeded its step limit.'); return }
+    if (depth > state.limits.maximumDepth) { exhaust(state, 'VALUE_DEPTH_LIMIT', 'Bounded value evaluation exceeded its depth limit.'); return }
+    this.depend(state, `occurrence:${callee}`)
+    const occurrence = this.#index.occurrences.get(callee)
+    return occurrence?.syntax === 'PropertyAccessExpression' ? occurrence.propertyName : undefined
   }
 
   private assignmentValue(id: OccurrenceId): OccurrenceId | undefined {

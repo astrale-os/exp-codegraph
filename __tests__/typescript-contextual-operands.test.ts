@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import {
   openTypeScriptProject,
+  type SymbolicCallContext,
   type SymbolicCallModel,
   type SymbolicOperandPlan,
   type SymbolicValue,
@@ -16,7 +17,10 @@ import type { OccurrenceId } from '../analysis/identity/index.ts'
 const source = `
 import { integration, provider } from '@fixture/platform'
 import { route, transparent } from '@fixture/http'
+import * as http from '@fixture/http'
+import { transport } from '@fixture/http'
 import { configuration } from './helper'
+import { dispatchMessage } from './dispatch'
 function operationsFor(name: string) { const deploy = () => name; return { deploy } }
 function register(name: string) {
   return integration({ id: name, operations: operationsFor(name) })
@@ -30,6 +34,16 @@ export const service = register('service-hosting')
 export const binding = provide('cloudflare')
 export const endpoint = routed('/health')
 export const member = router.send({ path: '/member', handler: () => 'member' })
+const aliasRouter = router
+export const aliasMember = aliasRouter.send({ path: '/alias', handler: () => 'alias' })
+export const castMember = (router as { prefix: string, send: typeof route }).send({ path: '/cast', handler: () => 'cast' })
+export const namespaceMember = http.send({ path: '/namespace', handler: () => 'namespace' })
+export const parenthesizedMember = (router.send)({ path: '/wrapped', handler: () => 'wrapped' })
+const send = route
+export const directAlias = send({ path: '/direct', handler: () => 'direct' })
+export const dispatched = dispatchMessage()
+const counterfeit = { open: () => ({ transmit: (_value: unknown) => 'local' }) } as typeof transport
+export const counterfeitDispatch = counterfeit.open().transmit('message')
 export const budgeted = route({ path: 'bounded', handler: () => 'bounded' })
 const fabricated = ((options: unknown) => 'local') as typeof route
 export const fake = fabricated({ path: '/fake', handler: () => 'fake' })
@@ -40,6 +54,7 @@ export const wrapped = wrap('preserved')
 export const wrappedFunction = transparent(capture('function'))
 `
 const helper = "export function configuration(path: string) { return { path, handler: () => path } }\n"
+const dispatch = "import { transport } from '@fixture/http'\nexport function dispatchMessage() { return transport.open().transmit('message') }\n"
 
 describe('contextual operands through the public project API', () => {
   let root: string
@@ -78,16 +93,42 @@ describe('contextual operands through the public project API', () => {
     }
   }
 
+  const memberModel: SymbolicCallModel<string> = (context) => {
+    const name = context.propertyName
+    if (name === 'open') {
+      const receiver = context.receiver()?.resolve()
+      if (receiver?.kind === 'known' && receiver.value.kind === 'external' &&
+        receiver.value.symbolOrigin?.package === '@fixture/http' && receiver.value.symbolOrigin.path[0] === 'transport') {
+        return { kind: 'atom', value: 'transport-builder' }
+      }
+      return
+    }
+    if (name === 'transmit' || name === 'dispatch') {
+      const receiver = context.receiver()?.resolve()
+      if (receiver?.kind === 'known' && receiver.value.kind === 'atom' && receiver.value.value === 'transport-builder') {
+        const message = literal(context.argument(0)?.resolve())
+        return typeof message === 'string' ? { kind: 'atom', value: `${name}:${message}` } : undefined
+      }
+      return
+    }
+    const callee = context.callee().resolve()
+    if (callee.kind === 'known' && callee.value.kind === 'external' &&
+      callee.value.symbolOrigin?.package === '@fixture/http' && callee.value.symbolOrigin.path[0] === 'route') {
+      return { kind: 'atom', value: name ?? 'direct' }
+    }
+  }
+
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), 'codegraph-operands-'))
     await Promise.all([
-      writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, noEmit: true }, files: ['index.ts', 'helper.ts'] })),
+      writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, noEmit: true }, files: ['index.ts', 'helper.ts', 'dispatch.ts'] })),
       writeFile(join(root, 'index.ts'), source),
       writeFile(join(root, 'helper.ts'), helper),
+      writeFile(join(root, 'dispatch.ts'), dispatch),
     ])
     for (const [name, declaration] of [
       ['platform', 'export declare function integration(options: any): unknown\nexport declare function provider(definition: any, implementation: any): unknown\n'],
-      ['http', 'export declare function route(options: any): unknown\nexport declare function transparent<Value>(value: Value): Value\n'],
+      ['http', 'export declare function route(options: any): unknown\nexport { route as send }\nexport declare function transparent<Value>(value: Value): Value\nexport interface Transport { transmit(message: string): unknown; dispatch(message: string): unknown }\nexport declare const transport: { open(): Transport }\n'],
     ]) {
       const directory = join(root, 'node_modules/@fixture', name!)
       await mkdir(directory, { recursive: true })
@@ -128,6 +169,75 @@ describe('contextual operands through the public project API', () => {
       .toMatchObject({ kind: 'known', value: { kind: 'atom', value: '/api/member:member:none' } })
     expect(await values.value(declaration('fake')).resolve())
       .toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'local' } })
+  })
+
+  it('keeps the called property distinct from an exported alias and proves the actual receiver', async () => {
+    const values = await snapshot.values({ call: memberModel, limits: { maximumDepth: 64 } })
+    for (const name of ['member', 'aliasMember', 'castMember', 'namespaceMember']) {
+      expect(await values.value(declaration(name)).resolve(), name)
+        .toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'send' } })
+    }
+    for (const name of ['directAlias', 'parenthesizedMember']) {
+      expect(await values.value(declaration(name)).resolve(), name)
+        .toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'direct' } })
+    }
+    expect(await values.value(declaration('dispatched')).resolve())
+      .toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'transmit:message' } })
+    expect(await values.value(declaration('counterfeitDispatch')).resolve())
+      .toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'local' } })
+  })
+
+  it('charges called-property metadata once to the current proof and ends its read lifetime', async () => {
+    let retained: SymbolicCallContext<string> | undefined
+    const model: SymbolicCallModel<string> = (context) => {
+      retained = context
+      const name = context.propertyName
+      for (let read = 0; read < 20; read += 1) expect(context.propertyName).toBe(name)
+      return { kind: 'atom', value: name ?? 'absent' }
+    }
+    const values = await snapshot.values({ call: model })
+    expect(await values.value(declaration('member')).resolve({ limits: { maximumSteps: 3 } }))
+      .toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'send' } })
+    expect(() => retained?.propertyName).toThrow('during its call model')
+    expect(await values.value(declaration('member')).resolve({ limits: { maximumSteps: 2 } }))
+      .toMatchObject({ kind: 'unknown', reasons: expect.arrayContaining([expect.objectContaining({ code: 'VALUE_STEP_LIMIT' })]) })
+    expect(await values.value(declaration('member')).resolve({ limits: { maximumDepth: 1 } }))
+      .toMatchObject({ kind: 'unknown', reasons: expect.arrayContaining([expect.objectContaining({ code: 'VALUE_DEPTH_LIMIT' })]) })
+    const unread = await snapshot.values({ call: (context) => { retained = context; return { kind: 'atom', value: 'unused' } } })
+    expect(await unread.value(declaration('member')).resolve({ limits: { maximumSteps: 2 } }))
+      .toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'unused' } })
+    expect(() => retained?.propertyName).toThrow('during its call model')
+    const throws = await snapshot.values({ call: (context) => { retained = context; throw new Error('member model failed') } })
+    await expect(throws.value(declaration('member')).resolve()).rejects.toThrow('member model failed')
+    expect(() => retained?.propertyName).toThrow('during its call model')
+  })
+
+  it('invalidates modeled method selection after a helper edit while retaining old proofs', async () => {
+    const options = { call: memberModel, limits: { maximumDepth: 64 } }
+    const values = await snapshot.values(options)
+    const before = await values.value(declaration('dispatched')).resolve()
+    const independent = await values.value(declaration('member')).resolve()
+    let changed: TypeScriptProjectSnapshot | undefined
+    let repaired: TypeScriptProjectSnapshot | undefined
+    try {
+      await writeFile(join(root, 'dispatch.ts'), dispatch.replace('.transmit(', '.dispatch('))
+      await project.refresh({ changed: ['dispatch.ts'] })
+      changed = await project.open()
+      const next = await changed.values(options)
+      expect(next.canReuse(before)).toBe(false)
+      expect(next.canReuse(independent)).toBe(true)
+      expect(await next.value(declaration('dispatched')).resolve())
+        .toMatchObject({ kind: 'known', value: { kind: 'atom', value: 'dispatch:message' } })
+      expect(await values.value(declaration('dispatched')).resolve()).toEqual(before)
+      await writeFile(join(root, 'dispatch.ts'), dispatch)
+      await project.refresh({ changed: ['dispatch.ts'] })
+      repaired = await project.open()
+      const restored = await repaired.values(options)
+      expect(restored.canReuse(before)).toBe(true)
+      expect(await restored.value(declaration('dispatched')).resolve()).toEqual(before)
+    } finally {
+      await Promise.all([changed?.dispose(), repaired?.dispose()])
+    }
   })
 
   it('charges every operand resolution to one cumulative budget and keeps other proofs independent', async () => {
