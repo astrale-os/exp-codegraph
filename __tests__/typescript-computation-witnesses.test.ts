@@ -131,4 +131,29 @@ describe('bounded exact computation witness collection', () => {
       } finally { cache.close(); values.close() }
     }
   })
+
+  it('releases a failed witness allocation and admits a successful retry', async () => {
+    const index = IndexedValues.empty().update([], [], true, capabilities), pinned = query('allocation-retry')
+    const values = new ValueResolutionCache(), cache = new SemanticComputationCache(values)
+    const baseline = values.bytes
+    const failure = new RangeError('interrupted witness allocation')
+    let executions = 0
+    const observe = () => { executions++; return { complete: true } }
+    try {
+      cache.committed(pinned.generation)
+      vi.stubGlobal('Float64Array', new Proxy(Float64Array, {
+        construct() { throw failure },
+      }))
+      try {
+        await expect(cache.run(pinned, async () => index, observe, null, () => {})).rejects.toBe(failure)
+      } finally { vi.unstubAllGlobals() }
+      expect(executions).toBe(0)
+      expect(values.bytes).toBe(baseline)
+      expect(await cache.run(pinned, async () => index, observe, null, () => {})).toEqual({ complete: true })
+      expect(await cache.run(pinned, async () => index, observe, null, () => {})).toEqual({ complete: true })
+      expect(executions).toBe(1)
+      cache.close()
+      expect(values.bytes).toBe(baseline)
+    } finally { cache.close(); values.close() }
+  })
 })

@@ -28,10 +28,9 @@ export class SemanticComputationCache {
         let active = true;
         // Includes temporary witness tags and simultaneously live folded tables.
         let release = key && current() ? this.reserve(key, COMPUTATION_RECEIPT_BYTES * 2 + COMPUTATION_WITNESS_BYTES + key.length * 2 + 512) : undefined;
-        if (release)
-            this.#building.add(release);
-        let receipt = release ? new ComputationReceipt() : undefined;
-        let witnesses = release ? new Float64Array(COMPUTATION_WITNESS_BYTES / Float64Array.BYTES_PER_ELEMENT) : undefined;
+        let receipt;
+        let witnesses;
+        let factory;
         const abandon = () => {
             receipt = undefined;
             witnesses = undefined;
@@ -41,33 +40,38 @@ export class SemanticComputationCache {
                 release = undefined;
             }
         };
-        const scope = {
-            signal,
-            check: () => {
-                check();
-                signal?.throwIfAborted();
-                if (!active)
-                    throw new Error('A semantic reader can only be used during its computation.');
-            },
-            fail: abandon,
-            proof: (basis) => {
-                if (receipt)
-                    for (const dependency of basis.dependencies) {
-                        if (recordComputationWitness(witnesses, this.#values.witnessIdentity(dependency)))
-                            receipt.add(dependency.key);
-                    }
-            },
-            selection: (revision, keys) => {
-                if (revision?.token !== index.revision.token || revision.selection !== 'typescript.calls/v1')
-                    abandon();
-                else if (receipt)
-                    for (const key of keys)
-                        receipt.add(key);
-            },
-        };
-        const factory = createValueEvaluatorFactory(query, this.#values, load, scope);
-        const reader = Object.freeze({ calls: factory.calls, values: factory });
         try {
+            if (release) {
+                this.#building.add(release);
+                receipt = new ComputationReceipt();
+                witnesses = new Float64Array(COMPUTATION_WITNESS_BYTES / Float64Array.BYTES_PER_ELEMENT);
+            }
+            const scope = {
+                signal,
+                check: () => {
+                    check();
+                    signal?.throwIfAborted();
+                    if (!active)
+                        throw new Error('A semantic reader can only be used during its computation.');
+                },
+                fail: abandon,
+                proof: (basis) => {
+                    if (receipt)
+                        for (const dependency of basis.dependencies) {
+                            if (recordComputationWitness(witnesses, this.#values.witnessIdentity(dependency)))
+                                receipt.add(dependency.key);
+                        }
+                },
+                selection: (revision, keys) => {
+                    if (revision?.token !== index.revision.token || revision.selection !== 'typescript.calls/v1')
+                        abandon();
+                    else if (receipt)
+                        for (const key of keys)
+                            receipt.add(key);
+                },
+            };
+            factory = createValueEvaluatorFactory(query, this.#values, load, scope);
+            const reader = Object.freeze({ calls: factory.calls, values: factory });
             const result = await cancellable(Promise.resolve().then(() => {
                 scope.check();
                 return observe(reader, captured ? captured.value : input);
@@ -90,7 +94,7 @@ export class SemanticComputationCache {
         finally {
             active = false;
             abandon();
-            factory.dispose();
+            factory?.dispose();
         }
     }
     get(key, revision) {
