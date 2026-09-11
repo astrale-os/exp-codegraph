@@ -81,14 +81,17 @@ async function inspectRoutes(
   return { completeness: inventory.completeness, inspected }
 }
 
-// After each refresh, use the same callback with the current snapshot.
-await project.refresh()
+// Pass the changed paths from your file watcher, then open the current snapshot.
+await project.refresh({ changed: changedPaths })
 await using current = await project.open()
 const report = await current.compute(inspectRoutes, {
   paths: ['routes/health.ts'],
   limits: { maximumDepth: 32, maximumSteps: 10_000, maximumAlternatives: 16 },
 })
 ```
+
+`changedPaths` comes from the consumer's file watcher or change tracking. After the
+initial load, `refresh()` without change hints does not scan for filesystem changes.
 
 This observes the handler shape; a rule must separately establish the callee's library
 identity before deciding that a call declares a route. Missing arguments remain explicit,
@@ -168,7 +171,8 @@ retaining a plan does not create an independently usable proof.
 
 Outside the model, `values.value(occurrence)` uses the same navigation operations, but
 `.resolve({ limits, signal })` is asynchronous and starts an independent bounded proof.
-The returned evidence includes positive and negative reads performed by the model.
+Reuse tracks positive and negative reads performed by the model; the public
+`evidence` lists the contributing `FactId`s.
 An occurrence read outside a call model does not supply an arbitrary caller's argument
 bindings; use the contextual operand inside the model when those bindings are needed.
 
