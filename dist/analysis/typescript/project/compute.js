@@ -1,5 +1,5 @@
 import { createValueEvaluatorFactory } from '../value/symbolic/engine.js';
-import { ComputationReceipt, COMPUTATION_RECEIPT_BYTES } from '../value/symbolic/receipt.js';
+import { ComputationReceipt, COMPUTATION_RECEIPT_BYTES, COMPUTATION_WITNESS_BYTES, recordComputationWitness } from '../value/symbolic/receipt.js';
 import { capturePortable, restorePortable } from './portable.js';
 /** One project-owned admission policy, with no callback or snapshot retained. */
 export class SemanticComputationCache {
@@ -26,13 +26,15 @@ export class SemanticComputationCache {
                 return restorePortable(entry.encoded);
         }
         let active = true;
-        // Includes the simultaneously live folded tables during compaction.
-        let release = key && current() ? this.reserve(key, COMPUTATION_RECEIPT_BYTES * 2 + key.length * 2 + 512) : undefined;
+        // Includes temporary witness tags and simultaneously live folded tables.
+        let release = key && current() ? this.reserve(key, COMPUTATION_RECEIPT_BYTES * 2 + COMPUTATION_WITNESS_BYTES + key.length * 2 + 512) : undefined;
         if (release)
             this.#building.add(release);
         let receipt = release ? new ComputationReceipt() : undefined;
+        let witnesses = release ? new Float64Array(COMPUTATION_WITNESS_BYTES / Float64Array.BYTES_PER_ELEMENT) : undefined;
         const abandon = () => {
             receipt = undefined;
+            witnesses = undefined;
             if (release) {
                 release();
                 this.#building.delete(release);
@@ -50,8 +52,10 @@ export class SemanticComputationCache {
             fail: abandon,
             proof: (basis) => {
                 if (receipt)
-                    for (const { key } of basis.dependencies)
-                        receipt.add(key);
+                    for (const dependency of basis.dependencies) {
+                        if (recordComputationWitness(witnesses, this.#values.witnessIdentity(dependency)))
+                            receipt.add(dependency.key);
+                    }
             },
             selection: (revision, keys) => {
                 if (revision?.token !== index.revision.token || revision.selection !== 'typescript.calls/v1')

@@ -1,6 +1,17 @@
 import { createHash } from 'node:crypto';
 const HASHES = 12;
 export const COMPUTATION_RECEIPT_BYTES = 512 * 1024;
+export const COMPUTATION_WITNESS_BYTES = 4096 * Float64Array.BYTES_PER_ELEMENT;
+/** Only an exact tag match skips hashing; a slot collision records both keys. */
+export function recordComputationWitness(tags, identity) {
+    if (identity === undefined || !Number.isSafeInteger(identity) || identity <= 0)
+        return true;
+    const slot = identity & (tags.length - 1);
+    if (tags[slot] === identity)
+        return false;
+    tags[slot] = identity;
+    return true;
+}
 /** A negative membership answer proves absence; every positive forces a miss. */
 export class ComputationReceipt {
     #words;
