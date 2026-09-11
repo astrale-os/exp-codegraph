@@ -125,7 +125,10 @@ logical identity, semantic admission, and unowned or foreign-codec fallback.
 The symbolic index owns one immutable contribution per admitted packed occurrence or call. Its
 fact identity, body fragment, and row ordinal also serve as the column's singleton entry; the
 fragment keeps no second array of row references. A private self-valued data field lets ordinary
-column reads use that same object without a getter or a second lookup. Projected occurrences,
+column reads use that same object without a getter or a second lookup. A private constructor
+initializes all four data fields before freezing the instance, so large index allocation histories
+reuse the instance layout instead of retaining separate frozen object-literal maps and descriptors.
+The constructor and prototype are not exposed by public readers. Projected occurrences,
 calls, portable proofs, and transport payloads never expose these entries. Overlapping facts retain
 their individual contributions and project them in fact-identity order, so promotion and demotion preserve the exact
 surviving entry and pinned index roots. Function identity never replaces contributing fact identity.
