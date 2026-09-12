@@ -47,6 +47,71 @@ Path and source filters select the returned inventory. The current implementatio
 a project-wide fact index with value evaluation; these filters do not restrict native
 extraction or guarantee that only selected source facts are loaded.
 
+## Reuse a semantic computation
+
+For repeated lint runs, put the semantic observation in a stable callback and pass every
+variable parameter through `input`. `snapshot.compute()` tracks the callback's call
+selections and value reads, including absent reads and already cached proofs.
+
+```ts
+import {
+  mapValueResult,
+  type BoundedValueLimits,
+  type TypeScriptSemanticReader,
+} from '@astrale-os/codegraph/analysis/typescript'
+
+// Define once, outside the refresh/lint loop.
+async function inspectRoutes(
+  read: TypeScriptSemanticReader,
+  input: { paths: readonly string[]; limits: BoundedValueLimits },
+) {
+  const inventory = await read.calls({ paths: input.paths })
+  const values = await read.values({ limits: input.limits })
+  const inspected = await Promise.all(inventory.sites.map(async site => {
+    const argument = site.call.arguments[0]
+    return {
+      path: site.path,
+      span: site.occurrence.span,
+      status: argument === undefined ? undefined : mapValueResult(
+        await values.value(argument).property('handler').invoke().property('status').resolve(),
+        value => value.kind === 'literal' && typeof value.value === 'number' ? value.value : null,
+      ),
+    }
+  }))
+  return { completeness: inventory.completeness, inspected }
+}
+
+// Pass the changed paths from your file watcher, then open the current snapshot.
+await project.refresh({ changed: changedPaths })
+await using current = await project.open()
+const report = await current.compute(inspectRoutes, {
+  paths: ['routes/health.ts'],
+  limits: { maximumDepth: 32, maximumSteps: 10_000, maximumAlternatives: 16 },
+})
+```
+
+`changedPaths` comes from the consumer's file watcher or change tracking. After the
+initial load, `refresh()` without change hints does not scan for filesystem changes.
+
+This observes the handler shape; a rule must separately establish the callee's library
+identity before deciding that a call declares a route. Missing arguments remain explicit,
+and a proved nonnumeric value projects to `null`. `mapValueResult` preserves unknowns,
+alternatives, unsupported results and evidence; the report also preserves inventory
+completeness. Neither an incomplete empty selection nor an unknown status is a passing rule.
+The projected report contains plain data rather than opaque evaluation receipts.
+
+Codegraph reuses the report when its reads still hold, including across unrelated edits.
+Relevant changes, newly available evidence or an unverified revision rerun the callback.
+Each value resolution has its own limits; contextual operands share that enclosing proof's
+budget. Computations and value proofs share the project's bounded cache. Plain inputs are
+captured before yielding, and admitted results are owned, deeply frozen data. Nonportable
+inputs/results or oversized results still execute normally without reuse.
+
+Readers, evaluators and plans supplied to the callback expire when it settles. Keep source
+text and mutable configuration out of its closure. Return source coordinates with semantic
+observations, then render diagnostics against the source revision currently being linted;
+if the editor has advanced, obtain a fresh snapshot before applying those diagnostics.
+
 ## Model a library boundary
 
 `snapshot.values({ call })` lets a consumer model a library boundary while Codegraph
@@ -85,6 +150,14 @@ even when a helper constructed the object and its method captures a helper argum
 The authored keys of shorthand properties and imported aliases remain distinct from
 their canonical value symbols.
 
+`context.propertyName` lazily reads the member named by the callee IR. It is distinct from
+the resolved declaration's name or a renamed export. Its first read records the callee
+dependency and consumes at most one proof step; repeated reads reuse that metadata. An
+absent or unsupported member form leaves it `undefined`. The name alone proves neither
+the receiver's identity nor a library boundary: establish the receiver with
+`context.receiver()?.resolve()` before dispatching on its member name. Like operands,
+this metadata can only be read during the synchronous model call.
+
 Inside the synchronous call model, `.resolve()` is synchronous and shares the enclosing
 proof's environment, depth, step allowance, cancellation and evidence. It accepts no
 budget overrides. Constructing a plan does not evaluate it; repeated resolutions consume
@@ -98,7 +171,8 @@ retaining a plan does not create an independently usable proof.
 
 Outside the model, `values.value(occurrence)` uses the same navigation operations, but
 `.resolve({ limits, signal })` is asynchronous and starts an independent bounded proof.
-The returned evidence includes positive and negative reads performed by the model.
+Reuse tracks positive and negative reads performed by the model; the public
+`evidence` lists the contributing `FactId`s.
 An occurrence read outside a call model does not supply an arbitrary caller's argument
 bindings; use the contextual operand inside the model when those bindings are needed.
 
