@@ -12,16 +12,30 @@ export type SymbolicValue<Atom = never> =
 
 export interface SymbolicCallContext<Atom> {
   readonly call: ResolvedCall
+  /**
+   * Property named by the callee IR, distinct from the resolved declaration's name.
+   * Absent for calls without a proved property name. The first read uses the current
+   * proof budget and dependencies; reads are valid only during this call model.
+   */
+  readonly propertyName?: string
   /** Demand operands only when the model needs them; all reads use the current proof budget. */
-  callee(): ValueResult<SymbolicValue<Atom>>
-  receiver(): ValueResult<SymbolicValue<Atom>> | undefined
-  argument(index: number): ValueResult<SymbolicValue<Atom>> | undefined
+  callee(): SymbolicOperandPlan<Atom>
+  receiver(): SymbolicOperandPlan<Atom> | undefined
+  argument(index: number): SymbolicOperandPlan<Atom> | undefined
 }
 
-/** Undefined delegates ordinary TypeScript calls to the generic evaluator. */
+/** Lazy operand in the current proof; resolve only during its synchronous call model. */
+export interface SymbolicOperandPlan<Atom = never> {
+  property(name: string): SymbolicOperandPlan<Atom>
+  invoke(): SymbolicOperandPlan<Atom>
+  resolve(): ValueResult<SymbolicValue<Atom>>
+}
+
+/** Undefined delegates ordinary calls; returning an operand preserves its symbolic value. */
 export type SymbolicCallModel<Atom> = (context: SymbolicCallContext<Atom>) =>
   | { readonly kind: 'atom'; readonly value: Atom }
   | { readonly kind: 'unknown'; readonly reason: string }
+  | SymbolicOperandPlan<Atom>
   | undefined
 
 export interface SymbolicValueResolveOptions {

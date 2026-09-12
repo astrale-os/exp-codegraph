@@ -36,6 +36,15 @@ delegate to generic evaluation. Canonical receiver symbol origin remains distinc
 method's declaration origin. Model functions and emitted atoms must have stable, deterministic
 meaning for their lifetime; a changed model must use a new function identity.
 
+The call context's `propertyName` is the member named by its callee occurrence, not the name of
+the selected declaration or a renamed export. Its first read records the callee dependency and
+uses at most one step of the enclosing proof; repeated reads share that captured metadata.
+Unrequested metadata costs no proof work. A model can combine the member name with a proved
+receiver without trusting a structural method signature. Missing or unsupported callee shapes
+leave the name absent. Like operand resolution, reads end with the synchronous call model.
+The current native IR only pairs a direct property callee with its receiver; parenthesized
+`(object.method)(...)` and computed callees are not given inferred member metadata here.
+
 One resident project owns a lazy body/symbol/source index per immutable generation, shared across
 snapshots, models and budgets. Standalone evaluators keep a query-local index. There is no global
 index or compiler handle. Completed proofs retain evidence and private fingerprints for every
