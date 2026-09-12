@@ -3,7 +3,7 @@ import type { AnalysisQuery } from '../../query/index.ts'
 import type { ValueIndex } from '../value/symbolic/facts.ts'
 import { createValueEvaluatorFactory, type ValueReadScope } from '../value/symbolic/engine.ts'
 import type { ValueIndexRevision, ValueResolutionCache } from '../value/symbolic/cache.ts'
-import { ComputationReceipt, COMPUTATION_RECEIPT_BYTES } from '../value/symbolic/receipt.ts'
+import { ComputationReceipt, COMPUTATION_RECEIPT_BYTES, COMPUTATION_WITNESS_BYTES, recordComputationWitness } from '../value/symbolic/receipt.ts'
 import type { TypeScriptComputation, TypeScriptSemanticReader } from './model.ts'
 import { capturePortable, restorePortable } from './portable.ts'
 
@@ -42,33 +42,42 @@ export class SemanticComputationCache {
       if (entry) return restorePortable<Result>(entry.encoded)
     }
     let active = true
-    // Includes the simultaneously live folded tables during compaction.
-    let release = key && current() ? this.reserve(key, COMPUTATION_RECEIPT_BYTES * 2 + key.length * 2 + 512) : undefined
-    if (release) this.#building.add(release)
-    let receipt = release ? new ComputationReceipt() : undefined
+    // Includes temporary witness tags and simultaneously live folded tables.
+    let release = key && current() ? this.reserve(key, COMPUTATION_RECEIPT_BYTES * 2 + COMPUTATION_WITNESS_BYTES + key.length * 2 + 512) : undefined
+    let receipt: ComputationReceipt | undefined
+    let witnesses: Float64Array | undefined
+    let factory: ReturnType<typeof createValueEvaluatorFactory> | undefined
     const abandon = () => {
       receipt = undefined
+      witnesses = undefined
       if (release) { release(); this.#building.delete(release); release = undefined }
     }
-    const scope: ValueReadScope = {
-      signal,
-      check: () => {
-        check()
-        signal?.throwIfAborted()
-        if (!active) throw new Error('A semantic reader can only be used during its computation.')
-      },
-      fail: abandon,
-      proof: (basis) => {
-        if (receipt) for (const { key } of basis.dependencies) receipt.add(key)
-      },
-      selection: (revision, keys) => {
-        if (revision?.token !== index.revision.token || revision.selection !== 'typescript.calls/v1') abandon()
-        else if (receipt) for (const key of keys) receipt.add(key)
-      },
-    }
-    const factory = createValueEvaluatorFactory(query, this.#values, load, scope)
-    const reader: TypeScriptSemanticReader = Object.freeze({ calls: factory.calls, values: factory })
     try {
+      if (release) {
+        this.#building.add(release)
+        receipt = new ComputationReceipt()
+        witnesses = new Float64Array(COMPUTATION_WITNESS_BYTES / Float64Array.BYTES_PER_ELEMENT)
+      }
+      const scope: ValueReadScope = {
+        signal,
+        check: () => {
+          check()
+          signal?.throwIfAborted()
+          if (!active) throw new Error('A semantic reader can only be used during its computation.')
+        },
+        fail: abandon,
+        proof: (basis) => {
+          if (receipt) for (const dependency of basis.dependencies) {
+            if (recordComputationWitness(witnesses!, this.#values.witnessIdentity(dependency))) receipt.add(dependency.key)
+          }
+        },
+        selection: (revision, keys) => {
+          if (revision?.token !== index.revision.token || revision.selection !== 'typescript.calls/v1') abandon()
+          else if (receipt) for (const key of keys) receipt.add(key)
+        },
+      }
+      factory = createValueEvaluatorFactory(query, this.#values, load, scope)
+      const reader: TypeScriptSemanticReader = Object.freeze({ calls: factory.calls, values: factory })
       const result = await cancellable(Promise.resolve().then(() => {
         scope.check()
         return observe(reader, captured ? captured.value : input)
@@ -88,7 +97,7 @@ export class SemanticComputationCache {
     } finally {
       active = false
       abandon()
-      factory.dispose()
+      factory?.dispose()
     }
   }
 

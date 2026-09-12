@@ -37,6 +37,16 @@ export class ValueResolutionCache {
         const resident = this.#readers.get(witness.key)?.witness;
         return resident && resident.fingerprint === witness.fingerprint ? resident : witness;
     }
+    /** Weak, cache-local tags never recycle, even after proof eviction. */
+    witnessIdentity(witness) {
+        let identity = this.#witnessIds.get(witness);
+        if (identity !== undefined)
+            return identity;
+        if (this.#nextWitness >= Number.MAX_SAFE_INTEGER)
+            return;
+        this.#witnessIds.set(witness, (identity = ++this.#nextWitness));
+        return identity;
+    }
     /** Aggregate computations share this cache's existing retention envelope. */
     reserve(bytes) {
         if (this.#closed || !Number.isSafeInteger(bytes) || bytes < 0 ||
@@ -58,12 +68,7 @@ export class ValueResolutionCache {
     /** Only resident bases are interned; rejected demands add no retained registry entry. */
     basis(dependencies, evidence, limits) {
         const ordered = [...new Map(Array.from(dependencies, dependency => [dependency.key, this.dependency(dependency)])).values()];
-        const ids = ordered.map((dependency) => {
-            let id = this.#witnessIds.get(dependency);
-            if (id === undefined)
-                this.#witnessIds.set(dependency, (id = ++this.#nextWitness));
-            return id;
-        });
+        const ids = ordered.map((dependency) => this.witnessIdentity(dependency) ?? [dependency.key, dependency.fingerprint]);
         const coordinates = this.#coordinates.prepare(evidence, limits);
         const key = JSON.stringify([limits.maximumDepth, limits.maximumSteps, limits.maximumAlternatives, ids,
             coordinates.evidence.map(token => token.id)]);

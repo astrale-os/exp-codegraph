@@ -18,6 +18,8 @@ export declare class ValueResolutionCache {
     constructor(maximumEntries?: number, maximumBytes?: number);
     model(model: object | undefined): number;
     dependency(witness: ValueDependency): ValueDependency;
+    /** Weak, cache-local tags never recycle, even after proof eviction. */
+    witnessIdentity(witness: ValueDependency): number | undefined;
     /** Aggregate computations share this cache's existing retention envelope. */
     reserve(bytes: number): (() => void) | undefined;
     /** Only resident bases are interned; rejected demands add no retained registry entry. */

@@ -77,6 +77,12 @@ escaped reads expire and late work remains handled. Each caller owns its cancell
 in-flight work is not deduplicated. Cached proofs retain opaque weak model identities,
 not model closures that could capture a computation reader.
 
+During collection, a temporary 32 KiB direct table recognizes repeated dependency witnesses
+by exact, non-recycled cache-local numeric identities. Slot collisions and unavailable safe
+identities repeat the normal hash; they never omit a dependency. Its reservation includes
+the table and receipt compaction, and retained receipts contain neither these tags nor
+references to their witnesses. Each independent computation starts with an empty table.
+
 Receipt collection includes value cache hits, unknowns, budgets and absent reads, plus
 complete call-selection membership and completeness. A negative filter answer for every
 key of a direct, atomic index delta permits reuse without rerunning the observer or
