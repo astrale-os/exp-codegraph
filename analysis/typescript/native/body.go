@@ -181,11 +181,7 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 		return b.definitions[i].Use < b.definitions[j].Use
 	})
 	sort.Slice(b.calls, func(i, j int) bool { return b.calls[i].Occurrence < b.calls[j].Occurrence })
-	sort.Slice(b.relations, func(i, j int) bool {
-		left := b.relations[i].Parent + "\x00" + b.relations[i].Role + "\x00" + b.relations[i].Child
-		right := b.relations[j].Parent + "\x00" + b.relations[j].Role + "\x00" + b.relations[j].Child
-		return left < right
-	})
+	sortBodyRelations(b.relations)
 
 	ir := functionBodyIR{
 		Function: b.owner, Scope: b.scope, Parameters: uniqueInOrder(parameters), Occurrences: b.occurrences,

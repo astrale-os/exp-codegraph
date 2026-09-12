@@ -25,6 +25,10 @@ it('shares prepared payload bytes across exact native fact and shard identities'
   await goTest(['canonical.go', 'identity.go', 'fact_identity.go', 'fact_identity_test.go', 'model.go', 'framing.go', 'framing_records.go', 'telemetry.go'])
 }, 95_000)
 
+it('orders native body relations without allocating composite keys or changing semantic identities', async () => {
+  await goTest(['body_relations.go', 'body_relations_test.go', 'canonical.go', 'identity.go', 'fact_identity.go', 'model.go'])
+}, 95_000)
+
 it('preserves columnar and legacy packed native bodies with exact negotiation', async () => {
   const output = await goTest(['model.go', 'body_packed.go', 'body_packed_test.go'], ['-v'])
   const marker = 'CODEGRAPH_PACKED_BODY_FIXTURE '
