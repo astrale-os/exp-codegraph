@@ -139,3 +139,15 @@ witness only when both contributing fingerprints are equal; overlapping fact own
 occurrence witness. Initializer fingerprints include the referenced occurrence fingerprints, so
 proofs cut short by a budget cannot retain evidence from a removed fact. Revision deltas report every
 changed fingerprint, including added and removed lookup keys, without scanning untouched tables.
+
+Call selection has its own private witnesses for the global completeness, complete inventory,
+source buckets, logical paths and the count of relevant sources without a path. Filtered reads
+record absent buckets as well as present ones. These witnesses are published atomically with the
+value index and capabilities from the same pinned query; an index without this certification can
+still produce calls but cannot certify a reusable selection. Changed bodies, effective source
+mappings and overlapping occurrence owners update only affected buckets. Completeness counters
+preserve shared attribution and partial reasons hidden by unavailable results, including when
+provenance changes without a value fingerprint change. Capability-only transactions update the
+global witness. Old pins retain immutable selection metadata; compacted updates compare against
+their actual demanded base. Read-time path matching still selects among source buckets, whereas
+maintaining the selection journal never scans the unchanged body or source catalogue.

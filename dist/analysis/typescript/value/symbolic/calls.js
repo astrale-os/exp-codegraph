@@ -1,22 +1,26 @@
 import { combineCompleteness } from '../../../facts/index.js';
 import { createTypeScriptFactReader } from '../../facts/index.js';
-// These limitations affect execution topology, while walkOwned still visits
-// every call. Nested class/namespace scopes are deliberately NOT accepted.
-const FLOW_ONLY = new Set([
-    'CFG_EXPRESSION_BRANCH_PARTIAL', 'CFG_SWITCH_PARTIAL', 'CFG_TRY_PARTIAL',
-    'CFG_LABEL_PARTIAL', 'CFG_UNRESOLVED_CONTINUE', 'CFG_UNRESOLVED_BREAK',
-]);
+import { CALL_SELECTION, callSelectionKeys, freezeCompleteness, inventoryCompleteness, reasonKey, unavailable } from './selection.js';
 export function createCallProjection(query, loadIndex) {
     let pending;
     const sites = new Map();
-    const project = async (options = {}) => {
+    const project = async (options = {}, observe) => {
         const signal = options.signal;
         const paths = options.paths && new Set(options.paths);
         const sources = options.sources && new Set(options.sources);
+        const keys = observe && callSelectionKeys({ ...(paths ? { paths: [...paths] } : {}), ...(sources ? { sources: [...sources] } : {}) });
         signal?.throwIfAborted();
         pending ??= (async () => {
+            const index = await loadIndex();
+            const selection = index.revision?.selection === CALL_SELECTION ? index.callsSelection : undefined;
+            if (selection && index.sources && index.callsBySource)
+                return {
+                    index, paths: { get: (source) => index.sources.get(source)?.payload.logicalPath },
+                    calls: index.callsBySource, completion: selection.completion,
+                    bySource: () => selection.sources(), local: (source) => selection.local(source), selection,
+                };
             const reader = createTypeScriptFactReader(query);
-            const [index, capabilities] = await Promise.all([loadIndex(), query.capabilities()]);
+            const capabilities = await query.capabilities();
             const sourceFacts = index.sources ? [...index.sources.values()] : await collect(reader.export('source'));
             const paths = new Map(sourceFacts.map((fact) => [fact.payload.source, fact.payload.logicalPath]));
             let calls = index.callsBySource ?? new Map();
@@ -52,11 +56,14 @@ export function createCallProjection(query, loadIndex) {
                 }
                 calls = discovered;
             }
-            return { index, paths, calls, completion, bySource };
+            return { index, paths, calls, completion, bySource: () => bySource, local: (source) => bySource.get(source) };
         })().catch((error) => { pending = undefined; throw error; });
         const inventory = await pending;
         signal?.throwIfAborted();
+        observe?.(inventory.selection ? inventory.index.revision : undefined, keys);
         let completeness = inventory.completion;
+        if (paths?.size === 0 || sources?.size === 0)
+            return Object.freeze({ sites: Object.freeze([]), completeness: freezeCompleteness(completeness) });
         const result = [];
         const unresolvedSources = new Set();
         const selected = (source) => {
@@ -68,17 +75,20 @@ export function createCallProjection(query, loadIndex) {
                 return false;
             const path = inventory.paths.get(source);
             if (path === undefined) {
-                unresolvedSources.add(source);
+                if (!inventory.selection || sources)
+                    unresolvedSources.add(source);
                 return false;
             }
             return paths.has(path);
         };
-        for (const [source, completion] of inventory.bySource) {
-            if (completion.kind !== 'complete' && selected(source))
+        const completions = sources ? [...sources].map((source) => [source, inventory.local(source)]) : inventory.bySource();
+        for (const [source, completion] of completions) {
+            if (completion && completion.kind !== 'complete' && selected(source))
                 completeness = combineCompleteness(completeness, completion);
         }
-        for (const [source, calls] of inventory.calls) {
-            if (!selected(source))
+        const groups = sources ? [...sources].map((source) => [source, inventory.calls.get(source)]) : inventory.calls;
+        for (const [source, calls] of groups) {
+            if (!calls || !selected(source))
                 continue;
             for (const id of new Set(calls)) {
                 signal?.throwIfAborted();
@@ -103,11 +113,12 @@ export function createCallProjection(query, loadIndex) {
                 result.push(site);
             }
         }
-        if (unresolvedSources.size)
+        const unresolved = inventory.selection && paths && !sources ? inventory.selection.unmapped : unresolvedSources.size;
+        if (unresolved)
             completeness = combineCompleteness(completeness, {
                 kind: 'partial', reasons: [{ code: 'CALL_SOURCE_SELECTION_UNKNOWN',
                         message: 'A source has no logical path, so its calls cannot be included or excluded by the requested path filter.',
-                        effective: { sources: unresolvedSources.size } }],
+                        effective: { sources: unresolved } }],
             });
         result.sort((left, right) => (left.path ?? '').localeCompare(right.path ?? '') ||
             left.occurrence.span.start - right.occurrence.span.start || left.call.occurrence.localeCompare(right.call.occurrence));
@@ -115,29 +126,10 @@ export function createCallProjection(query, loadIndex) {
     };
     return Object.assign(project, { dispose() { pending = undefined; sites.clear(); } });
 }
-function inventoryCompleteness(completeness) {
-    if (completeness.kind !== 'partial')
-        return completeness;
-    const reasons = completeness.reasons.filter(({ code }) => !FLOW_ONLY.has(code));
-    return reasons.length ? { kind: 'partial', reasons } : { kind: 'complete' };
-}
-function unavailable(message) {
-    return { kind: 'unavailable', reasons: [{ code: 'CALL_INVENTORY_UNAVAILABLE', message, retryable: false }] };
-}
-function freezeCompleteness(value) {
-    return Object.freeze(value.kind === 'complete' ? value : {
-        ...value, reasons: Object.freeze(value.reasons.map((reason) => Object.freeze({ ...reason,
-            ...('effective' in reason ? { effective: Object.freeze({ ...reason.effective }) } : {}),
-        }))),
-    });
-}
 async function collect(values) {
     const result = [];
     for await (const value of values)
         result.push(value);
     return result;
-}
-function reasonKey(reason) {
-    return JSON.stringify([reason.code, reason.message, Object.entries(reason.effective).sort(([left], [right]) => left.localeCompare(right))]);
 }
 //# sourceMappingURL=calls.js.map

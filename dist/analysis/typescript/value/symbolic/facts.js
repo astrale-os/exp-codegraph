@@ -4,6 +4,7 @@ import { createTypeScriptFactReader, TypeScriptFactContractError } from '../../f
 import { projectPackedTypeScriptBody } from '../../physical/index.js';
 import { bodyFragment } from './fragment.js';
 import { ValueIndexTable } from './table.js';
+import { CALL_SELECTION, CallSelection } from './selection.js';
 /** Most lookups have one contributing fact; uncommon overlaps retain their precise ordered owners. */
 class Column {
     [Symbol.toStringTag] = 'ValueIndexColumn';
@@ -131,6 +132,7 @@ class ColumnEdit {
         throw new Error('Value index column edit is already published.'); }
 }
 export class IndexedValues {
+    callsSelection;
     work;
     bodies;
     occurrences;
@@ -159,7 +161,8 @@ export class IndexedValues {
     #aggregateEvidence;
     #mutationOwners;
     #aliasSources;
-    constructor(facts, columns, derived, hashes, factEvidence, witnesses, aggregateEvidence, mutationOwners, aliasSources, revision, work = { facts: 0, bodies: 0, contributions: 0 }) {
+    #selection;
+    constructor(facts, columns, derived, hashes, factEvidence, witnesses, aggregateEvidence, mutationOwners, aliasSources, revision, work = { facts: 0, bodies: 0, contributions: 0 }, selection = new CallSelection()) {
         this.#facts = facts;
         this.#columns = columns;
         this.#derived = derived;
@@ -170,6 +173,8 @@ export class IndexedValues {
         this.#mutationOwners = mutationOwners;
         this.#aliasSources = aliasSources;
         this.revision = revision;
+        this.#selection = selection;
+        this.callsSelection = revision.selection === CALL_SELECTION ? selection : undefined;
         this.work = Object.freeze(work);
         this.bodies = columns.bodies;
         this.occurrences = projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row));
@@ -242,7 +247,7 @@ export class IndexedValues {
             return this.#columns.symbols.fingerprint(key.slice(7), this.#hashes);
         return this.#witnesses.get(key)?.fingerprint;
     }
-    update(upserts, deletes, initial = false) {
+    update(upserts, deletes, initial = false, capabilities) {
         const facts = this.#facts.edit();
         const hashes = this.#hashes.edit();
         const factEvidence = this.#factEvidence.edit();
@@ -251,6 +256,7 @@ export class IndexedValues {
         const touched = new Set();
         const inputs = new Set();
         const changed = new Map();
+        const bodyOwners = new Set(), mappingSources = new Set(), siteSources = new Set();
         for (const id of deletes)
             if (this.#facts.has(id))
                 changed.set(id, undefined);
@@ -265,6 +271,16 @@ export class IndexedValues {
         }
         for (const [id, next] of changed) {
             const previous = this.#facts.get(id);
+            for (const fact of [previous, next]) {
+                if (fact?.namespace === 'typescript.source')
+                    mappingSources.add(fact.payload.source);
+                else if (fact?.namespace === 'typescript.body') {
+                    const fragment = bodyFragment(fact);
+                    bodyOwners.add(fragment.owner);
+                    for (const source of fragment.callsBySource.keys())
+                        siteSources.add(source);
+                }
+            }
             if (previous)
                 primary(columns, previous, false, touched, inputs);
             if (next) {
@@ -364,13 +380,53 @@ export class IndexedValues {
             else if (this.#witnesses.get(key)?.fingerprint !== fingerprint)
                 witnesses.set(key, Object.freeze({ key, fingerprint }));
         }
-        return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(), aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(), { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys }, { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) });
+        for (const source of mappingSources) {
+            if (this.#columns.sources.get(source)?.payload.logicalPath !== nextColumns.sources.get(source)?.payload.logicalPath)
+                siteSources.add(source);
+        }
+        // A contributor may change the effective call occurrence/callee without owning
+        // any calls. Recover source buckets from each call owner's own occurrence.
+        if (!initial)
+            for (const key of touched)
+                if (key.startsWith('occurrence:')) {
+                    const id = key.slice(11);
+                    callOwnerSources(this.#columns, id, siteSources);
+                    callOwnerSources(nextColumns, id, siteSources);
+                }
+        const previousBodies = this.#columns.bodies, nextBodies = nextColumns.bodies;
+        const selection = this.#selection.update((function* () {
+            for (const owner of bodyOwners)
+                yield [previousBodies.get(owner), nextBodies.get(owner)];
+        })(), siteSources, this.#columns, nextColumns, capabilities, initial ? undefined : changedKeys);
+        return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(), aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(), { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys,
+            ...(capabilities ? { selection: CALL_SELECTION } : {}) }, { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) }, selection);
     }
 }
 export async function loadValueIndex(query) {
     const reader = createTypeScriptFactReader(query);
-    const facts = await Promise.all([readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source'))]);
-    return IndexedValues.empty().update(facts.flat(), [], true);
+    const [bodies, symbols, sources, capabilities] = await Promise.all([
+        readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source')), query.capabilities(),
+    ]);
+    return IndexedValues.empty().update([...bodies, ...symbols, ...sources], [], true, capabilities);
+}
+function callOwnerSources(columns, id, sources) {
+    const calls = columns.calls.slots.get(id);
+    if (!calls)
+        return;
+    const occurrences = columns.occurrences.slots.get(id);
+    if (!occurrences)
+        return;
+    const add = (owner) => {
+        const value = 'owner' in occurrences ? occurrences.owner === owner ? occurrences.value : undefined
+            : occurrences.owners.get(owner)?.value;
+        if (value)
+            sources.add(value.fragment.packed ? value.fragment.packed.source : value.fragment.node(value.row).span.source);
+    };
+    if ('owner' in calls)
+        add(calls.owner);
+    else
+        for (const owner of calls.owners.keys())
+            add(owner);
 }
 function primary(columns, fact, add, touched, inputs) {
     const owner = fact.id;
