@@ -65,7 +65,8 @@ function canonical(value) {
         entry[1] = canonical(entry[1]);
     return Object.fromEntries(entries);
 }
-function compareUnicodeScalars(left, right) {
+/** Internal canonical key ordering; not part of the public identity barrel. */
+export function compareUnicodeScalars(left, right) {
     let a = 0;
     let b = 0;
     while (a < left.length && b < right.length) {

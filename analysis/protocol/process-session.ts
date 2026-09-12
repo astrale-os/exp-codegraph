@@ -23,6 +23,7 @@ import {
   createFactWithPhysicalPayload,
   createFactWithSemanticPayload,
   ownPhysicalPayloadRecord,
+  ownWireFactShard,
   physicalPayloadForTransport,
   type FactPayloadCodec,
   type FactPayloadCodecMap,
@@ -1190,7 +1191,7 @@ function validateShard(
   payloadCodecs: FactPayloadCodecMap,
 ): FactShard {
   const value = requiredRecord(input, path)
-  return {
+  return ownWireFactShard({
     key: admitAnalysisId('fact-shard-key', requiredString(value.key, `${path}.key`)),
     digest: admitAnalysisId(
       'fact-shard-digest',
@@ -1202,7 +1203,7 @@ function validateShard(
     facts: requiredArray(value.facts, `${path}.facts`).map((fact, index) =>
       validateFact(fact, `${path}.facts[${index}]`, payloadCodecs),
     ),
-  }
+  })
 }
 
 function validateFact(

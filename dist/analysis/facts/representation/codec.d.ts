@@ -1,4 +1,4 @@
-import type { Fact } from '../types.ts';
+import type { Fact, FactShard } from '../types.ts';
 import type { AnalysisGenerationId } from '../../identity/index.ts';
 export interface PhysicalPayloadRecord {
     readonly codec: string;
@@ -30,6 +30,10 @@ export declare function createFactWithSemanticPayload(fields: Omit<Fact, 'payloa
 export declare function createFactWithPhysicalPayload(fields: Omit<Fact, 'payload'>, input: unknown, codecs: FactPayloadCodecMap, owner: string): Fact;
 /** Internal JSON ingress only: the caller owns this freshly parsed plain tree. */
 export declare function ownPhysicalPayloadRecord<Value>(record: Value): Value;
+/** Internal wire ingress owns this freshly reconstructed envelope and JSON tree. */
+export declare function ownWireFactShard<Shard extends FactShard>(shard: Shard): Shard;
+/** Ownership is not admission: the complete semantic digest must still be checked. */
+export declare function canStreamFactShardIdentity(shard: FactShard): boolean;
 /** An admitted immutable representation belongs to this exact decoder instance. */
 export declare function physicalPayloadForProjection(fact: Fact, codec: FactPayloadCodec): PhysicalPayloadRecord | undefined;
 export declare function createFactWithStoredPayload(fields: Omit<Fact, 'payload'>, payload: StoredFactPayload, codecs: FactPayloadCodecMap, owner: string): Fact;
