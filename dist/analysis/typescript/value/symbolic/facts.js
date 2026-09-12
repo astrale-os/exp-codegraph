@@ -254,7 +254,9 @@ export class IndexedValues {
         const derived = this.#derived.edit();
         const columns = Object.fromEntries(Object.entries(this.#columns).map(([key, column]) => [key, column.edit()]));
         const touched = new Set();
-        const inputs = new Set();
+        // A first index has no readers to invalidate. Keep its published witnesses,
+        // but avoid recording every occurrence merely to discard those changes.
+        const inputs = initial && this.#facts.size === 0 ? undefined : new Set();
         const changed = new Map();
         const bodyOwners = new Set(), mappingSources = new Set(), siteSources = new Set();
         for (const id of deletes)
@@ -299,13 +301,14 @@ export class IndexedValues {
         for (const [id, fact] of changed)
             if (fact?.namespace === 'typescript.body' || this.#derived.has(id))
                 affected.add(id);
-        for (const key of inputs) {
-            // Effect classification asks whether a callee body exists, not for its contents.
-            if (key.startsWith('function:') && this.bodies.has(key.slice(9)) === !!columns.bodies.get(key.slice(9)))
-                continue;
-            for (const id of this.#columns.dependents.get(key) ?? [])
-                affected.add(id);
-        }
+        if (inputs)
+            for (const key of inputs) {
+                // Effect classification asks whether a callee body exists, not for its contents.
+                if (key.startsWith('function:') && this.bodies.has(key.slice(9)) === !!columns.bodies.get(key.slice(9)))
+                    continue;
+                for (const id of this.#columns.dependents.get(key) ?? [])
+                    affected.add(id);
+            }
         for (const id of affected) {
             const previous = this.#derived.get(id);
             if (previous)
@@ -448,15 +451,17 @@ function primary(columns, fact, add, touched, inputs) {
     const fragment = bodyFragment(fact);
     apply(columns.bodies, fragment.owner, fact);
     touched.add(`function:${fragment.owner}`);
-    inputs.add(`function:${fragment.owner}`);
+    inputs?.add(`function:${fragment.owner}`);
     const occurrence = (row) => {
         const id = fragment.id(row);
         const previous = columns.occurrences.get(id);
         if (add && previous && previous.fragment.owner !== fragment.owner)
             throw new Error(`Occurrence ${id} has multiple function owners.`);
-        touched.add(`occurrence:${id}`);
-        inputs.add(`occurrence:${id}`);
-        inputs.add(`children:${id}`);
+        if (inputs) {
+            touched.add(`occurrence:${id}`);
+            inputs.add(`occurrence:${id}`);
+            inputs.add(`children:${id}`);
+        }
         return id;
     };
     if (fragment.packed) {
