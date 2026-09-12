@@ -45,7 +45,9 @@ export class ValueIndexOwner {
     const base = complete && previous?.shards
       ? previous.pending ? { index: previous.pending, shards: previous.shards } : previous.base
       : undefined
-    const changes = (base && !previous?.pending ? previous?.changed : undefined)?.edit() ?? new ValueIndexTable<FactShardKey, Shard | undefined>().edit()
+    // Only a following catalogue inherits pending changes. A complete rebase
+    // must drop shards that belonged solely to an unmaterialized intermediate.
+    const changes = (base && follows && !previous?.pending ? previous?.changed : undefined)?.edit() ?? new ValueIndexTable<FactShardKey, Shard | undefined>().edit()
     if (base) {
       const changedKeys = follows
         ? replaced
