@@ -100,9 +100,12 @@ export class ValueResolutionCache {
         this.#entries.set(key, entry);
         return entry.result;
     }
-    put(key, result, bytes, basis) {
+    put(key, result, bytes, basis, revision) {
         if (this.#closed)
             return;
+        // A model may reenter another pinned evaluator between get and put. Only
+        // certify the producer's revision, never whichever reader last used get.
+        const lineage = this.#revision && (!revision || revision.token === this.#revision) ? this.#lineage : undefined;
         // One inverse membership per entry; shared bases own the dependency graph.
         bytes += key.length * 2 + 224;
         if (bytes + this.#frequency.bytes > this.#maximumBytes)
@@ -158,7 +161,7 @@ export class ValueResolutionCache {
         // The last reader of this basis may have been among the evicted entries.
         group = basis && this.#groups.get(basis.key);
         if (basis && !group) {
-            group = { basis, entries: new Set(), bytes: groupBytes, ...(coordinates ? { coordinates } : {}), ...(this.#revision ? { lineage: this.#lineage } : {}) };
+            group = { basis, entries: new Set(), bytes: groupBytes, ...(coordinates ? { coordinates } : {}), ...(lineage ? { lineage } : {}) };
             this.#groups.set(basis.key, group);
             this.#bytes += group.bytes;
             if (coordinates)
@@ -178,7 +181,7 @@ export class ValueResolutionCache {
         this.#bytes += bytes;
         if (group) {
             group.entries.add(entry);
-            group.lineage = this.#revision ? this.#lineage : undefined;
+            group.lineage = lineage;
         }
     }
     advance(revision) {
