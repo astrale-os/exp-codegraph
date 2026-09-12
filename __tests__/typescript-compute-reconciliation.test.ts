@@ -68,7 +68,7 @@ describe('semantic computation variant reconciliation', () => {
       executions.push(name)
       return { name, kind: await missing(read, name) }
     }
-    const intersects = vi.spyOn(ComputationReceipt.prototype, 'intersects')
+    const intersects = vi.spyOn(ComputationReceipt.prototype, 'mayContain')
     try {
       cache.committed(first.generation)
       const a = await cache.run(first, async () => before, observe, 'a', () => {})
@@ -88,6 +88,37 @@ describe('semantic computation variant reconciliation', () => {
       expect(await cache.run(last, async () => third, observe, 'a', () => {})).toEqual(a)
       expect(executions).toEqual(['a', 'b', 'a'])
       expect(intersects.mock.calls.length).toBe(comparisons + 2)
+    } finally { cache.close(); values.close() }
+  })
+
+  it('retires variants affected at different positions in a delta while keeping independent siblings', async () => {
+    const values = new ValueResolutionCache(), cache = new SemanticComputationCache(values)
+    const before = initial(), after = revision(before, [
+      'unrelated:first', dependency('early'), 'unrelated:middle', dependency('late'), 'unrelated:last',
+    ])
+    const following = revision(after, ['unrelated:following'])
+    const first = query('before'), next = query('after'), last = query('following')
+    const reads: Record<string, string[]> = {
+      early: ['early'], independent: ['independent'], both: ['early', 'late'], late: ['late'],
+    }
+    const executions: string[] = []
+    const observe = async (read: TypeScriptSemanticReader, name: string) => {
+      executions.push(name)
+      return { name, kinds: await Promise.all(reads[name]!.map((key) => missing(read, key))) }
+    }
+    try {
+      cache.committed(first.generation)
+      const expected = new Map<string, Awaited<ReturnType<typeof observe>>>()
+      for (const name of Object.keys(reads)) expected.set(name, await cache.run(first, async () => before, observe, name, () => {}))
+      cache.committed(next.generation)
+      expect(await cache.run(next, async () => after, observe, 'independent', () => {})).toEqual(expected.get('independent'))
+      expect(executions).toEqual(['early', 'independent', 'both', 'late'])
+      for (const name of Object.keys(reads)) expect(await cache.run(next, async () => after, observe, name, () => {})).toEqual(expected.get(name))
+      expect(executions).toEqual(['early', 'independent', 'both', 'late', 'early', 'both', 'late'])
+      cache.committed(last.generation)
+      for (const name of Object.keys(reads)) expect(await cache.run(last, async () => following, observe, name, () => {})).toEqual(expected.get(name))
+      expect(executions).toEqual(['early', 'independent', 'both', 'late', 'early', 'both', 'late'])
+      expect(values.bytes).toBeLessThanOrEqual(8 * 1024 * 1024)
     } finally { cache.close(); values.close() }
   })
 

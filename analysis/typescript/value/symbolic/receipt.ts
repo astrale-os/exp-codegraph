@@ -29,17 +29,22 @@ export class ComputationReceipt {
   }
 
   intersects(keys: Iterable<string>): boolean {
-    for (const key of keys) {
-      const digest = hash(key)
-      const mask = this.#words.length * 32 - 1
-      let present = true
-      for (let index = 0; index < HASHES; index++) {
-        const bit = digest.readUInt32LE(index * 4) & mask
-        if (!(this.#words[bit >>> 5]! & (1 << (bit & 31)))) { present = false; break }
-      }
-      if (present) return true
-    }
+    for (const digest of ComputationReceipt.hashes(keys)) if (this.mayContain(digest)) return true
     return false
+  }
+
+  /** Stream one temporary digest across independent receipts without retaining the delta. */
+  static *hashes(keys: Iterable<string>): Iterable<Buffer> {
+    for (const key of keys) yield hash(key)
+  }
+
+  mayContain(digest: Buffer): boolean {
+    const mask = this.#words.length * 32 - 1
+    for (let index = 0; index < HASHES; index++) {
+      const bit = digest.readUInt32LE(index * 4) & mask
+      if (!(this.#words[bit >>> 5]! & (1 << (bit & 31)))) return false
+    }
+    return true
   }
 
   /** Folding preserves every inserted bit, unlike truncation or resampling. */
