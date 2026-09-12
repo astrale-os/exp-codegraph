@@ -17,6 +17,10 @@ it('shares package ownership walks only within one compiler snapshot', async () 
   await goTest(['package_coordinate.go', 'package_coordinate_test.go'])
 }, 95_000)
 
+it('indexes exact TypeScript UTF-16 coordinates without allocating for ASCII sources', async () => {
+  await goTest(['source_coordinates.go', 'source_coordinates_test.go'])
+}, 95_000)
+
 it('shares prepared payload bytes across exact native fact and shard identities', async () => {
   await goTest(['canonical.go', 'identity.go', 'fact_identity.go', 'fact_identity_test.go', 'model.go', 'framing.go', 'framing_records.go', 'telemetry.go'])
 }, 95_000)

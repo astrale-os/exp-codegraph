@@ -47,6 +47,13 @@ Path and source filters select the returned inventory. The current implementatio
 a project-wide fact index with value evaluation; these filters do not restrict native
 extraction or guarantee that only selected source facts are loaded.
 
+TypeScript spans use zero-based UTF-16 code-unit offsets with an exclusive end,
+matching JavaScript string slicing and TypeScript's public node positions. Module
+locations use one-based ECMAScript lines and UTF-16 columns. Offsets include an
+authored UTF-8 BOM; cold loads and incremental edits preserve the same source text.
+Each span belongs to its recorded source revision, so use the corresponding text
+when displaying evidence from an older pinned snapshot.
+
 ## Reuse a semantic computation
 
 For repeated lint runs, put the semantic observation in a stable callback and pass every

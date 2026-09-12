@@ -14,6 +14,46 @@ type moduleDeclarationObservation struct {
 	partial     bool
 }
 
+// Module owners already retain their complete transitive support references.
+// A replaced support must be observed by every reader in the candidate, while
+// a body edit with unchanged support leaves unrelated modules untouched.
+func includeDeclarationReaders(
+	selected map[string]bool,
+	previous map[string][]string,
+	observations map[string]*moduleObservation,
+	current map[string]preparedFact,
+) bool {
+	displaced := map[string]bool{}
+	for owner, observation := range observations {
+		retained := make(map[string]bool, len(observation.declarations))
+		for _, declaration := range observation.declarations {
+			retained[current[declaration.Identity].ID] = true
+		}
+		for _, fact := range previous[owner] {
+			if !retained[fact] {
+				displaced[fact] = true
+			}
+		}
+	}
+	if len(displaced) == 0 {
+		return false
+	}
+	added := false
+	for owner, declarations := range previous {
+		if selected[owner] {
+			continue
+		}
+		for _, fact := range declarations {
+			if displaced[fact] {
+				selected[owner] = true
+				added = true
+				break
+			}
+		}
+	}
+	return added
+}
+
 func (x *extractor) observeModuleDeclaration(symbol *shimast.Symbol, exportPaths [][]string) (observedDeclarationPayload, map[string]*shimast.Symbol, bool, error) {
 	observation, ok := x.moduleDeclarations[symbol]
 	if ok {

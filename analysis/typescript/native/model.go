@@ -2,9 +2,9 @@ package main
 
 const (
 	protocolVersion = 1
-	producerVersion = "0.6.1"
+	producerVersion = "0.6.2"
 	ttscVersion     = "0.25.0"
-	passVersion     = "1.6.1"
+	passVersion     = "1.6.2"
 )
 
 const (

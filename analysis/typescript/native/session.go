@@ -49,7 +49,7 @@ type analyzer struct {
 	payloadCodecs               map[string]bool
 	maximumSemanticPayloadBytes int
 	maximumDecodedShardBytes    int
-	session                     *driver.Session
+	session                     *compilerSession
 	// Only the acknowledged base and its unpublished candidate belong to this
 	// process. Historical snapshots and reader leases belong to the client store.
 	acknowledged generationState
@@ -72,7 +72,7 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 	if err != nil {
 		return nil, err
 	}
-	session, diagnostics, err := driver.NewSession(root, config, driver.LoadProgramOptions{ForceNoEmit: true})
+	session, diagnostics, err := newCompilerSession(root, config)
 	telemetry.record(0, "compiler.open", started, map[string]any{"configurationDiagnostics": len(diagnostics)})
 	if err != nil {
 		return nil, err
@@ -434,9 +434,6 @@ func (a *analyzer) extract(
 				selectedModules[owner.ID] = true
 			}
 		}
-		for module := range selectedModules {
-			replaced[deriveID("fact-shard-key", moduleNamespace, map[string]any{"owner": module})] = true
-		}
 	}
 	for file := range selected {
 		record, exists := x.sources[file]
@@ -465,10 +462,14 @@ func (a *analyzer) extract(
 		if selection.allModules {
 			modules, err = x.moduleShards(a.session.Program())
 		} else if len(selectedModules) != 0 {
-			modules, err = x.moduleShardsFor(a.session.Program(), selectedModules, base.moduleDependencies)
+			modules, err = x.moduleShardsFor(a.session.Program(), selectedModules, base.moduleDependencies, base.moduleDeclarations)
 		}
 		if err != nil {
 			return nil, nil, nil, nil, err
+		}
+		// Module observation can add readers of a changed shared declaration.
+		for module := range selectedModules {
+			replaced[deriveID("fact-shard-key", moduleNamespace, map[string]any{"owner": module})] = true
 		}
 		shards = append(shards, modules...)
 		moduleOwners, declarationShards, declarationReferences := moduleProjectionCounts(modules)
@@ -778,7 +779,7 @@ func parsedProjectConfigs(program *driver.Program) ([]*shimtsoptions.ParsedComma
 }
 
 func (a *analyzer) rebuild() error {
-	next, diagnostics, err := driver.NewSession(a.root, a.config, driver.LoadProgramOptions{ForceNoEmit: true})
+	next, diagnostics, err := newCompilerSession(a.root, a.config)
 	if err != nil {
 		return err
 	}
