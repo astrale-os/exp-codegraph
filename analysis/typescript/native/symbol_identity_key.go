@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -11,9 +12,10 @@ import (
 // fixed key shape is declared in canonical order; encoding/json still owns all
 // string spelling. Returned keys own their bytes before the next encoding.
 type symbolIdentityKeyWorkspace struct {
-	buffer  bytes.Buffer
-	encoder *json.Encoder
-	input   symbolIdentityKeyInput
+	buffer         bytes.Buffer
+	encoder        *json.Encoder
+	input          symbolIdentityKeyInput
+	lexicalScratch []string
 }
 
 type symbolIdentityKeyInput struct {
@@ -28,27 +30,43 @@ func (w *symbolIdentityKeyWorkspace) key(name, syntax string, lexical []string) 
 		w.encoder = json.NewEncoder(&w.buffer)
 		w.encoder.SetEscapeHTML(false)
 	}
-	w.input = symbolIdentityKeyInput{Lexical: lexical, Name: name, Syntax: syntax}
-	if err := w.encoder.Encode(&w.input); err != nil {
-		panic(fmt.Errorf("canonical JSON: %w", err))
+	// Borrow valid lexical chains; copy only if an entry needs normalization.
+	// In particular, keep nil and an empty non-nil chain distinct.
+	normalizedLexical := lexical
+	for index, value := range lexical {
+		if utf8.ValidString(value) {
+			continue
+		}
+		if len(w.lexicalScratch) == 0 {
+			w.lexicalScratch = append(w.lexicalScratch[:0], lexical...)
+			normalizedLexical = w.lexicalScratch
+		}
+		normalizedLexical[index] = normalizeSymbolKeyString(value)
 	}
+	w.input = symbolIdentityKeyInput{
+		Lexical: normalizedLexical,
+		Name:    normalizeSymbolKeyString(name),
+		Syntax:  normalizeSymbolKeyString(syntax),
+	}
+	err := w.encoder.Encode(&w.input)
 	// Do not retain the caller's lexical slice or names after this encoding.
 	w.input = symbolIdentityKeyInput{}
+	clear(w.lexicalScratch)
+	w.lexicalScratch = w.lexicalScratch[:0]
+	if err != nil {
+		panic(fmt.Errorf("canonical JSON: %w", err))
+	}
 	encoded := w.buffer.Bytes()
 	encoded = encoded[:len(encoded)-1] // Encode appends exactly one newline.
-	valid := utf8.ValidString(name) && utf8.ValidString(syntax)
-	if valid {
-		for _, value := range lexical {
-			if !utf8.ValidString(value) {
-				valid = false
-				break
-			}
-		}
-	}
-	// JSON escapes invalid UTF-8 as \ufffd; canonical keys use the literal
-	// replacement rune. Preserve the former normalizer's authority here.
-	if !valid {
-		encoded = canonicalJSONBytes(encoded)
-	}
 	return string(encoded)
+}
+
+func normalizeSymbolKeyString(value string) string {
+	if utf8.ValidString(value) {
+		return value
+	}
+	// JSON escapes invalid UTF-8 as \ufffd; canonical keys use literal U+FFFD.
+	// Map preserves one replacement rune per invalid decoding step, unlike
+	// ToValidUTF8 which collapses adjacent invalid bytes into one replacement.
+	return strings.Map(func(value rune) rune { return value }, value)
 }
