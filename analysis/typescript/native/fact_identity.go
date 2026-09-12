@@ -1,13 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"hash"
 	"sort"
 )
 
-// A prepared fact owns its canonical logical payload only until its shard is
+// A prepared fact's canonical logical payload remains valid until its shard is
 // finalized. Published facts and retained generations never carry these bytes.
 // Preparation seals the payload; metadata such as a module's logical fact ID
 // may still be finalized before finishShard consumes the prepared value.
@@ -25,6 +26,35 @@ func prepareFact(entry fact) (preparedFact, error) {
 	// HTML escapes can make it longer than the canonical identity spelling.
 	entry.semanticBytes = len(encoded)
 	payload := canonicalJSONBytes(encoded)
+	entry.ID = nativeFactIdentity(entry, payload)
+	return preparedFact{fact: entry, canonicalPayload: payload}, nil
+}
+
+// Body shards finalize one fact immediately. One projection-owned workspace
+// can therefore reuse its encoded payload after finishShard returns. Other
+// namespaces accumulate prepared facts and keep using independently owned bytes.
+// Metadata hashing deliberately keeps its own encoders: the canonical payload
+// below must survive both the fact and shard preimages without being overwritten.
+type bodyIdentityWorkspace struct {
+	semantic  bytes.Buffer
+	encoder   *json.Encoder
+	canonical canonicalJSON
+}
+
+func (w *bodyIdentityWorkspace) prepare(entry fact) (preparedFact, error) {
+	w.semantic.Reset()
+	if w.encoder == nil {
+		w.encoder = json.NewEncoder(&w.semantic)
+	}
+	if err := w.encoder.Encode(entry.Payload); err != nil {
+		return preparedFact{}, err
+	}
+	// Encoder preserves Marshal's HTML escaping and adds exactly one newline.
+	// Admission counts the same spelling as prepareFact, without that separator.
+	encoded := w.semantic.Bytes()
+	encoded = encoded[:len(encoded)-1]
+	entry.semanticBytes = len(encoded)
+	payload := w.canonical.encode(encoded)
 	entry.ID = nativeFactIdentity(entry, payload)
 	return preparedFact{fact: entry, canonicalPayload: payload}, nil
 }

@@ -264,6 +264,7 @@ func (x *extractor) sourceShards(
 	if x.plan.bodies {
 		phase := time.Now()
 		bodyShards := 0
+		var identityWorkspace bodyIdentityWorkspace
 		for _, file := range files {
 			if selected != nil && !selected[file.FileName()] {
 				continue
@@ -272,7 +273,7 @@ func (x *extractor) sourceShards(
 			if !ok {
 				continue
 			}
-			bodies, err := x.bodyShards(file, record)
+			bodies, err := x.bodyShards(file, record, &identityWorkspace)
 			if err != nil {
 				return nil, err
 			}
@@ -422,18 +423,31 @@ func (x *extractor) newFactVersion(
 	completion completeness,
 	schemaVersion int,
 ) preparedFact {
+	return x.admitPreparedFact(prepareFact(x.factWithProvenance(namespace, kind, subject, payload, evidence, completion, schemaVersion)))
+}
+
+func (x *extractor) factWithProvenance(
+	namespace, kind, subject string,
+	payload any,
+	evidence []sourceSpan,
+	completion completeness,
+	schemaVersion int,
+) fact {
 	if evidence == nil {
 		evidence = []sourceSpan{}
 	}
 	pass := deriveID("pass", "astrale.analysis.typescript.native", map[string]any{
 		"namespace": namespace, "version": passVersion,
 	})
-	entry, err := prepareFact(fact{
+	return fact{
 		Namespace: namespace, SchemaVersion: schemaVersion, Kind: kind, Subject: subject,
 		Completeness: completion,
 		Provenance:   provenance{Pass: pass, PassVersion: passVersion, Evidence: evidence, Inputs: []string{}},
 		Payload:      payload,
-	})
+	}
+}
+
+func (x *extractor) admitPreparedFact(entry preparedFact, err error) preparedFact {
 	if x.payloadEncodingError == nil {
 		if err != nil {
 			x.payloadEncodingError = fmt.Errorf("encode semantic fact payload: %w", err)

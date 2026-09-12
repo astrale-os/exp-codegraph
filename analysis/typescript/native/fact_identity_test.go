@@ -106,6 +106,12 @@ func TestPreparedFactsPreserveCompleteV1Preimages(t *testing.T) {
 
 type countedIdentityPayload struct{ calls *int }
 
+type failingIdentityPayload struct{}
+
+func (failingIdentityPayload) MarshalJSON() ([]byte, error) {
+	return nil, fmt.Errorf("fixture payload encoding failure")
+}
+
 func (value countedIdentityPayload) MarshalJSON() ([]byte, error) {
 	*value.calls++
 	return []byte(`{"z":"<&>","a":[1,2,3]}`), nil
@@ -164,6 +170,170 @@ func TestPreparedPayloadPreservesSemanticLimitsAndPublishesNothingOnRejection(t 
 	}
 	if _, err := prepareFact(identityFixture(math.Inf(1))); err == nil {
 		t.Fatal("unsupported semantic JSON was silently admitted")
+	}
+}
+
+func TestBodyWorkspacePreservesFinalizedShardsAcrossPayloadReuse(t *testing.T) {
+	var workspace bodyIdentityWorkspace
+	var published []factShard
+	var encodedShards [][]byte
+	payloads := []any{
+		map[string]any{"wide": strings.Repeat("é<&>𝒙", 4096), "nested": map[string]any{"z": 1, "a": true}},
+		nil, []any{}, []any(nil), math.Copysign(0, -1), math.SmallestNonzeroFloat64,
+		json.Number("123456789012345678901234567890"), "<&>\n\t\u2028\u2029\xff",
+		json.RawMessage(`{"z":1,"a":{"z":2,"a":3},"z":4,"\u0061":{"last":true}}`),
+		json.RawMessage(`{"string":"\u003c\u0026\u003e\/\u000a\uD834\uDD1E","number":1e+03}`),
+		map[string]any{"small": true},
+	}
+	for index, payload := range payloads {
+		entry := identityFixture(payload)
+		entry.Subject = fmt.Sprintf("symbol:body:%d", index)
+		if index%2 != 0 {
+			entry.Completeness = completeness{Kind: "partial", Reasons: []any{map[string]any{"code": "LIMIT"}}}
+		}
+		prepared, err := workspace.prepare(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		owned, err := prepareFact(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(prepared.fact, owned.fact) || !bytes.Equal(prepared.canonicalPayload, owned.canonicalPayload) {
+			t.Fatalf("body %d changed its logical fact, semantic admission size or identity preimage", index)
+		}
+		shard := finishShard(entry.Namespace, entry.Subject, entry.Completeness, []preparedFact{prepared})
+		if shard.Digest != referenceShardIdentity(shard) {
+			t.Fatalf("body %d metadata hashing overwrote the borrowed payload", index)
+		}
+		encoded, err := json.Marshal(shard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		published = append(published, shard)
+		encodedShards = append(encodedShards, encoded)
+	}
+	for index, shard := range published {
+		encoded, err := json.Marshal(shard)
+		if err != nil || !bytes.Equal(encoded, encodedShards[index]) || shard.Digest != referenceShardIdentity(shard) {
+			t.Fatalf("workspace reuse mutated previously finalized body %d", index)
+		}
+	}
+}
+
+func TestBodyWorkspaceReusesCapacityWithoutRetainingCanonicalFieldKeys(t *testing.T) {
+	var workspace bodyIdentityWorkspace
+	var input strings.Builder
+	input.WriteString(`{"\u0061":true`)
+	for index := range 512 {
+		fmt.Fprintf(&input, `,"field-%04d":{"z":"%s","a":true}`, index, strings.Repeat("x", 128))
+	}
+	input.WriteByte('}')
+	finish := func(payload any) {
+		t.Helper()
+		prepared, err := workspace.prepare(identityFixture(payload))
+		if err != nil {
+			t.Fatal(err)
+		}
+		shard := finishShard("typescript.body", "owner", completeness{Kind: "complete"}, []preparedFact{prepared})
+		if shard.Digest != referenceShardIdentity(shard) {
+			t.Fatal("reused body identity changed")
+		}
+		if workspace.canonical.input != nil || len(workspace.canonical.fields) != 0 {
+			t.Fatal("completed canonical encoding retained its input or active descriptors")
+		}
+		for _, field := range workspace.canonical.fields[:cap(workspace.canonical.fields)] {
+			if field.key != nil {
+				t.Fatal("popped field descriptor retained an input slice or normalized key")
+			}
+		}
+	}
+	finish(json.RawMessage(input.String()))
+	semantic, canonical := &workspace.semantic.Bytes()[0], &workspace.canonical.output[0]
+	fields := &workspace.canonical.fields[:cap(workspace.canonical.fields)][0]
+	for range 8 {
+		finish(map[string]any{"small": "<&>𝒙"})
+		if semantic != &workspace.semantic.Bytes()[0] || canonical != &workspace.canonical.output[0] || fields != &workspace.canonical.fields[:cap(workspace.canonical.fields)][0] {
+			t.Fatal("smaller bodies allocated replacement semantic, canonical or descriptor buffers")
+		}
+	}
+}
+
+func TestBodyWorkspacePreservesAdmissionAndRecoversAfterEncodingFailure(t *testing.T) {
+	var workspace bodyIdentityWorkspace
+	calls := 0
+	prepared, err := workspace.prepare(identityFixture(countedIdentityPayload{calls: &calls}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finishShard("typescript.body", "owner", completeness{Kind: "complete"}, []preparedFact{prepared})
+	if calls != 1 {
+		t.Fatalf("workspace serialized its logical payload %d times", calls)
+	}
+	payload := strings.Repeat("<&>", 256)
+	prepared, err = workspace.prepare(identityFixture(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(payload)
+	if prepared.semanticBytes != len(encoded) || len(prepared.canonicalPayload) >= 1024 || prepared.semanticBytes <= 1024 {
+		t.Fatal("workspace changed the admitted JSON spelling or included Encoder's newline")
+	}
+	shard := finishShard("typescript.body", "owner", completeness{Kind: "complete"}, []preparedFact{prepared})
+	transaction := &factTransaction{ProtocolVersion: protocolVersion, Upserts: []factShard{shard}}
+	var output bytes.Buffer
+	limits := recordLimits{MaximumRecordBytes: 64 * 1024, MaximumDecodedShardBytes: 1024}
+	err = writeRecordPayloadResponse(&output, 1, "transaction", transaction, 64*1024, 4096, limits, nil)
+	if err == nil || !strings.Contains(err.Error(), "semantic shard") || output.Len() != 0 {
+		t.Fatalf("workspace admission published rejected bytes: %v", err)
+	}
+	limits.MaximumDecodedShardBytes = prepared.semanticBytes
+	limits.MaximumTransactionBytes = prepared.semanticBytes - 1
+	err = writeRecordPayloadResponse(&output, 2, "transaction", transaction, 64*1024, 4096, limits, nil)
+	if err == nil || !strings.Contains(err.Error(), "semantic fact payloads") || output.Len() != 0 {
+		t.Fatalf("workspace bypassed aggregate semantic admission: %v", err)
+	}
+	for _, invalid := range []any{math.Inf(1), math.NaN(), failingIdentityPayload{}} {
+		if _, err := workspace.prepare(identityFixture(invalid)); err == nil {
+			t.Fatalf("workspace silently admitted an invalid payload: %T", invalid)
+		}
+		recovered, err := workspace.prepare(identityFixture(map[string]any{"recovered": true}))
+		if err != nil || recovered.ID != referenceFactIdentity(recovered.fact) {
+			t.Fatalf("workspace could not recover after encoding failure: %v", err)
+		}
+		finishShard("typescript.body", "owner", completeness{Kind: "complete"}, []preparedFact{recovered})
+	}
+	limits.MaximumTransactionBytes = prepared.semanticBytes
+	if err := writeRecordPayloadResponse(&output, 3, "transaction", transaction, 64*1024, 4096, limits, nil); err != nil {
+		t.Fatalf("previously finalized shard became unusable after workspace reuse: %v", err)
+	}
+	if output.Len() == 0 || shard.Digest != referenceShardIdentity(shard) {
+		t.Fatal("workspace reuse corrupted the rejected shard or its retained semantic size")
+	}
+}
+
+func BenchmarkBodyIdentityWorkspace(b *testing.B) {
+	rows := make([]map[string]any, 256)
+	for index := range rows {
+		rows[index] = map[string]any{"symbol": "symbol:abcdef0123456789", "span": sourceSpan{Source: "source:test", Revision: "revision:test", Start: index, End: index + 1}, "value": "<&>", "syntax": "Identifier"}
+	}
+	entry := identityFixture(map[string]any{"body": rows, "values": rows})
+	for _, mode := range []string{"owned-per-body", "projection-workspace"} {
+		b.Run(mode, func(b *testing.B) {
+			var workspace bodyIdentityWorkspace
+			prepare := prepareFact
+			if mode == "projection-workspace" {
+				prepare = workspace.prepare
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				prepared, err := prepare(entry)
+				if err != nil {
+					b.Fatal(err)
+				}
+				finishShard(entry.Namespace, entry.Subject, entry.Completeness, []preparedFact{prepared})
+			}
+		})
 	}
 }
 
