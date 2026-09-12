@@ -7,6 +7,7 @@ const OWNED_PAYLOAD_CODECS = new WeakSet<FactPayloadCodec>()
 const IMMUTABLE_PAYLOADS = new WeakSet<object>()
 const OWNED_PHYSICAL_RECORDS = new WeakSet<object>()
 const OWNED_WIRE_SHARDS = new WeakSet<object>()
+const OWNED_PAYLOAD_IDENTITIES = new WeakMap<FactPayloadCodec, (data: unknown) => OwnedPayloadIdentity>()
 
 export interface PhysicalPayloadRecord {
   readonly codec: string
@@ -26,6 +27,41 @@ export interface FactPayloadCodec {
 export function ownFactPayloadCodec<Codec extends FactPayloadCodec>(codec: Codec): Codec {
   OWNED_PAYLOAD_CODECS.add(codec)
   return Object.freeze(codec)
+}
+
+/** Private codec composition: validate first, then emit the logical JSON identity. */
+export interface OwnedPayloadIdentity {
+  write(writer: OwnedPayloadIdentityWriter): void
+}
+
+export interface OwnedPayloadIdentityWriter {
+  /** Fixed ASCII JSON punctuation and field names, never unescaped input. */
+  part(value: string): void
+  /** A logical JSON value; escaping, key order and byte counting belong to the writer. */
+  value(value: unknown): void
+}
+
+export function ownFactPayloadIdentity<Codec extends FactPayloadCodec>(
+  codec: Codec,
+  prepare: (data: unknown) => OwnedPayloadIdentity,
+): Codec {
+  OWNED_PAYLOAD_IDENTITIES.set(codec, prepare)
+  return ownFactPayloadCodec(codec)
+}
+
+/** No preparation runs until the complete shard qualifies for this private path. */
+export function prepareOwnedFactShardIdentity(shard: FactShard): readonly OwnedPayloadIdentity[] | undefined {
+  if (!OWNED_WIRE_SHARDS.has(shard) || !shard.facts.length) return
+  const inputs: { readonly data: unknown; readonly prepare: (data: unknown) => OwnedPayloadIdentity }[] = []
+  for (const fact of shard.facts) {
+    const state = physicalState(fact)
+    if (!state?.owned || state.status !== undefined || !OWNED_PAYLOAD_CODECS.has(state.codec)) return
+    const prepare = OWNED_PAYLOAD_IDENTITIES.get(state.codec)
+    if (!prepare) return
+    inputs.push({ data: state.record.data, prepare })
+  }
+  // Preserve the decoder's fact order, including failure before any identity work.
+  return inputs.map(({ data, prepare }) => prepare(data))
 }
 
 /** Certificates concern decoded roots, never a codec name or a caller's frozen object. */

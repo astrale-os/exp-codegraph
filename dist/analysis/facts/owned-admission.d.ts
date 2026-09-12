@@ -9,4 +9,9 @@ export declare function hashOwnedFactShard(input: ShardIdentity): {
     readonly digest: FactShardDigest;
     readonly semanticPayloadBytes: number;
 } | undefined;
+/** The exact owned codecs validate compact payloads before any bytes are emitted. */
+export declare function hashOwnedPhysicalFactShard(input: FactShard): {
+    readonly digest: FactShardDigest;
+    readonly semanticPayloadBytes: number;
+} | undefined;
 export {};

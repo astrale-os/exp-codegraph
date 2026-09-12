@@ -3,6 +3,7 @@ import { compareUnicodeScalars } from '../identity/model.ts'
 import { types } from 'node:util'
 import type { FactShardDigest } from '../identity/index.ts'
 import type { Fact, FactShard } from './types.ts'
+import { prepareOwnedFactShardIdentity, type OwnedPayloadIdentity } from './representation/index.ts'
 
 type SemanticFact = Omit<Fact, 'generation'>
 type ShardIdentity = Omit<FactShard, 'digest' | 'facts'> & { readonly facts: readonly SemanticFact[] }
@@ -20,6 +21,21 @@ export function hashOwnedFactShard(input: ShardIdentity): {
   readonly digest: FactShardDigest
   readonly semanticPayloadBytes: number
 } | undefined {
+  if (!supportsOwnedJSONIdentity()) return
+  return writeFactShardIdentity(input)
+}
+
+/** The exact owned codecs validate compact payloads before any bytes are emitted. */
+export function hashOwnedPhysicalFactShard(input: FactShard): {
+  readonly digest: FactShardDigest
+  readonly semanticPayloadBytes: number
+} | undefined {
+  if (!supportsOwnedJSONIdentity()) return
+  const payloads = prepareOwnedFactShardIdentity(input)
+  return payloads ? writeFactShardIdentity(input, payloads) : undefined
+}
+
+function supportsOwnedJSONIdentity(): boolean {
   // These hooks would change canonical() or JSON.stringify() even for fresh
   // plain data. Leave their observation and result to the generic encoder.
   if (!NATIVE_ARRAYS || Array !== ARRAY || Array.prototype !== ARRAY_PROTOTYPE ||
@@ -27,7 +43,14 @@ export function hashOwnedFactShard(input: ShardIdentity): {
     !sameDescriptor(Object.getOwnPropertyDescriptor(ARRAY_PROTOTYPE, 'map'), ARRAY_MAP) ||
     !sameDescriptor(Object.getOwnPropertyDescriptor(ARRAY_PROTOTYPE, 'constructor'), ARRAY_CONSTRUCTOR) ||
     !sameDescriptor(Object.getOwnPropertyDescriptor(ARRAY, Symbol.species), ARRAY_SPECIES) ||
-    Object.hasOwn(Object.prototype, 'toJSON') || Object.hasOwn(Array.prototype, 'toJSON')) return
+    Object.hasOwn(Object.prototype, 'toJSON') || Object.hasOwn(Array.prototype, 'toJSON')) return false
+  return true
+}
+
+function writeFactShardIdentity(input: ShardIdentity, payloads?: readonly OwnedPayloadIdentity[]): {
+  readonly digest: FactShardDigest
+  readonly semanticPayloadBytes: number
+} | undefined {
   const writer = new OwnedJSONWriter(input.namespace)
   try {
     writer.part('{')
@@ -53,7 +76,8 @@ export function hashOwnedFactShard(input: ShardIdentity): {
       writer.value(fact.namespace)
       writer.part(',"payload":')
       const before = writer.bytes
-      writer.value(fact.payload)
+      if (payloads) payloads[index]!.write(writer)
+      else writer.value(fact.payload)
       semanticPayloadBytes += writer.bytes - before
       writer.part(',"provenance":')
       writer.value(fact.provenance)

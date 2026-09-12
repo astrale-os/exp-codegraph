@@ -108,4 +108,5 @@ export interface FunctionBodyIR {
     readonly calls: readonly ResolvedCall[];
     readonly summary: FunctionSummary;
 }
+/** Validate a logical body with the same semantic authority used by compact admission. */
 export declare function validateFunctionBodyIR(body: FunctionBodyIR): readonly string[];
