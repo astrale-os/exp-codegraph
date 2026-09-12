@@ -69,6 +69,40 @@ async function inventory(index: IndexedValues, options: TypeScriptCallQuery = {}
 afterEach(() => vi.restoreAllMocks())
 
 describe('atomic call selection journal', () => {
+  it('builds the first inventory without looking up occurrence witnesses or nonexistent dependents', async () => {
+    const first = body('first'), second = body('second', { completion: limited })
+    const facts = [source('first'), first, source('second'), second]
+    const caps = capabilities(limited)
+    const occurrences = new Set([first, second].flatMap((fact) => fact.payload.body.occurrences.map((node) => node.id)))
+    const occurrenceLookups = new Set([...occurrences].flatMap((id) => [id, `occurrence:${id}`, `children:${id}`]))
+    const reads: string[] = []
+    const get = ValueIndexTable.prototype.get
+    const lookups = vi.spyOn(ValueIndexTable.prototype, 'get').mockImplementation(function (id) {
+      if (occurrenceLookups.has(id)) reads.push(id)
+      return Reflect.apply(get, this, [id])
+    })
+    let cold: IndexedValues
+    try { cold = initial(facts, caps) }
+    finally { lookups.mockRestore() }
+    expect(reads).toEqual([])
+
+    let incremental = initial([], caps)
+    for (const fact of facts) incremental = incremental.update([fact], [], false, caps)
+    for (const options of [{}, { paths: ['first.ts'] }, { paths: ['second.ts'] }, { paths: ['absent.ts'] }]) {
+      expect((await inventory(cold, options, caps)).result).toEqual((await inventory(incremental, options, caps)).result)
+    }
+    for (const id of occurrences) {
+      expect(cold.dependency(`occurrence:${id}`)).toEqual(incremental.dependency(`occurrence:${id}`))
+      expect(cold.evidence.get(`occurrence:${id}`)).toEqual(incremental.evidence.get(`occurrence:${id}`))
+    }
+    const original = (await inventory(cold, {}, caps)).result
+    const removed = cold.update([], [first.id], false, caps)
+    expect((await inventory(removed, { paths: ['first.ts'] }, caps)).result.sites).toEqual([])
+    const restored = removed.update([first], [], false, caps)
+    expect((await inventory(restored, {}, caps)).result).toEqual(original)
+    expect((await inventory(cold, {}, caps)).result).toEqual(original)
+  })
+
   it('records absent paths, explicit intersections and empty filters without treating absence as a global read', async () => {
     const before = initial([])
     expect((await inventory(before, { paths: ['missing.ts', 'missing.ts'] })).keys).toEqual([key.global, key.path('missing.ts'), key.unmapped])

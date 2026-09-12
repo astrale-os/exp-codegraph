@@ -294,7 +294,9 @@ export class IndexedValues implements ValueIndex {
     const derived = this.#derived.edit()
     const columns = Object.fromEntries(Object.entries(this.#columns).map(([key, column]) => [key, column.edit()])) as Edits
     const touched = new Set<string>()
-    const inputs = new Set<string>()
+    // A first index has no readers to invalidate. Keep its published witnesses,
+    // but avoid recording every occurrence merely to discard those changes.
+    const inputs = initial && this.#facts.size === 0 ? undefined : new Set<string>()
     const changed = new Map<FactId, IndexedFact | undefined>()
     const bodyOwners = new Set<SymbolId>(), mappingSources = new Set<SourceId>(), siteSources = new Set<SourceId>()
     for (const id of deletes) if (this.#facts.has(id)) changed.set(id, undefined)
@@ -327,7 +329,7 @@ export class IndexedValues implements ValueIndex {
     }
     const affected = new Set<FactId>()
     for (const [id, fact] of changed) if (fact?.namespace === 'typescript.body' || this.#derived.has(id)) affected.add(id)
-    for (const key of inputs) {
+    if (inputs) for (const key of inputs) {
       // Effect classification asks whether a callee body exists, not for its contents.
       if (key.startsWith('function:') && this.bodies.has(key.slice(9) as SymbolId) === !!columns.bodies.get(key.slice(9) as SymbolId)) continue
       for (const id of this.#columns.dependents.get(key) ?? []) affected.add(id)
@@ -437,7 +439,7 @@ function callOwnerSources(columns: Columns, id: OccurrenceId, sources: Set<Sourc
   else for (const owner of calls.owners.keys()) add(owner)
 }
 
-function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<string>, inputs: Set<string>): void {
+function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<string>, inputs: Set<string> | undefined): void {
   const owner = fact.id
   const apply = <Key extends string, Value>(column: ColumnEdit<Key, Value>, key: Key, value: Value) => {
     if (add) column.set(key, owner, value)
@@ -451,12 +453,14 @@ function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<s
   if (fact.namespace === 'typescript.source') { apply(columns.sources, fact.payload.source, fact); return }
   const fragment = bodyFragment(fact)
   apply(columns.bodies, fragment.owner, fact)
-  touched.add(`function:${fragment.owner}`); inputs.add(`function:${fragment.owner}`)
+  touched.add(`function:${fragment.owner}`); inputs?.add(`function:${fragment.owner}`)
   const occurrence = (row: number) => {
     const id = fragment.id(row)
     const previous = columns.occurrences.get(id)
     if (add && previous && previous.fragment.owner !== fragment.owner) throw new Error(`Occurrence ${id} has multiple function owners.`)
-    touched.add(`occurrence:${id}`); inputs.add(`occurrence:${id}`); inputs.add(`children:${id}`)
+    if (inputs) {
+      touched.add(`occurrence:${id}`); inputs.add(`occurrence:${id}`); inputs.add(`children:${id}`)
+    }
     return id
   }
   if (fragment.packed) {
