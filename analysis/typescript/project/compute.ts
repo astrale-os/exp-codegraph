@@ -20,6 +20,7 @@ export class SemanticComputationCache {
   readonly #entries = new Map<string, Entry>()
   readonly #building = new Set<() => void>()
   #generation: AnalysisGeneration['id'] | undefined
+  #revision: object | undefined
   #closed = false
 
   constructor(values: ValueResolutionCache) { this.#values = values }
@@ -38,7 +39,8 @@ export class SemanticComputationCache {
     signal?.throwIfAborted()
     const current = () => !this.#closed && this.#generation === query.generation.id
     if (key && current()) {
-      const entry = this.get(key, index.revision)
+      this.reconcile(index.revision)
+      const entry = this.get(key)
       if (entry) return restorePortable<Result>(entry.encoded)
     }
     let active = true
@@ -101,15 +103,21 @@ export class SemanticComputationCache {
     }
   }
 
-  private get(key: string, revision: ValueIndexRevision): Entry | undefined {
+  private reconcile(revision: ValueIndexRevision): void {
+    if (this.#revision === revision.token) return
+    // Reconcile every variant before its reservation can displace reusable proofs.
+    // Promoting an untouched variant must not change its LRU position.
+    for (const [key, entry] of this.#entries) {
+      if (entry.revision !== revision.token && (revision.selection !== 'typescript.calls/v1' ||
+        revision.parent !== entry.revision || entry.receipt.intersects(revision.changed))) this.remove(key, entry)
+      else entry.revision = revision.token
+    }
+    this.#revision = revision.token
+  }
+
+  private get(key: string): Entry | undefined {
     const entry = this.#entries.get(key)
     if (!entry) return
-    if (entry.revision !== revision.token && (revision.selection !== 'typescript.calls/v1' ||
-      revision.parent !== entry.revision || entry.receipt.intersects(revision.changed))) {
-      this.remove(key, entry)
-      return
-    }
-    entry.revision = revision.token
     this.#entries.delete(key)
     this.#entries.set(key, entry)
     return entry
@@ -132,6 +140,7 @@ export class SemanticComputationCache {
 
   close(): void {
     this.#closed = true
+    this.#revision = undefined
     for (const [key, entry] of this.#entries) this.remove(key, entry)
     for (const release of this.#building) release()
     this.#building.clear()

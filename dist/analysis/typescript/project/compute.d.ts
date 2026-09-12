@@ -9,6 +9,7 @@ export declare class SemanticComputationCache {
     constructor(values: ValueResolutionCache);
     committed(generation: AnalysisGeneration): void;
     run<Input, Result>(query: AnalysisQuery, load: () => Promise<ValueIndex>, observe: TypeScriptComputation<Input, Result>, input: Input, check: () => void, signal?: AbortSignal): Promise<Result>;
+    private reconcile;
     private get;
     private reserve;
     private remove;
