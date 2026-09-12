@@ -322,6 +322,17 @@ export function loop(flag: boolean) { let request = 'old'; while (flag) { reques
     try {
       await current.service.refresh({ signal: AbortSignal.timeout(20_000) })
       const bodies = await current.read()
+      for (const { body } of bodies) {
+        // Native IDs and role tokens make field ordering identical to the
+        // original composite keys, including through packed transport.
+        const keys = body.relations.map(({ parent, role, child }) => {
+          expect(parent).toMatch(/^occurrence:[a-f0-9]{64}$/)
+          expect(child).toMatch(/^occurrence:[a-f0-9]{64}$/)
+          expect(role).toMatch(/^[a-z-]+(?::[0-9]+)?$/)
+          return `${parent}\0${role}\0${child}`
+        })
+        expect(keys).toEqual([...keys].sort())
+      }
       const module = bodies.find((entry) => entry.file === 'index.ts' && entry.body.scope === 'module')!
       expect(module.kind).toBe('module-body')
       expect(module.body.parameters).toEqual([])
