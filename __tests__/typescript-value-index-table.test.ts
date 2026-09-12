@@ -87,6 +87,99 @@ describe('immutable value lookup tables', () => {
     expect([...build.finish()]).toEqual([...pinned])
   })
 
+  it('preserves first-seen slots through seven levels, full hash collisions and replacements', () => {
+    const [a, b, c, d, collision, other] = [
+      coordinate('a', '80000000'), coordinate('b', '00000000'),
+      coordinate('c', 'c0000000'), coordinate('d', '40000000'),
+      coordinate('collision', '00000000'), coordinate('other', '00000001'),
+    ] as const
+    const atom = Object.freeze({ value: 'replacement' })
+    const build = new ValueIndexTable<string, object | undefined>().edit()
+    for (const key of [a, other, b, c, collision, d]) build.set(key, undefined)
+    build.set(b, atom)
+    expect(build.get(b)).toBe(atom)
+    expect(build.get(collision)).toBeUndefined()
+    const pinned = build.finish()
+    expect([...pinned.keys()]).toEqual([a, b, collision, c, d, other])
+    expect(pinned.size).toBe(6)
+    expect(pinned.has(collision)).toBe(true)
+    expect(build.get(b)).toBe(atom)
+    expect([...build.finish()]).toEqual([...pinned])
+    expect(() => build.set(b, undefined)).toThrow('already published')
+    expect(() => build.delete('absent')).toThrow('already published')
+
+    const left = pinned.edit(), right = pinned.edit()
+    left.delete(a)
+    left.set(a, atom)
+    right.delete(b)
+    right.set(collision, atom)
+    expect([...left.finish().keys()]).toEqual([b, collision, c, d, a, other])
+    expect([...right.finish().keys()]).toEqual([a, collision, c, d, other])
+    expect(pinned.get(collision)).toBeUndefined()
+    expect(pinned.get(b)).toBe(atom)
+    expect([...pinned.keys()]).toEqual([a, b, collision, c, d, other])
+  })
+
+  it('keeps a surviving slot in place when its first key is deleted before publication', () => {
+    const a = coordinate('first', '00000000')
+    const b = coordinate('second', '00000001')
+    const c = coordinate('survivor', '00000020')
+    const build = new ValueIndexTable<string, string | undefined>().edit()
+    build.set(a, undefined)
+    build.set(b, 'second')
+    build.set(c, 'survivor')
+    build.delete('absent')
+    build.delete(a)
+    expect(build.get(a)).toBeUndefined()
+    expect(build.get(c)).toBe('survivor')
+    const pinned = build.finish()
+    // Filtering the original insertion Map would incorrectly visit b before c.
+    expect([...pinned.keys()]).toEqual([c, b])
+    expect(pinned.has(a)).toBe(false)
+    const changed = pinned.edit()
+    changed.set(a, 'returned')
+    expect([...changed.finish().keys()]).toEqual([c, a, b])
+    expect([...pinned.keys()]).toEqual([c, b])
+  })
+
+  it('matches incremental construction through mixed edits before the first publication', () => {
+    const sentinel = coordinate('sentinel', 'ffffffff')
+    const seed = new ValueIndexTable<string, number | undefined>().edit()
+    seed.set(sentinel, 0)
+    const pinned = seed.finish()
+    const incremental = pinned.edit()
+    const bulk = new ValueIndexTable<string, number | undefined>().edit()
+    // Slot 31 is reserved for the sentinel. Removing it after the operations
+    // leaves exactly the traversal established by the shared insertions.
+    const keys = Array.from({ length: 96 }, (_, index) => coordinate(String(index),
+      (((Math.imul(index % 24, 0x9e3779b1) & 0xffffffe0) | index % 8) >>> 0).toString(16).padStart(8, '0')))
+    for (const [index, key] of keys.entries()) {
+      bulk.set(key, index % 3 ? index : undefined)
+      incremental.set(key, index % 3 ? index : undefined)
+    }
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[(index * 17) % keys.length]!
+      if (index % 4 === 0) { bulk.delete(key); incremental.delete(key) }
+      else { bulk.set(key, index); incremental.set(key, index) }
+      expect(bulk.get(key)).toBe(incremental.get(key))
+    }
+    incremental.delete(sentinel)
+    const actual = bulk.finish(), expected = incremental.finish()
+    expect([...actual]).toEqual([...expected])
+    expect(actual.size).toBe(expected.size)
+    expect([...pinned]).toEqual([[sentinel, 0]])
+    expect([...bulk.finish()]).toEqual([...expected])
+    const emptied = actual.edit()
+    for (const key of actual.keys()) emptied.delete(key)
+    const empty = emptied.finish()
+    const restarted = empty.edit()
+    restarted.delete('absent')
+    restarted.set(keys[0]!, undefined)
+    expect(restarted.finish().has(keys[0]!)).toBe(true)
+    expect(empty.size).toBe(0)
+    expect([...actual]).toEqual([...expected])
+  })
+
   it('matches exact key/value membership through many pinned mixed revisions', () => {
     const keys = Array.from({ length: 256 }, (_, index) => index % 4
       ? coordinate(String(index), ((Math.imul(index, 0x9e3779b1)) >>> 0).toString(16).padStart(8, '0'))
