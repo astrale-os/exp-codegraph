@@ -1,7 +1,7 @@
 import type { OccurrenceId } from '../../identity/index.ts'
 import type {
   BodyOccurrence, BodyOccurrenceKind, ControlFlowEdgeKind, FunctionBodyIR, TypeScriptSymbolOrigin,
-} from './model.ts'
+} from './types.ts'
 
 /** Private semantic view. Structural decoding must complete before this validator runs. */
 export interface BodyValidationView extends Omit<FunctionBodyIR,

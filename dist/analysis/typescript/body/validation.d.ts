@@ -1,5 +1,5 @@
 import type { OccurrenceId } from '../../identity/index.ts';
-import type { BodyOccurrence, FunctionBodyIR } from './model.ts';
+import type { BodyOccurrence, FunctionBodyIR } from './types.ts';
 /** Private semantic view. Structural decoding must complete before this validator runs. */
 export interface BodyValidationView extends Omit<FunctionBodyIR, 'occurrences' | 'blocks' | 'relations' | 'edges' | 'definitions' | 'calls'> {
     readonly occurrences: Iterable<BodyOccurrence> & {
