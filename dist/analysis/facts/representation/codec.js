@@ -4,10 +4,32 @@ const OWNED_PAYLOAD_CODECS = new WeakSet();
 const IMMUTABLE_PAYLOADS = new WeakSet();
 const OWNED_PHYSICAL_RECORDS = new WeakSet();
 const OWNED_WIRE_SHARDS = new WeakSet();
+const OWNED_PAYLOAD_IDENTITIES = new WeakMap();
 /** Internal composition only: this decoder constructs an owned plain data tree. */
 export function ownFactPayloadCodec(codec) {
     OWNED_PAYLOAD_CODECS.add(codec);
     return Object.freeze(codec);
+}
+export function ownFactPayloadIdentity(codec, prepare) {
+    OWNED_PAYLOAD_IDENTITIES.set(codec, prepare);
+    return ownFactPayloadCodec(codec);
+}
+/** No preparation runs until the complete shard qualifies for this private path. */
+export function prepareOwnedFactShardIdentity(shard) {
+    if (!OWNED_WIRE_SHARDS.has(shard) || !shard.facts.length)
+        return;
+    const inputs = [];
+    for (const fact of shard.facts) {
+        const state = physicalState(fact);
+        if (!state?.owned || state.status !== undefined || !OWNED_PAYLOAD_CODECS.has(state.codec))
+            return;
+        const prepare = OWNED_PAYLOAD_IDENTITIES.get(state.codec);
+        if (!prepare)
+            return;
+        inputs.push({ data: state.record.data, prepare });
+    }
+    // Preserve the decoder's fact order, including failure before any identity work.
+    return inputs.map(({ data, prepare }) => prepare(data));
 }
 /** Certificates concern decoded roots, never a codec name or a caller's frozen object. */
 export function hasImmutableFactPayload(payload) {

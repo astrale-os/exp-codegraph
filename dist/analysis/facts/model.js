@@ -1,6 +1,6 @@
 import { deriveAnalysisId } from '../identity/index.js';
 import { admittedFactShardPayloadBytes, canStreamFactShardIdentity, certifyFactShard, payloadForSemanticIdentity, } from './representation/index.js';
-import { hashOwnedFactShard } from './owned-admission.js';
+import { hashOwnedFactShard, hashOwnedPhysicalFactShard } from './owned-admission.js';
 const textEncoder = new TextEncoder();
 /** Read a fact envelope without invoking a lazy semantic payload getter. */
 export function factHeader(fact) {
@@ -63,16 +63,17 @@ export function validateFactShard(shard) {
             }
         }
     }
-    const semanticFacts = shard.facts.map(semanticFactIdentity);
+    const compact = hashOwnedPhysicalFactShard(shard);
+    const semanticFacts = compact ? undefined : shard.facts.map(semanticFactIdentity);
     const identity = {
         key: shard.key,
         namespace: shard.namespace,
         schemaVersion: shard.schemaVersion,
         completion: shard.completion,
-        facts: semanticFacts,
+        facts: semanticFacts ?? shard.facts,
         ...(shard.capabilities ? { capabilities: shard.capabilities } : {}),
     };
-    const streamed = canStreamFactShardIdentity(shard) ? hashOwnedFactShard(identity) : undefined;
+    const streamed = compact ?? (canStreamFactShardIdentity(shard) ? hashOwnedFactShard(identity) : undefined);
     const expected = streamed?.digest ?? deriveAnalysisId('fact-shard-digest', shard.namespace, identity);
     if (shard.digest !== expected) {
         diagnostics.push(`FACT_SHARD_DIGEST_MISMATCH:expected=${expected}:actual=${shard.digest}:subjects=${[

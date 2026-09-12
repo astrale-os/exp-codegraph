@@ -1,6 +1,7 @@
 import { createAnalysisIdentityHash } from '../identity/hash.js';
 import { compareUnicodeScalars } from '../identity/model.js';
 import { types } from 'node:util';
+import { prepareOwnedFactShardIdentity } from './representation/index.js';
 const UNSUPPORTED = Symbol('non-JSON admission value');
 const ARRAY = Array;
 const ARRAY_PROTOTYPE = Array.prototype;
@@ -11,6 +12,18 @@ const NATIVE_ARRAYS = ARRAY_CONSTRUCTOR?.value === ARRAY && nativeFunction(ARRAY
     nativeFunction(ARRAY_MAP?.value, 'map') && nativeFunction(ARRAY_SPECIES?.get, 'get [Symbol.species]');
 /** Private, owned JSON ingress only. The generic identity path remains the fallback. */
 export function hashOwnedFactShard(input) {
+    if (!supportsOwnedJSONIdentity())
+        return;
+    return writeFactShardIdentity(input);
+}
+/** The exact owned codecs validate compact payloads before any bytes are emitted. */
+export function hashOwnedPhysicalFactShard(input) {
+    if (!supportsOwnedJSONIdentity())
+        return;
+    const payloads = prepareOwnedFactShardIdentity(input);
+    return payloads ? writeFactShardIdentity(input, payloads) : undefined;
+}
+function supportsOwnedJSONIdentity() {
     // These hooks would change canonical() or JSON.stringify() even for fresh
     // plain data. Leave their observation and result to the generic encoder.
     if (!NATIVE_ARRAYS || Array !== ARRAY || Array.prototype !== ARRAY_PROTOTYPE ||
@@ -19,7 +32,10 @@ export function hashOwnedFactShard(input) {
         !sameDescriptor(Object.getOwnPropertyDescriptor(ARRAY_PROTOTYPE, 'constructor'), ARRAY_CONSTRUCTOR) ||
         !sameDescriptor(Object.getOwnPropertyDescriptor(ARRAY, Symbol.species), ARRAY_SPECIES) ||
         Object.hasOwn(Object.prototype, 'toJSON') || Object.hasOwn(Array.prototype, 'toJSON'))
-        return;
+        return false;
+    return true;
+}
+function writeFactShardIdentity(input, payloads) {
     const writer = new OwnedJSONWriter(input.namespace);
     try {
         writer.part('{');
@@ -46,7 +62,10 @@ export function hashOwnedFactShard(input) {
             writer.value(fact.namespace);
             writer.part(',"payload":');
             const before = writer.bytes;
-            writer.value(fact.payload);
+            if (payloads)
+                payloads[index].write(writer);
+            else
+                writer.value(fact.payload);
             semanticPayloadBytes += writer.bytes - before;
             writer.part(',"provenance":');
             writer.value(fact.provenance);

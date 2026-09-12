@@ -14,6 +14,19 @@ export interface FactPayloadCodec {
 }
 /** Internal composition only: this decoder constructs an owned plain data tree. */
 export declare function ownFactPayloadCodec<Codec extends FactPayloadCodec>(codec: Codec): Codec;
+/** Private codec composition: validate first, then emit the logical JSON identity. */
+export interface OwnedPayloadIdentity {
+    write(writer: OwnedPayloadIdentityWriter): void;
+}
+export interface OwnedPayloadIdentityWriter {
+    /** Fixed ASCII JSON punctuation and field names, never unescaped input. */
+    part(value: string): void;
+    /** A logical JSON value; escaping, key order and byte counting belong to the writer. */
+    value(value: unknown): void;
+}
+export declare function ownFactPayloadIdentity<Codec extends FactPayloadCodec>(codec: Codec, prepare: (data: unknown) => OwnedPayloadIdentity): Codec;
+/** No preparation runs until the complete shard qualifies for this private path. */
+export declare function prepareOwnedFactShardIdentity(shard: FactShard): readonly OwnedPayloadIdentity[] | undefined;
 /** Certificates concern decoded roots, never a codec name or a caller's frozen object. */
 export declare function hasImmutableFactPayload(payload: object): boolean;
 export type StoredFactPayload = {
