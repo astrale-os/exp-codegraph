@@ -83,10 +83,11 @@ export function createFactWithPhysicalPayload(
   const record = admitPhysicalPayloadRecord(input, owner)
   const codec = codecs.get(record.codec)
   if (!codec) throw new TypeError(`${owner} uses unsupported fact payload codec ${record.codec}.`)
+  const owned = input !== null && typeof input === 'object' && OWNED_PHYSICAL_RECORDS.has(input)
   return createPhysicalFact(fields, {
-    record: deepFreeze(record),
+    record: owned ? freezeOwnedJSON(record) : deepFreeze(record),
     codec,
-    owned: input !== null && typeof input === 'object' && OWNED_PHYSICAL_RECORDS.has(input),
+    owned,
   })
 }
 
@@ -256,6 +257,20 @@ function deepFreeze<Value>(value: Value, owned = false): Value {
     for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
       if ('value' in descriptor) deepFreeze(descriptor.value, owned)
     }
+  }
+  return Object.freeze(value)
+}
+
+/** JSON ingress owns plain data, so large packed arrays need no property descriptors. */
+function freezeOwnedJSON<Value>(value: Value): Value {
+  if (value === null || typeof value !== 'object') return value
+  // A frozen parent does not certify its children. Traverse every owned input
+  // once, including roots or nested containers frozen before admission.
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index++) freezeOwnedJSON(value[index])
+  } else {
+    const record = value as Record<string, unknown>
+    for (const key of Object.keys(record)) freezeOwnedJSON(record[key])
   }
   return Object.freeze(value)
 }
