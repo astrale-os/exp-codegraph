@@ -88,6 +88,7 @@ func (a *analyzer) moduleDependencyFingerprint(
 			rows = append(rows, map[string]any{
 				"file": source.FileName(), "kind": reference.kind, "typeOnly": reference.typeOnly,
 				"specifier": reference.specifier, "start": reference.node.Pos(), "end": reference.node.End(),
+				"location":    x.location(source, reference.node),
 				"sourceOwner": sourceOwner, "target": target, "targetOwner": targetOwner,
 			})
 		}
@@ -95,6 +96,7 @@ func (a *analyzer) moduleDependencyFingerprint(
 			rows = append(rows, map[string]any{
 				"file": source.FileName(), "kind": reference.kind, "unresolved": true,
 				"start": reference.node.Pos(), "end": reference.node.End(),
+				"location": x.location(source, reference.node),
 			})
 		}
 	}

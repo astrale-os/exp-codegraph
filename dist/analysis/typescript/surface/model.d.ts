@@ -1,5 +1,7 @@
 export interface SourcePosition {
+    /** One-based ECMAScript source line. */
     readonly line: number;
+    /** One-based UTF-16 code-unit column. */
     readonly column: number;
 }
 export type SourceLocation = SourcePosition & ({

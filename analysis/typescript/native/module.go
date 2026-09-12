@@ -27,7 +27,7 @@ type moduleObservation struct {
 }
 
 func (x *extractor) moduleShards(program *driver.Program) ([]factShard, error) {
-	return x.moduleShardsFor(program, nil, nil)
+	return x.moduleShardsFor(program, nil, nil, nil)
 }
 
 // moduleShardsFor composes the normalized physical module representation for
@@ -38,19 +38,39 @@ func (x *extractor) moduleShardsFor(
 	program *driver.Program,
 	selected map[string]bool,
 	retainedDependencies []dependencyPayload,
+	previousDeclarations map[string][]string,
 ) ([]factShard, error) {
 	observations := map[string]*moduleObservation{}
+	declarationFacts := map[string]preparedFact{}
 	currentProject := filepath.Clean(program.ParsedConfig.ConfigName())
-	for _, boundary := range x.modules {
-		configuredProject := filepath.Clean(filepath.Join(x.root, filepath.FromSlash(boundary.Project)))
-		if configuredProject != currentProject || (selected != nil && !selected[boundary.ID]) {
-			continue
+	for {
+		added := false
+		for _, boundary := range x.modules {
+			configuredProject := filepath.Clean(filepath.Join(x.root, filepath.FromSlash(boundary.Project)))
+			if configuredProject != currentProject || observations[boundary.ID] != nil || (selected != nil && !selected[boundary.ID]) {
+				continue
+			}
+			observation, err := x.observeModule(program, boundary)
+			if err != nil {
+				return nil, err
+			}
+			observations[boundary.ID] = observation
+			added = true
 		}
-		observation, err := x.observeModule(program, boundary)
-		if err != nil {
-			return nil, err
+		if !added {
+			break
 		}
-		observations[boundary.ID] = observation
+		// Prepare each canonical support once. Its exact fact ID includes every
+		// exposed location, even when the compiler's declaration shape is stable.
+		for identity, observation := range x.moduleDeclarationsByIdentity {
+			if _, exists := declarationFacts[identity]; !exists {
+				declarationFacts[identity] = x.newFactVersion(declarationNamespace, "declaration", identity,
+					declarationFactPayload{Declaration: observation.declaration}, nil, complete(), 2)
+			}
+		}
+		if selected == nil || !includeDeclarationReaders(selected, previousDeclarations, observations, declarationFacts) {
+			break
+		}
 	}
 	if len(observations) == 0 {
 		return []factShard{}, nil
@@ -66,7 +86,7 @@ func (x *extractor) moduleShardsFor(
 		}
 		diagnostics = program.DiagnosticsForFiles(files)
 	}
-	x.attachCompilerDiagnostics(diagnostics, observations)
+	x.attachCompilerDiagnostics(program, diagnostics, observations)
 	edges, dependencyIssues := x.observeModuleDependencies(program)
 	if selected != nil {
 		for _, edge := range retainedDependencies {
@@ -102,7 +122,6 @@ func (x *extractor) moduleShardsFor(
 		sortDependencies(observation.payload.Dependencies)
 		sortDependencies(observation.payload.InboundDependencies)
 	}
-	declarationFacts := map[string]string{}
 	shards := make([]factShard, 0, len(ids)+len(x.moduleDeclarationsByIdentity))
 	declarationIDs := make([]string, 0, len(x.moduleDeclarationsByIdentity))
 	for identity := range x.moduleDeclarationsByIdentity {
@@ -110,16 +129,7 @@ func (x *extractor) moduleShardsFor(
 	}
 	sort.Strings(declarationIDs)
 	for _, identity := range declarationIDs {
-		entry := x.newFactVersion(
-			declarationNamespace,
-			"declaration",
-			identity,
-			declarationFactPayload{Declaration: x.moduleDeclarationsByIdentity[identity].declaration},
-			nil,
-			complete(),
-			2,
-		)
-		declarationFacts[identity] = entry.ID
+		entry := declarationFacts[identity]
 		shards = append(shards, finishShardVersion(declarationNamespace, entry.ID, complete(), []preparedFact{entry}, 2))
 	}
 	for _, id := range ids {
@@ -131,7 +141,7 @@ func (x *extractor) moduleShardsFor(
 				return nil, fmt.Errorf("normalized declaration %s has no fact", declaration.Identity)
 			}
 			references = append(references, moduleDeclarationReferencePayload{
-				Fact: entry, Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
+				Fact: entry.ID, Identity: declaration.Identity, ExportPaths: declaration.ExportPaths,
 			})
 		}
 		sort.Slice(references, func(i, j int) bool { return references[i].Identity < references[j].Identity })
@@ -180,7 +190,7 @@ func (x *extractor) moduleShardsFor(
 // apply to every module in the project. Source-local diagnostics are retained
 // only when the source is catalog-owned and belongs to one of this project's
 // configured module boundaries.
-func (x *extractor) attachCompilerDiagnostics(diagnostics []driver.Diagnostic, observations map[string]*moduleObservation) {
+func (x *extractor) attachCompilerDiagnostics(program *driver.Program, diagnostics []driver.Diagnostic, observations map[string]*moduleObservation) {
 	for _, diagnostic := range diagnostics {
 		issue := map[string]any{
 			"code":    fmt.Sprintf("TYPESCRIPT_%d", diagnostic.Code),
@@ -205,6 +215,9 @@ func (x *extractor) attachCompilerDiagnostics(diagnostics []driver.Diagnostic, o
 			continue
 		}
 		line, column := diagnostic.Line, diagnostic.Column
+		if source := x.diagnosticSource(program, diagnostic.File); source != nil {
+			line, column = x.lineAndColumn(source, *diagnostic.Start)
+		}
 		if line < 1 {
 			line = 1
 		}
@@ -249,8 +262,8 @@ func (x *extractor) observeModule(program *driver.Program, boundary moduleBounda
 			sourceLocation{File: boundary.Entrypoint, Line: 1, Column: 1},
 		))
 	} else {
-		if record, ok := x.sources[source.FileName()]; ok {
-			evidence = []sourceSpan{{Source: record.Source, Revision: record.Revision, Start: 0, End: max(1, len(source.Text()))}}
+		if _, ok := x.sources[source.FileName()]; ok {
+			evidence = []sourceSpan{x.sourceSpan(source, 0, len(source.Text()))}
 		}
 		moduleSymbol := x.checker.GetSymbolAtLocation(source.AsNode())
 		if moduleSymbol == nil {
@@ -613,15 +626,7 @@ func (x *extractor) location(file *shimast.SourceFile, node *shimast.Node) sourc
 	if node != nil && node != file.AsNode() {
 		start = shimscanner.SkipTrivia(file.Text(), node.Pos())
 	}
-	line, column := 1, 1
-	for index := 0; index < start && index < len(file.Text()); index++ {
-		if file.Text()[index] == '\n' {
-			line++
-			column = 1
-		} else {
-			column++
-		}
-	}
+	line, column := x.lineAndColumn(file, start)
 	path, catalog := x.publicSourceCoordinate(file.FileName())
 	if catalog {
 		return sourceLocation{File: path, Line: line, Column: column}

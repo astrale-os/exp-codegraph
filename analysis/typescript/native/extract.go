@@ -35,12 +35,16 @@ var supportedCapabilities = []string{
 }
 
 type extractor struct {
-	callableReads                map[string][]callableRead
-	root                         string
-	universe                     string
-	plan                         projectionPlan
-	checker                      *shimchecker.Checker
-	sources                      map[string]sourceRecord
+	callableReads map[string][]callableRead
+	root          string
+	universe      string
+	plan          projectionPlan
+	checker       *shimchecker.Checker
+	sources       map[string]sourceRecord
+
+	// Scoped to immutable compiler sources in this extraction; never keyed by path.
+	sourceCoordinates            map[*shimast.SourceFile]sourceCoordinates
+	diagnosticSources            map[string]*shimast.SourceFile
 	symbolIDs                    map[*shimast.Symbol]string
 	symbolSeen                   map[string]symbolFactPayload
 	symbolsBySource              map[string][]symbolFactPayload
@@ -316,12 +320,12 @@ func (x *extractor) diagnosticShard(program *driver.Program) factShard {
 		var diagnosticSpan *sourceSpan
 		if diagnostic.File != "" {
 			file, _ = x.publicSourceCoordinate(diagnostic.File)
-			if record, exists := x.sources[diagnostic.File]; exists && diagnostic.Start != nil {
-				end := *diagnostic.Start + 1
+			if _, exists := x.sources[diagnostic.File]; exists && diagnostic.Start != nil {
+				end := *diagnostic.Start
 				if diagnostic.Length != nil && *diagnostic.Length > 0 {
 					end = *diagnostic.Start + *diagnostic.Length
 				}
-				span := sourceSpan{Source: record.Source, Revision: record.Revision, Start: *diagnostic.Start, End: end}
+				span := x.sourceSpan(x.diagnosticSource(program, diagnostic.File), *diagnostic.Start, end)
 				diagnosticSpan = &span
 				evidence = []sourceSpan{span}
 			}
@@ -622,13 +626,8 @@ func (x *extractor) occurrenceID(span sourceSpan, kind string) string {
 }
 
 func (x *extractor) span(file *shimast.SourceFile, node *shimast.Node) sourceSpan {
-	record := x.sources[file.FileName()]
 	start := shimscanner.SkipTrivia(file.Text(), node.Pos())
-	end := node.End()
-	if end <= start {
-		end = start + 1
-	}
-	return sourceSpan{Source: record.Source, Revision: record.Revision, Start: start, End: end}
+	return x.sourceSpan(file, start, node.End())
 }
 
 func (x *extractor) ownedPath(path string) (string, bool) {

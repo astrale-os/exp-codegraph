@@ -36,7 +36,9 @@ func (b *bodyBuilder) finishDefinitionUses(flow controlFlowResult) {
 					end = parent.End()
 				}
 			}
-			completed[id] = completedDefinition{id: id, start: node.Pos(), end: end}
+			// Occurrence spans are public UTF-16 coordinates; compare like units.
+			coordinates := b.x.coordinates(b.file)
+			completed[id] = completedDefinition{id: id, start: coordinates.utf16(node.Pos()), end: coordinates.utf16(end)}
 		}
 	}
 	for symbol, uses := range b.uses {

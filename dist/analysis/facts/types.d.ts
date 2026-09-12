@@ -2,7 +2,9 @@ import type { AnalysisGenerationId, FactId, FactShardDigest, FactShardKey, PassI
 export interface SourceSpan {
     readonly source: SourceId;
     readonly revision: SourceRevisionId;
+    /** Zero-based source offset; TypeScript producers use UTF-16 code units. */
     readonly start: number;
+    /** Exclusive source offset; empty TypeScript evidence retains a width of one. */
     readonly end: number;
 }
 export interface AnalysisLimit {
