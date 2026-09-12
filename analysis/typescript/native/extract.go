@@ -52,6 +52,7 @@ type extractor struct {
 	callOrigins                  map[*shimast.Symbol]*callTargetOrigin
 	packageCoordinates           *packageCoordinateResolver
 	symbolIdentityCounts         map[*shimast.SourceFile]map[string]int
+	symbolIdentityKeys           symbolIdentityKeyWorkspace
 	signatureIDs                 map[*shimast.Node]string
 	moduleDeclarations           map[*shimast.Symbol]moduleDeclarationObservation
 	moduleDeclarationsByIdentity map[string]moduleDeclarationObservation
@@ -487,9 +488,7 @@ func (x *extractor) symbolID(symbol *shimast.Symbol) string {
 		name = "<anonymous>"
 	}
 	lexical := lexicalNames(declaration, symbol)
-	identityKey := stableJSON(map[string]any{
-		"name": name, "syntax": declaration.KindString(), "lexical": lexical,
-	})
+	identityKey := x.symbolIdentityKeys.key(name, declaration.KindString(), lexical)
 	generationScoped := name == "<anonymous>" || x.identityCollisions(file, identityKey) > 1
 	input := map[string]any{
 		"path": path, "name": name, "syntax": declaration.KindString(), "lexical": lexical,
@@ -570,10 +569,7 @@ func (x *extractor) identityCollisions(file *shimast.SourceFile, identityKey str
 		if name == "" {
 			name = "<anonymous>"
 		}
-		candidate := stableJSON(map[string]any{
-			"name": name, "syntax": declaration.KindString(),
-			"lexical": lexicalNames(declaration, symbol),
-		})
+		candidate := x.symbolIdentityKeys.key(name, declaration.KindString(), lexicalNames(declaration, symbol))
 		counts[candidate]++
 		return true
 	})

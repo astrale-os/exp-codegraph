@@ -13,6 +13,10 @@ it('preserves occurrence identities and retained results across native workspace
   await goTest(['occurrence_identity.go', 'occurrence_identity_test.go', 'canonical.go', 'identity.go', 'model.go'])
 }, 95_000)
 
+it('preserves normalized symbol collision keys across native workspace reuse', async () => {
+  await goTest(['symbol_identity_key.go', 'symbol_identity_key_test.go', 'canonical.go', 'identity.go'])
+}, 95_000)
+
 it('streams complete records across bounded frames before atomic admission', async () => {
   await goTest(['framing.go', 'framing_records.go', 'framing_records_test.go', 'model.go', 'telemetry.go'])
 }, 95_000)
