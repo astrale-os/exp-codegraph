@@ -70,6 +70,45 @@ describe('owned shard admission', () => {
     expect(admittedFactShardPayloadBytes(shard)).toBe(Buffer.byteLength(JSON.stringify(payload)))
   })
 
+  it('preserves long string and property tokens across mixed UTF-8 payloads', () => {
+    const payloads = [
+      'A'.repeat(100_003),
+      'é漢'.repeat(30_007),
+      '😀'.repeat(25_013),
+      '\uD800|\uDC00|\u2028\u2029|\\u2028\\u2029|\0\n"\\'.repeat(7_009),
+      { ['é😀'.repeat(8_009)]: 'tail', after: ['\uD800', '😀', '\uDC00'] },
+    ]
+    const draft = envelope(payloads.map((payload, index) => ({ ...fields(index + 1), payload })))
+    const shard = ownWireFactShard({ ...draft, digest: factShardDigest(draft) })
+    expect(validateFactShard(shard)).toEqual([])
+    expect(admittedFactShardPayloadBytes(shard)).toBe(
+      payloads.reduce((bytes, payload) => bytes + Buffer.byteLength(JSON.stringify(payload)), 0),
+    )
+  })
+
+  it('preserves accumulated short UTF-8 fragments after differently sized prefixes', () => {
+    const alphabet = ['ascii', 'é', '漢', '😀', '\uD800', '\uDC00', '\u2028', '\\u2028', '\u2029', '\\u2029', '\0', '"', '\\']
+    const fragments = Array.from({ length: 12_007 }, (_, index) => alphabet[index % alphabet.length]!)
+    for (const prefix of ['', 'x', 'prefix!', 'varying prefix with punctuation!']) {
+      const payload = [prefix, fragments, { tail: '😀\uD800\u2028\\u2029' }]
+      const draft = envelope([{ ...fields(), payload }])
+      const shard = ownWireFactShard({ ...draft, digest: factShardDigest(draft) })
+      expect(validateFactShard(shard)).toEqual([])
+      expect(admittedFactShardPayloadBytes(shard)).toBe(Buffer.byteLength(JSON.stringify(payload)))
+    }
+  })
+
+  it('counts only payload bytes for an empty shard and multiple empty or scalar payloads', () => {
+    for (const payloads of [[], ['', [], {}, null, false, 0, -0, 'é😀\u2028\\u2028']]) {
+      const draft = envelope(payloads.map((payload, index) => ({ ...fields(index + 1), payload })))
+      const shard = ownWireFactShard({ ...draft, digest: factShardDigest(draft) })
+      expect(validateFactShard(shard)).toEqual([])
+      expect(admittedFactShardPayloadBytes(shard)).toBe(
+        payloads.reduce<number>((bytes, payload) => bytes + Buffer.byteLength(JSON.stringify(payload)), 0),
+      )
+    }
+  })
+
   it.each([1, 2, 3, 4, 5, 6])('preserves the logical digest and exact payload bytes for packed/%i', (version) => {
     const current = bodyShard(unusualJSON(), version)
     expect(current.bytes).toBeGreaterThan(32_768)

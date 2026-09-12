@@ -79,7 +79,11 @@ export function hashOwnedFactShard(input: ShardIdentity): {
   }
 }
 
-interface EncodedString { readonly canonical: string; readonly bytes: number }
+// Match UTF-16 code units: paired and unpaired surrogates both use the JSON
+// encoder. Plain strings can be quoted directly without a temporary JSON string.
+const JSON_ESCAPES = /["\\\u0000-\u001f\u2028\u2029\ud800-\udfff]/
+const UTF8 = new TextEncoder()
+interface EncodedString { readonly canonical: Buffer; readonly bytes: number }
 interface ObjectShape { readonly keys: readonly string[]; readonly ordered: readonly string[] }
 
 class OwnedJSONWriter {
@@ -87,18 +91,19 @@ class OwnedJSONWriter {
   readonly #strings = new Map<string, EncodedString>()
   readonly #shapes = new Map<number, ObjectShape[]>()
   #shapeCount = 0
-  #parts: string[] = []
-  #characters = 0
+  readonly #buffer = Buffer.allocUnsafe(32_768)
+  #offset = 0
   // Ordinary JSON UTF-8 bytes, before the identity-only separator escapes.
   bytes = 0
 
   constructor(namespace: string) { this.#hash = createAnalysisIdentityHash('fact-shard-digest', namespace) }
 
-  part(value: string, bytes = value.length): void {
-    this.bytes += bytes
-    if (this.#characters + value.length >= 32_768) this.flush()
-    if (value.length >= 32_768) this.#hash.update(value)
-    else { this.#parts.push(value); this.#characters += value.length }
+  /** Short ASCII framing and primitive tokens; string values use string(). */
+  part(value: string): void {
+    this.bytes += value.length
+    if (value.length > this.#buffer.length - this.#offset) this.flush()
+    if (value.length === 1) this.#buffer[this.#offset++] = value.charCodeAt(0)
+    else this.#offset += this.#buffer.write(value, this.#offset, value.length, 'ascii')
   }
 
   value(value: unknown): void {
@@ -143,16 +148,69 @@ class OwnedJSONWriter {
   }
 
   private string(value: string): void {
-    let encoded = value.length <= 256 ? this.#strings.get(value) : undefined
-    if (!encoded) {
-      const json = JSON.stringify(value)
-      encoded = { canonical: json.replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029'),
-        bytes: Buffer.byteLength(json) }
-      // Both caches belong to this one admission. Bound their entry count and
-      // retained key size; a giant open value must not become a cached token.
-      if (this.#strings.size < 256 && value.length <= 256) this.#strings.set(value, encoded)
+    const encoded = value.length <= 256 ? this.#strings.get(value) : undefined
+    if (encoded) {
+      this.bytes += encoded.bytes
+      this.token(encoded.canonical)
+      return
     }
-    this.part(encoded.canonical, encoded.bytes)
+    // Both caches belong to this one admission. Bound their entry count and
+    // retained key size; a giant open value must not become a cached token.
+    const cache = this.#strings.size < 256 && value.length <= 256
+    if (!JSON_ESCAPES.test(value)) {
+      const bytes = Buffer.byteLength(value)
+      this.bytes += bytes + 2
+      if (cache) {
+        const token = Buffer.allocUnsafe(bytes + 2)
+        token[0] = token[bytes + 1] = 34
+        token.write(value, 1, bytes, 'utf8')
+        this.#strings.set(value, { canonical: token, bytes: bytes + 2 })
+        this.token(token)
+      } else {
+        this.byte(34)
+        this.text(value, bytes)
+        this.byte(34)
+      }
+      return
+    }
+    const json = JSON.stringify(value)
+    const canonical = json.replaceAll('\u2028', '\\u2028').replaceAll('\u2029', '\\u2029')
+    const canonicalBytes = Buffer.byteLength(canonical)
+    const bytes = canonical === json ? canonicalBytes : Buffer.byteLength(json)
+    this.bytes += bytes
+    if (cache) {
+      const token = Buffer.from(canonical)
+      this.#strings.set(value, { canonical: token, bytes })
+      this.token(token)
+    } else this.text(canonical, canonicalBytes)
+  }
+
+  private byte(value: number): void {
+    if (this.#offset === this.#buffer.length) this.flush()
+    this.#buffer[this.#offset++] = value
+  }
+
+  /** Cached tokens are bounded to fit the buffer and already contain quotes. */
+  private token(value: Buffer): void {
+    if (value.length > this.#buffer.length - this.#offset) this.flush()
+    this.#offset += value.copy(this.#buffer, this.#offset)
+  }
+
+  private text(value: string, bytes: number): void {
+    if (bytes <= this.#buffer.length) {
+      if (bytes > this.#buffer.length - this.#offset) this.flush()
+      this.#offset += this.#buffer.write(value, this.#offset, bytes, 'utf8')
+      return
+    }
+    let read = 0
+    while (read < value.length) {
+      const result = UTF8.encodeInto(value.slice(read), this.#buffer.subarray(this.#offset))
+      read += result.read
+      this.#offset += result.written
+      // encodeInto reports consumed UTF-16 units and never splits a surrogate
+      // pair or writes a partial UTF-8 sequence when fewer than four bytes fit.
+      if (read < value.length) this.flush()
+    }
   }
 
   private keys(value: object): readonly string[] {
@@ -178,9 +236,10 @@ class OwnedJSONWriter {
   }
 
   private flush(): void {
-    if (this.#characters) this.#hash.update(this.#parts.join(''))
-    this.#parts.length = 0
-    this.#characters = 0
+    if (this.#offset) this.#hash.update(this.#buffer.subarray(0, this.#offset))
+    // Hash.update consumes this view synchronously; only its filled prefix was
+    // observed and the same local buffer is now free for the next chunk.
+    this.#offset = 0
   }
 }
 
