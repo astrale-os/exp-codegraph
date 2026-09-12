@@ -429,12 +429,25 @@ function primary(columns, fact, add, touched, inputs) {
         apply(columns.callsBySource, source, calls);
 }
 function rowContribution(owner, fragment, row) {
-    // Only a private, owned column entry contains this cycle. The projected value
-    // remains the body's node/call, never this entry; providers and codecs keep
-    // their original payloads. A data field avoids a getter on each column read.
-    const contribution = { owner, fragment, row, value: undefined };
-    contribution.value = contribution;
-    return Object.freeze(contribution);
+    return new BodyRowContribution(owner, fragment, row);
+}
+// A dedicated constructor shares the frozen layout across a large index. The
+// equivalent object literal can retain separate V8 maps/descriptors per row
+// under the index's allocation/GC history, despite keeping fast properties.
+class BodyRowContribution {
+    owner;
+    fragment;
+    row;
+    value;
+    constructor(owner, fragment, row) {
+        this.owner = owner;
+        this.fragment = fragment;
+        this.row = row;
+        // Only this private column entry contains the cycle; projected nodes,
+        // calls, proofs and transport never expose it. Reads need no getter.
+        this.value = this;
+        Object.freeze(this);
+    }
 }
 function derive(fact, columns) {
     const inputs = new Set();
