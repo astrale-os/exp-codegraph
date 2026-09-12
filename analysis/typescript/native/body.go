@@ -31,7 +31,7 @@ type bodyBuilder struct {
 	recursion       bool
 }
 
-func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([]factShard, error) {
+func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord, identityWorkspace *bodyIdentityWorkspace) ([]factShard, error) {
 	var shards []factShard
 	// Module evaluation owns initializers just as a function owns its body.
 	// Nested functions remain opaque values here and get independent shards.
@@ -42,7 +42,7 @@ func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([
 		builder := newBodyBuilder(x, file, owner, "module", file.AsNode())
 		payload := builder.build(nil)
 		if len(payload.Body.Occurrences) != 0 {
-			shard, err := x.bodyShard(builder, payload, "module-body", x.span(file, file.AsNode()))
+			shard, err := x.bodyShard(builder, payload, "module-body", x.span(file, file.AsNode()), identityWorkspace)
 			if err != nil {
 				return nil, err
 			}
@@ -59,7 +59,7 @@ func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord) ([
 		}
 		builder := newBodyBuilder(x, file, owner, "function", node.Body())
 		payload := builder.build(node)
-		shard, err := x.bodyShard(builder, payload, "function-body", x.span(file, node))
+		shard, err := x.bodyShard(builder, payload, "function-body", x.span(file, node), identityWorkspace)
 		if err != nil {
 			// The walker cannot return an error directly.
 			x.bodyPackingError = err
@@ -90,9 +90,9 @@ func newBodyBuilder(x *extractor, file *shimast.SourceFile, owner, scope string,
 	}
 }
 
-func (x *extractor) bodyShard(builder *bodyBuilder, payload bodyFactPayload, kind string, span sourceSpan) (factShard, error) {
+func (x *extractor) bodyShard(builder *bodyBuilder, payload bodyFactPayload, kind string, span sourceSpan, identityWorkspace *bodyIdentityWorkspace) (factShard, error) {
 	completion := payload.Completeness
-	entry := x.newFact(bodyNamespace, kind, builder.owner, payload, []sourceSpan{span}, completion)
+	entry := x.admitPreparedFact(identityWorkspace.prepare(x.factWithProvenance(bodyNamespace, kind, builder.owner, payload, []sourceSpan{span}, completion, 1)))
 	shard := finishShard(bodyNamespace, builder.owner, completion, []preparedFact{entry})
 	if codec := negotiatedBodyPayloadCodec(x.payloadCodecs); codec != "" {
 		packed, err := packBodyPayload(payload, span, codec)

@@ -11,9 +11,10 @@ import (
 // json.Numbers. encoding/json retains authority over Go values and JSON number
 // spelling; this pass changes object order while copying primitive byte spans.
 type canonicalJSON struct {
-	input  []byte
-	output []byte
-	fields []canonicalField
+	input      []byte
+	output     []byte
+	fields     []canonicalField
+	usedFields int
 }
 
 type canonicalField struct {
@@ -26,6 +27,19 @@ func canonicalJSONBytes(input []byte) []byte {
 	writer := canonicalJSON{input: input, output: make([]byte, 0, len(input))}
 	writer.value(0)
 	return writer.output
+}
+
+// Reused only while the caller owns the completed encoding. Field descriptors
+// can retain slices of an input or normalized keys after their stack is popped;
+// clear this encoding's high-water range, not the arena's historical capacity.
+func (w *canonicalJSON) encode(input []byte) []byte {
+	w.input = input
+	w.output = slices.Grow(w.output[:0], len(input))
+	w.value(0)
+	clear(w.fields[:w.usedFields])
+	w.usedFields = 0
+	w.input = nil
+	return w.output
 }
 
 func (w *canonicalJSON) space(position int) int {
@@ -142,6 +156,7 @@ func (w *canonicalJSON) object(position int) int {
 			position = w.space(position + 1)
 		}
 	}
+	w.usedFields = max(w.usedFields, len(w.fields))
 	fields := w.fields[base:]
 	slices.SortStableFunc(fields, func(left, right canonicalField) int { return bytes.Compare(left.key, right.key) })
 	w.output = append(w.output, '{')
