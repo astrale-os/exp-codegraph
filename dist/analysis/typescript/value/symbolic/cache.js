@@ -18,6 +18,7 @@ export class ValueResolutionCache {
     #nextModel = 0;
     #nextWitness = 0;
     #bytes = 0;
+    #reserved = 0;
     #closed = false;
     constructor(maximumEntries = Infinity, maximumBytes = 8 * 1024 * 1024) {
         this.#maximumEntries = maximumEntries;
@@ -35,6 +36,24 @@ export class ValueResolutionCache {
     dependency(witness) {
         const resident = this.#readers.get(witness.key)?.witness;
         return resident && resident.fingerprint === witness.fingerprint ? resident : witness;
+    }
+    /** Aggregate computations share this cache's existing retention envelope. */
+    reserve(bytes) {
+        if (this.#closed || !Number.isSafeInteger(bytes) || bytes < 0 ||
+            this.#reserved + bytes + this.#frequency.bytes > this.#maximumBytes)
+            return;
+        for (const entry of this.#entries.values()) {
+            if (this.bytes + bytes <= this.#maximumBytes)
+                break;
+            this.remove(entry);
+        }
+        this.#reserved += bytes;
+        let released = false;
+        return () => { if (!released) {
+            released = true;
+            if (!this.#closed)
+                this.#reserved -= bytes;
+        } };
     }
     /** Only resident bases are interned; rejected demands add no retained registry entry. */
     basis(dependencies, evidence, limits) {
@@ -201,9 +220,10 @@ export class ValueResolutionCache {
         }
     }
     clear() { this.#entries.clear(); this.#readers.clear(); this.#groups.clear(); this.#coordinates.clear(); this.#bytes = 0; }
-    close() { this.#closed = true; this.clear(); this.#frequency = undefined; this.#revision = undefined; }
+    close() { this.#closed = true; this.clear(); this.#reserved = 0; this.#frequency = undefined; this.#revision = undefined; }
     get size() { return this.#entries.size; }
-    get bytes() { return this.#bytes + this.#coordinates.bytes + (this.#frequency?.bytes ?? 0); }
+    get capacity() { return this.#maximumBytes - (this.#frequency?.bytes ?? 0); }
+    get bytes() { return this.#bytes + this.#reserved + this.#coordinates.bytes + (this.#frequency?.bytes ?? 0); }
 }
 function dependencyBytes(dependency) {
     return 192 + dependency.key.length * 2 + (dependency.fingerprint?.length ?? 0) * 2;

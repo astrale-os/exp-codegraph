@@ -50,6 +50,21 @@ it('reuses thousands of real demands while invalidating changed shared helper pr
     }
     const { values, first: occurrence } = await resolve(first)
     expect(executions).toBe(count)
+    // A cached proof must not own the model closure, which may capture a reader.
+    // Inspect hidden metadata too; checking only the public DTO misses that leak.
+    const proof = await values.value(occurrence).resolve()
+    const visited = new Set<object>()
+    const inspect = (value: unknown): void => {
+      expect(typeof value).not.toBe('function')
+      if (!value || typeof value !== 'object' || visited.has(value)) return
+      visited.add(value)
+      for (const key of Reflect.ownKeys(value)) {
+        const property = Object.getOwnPropertyDescriptor(value, key)!
+        expect('value' in property).toBe(true)
+        inspect(property.value)
+      }
+    }
+    inspect(proof)
     // New plan objects and a different reader still consume the same project-owned proofs.
     await first.dispose()
     const warm = await project.open()

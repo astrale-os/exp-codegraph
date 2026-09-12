@@ -1,0 +1,141 @@
+import type { AnalysisGeneration } from '../../generation/index.ts'
+import type { AnalysisQuery } from '../../query/index.ts'
+import type { ValueIndex } from '../value/symbolic/facts.ts'
+import { createValueEvaluatorFactory, type ValueReadScope } from '../value/symbolic/engine.ts'
+import type { ValueIndexRevision, ValueResolutionCache } from '../value/symbolic/cache.ts'
+import { ComputationReceipt, COMPUTATION_RECEIPT_BYTES } from '../value/symbolic/receipt.ts'
+import type { TypeScriptComputation, TypeScriptSemanticReader } from './model.ts'
+import { capturePortable, restorePortable } from './portable.ts'
+
+interface Entry {
+  readonly encoded: Buffer
+  readonly receipt: ComputationReceipt
+  readonly release: () => void
+  revision: object
+}
+
+/** One project-owned admission policy, with no callback or snapshot retained. */
+export class SemanticComputationCache {
+  readonly #values: ValueResolutionCache
+  readonly #entries = new Map<string, Entry>()
+  readonly #building = new Set<() => void>()
+  #generation: AnalysisGeneration['id'] | undefined
+  #closed = false
+
+  constructor(values: ValueResolutionCache) { this.#values = values }
+
+  committed(generation: AnalysisGeneration): void { this.#generation = generation.id }
+
+  async run<Input, Result>(query: AnalysisQuery, load: () => Promise<ValueIndex>,
+    observe: TypeScriptComputation<Input, Result>, input: Input, check: () => void, signal?: AbortSignal): Promise<Result> {
+    check()
+    signal?.throwIfAborted()
+    // Capture before the first await. The callback and its key see the same data.
+    const captured = capturePortable(input)
+    const key = captured ? `${this.#values.model(observe)}:${captured.encoded.toString('base64')}` : undefined
+    const index = await cancellable(load(), signal)
+    check()
+    signal?.throwIfAborted()
+    const current = () => !this.#closed && this.#generation === query.generation.id
+    if (key && current()) {
+      const entry = this.get(key, index.revision)
+      if (entry) return restorePortable<Result>(entry.encoded)
+    }
+    let active = true
+    // Includes the simultaneously live folded tables during compaction.
+    let release = key && current() ? this.reserve(key, COMPUTATION_RECEIPT_BYTES * 2 + key.length * 2 + 512) : undefined
+    if (release) this.#building.add(release)
+    let receipt = release ? new ComputationReceipt() : undefined
+    const abandon = () => {
+      receipt = undefined
+      if (release) { release(); this.#building.delete(release); release = undefined }
+    }
+    const scope: ValueReadScope = {
+      signal,
+      check: () => {
+        check()
+        signal?.throwIfAborted()
+        if (!active) throw new Error('A semantic reader can only be used during its computation.')
+      },
+      fail: abandon,
+      proof: (basis) => {
+        if (receipt) for (const { key } of basis.dependencies) receipt.add(key)
+      },
+      selection: (revision, keys) => {
+        if (revision?.token !== index.revision.token || revision.selection !== 'typescript.calls/v1') abandon()
+        else if (receipt) for (const key of keys) receipt.add(key)
+      },
+    }
+    const factory = createValueEvaluatorFactory(query, this.#values, load, scope)
+    const reader: TypeScriptSemanticReader = Object.freeze({ calls: factory.calls, values: factory })
+    try {
+      const result = await cancellable(Promise.resolve().then(() => {
+        scope.check()
+        return observe(reader, captured ? captured.value : input)
+      }), signal)
+      scope.check()
+      const portable = captured && capturePortable(result)
+      if (!portable) return result
+      const retained = receipt?.compact()
+      abandon()
+      if (key && retained && current()) {
+        const bytes = portable.encoded.buffer.byteLength + retained.bytes + key.length * 2 + 512
+        const reservation = this.reserve(key, bytes)
+        if (reservation) this.#entries.set(key, { encoded: portable.encoded, receipt: retained,
+          revision: index.revision.token, release: reservation })
+      }
+      return portable.value
+    } finally {
+      active = false
+      abandon()
+      factory.dispose()
+    }
+  }
+
+  private get(key: string, revision: ValueIndexRevision): Entry | undefined {
+    const entry = this.#entries.get(key)
+    if (!entry) return
+    if (entry.revision !== revision.token && (revision.parent !== entry.revision || entry.receipt.intersects(revision.changed))) {
+      this.remove(key, entry)
+      return
+    }
+    entry.revision = revision.token
+    this.#entries.delete(key)
+    this.#entries.set(key, entry)
+    return entry
+  }
+
+  private reserve(key: string, bytes: number): (() => void) | undefined {
+    if (bytes > this.#values.capacity) return
+    const previous = this.#entries.get(key)
+    if (previous) this.remove(key, previous)
+    let reservation = this.#values.reserve(bytes)
+    for (const [key, entry] of this.#entries) {
+      if (reservation) break
+      this.remove(key, entry)
+      reservation = this.#values.reserve(bytes)
+    }
+    return reservation
+  }
+
+  private remove(key: string, entry: Entry): void { this.#entries.delete(key); entry.release() }
+
+  close(): void {
+    this.#closed = true
+    for (const [key, entry] of this.#entries) this.remove(key, entry)
+    for (const release of this.#building) release()
+    this.#building.clear()
+  }
+}
+
+function cancellable<Value>(work: Promise<Value>, signal?: AbortSignal): Promise<Value> {
+  if (!signal) return work
+  return new Promise((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener('abort', abort, { once: true })
+    // Keep the underlying callback handled even when its caller has already left.
+    work.then((value) => { signal.removeEventListener('abort', abort); resolve(value) },
+      (error) => { signal.removeEventListener('abort', abort); reject(error) })
+    if (signal.aborted) { signal.removeEventListener('abort', abort); abort() }
+  })
+}

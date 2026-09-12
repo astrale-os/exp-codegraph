@@ -1,3 +1,3 @@
 import { defineLayout } from '@astrale-os/codegraph/authoring'
 
-export default defineLayout({ entries: ['index.ts', 'model.ts', 'project.ts'], exact: true })
+export default defineLayout({ entries: ['index.ts', 'model.ts', 'project.ts', 'compute.ts', 'portable.ts'], exact: true })

@@ -11,7 +11,6 @@ export interface ValueDependency {
   readonly fingerprint: string | undefined
 }
 
-
 export interface ValueProofBasis {
   readonly key: string
   readonly dependencies: readonly ValueDependency[]
@@ -57,6 +56,7 @@ export class ValueResolutionCache {
   #nextModel = 0
   #nextWitness = 0
   #bytes = 0
+  #reserved = 0
   #closed = false
 
   constructor(maximumEntries = Infinity, maximumBytes = 8 * 1024 * 1024) {
@@ -75,6 +75,19 @@ export class ValueResolutionCache {
   dependency(witness: ValueDependency): ValueDependency {
     const resident = this.#readers.get(witness.key)?.witness
     return resident && resident.fingerprint === witness.fingerprint ? resident : witness
+  }
+
+  /** Aggregate computations share this cache's existing retention envelope. */
+  reserve(bytes: number): (() => void) | undefined {
+    if (this.#closed || !Number.isSafeInteger(bytes) || bytes < 0 ||
+      this.#reserved + bytes + this.#frequency!.bytes > this.#maximumBytes) return
+    for (const entry of this.#entries.values()) {
+      if (this.bytes + bytes <= this.#maximumBytes) break
+      this.remove(entry)
+    }
+    this.#reserved += bytes
+    let released = false
+    return () => { if (!released) { released = true; if (!this.#closed) this.#reserved -= bytes } }
   }
 
   /** Only resident bases are interned; rejected demands add no retained registry entry. */
@@ -207,9 +220,10 @@ export class ValueResolutionCache {
   }
 
   private clear(): void { this.#entries.clear(); this.#readers.clear(); this.#groups.clear(); this.#coordinates.clear(); this.#bytes = 0 }
-  close(): void { this.#closed = true; this.clear(); this.#frequency = undefined; this.#revision = undefined }
+  close(): void { this.#closed = true; this.clear(); this.#reserved = 0; this.#frequency = undefined; this.#revision = undefined }
   get size(): number { return this.#entries.size }
-  get bytes(): number { return this.#bytes + this.#coordinates.bytes + (this.#frequency?.bytes ?? 0) }
+  get capacity(): number { return this.#maximumBytes - (this.#frequency?.bytes ?? 0) }
+  get bytes(): number { return this.#bytes + this.#reserved + this.#coordinates.bytes + (this.#frequency?.bytes ?? 0) }
 }
 
 function dependencyBytes(dependency: ValueDependency): number {
