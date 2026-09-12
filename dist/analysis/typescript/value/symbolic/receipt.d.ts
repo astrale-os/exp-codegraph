@@ -8,6 +8,9 @@ export declare class ComputationReceipt {
     constructor(words?: Uint32Array);
     add(key: string): void;
     intersects(keys: Iterable<string>): boolean;
+    /** Stream one temporary digest across independent receipts without retaining the delta. */
+    static hashes(keys: Iterable<string>): Iterable<Buffer>;
+    mayContain(digest: Buffer): boolean;
     /** Folding preserves every inserted bit, unlike truncation or resampling. */
     compact(): ComputationReceipt | undefined;
     get bytes(): number;

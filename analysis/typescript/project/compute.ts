@@ -107,11 +107,22 @@ export class SemanticComputationCache {
     if (this.#revision === revision.token) return
     // Reconcile every variant before its reservation can displace reusable proofs.
     // Promoting an untouched variant must not change its LRU position.
+    let candidates = 0
     for (const [key, entry] of this.#entries) {
-      if (entry.revision !== revision.token && (revision.selection !== 'typescript.calls/v1' ||
-        revision.parent !== entry.revision || entry.receipt.intersects(revision.changed))) this.remove(key, entry)
-      else entry.revision = revision.token
+      if (entry.revision === revision.token) continue
+      if (revision.selection !== 'typescript.calls/v1' || revision.parent !== entry.revision) this.remove(key, entry)
+      else candidates++
     }
+    if (candidates) for (const digest of ComputationReceipt.hashes(revision.changed)) {
+      for (const [key, entry] of this.#entries) {
+        if (entry.revision !== revision.token && entry.receipt.mayContain(digest)) {
+          this.remove(key, entry)
+          candidates--
+        }
+      }
+      if (!candidates) break
+    }
+    for (const entry of this.#entries.values()) entry.revision = revision.token
     this.#revision = revision.token
   }
 
