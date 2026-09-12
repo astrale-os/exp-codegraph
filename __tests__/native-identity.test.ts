@@ -9,6 +9,10 @@ it('preserves canonical native identity preimages, including retained fuzz regre
   await goTest(['canonical.go', 'canonical_test.go', 'identity.go', 'generation_identity.go', 'generation_identity_test.go', 'model.go'])
 }, 95_000)
 
+it('preserves occurrence identities and retained results across native workspace reuse', async () => {
+  await goTest(['occurrence_identity.go', 'occurrence_identity_test.go', 'canonical.go', 'identity.go', 'model.go'])
+}, 95_000)
+
 it('streams complete records across bounded frames before atomic admission', async () => {
   await goTest(['framing.go', 'framing_records.go', 'framing_records_test.go', 'model.go', 'telemetry.go'])
 }, 95_000)

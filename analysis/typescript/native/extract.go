@@ -44,6 +44,7 @@ type extractor struct {
 
 	// Scoped to immutable compiler sources in this extraction; never keyed by path.
 	sourceCoordinates            map[*shimast.SourceFile]sourceCoordinates
+	occurrenceIdentities         occurrenceIdentityWorkspace
 	diagnosticSources            map[string]*shimast.SourceFile
 	symbolIDs                    map[*shimast.Symbol]string
 	symbolSeen                   map[string]symbolFactPayload
@@ -633,10 +634,7 @@ func (x *extractor) resolveSymbol(node *shimast.Node) string {
 }
 
 func (x *extractor) occurrenceID(span sourceSpan, kind string) string {
-	return deriveID("occurrence", "typescript:"+x.universe, map[string]any{
-		"source": span.Source, "revision": span.Revision,
-		"start": span.Start, "end": span.End, "kind": kind,
-	})
+	return x.occurrenceIdentities.identify(x.universe, span, kind)
 }
 
 func (x *extractor) span(file *shimast.SourceFile, node *shimast.Node) sourceSpan {
