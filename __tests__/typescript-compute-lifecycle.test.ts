@@ -136,6 +136,47 @@ describe('semantic computation public lifecycle', () => {
     expect(executions).toBe(3)
   })
 
+  it('keeps other input variants cached when an edited subject changes its span under memory pressure', async () => {
+    const { root, project } = await fixture()
+    const source = "import { value } from './helper'; export const result = value()\n"
+    await Promise.all(['b.ts', 'c.ts'].map((path) => writeFile(join(root, path), source)))
+    await project.refresh({ changed: ['b.ts', 'c.ts'] })
+    const before = await project.open()
+    const executions: string[] = []
+    const payload = 'x'.repeat(5 * 1024 * 1024 / 2)
+    const observe = async (read: TypeScriptSemanticReader, subject: { path: string; start: number; end: number }) => {
+      executions.push(subject.path)
+      const calls = await read.calls({ paths: [subject.path] })
+      const site = calls.sites.find(({ occurrence }) => occurrence.span.start === subject.start && occurrence.span.end === subject.end)!
+      expect(site).toBeDefined()
+      const proof = await (await read.values()).value(site.call.occurrence).property('status').resolve()
+      return { path: subject.path, proof: { ...proof }, payload }
+    }
+    const subject = async (snapshot: typeof before, path: string) => {
+      const { start, end } = (await snapshot.calls({ paths: [path] })).sites[0]!.occurrence.span
+      return { path, start, end }
+    }
+    const b = await subject(before, 'b.ts'), c = await subject(before, 'c.ts'), old = await subject(before, 'index.ts')
+    // The soon-obsolete variant is most recent: eviction must follow validity,
+    // not displace the older, still-valid variants to preserve this reservation.
+    const expectedB = await before.compute(observe, b)
+    const expectedC = await before.compute(observe, c)
+    const expectedOld = await before.compute(observe, old)
+    await writeFile(join(root, 'index.ts'), source.replace('value()', 'value(12345)'))
+    await project.refresh({ changed: ['index.ts'] })
+    const after = await project.open(), current = await subject(after, 'index.ts')
+    expect(current.start).toBe(old.start)
+    expect(current.end).toBeGreaterThan(old.end)
+    const result = await after.compute(observe, current)
+    expect(result.proof).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'before' } })
+    expect(await after.compute(observe, b)).toEqual(expectedB)
+    expect(await after.compute(observe, c)).toEqual(expectedC)
+    expect(executions).toEqual(['b.ts', 'c.ts', 'index.ts', 'index.ts'])
+    expect(await before.compute(observe, old)).toEqual(expectedOld)
+    expect(await after.compute(observe, current)).toEqual(result)
+    expect(executions).toEqual(['b.ts', 'c.ts', 'index.ts', 'index.ts', 'index.ts'])
+  })
+
   it.each([
     { name: 'an absent property', helper: 'export function value() { return {} }\n', kind: 'known' },
     { name: 'a missing function body', helper: 'export declare function value(): { status: string }\n', kind: 'unsupported' },
