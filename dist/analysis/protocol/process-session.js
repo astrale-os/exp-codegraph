@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { validateFactShard } from '../facts/index.js';
 import { admitAnalysisId, portablePath } from '../identity/index.js';
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.js';
-import { admitFactPayloadCodecs, admittedFactShardPayloadBytes, createFactWithPhysicalPayload, createFactWithSemanticPayload, ownPhysicalPayloadRecord, physicalPayloadForTransport, } from '../facts/representation/index.js';
+import { admitFactPayloadCodecs, admittedFactShardPayloadBytes, createFactWithPhysicalPayload, createFactWithSemanticPayload, ownPhysicalPayloadRecord, ownWireFactShard, physicalPayloadForTransport, } from '../facts/representation/index.js';
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from './model.js';
 import { TransactionRecordDecoder } from './transaction-records.js';
 export class NativeAnalysisProcessResourceError extends Error {
@@ -878,14 +878,14 @@ function validateReference(input, path) {
 }
 function validateShard(input, path, payloadCodecs) {
     const value = requiredRecord(input, path);
-    return {
+    return ownWireFactShard({
         key: admitAnalysisId('fact-shard-key', requiredString(value.key, `${path}.key`)),
         digest: admitAnalysisId('fact-shard-digest', requiredString(value.digest, `${path}.digest`)),
         namespace: requiredString(value.namespace, `${path}.namespace`),
         schemaVersion: requiredInteger(value.schemaVersion, `${path}.schemaVersion`, 1),
         completion: validateCompleteness(value.completion, `${path}.completion`),
         facts: requiredArray(value.facts, `${path}.facts`).map((fact, index) => validateFact(fact, `${path}.facts[${index}]`, payloadCodecs)),
-    };
+    });
 }
 function validateFact(input, path, payloadCodecs) {
     const value = requiredRecord(input, path);

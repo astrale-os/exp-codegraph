@@ -25,4 +25,6 @@ export declare function admitAnalysisId<Kind extends string>(kind: Kind, value: 
 export declare function deriveAnalysisId<Kind extends string>(kind: Kind, namespace: string, input: unknown): AnalysisId<Kind>;
 export declare function portablePath(path: string): string;
 export declare function stableJson(value: unknown): string;
+/** Internal canonical key ordering; not part of the public identity barrel. */
+export declare function compareUnicodeScalars(left: string, right: string): number;
 export {};

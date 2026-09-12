@@ -2,10 +2,12 @@ import type { FactShardDigest } from '../identity/index.ts'
 import { deriveAnalysisId } from '../identity/index.ts'
 import {
   admittedFactShardPayloadBytes,
+  canStreamFactShardIdentity,
   certifyFactShard,
   payloadForSemanticIdentity,
 } from './representation/index.ts'
 import type { Completeness, Fact, FactHeader, FactShard, FactShardReference } from './types.ts'
+import { hashOwnedFactShard } from './owned-admission.ts'
 
 export type {
   AnalysisFailure,
@@ -82,14 +84,16 @@ export function validateFactShard(shard: FactShard): readonly string[] {
     }
   }
   const semanticFacts = shard.facts.map(semanticFactIdentity)
-  const expected = deriveAnalysisId('fact-shard-digest', shard.namespace, {
+  const identity = {
     key: shard.key,
     namespace: shard.namespace,
     schemaVersion: shard.schemaVersion,
     completion: shard.completion,
     facts: semanticFacts,
     ...(shard.capabilities ? { capabilities: shard.capabilities } : {}),
-  })
+  }
+  const streamed = canStreamFactShardIdentity(shard) ? hashOwnedFactShard(identity) : undefined
+  const expected = streamed?.digest ?? deriveAnalysisId('fact-shard-digest', shard.namespace, identity)
   if (shard.digest !== expected) {
     diagnostics.push(
       `FACT_SHARD_DIGEST_MISMATCH:expected=${expected}:actual=${shard.digest}:subjects=${[
@@ -103,7 +107,7 @@ export function validateFactShard(shard: FactShard): readonly string[] {
     // admission may safely reuse it without decoding private payloads again.
     certifyFactShard(
       shard,
-      semanticFacts.reduce(
+      streamed?.semanticPayloadBytes ?? semanticFacts.reduce(
         (bytes, fact) => bytes + encodedPayloadBytes(fact.payload),
         0,
       ),

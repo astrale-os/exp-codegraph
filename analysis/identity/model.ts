@@ -97,7 +97,8 @@ function canonical(value: unknown): unknown {
   return Object.fromEntries(entries)
 }
 
-function compareUnicodeScalars(left: string, right: string): number {
+/** Internal canonical key ordering; not part of the public identity barrel. */
+export function compareUnicodeScalars(left: string, right: string): number {
   let a = 0
   let b = 0
   while (a < left.length && b < right.length) {

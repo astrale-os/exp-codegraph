@@ -1,5 +1,6 @@
 import { deriveAnalysisId } from '../identity/index.js';
-import { admittedFactShardPayloadBytes, certifyFactShard, payloadForSemanticIdentity, } from './representation/index.js';
+import { admittedFactShardPayloadBytes, canStreamFactShardIdentity, certifyFactShard, payloadForSemanticIdentity, } from './representation/index.js';
+import { hashOwnedFactShard } from './owned-admission.js';
 const textEncoder = new TextEncoder();
 /** Read a fact envelope without invoking a lazy semantic payload getter. */
 export function factHeader(fact) {
@@ -63,14 +64,16 @@ export function validateFactShard(shard) {
         }
     }
     const semanticFacts = shard.facts.map(semanticFactIdentity);
-    const expected = deriveAnalysisId('fact-shard-digest', shard.namespace, {
+    const identity = {
         key: shard.key,
         namespace: shard.namespace,
         schemaVersion: shard.schemaVersion,
         completion: shard.completion,
         facts: semanticFacts,
         ...(shard.capabilities ? { capabilities: shard.capabilities } : {}),
-    });
+    };
+    const streamed = canStreamFactShardIdentity(shard) ? hashOwnedFactShard(identity) : undefined;
+    const expected = streamed?.digest ?? deriveAnalysisId('fact-shard-digest', shard.namespace, identity);
     if (shard.digest !== expected) {
         diagnostics.push(`FACT_SHARD_DIGEST_MISMATCH:expected=${expected}:actual=${shard.digest}:subjects=${[
             ...new Set(shard.facts.map((fact) => fact.subject)),
@@ -80,7 +83,7 @@ export function validateFactShard(shard) {
     if (!result.length) {
         // A valid shard is an immutable semantic certificate. Later transaction
         // admission may safely reuse it without decoding private payloads again.
-        certifyFactShard(shard, semanticFacts.reduce((bytes, fact) => bytes + encodedPayloadBytes(fact.payload), 0));
+        certifyFactShard(shard, streamed?.semanticPayloadBytes ?? semanticFacts.reduce((bytes, fact) => bytes + encodedPayloadBytes(fact.payload), 0));
     }
     return result;
 }

@@ -1,4 +1,4 @@
-import type { Fact } from '../types.ts'
+import type { Fact, FactShard } from '../types.ts'
 import type { AnalysisGenerationId } from '../../identity/index.ts'
 
 const PHYSICAL_STATES = new WeakMap<object, PhysicalPayloadState>()
@@ -6,6 +6,7 @@ const ADMITTED_SHARDS = new WeakMap<object, number>()
 const OWNED_PAYLOAD_CODECS = new WeakSet<FactPayloadCodec>()
 const IMMUTABLE_PAYLOADS = new WeakSet<object>()
 const OWNED_PHYSICAL_RECORDS = new WeakSet<object>()
+const OWNED_WIRE_SHARDS = new WeakSet<object>()
 
 export interface PhysicalPayloadRecord {
   readonly codec: string
@@ -95,6 +96,23 @@ export function createFactWithPhysicalPayload(
 export function ownPhysicalPayloadRecord<Value>(record: Value): Value {
   if (record !== null && typeof record === 'object') OWNED_PHYSICAL_RECORDS.add(record)
   return record
+}
+
+/** Internal wire ingress owns this freshly reconstructed envelope and JSON tree. */
+export function ownWireFactShard<Shard extends FactShard>(shard: Shard): Shard {
+  OWNED_WIRE_SHARDS.add(shard)
+  return shard
+}
+
+/** Ownership is not admission: the complete semantic digest must still be checked. */
+export function canStreamFactShardIdentity(shard: FactShard): boolean {
+  if (!OWNED_WIRE_SHARDS.has(shard)) return false
+  return shard.facts.every((fact) => {
+    const state = physicalState(fact)
+    // Semantic wire payloads are freshly parsed JSON. A physical payload also
+    // needs the exact composed decoder's promise of an owned plain data tree.
+    return !state || state.owned && OWNED_PAYLOAD_CODECS.has(state.codec)
+  })
 }
 
 /** An admitted immutable representation belongs to this exact decoder instance. */
