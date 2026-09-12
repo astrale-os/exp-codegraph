@@ -10,6 +10,8 @@ import (
 	"sort"
 )
 
+const analysisIdentityPrefix = "astrale.analysis.identity\x00"
+
 func deriveID(kind, namespace string, input any) string {
 	digest := identityHash(kind, namespace)
 	digest.Write(canonicalJSONEncoding(input))
@@ -18,7 +20,7 @@ func deriveID(kind, namespace string, input any) string {
 
 func identityHash(kind, namespace string) hash.Hash {
 	digest := sha256.New()
-	digest.Write([]byte("astrale.analysis.identity\x00" + kind + "\x00" + namespace + "\x00"))
+	digest.Write([]byte(analysisIdentityPrefix + kind + "\x00" + namespace + "\x00"))
 	return digest
 }
 
