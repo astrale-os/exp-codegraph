@@ -46,14 +46,22 @@ export class ValueIndexTable {
             callback.call(thisArg, value, key, this);
     }
 }
-/** One update copies each modified branch once, even when many facts share its prefix. */
+/** Empty roots are built in one batch; existing roots copy each modified branch once. */
 export class ValueIndexTableEdit {
     #root;
     #size;
+    #initial;
     #owned = new WeakSet();
     #finished = false;
-    constructor(root, size) { this.#root = root; this.#size = size; }
+    constructor(root, size) {
+        this.#root = root;
+        this.#size = size;
+        if (!root)
+            this.#initial = new Map();
+    }
     get(key) {
+        if (this.#initial)
+            return this.#initial.get(key)?.value;
         if (!this.#root)
             return undefined;
         const hash = hashKey(key);
@@ -71,16 +79,101 @@ export class ValueIndexTableEdit {
     set(key, value) {
         if (this.#finished)
             throw new Error('Value index update is already published.');
+        if (this.#initial) {
+            this.#initial.set(key, { kind: 'leaf', hash: hashKey(key), key, value });
+            this.#size = this.#initial.size;
+            return;
+        }
         this.#root = this.write(this.#root, hashKey(key), key, value, 0);
     }
     delete(key) {
         if (this.#finished)
             throw new Error('Value index update is already published.');
+        if (this.#initial) {
+            if (!this.#initial.has(key))
+                return;
+            // A surviving sibling keeps its branch's original position. Building only
+            // the remaining Map entries would move that branch after newer siblings.
+            this.materialize();
+        }
         this.#root = this.remove(this.#root, hashKey(key), key, 0);
     }
     finish() {
+        this.materialize();
         this.#finished = true;
         return new ValueIndexTable(this.#root, this.#size);
+    }
+    materialize() {
+        const initial = this.#initial;
+        if (!initial)
+            return;
+        const size = initial.size;
+        if (size <= 1) {
+            this.#root = initial.values().next().value;
+            this.#initial = undefined;
+            return;
+        }
+        const leaves = new Array(size);
+        const next = new Uint32Array(size);
+        let offset = 0;
+        for (const leaf of initial.values()) {
+            leaves[offset] = leaf;
+            next[offset] = offset + 1;
+            offset++;
+            initial.delete(leaf.key);
+        }
+        this.#initial = undefined;
+        // Stable linked partitions use one position per leaf, rather than keeping a
+        // copied reference array at each trie level. Seven levels cover all 32 bits.
+        const heads = new Uint32Array(7 * 32), tails = new Uint32Array(7 * 32);
+        const collision = (head, hash) => {
+            const values = new Map();
+            for (let index = head; index !== size; index = next[index]) {
+                const leaf = leaves[index];
+                values.set(leaf.key, leaf.value);
+                leaves[index] = undefined;
+            }
+            return { kind: 'collision', hash, values };
+        };
+        const build = (head, shift) => {
+            const first = leaves[head];
+            if (next[head] === size) {
+                leaves[head] = undefined;
+                return first;
+            }
+            // A bucket remaining after the high two bits contains only full-hash
+            // collisions. Do not wrap JS shifts or index beyond the bounded scratch.
+            if (shift >= 32)
+                return collision(head, first.hash);
+            const depth = shift / 5 * 32;
+            let bitmap = 0, order = '', sameHash = true;
+            for (let index = head; index !== size;) {
+                const leaf = leaves[index], following = next[index];
+                const part = (leaf.hash >>> shift) & 31, bit = 1 << part, slot = depth + part;
+                if (bitmap & bit)
+                    next[tails[slot]] = index;
+                else {
+                    bitmap |= bit;
+                    order += String.fromCharCode(part);
+                    heads[slot] = index;
+                }
+                tails[slot] = index;
+                next[index] = size;
+                if (leaf.hash !== first.hash)
+                    sameHash = false;
+                index = following;
+            }
+            if (sameHash)
+                return collision(head, first.hash);
+            const children = new Array(order.length);
+            let child = 0;
+            for (let part = 0; part < 32; part++) {
+                if (bitmap & (1 << part))
+                    children[child++] = build(heads[depth + part], shift + 5);
+            }
+            return { kind: 'branch', bitmap, children, order };
+        };
+        this.#root = build(0, 0);
     }
     branch(node) {
         if (this.#owned.has(node))

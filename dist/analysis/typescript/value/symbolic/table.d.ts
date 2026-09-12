@@ -32,7 +32,7 @@ export declare class ValueIndexTable<Key extends string, Value> implements Reado
     [Symbol.iterator](): MapIterator<[Key, Value]>;
     forEach(callback: (value: Value, key: Key, map: ReadonlyMap<Key, Value>) => void, thisArg?: unknown): void;
 }
-/** One update copies each modified branch once, even when many facts share its prefix. */
+/** Empty roots are built in one batch; existing roots copy each modified branch once. */
 export declare class ValueIndexTableEdit<Key extends string, Value> {
     #private;
     constructor(root: Node<Key, Value> | undefined, size: number);
@@ -40,6 +40,7 @@ export declare class ValueIndexTableEdit<Key extends string, Value> {
     set(key: Key, value: Value): void;
     delete(key: Key): void;
     finish(): ValueIndexTable<Key, Value>;
+    private materialize;
     private branch;
     private write;
     private remove;
