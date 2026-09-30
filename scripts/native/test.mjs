@@ -16,9 +16,15 @@ try {
   const work = resolve(temporary, 'go.work')
   const quote = (path) => JSON.stringify(path.replaceAll('\\', '/'))
   await writeFile(work, `go 1.26\nuse (\n${modules.map((path) => `\t${quote(path)}`).join('\n')}\n)\nreplace github.com/samchon/ttsc/packages/ttsc v0.0.0 => ${quote(toolchain.root)}\n`)
+  const argument = (name, fallback) => {
+    const index = process.argv.indexOf(name)
+    return index < 0 ? fallback : JSON.parse(process.argv[index + 1])
+  }
+  const files = argument('--files-json', [])
+  const options = argument('--options-json', [])
   const code = await new Promise((complete, reject) => {
-    const child = spawn(toolchain.go, ['test', './analysis/typescript/native', '-count=1'], {
-      cwd: root, stdio: 'inherit', env: { ...process.env, GOTOOLCHAIN: 'local', GOWORK: work },
+    const child = spawn(toolchain.go, ['test', ...(files.length ? files : ['./analysis/typescript/native']), '-count=1', ...options], {
+      cwd: files.length ? resolve(root, 'analysis/typescript/native') : root, stdio: 'inherit', env: { ...process.env, GOTOOLCHAIN: 'local', GOWORK: work },
     })
     child.once('error', reject)
     child.once('exit', (code, signal) => signal ? reject(new Error(`Native tests terminated by ${signal}.`)) : complete(code))
