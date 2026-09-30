@@ -1416,4 +1416,3 @@ function deduplicateIssues(issues) {
 function compare(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
-//# sourceMappingURL=declaration.js.map

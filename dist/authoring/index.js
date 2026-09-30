@@ -5,4 +5,3 @@ export { defineState, eventsOf, illegalTransitionsOf, statesOf, transition, tran
 export { defineBenchmark } from './benchmark.js';
 export { definePackage, definePackagePattern } from './package.js';
 export { defineLayout } from './layout.js';
-//# sourceMappingURL=index.js.map

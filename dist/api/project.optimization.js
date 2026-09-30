@@ -140,4 +140,3 @@ export function declarationPortablePath(path) {
 export function compareDeclarationText(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
-//# sourceMappingURL=project.optimization.js.map

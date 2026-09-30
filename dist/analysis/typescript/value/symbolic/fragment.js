@@ -104,4 +104,3 @@ function snapshotData(value, seen = new Map()) {
         });
     return Object.freeze(copy);
 }
-//# sourceMappingURL=fragment.js.map

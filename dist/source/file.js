@@ -100,4 +100,3 @@ function isMissing(error) {
         'code' in error &&
         error.code === 'ENOENT');
 }
-//# sourceMappingURL=file.js.map

@@ -4,4 +4,3 @@
  * exhausting the otherwise memory-bounded worker.
  */
 export const SPECIFICATION_COMPILER_BATCH_CAPACITY = 4;
-//# sourceMappingURL=resource-limits.js.map

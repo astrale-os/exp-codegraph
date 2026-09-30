@@ -3,4 +3,3 @@ import { createValueEvaluatorFactory } from './symbolic/engine.js';
 export function createBoundedValueEvaluator(options) {
     return createValueEvaluatorFactory(options.query)(options);
 }
-//# sourceMappingURL=evaluator.js.map

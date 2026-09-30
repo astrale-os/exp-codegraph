@@ -95,4 +95,3 @@ function within(root, target) {
     const path = relative(root, target);
     return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
 }
-//# sourceMappingURL=resolve.js.map

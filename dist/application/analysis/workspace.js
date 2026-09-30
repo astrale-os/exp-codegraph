@@ -218,4 +218,3 @@ function affectedBindingModules(boundaries, changes) {
         .map((boundary) => boundary.id)
         .sort();
 }
-//# sourceMappingURL=workspace.js.map

@@ -62,4 +62,3 @@ catch (error) {
     process.stderr.write(`${message === USAGE ? message : terminalText(message)}\n`);
     process.exitCode = 2;
 }
-//# sourceMappingURL=cli.js.map

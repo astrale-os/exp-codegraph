@@ -978,4 +978,3 @@ function applicationProfiles(profiles, options) {
         ? replaced
         : [...replaced, layout];
 }
-//# sourceMappingURL=service.js.map

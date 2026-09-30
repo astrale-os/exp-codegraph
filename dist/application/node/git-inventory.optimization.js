@@ -120,4 +120,3 @@ function nulRecords(input) {
 function fatalText(bytes) {
     return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
-//# sourceMappingURL=git-inventory.optimization.js.map

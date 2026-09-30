@@ -24,6 +24,46 @@ class ResidentTypeScriptAnalysisService {
         return this.#universe;
     }
     async refresh(options = {}) {
+        const started = performance.now();
+        let result = await this.refreshOnce(options);
+        if (!options.discover)
+            return result;
+        const changedSources = new Set(result.changedSources);
+        const invalidatedPasses = new Set(result.invalidatedPasses);
+        const changedModules = new Set(result.changedModules ?? []);
+        let scopeUnknown = result.changedModules === undefined;
+        let transaction = result.transaction;
+        let moduleRouting = result.moduleRouting;
+        for (let attempt = 0; result.transaction; attempt++) {
+            if (attempt >= 3) {
+                throw new Error('Compiler inputs kept changing during discovery refresh.');
+            }
+            // A replayed candidate must be acknowledged before the native owner can
+            // reconcile filesystem changes. Never return that intermediate snapshot.
+            result = await this.refreshOnce({ discover: true, signal: options.signal });
+            transaction = result.transaction ?? transaction;
+            moduleRouting = result.moduleRouting ?? moduleRouting;
+            for (const source of result.changedSources)
+                changedSources.add(source);
+            for (const pass of result.invalidatedPasses)
+                invalidatedPasses.add(pass);
+            scopeUnknown ||= result.changedModules === undefined;
+            for (const module of result.changedModules ?? [])
+                changedModules.add(module);
+        }
+        return {
+            ...result,
+            ...(transaction ? { transaction } : {}),
+            ...(moduleRouting ? { moduleRouting } : {}),
+            changedSources: [...changedSources].sort(),
+            invalidatedPasses: [...invalidatedPasses].sort(),
+            ...(scopeUnknown
+                ? { changedModules: undefined }
+                : { changedModules: [...changedModules].sort() }),
+            durationMs: performance.now() - started,
+        };
+    }
+    async refreshOnce(options = {}) {
         this.assertOpen();
         const started = performance.now();
         const request = this.#request + 1;
@@ -41,6 +81,7 @@ class ResidentTypeScriptAnalysisService {
             ...(current ? { baseSequence: current.sequence } : {}),
             ...(options.changed ? { changed: [...options.changed].sort() } : {}),
             ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
+            ...(options.discover !== undefined ? { discover: options.discover } : {}),
             ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
         }, { signal: options.signal });
         this.emit('native.request', request, phaseStarted, { responseKind: response.kind });
@@ -142,4 +183,3 @@ class ResidentTypeScriptAnalysisService {
 function logicalChangedPath(root, path) {
     return portablePath(isAbsolute(path) ? relative(root, path).replaceAll('\\', '/') : path);
 }
-//# sourceMappingURL=service.js.map

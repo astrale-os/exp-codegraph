@@ -77,4 +77,3 @@ export class ResidentProofCoordinates {
 }
 function evidenceBytes(token) { return 256 + token.fact.length * 2; }
 function budgetBytes(token) { return 512 + token.key.length * 2; }
-//# sourceMappingURL=coordinates.js.map

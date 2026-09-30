@@ -2,4 +2,3 @@
 export function defineCode(configuration) {
     return configuration;
 }
-//# sourceMappingURL=code.js.map

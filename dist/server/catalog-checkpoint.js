@@ -538,4 +538,3 @@ function isQualificationRule(value) {
 function isQualificationStatus(value) {
     return value === 'pass' || value === 'fail' || value === 'idle' || value === 'error';
 }
-//# sourceMappingURL=catalog-checkpoint.js.map

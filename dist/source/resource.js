@@ -45,4 +45,3 @@ function portable(path) {
 function isControl(code) {
     return code <= 0x1f || (code >= 0x7f && code <= 0x9f);
 }
-//# sourceMappingURL=resource.js.map

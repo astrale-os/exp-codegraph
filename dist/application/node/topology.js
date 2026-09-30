@@ -6,4 +6,3 @@ export async function repositoryDirectoryTopologyFingerprint(root, exclude, sign
     const directories = await scanRepositoryDirectories(root, exclude, signal);
     return createHash('sha256').update(JSON.stringify(directories)).digest('hex');
 }
-//# sourceMappingURL=topology.js.map

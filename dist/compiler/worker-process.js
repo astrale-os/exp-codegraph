@@ -10,4 +10,3 @@ export function codegraphWorkerProcess(role, worker, maxOldSpaceMegabytes, trail
         ],
     };
 }
-//# sourceMappingURL=worker-process.js.map

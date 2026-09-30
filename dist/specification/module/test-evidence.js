@@ -236,4 +236,3 @@ function asEvidenceFailure(error) {
         message: error instanceof Error ? error.message : String(error),
     };
 }
-//# sourceMappingURL=test-evidence.js.map

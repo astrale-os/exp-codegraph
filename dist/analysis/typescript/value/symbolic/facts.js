@@ -701,4 +701,3 @@ function projectSlot(slot, project, merge) {
         .flatMap(([, contribution]) => { const result = project(contribution.value); return result === undefined ? [] : [result]; });
     return values.length ? merge(values) : undefined;
 }
-//# sourceMappingURL=facts.js.map

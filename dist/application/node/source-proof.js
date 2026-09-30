@@ -371,4 +371,3 @@ function boundedMessage(error) {
     const message = error instanceof Error ? error.message : String(error);
     return message.length <= 500 ? message : `${message.slice(0, 500)}…`;
 }
-//# sourceMappingURL=source-proof.js.map

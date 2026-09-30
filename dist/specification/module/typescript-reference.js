@@ -22,4 +22,3 @@ export function visitModuleReferences(file, visit) {
     };
     walk(file);
 }
-//# sourceMappingURL=typescript-reference.js.map

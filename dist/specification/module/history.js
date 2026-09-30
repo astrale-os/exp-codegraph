@@ -166,4 +166,3 @@ function startsWith(value, expected) {
 function ascii(value, start, length) {
     return String.fromCharCode(...value.subarray(start, start + length));
 }
-//# sourceMappingURL=history.js.map

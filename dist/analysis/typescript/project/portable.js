@@ -60,4 +60,3 @@ export function restorePortable(encoded) {
     freeze(value);
     return value;
 }
-//# sourceMappingURL=portable.js.map

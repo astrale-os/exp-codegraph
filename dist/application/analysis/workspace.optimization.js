@@ -92,4 +92,3 @@ export class ApplicationCompilerRoutingIndex {
             .map(({ project }) => project));
     }
 }
-//# sourceMappingURL=workspace.optimization.js.map

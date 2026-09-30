@@ -318,4 +318,3 @@ function ownership(path) {
 function isCode(path) {
     return /\.(?:[cm]?[jt]sx?|go|rs|py|java|kt|swift|rb|php|cs|c|cc|cpp|h|hpp)$/u.test(path);
 }
-//# sourceMappingURL=model.js.map

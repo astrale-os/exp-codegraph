@@ -72,4 +72,3 @@ function isSchemaFact(value) {
         Array.isArray(value.sources) &&
         Array.isArray(value.diagnostics));
 }
-//# sourceMappingURL=schema.js.map

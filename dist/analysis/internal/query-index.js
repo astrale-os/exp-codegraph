@@ -235,4 +235,3 @@ function* mergePostings(groups) {
         pending[index] = head;
     }
 }
-//# sourceMappingURL=query-index.js.map

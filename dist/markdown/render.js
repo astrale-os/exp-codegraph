@@ -134,4 +134,3 @@ function analyzeMarkdown(markdown) {
             visit(child, linked);
     }
 }
-//# sourceMappingURL=render.js.map

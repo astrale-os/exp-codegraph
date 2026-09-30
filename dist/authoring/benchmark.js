@@ -2,4 +2,3 @@
 export function defineBenchmark(definition) {
     return definition;
 }
-//# sourceMappingURL=benchmark.js.map

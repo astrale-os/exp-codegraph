@@ -80,4 +80,3 @@ export function compareUnicodeScalars(left, right) {
     }
     return a < left.length ? 1 : b < right.length ? -1 : 0;
 }
-//# sourceMappingURL=model.js.map

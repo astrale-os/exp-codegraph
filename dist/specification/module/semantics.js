@@ -103,4 +103,3 @@ export function schemaId(schema) {
     const id = schema.$id;
     return typeof id === 'string' && id ? id : undefined;
 }
-//# sourceMappingURL=semantics.js.map

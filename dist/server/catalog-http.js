@@ -74,4 +74,3 @@ function reject(response, status, message) {
     response.setHeader('x-content-type-options', 'nosniff');
     response.end(JSON.stringify({ status: 'error', message }));
 }
-//# sourceMappingURL=catalog-http.js.map

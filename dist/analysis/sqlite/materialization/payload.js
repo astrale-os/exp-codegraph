@@ -184,4 +184,3 @@ export function decodeShardPayloads(row, maximumDecompressedBytes) {
         storedRecords: row.encoding === SQLITE_SHARD_PAYLOAD_ENCODING,
     };
 }
-//# sourceMappingURL=payload.js.map

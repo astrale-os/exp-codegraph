@@ -6,4 +6,3 @@ export function definePackage(definition) {
 export function definePackagePattern(definition) {
     return definition;
 }
-//# sourceMappingURL=package.js.map

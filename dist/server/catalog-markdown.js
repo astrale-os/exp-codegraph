@@ -33,4 +33,3 @@ function escapeAttribute(value) {
         .replaceAll('<', '&lt;')
         .replaceAll('>', '&gt;');
 }
-//# sourceMappingURL=catalog-markdown.js.map

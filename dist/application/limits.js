@@ -22,4 +22,3 @@ export const TYPE_SPEC_APPLICATION_LIMITS = Object.freeze({
     // This ceiling measures the whole Node application process, not only the V8 heap.
     maximumInteractiveHeapMiB: 3_584,
 });
-//# sourceMappingURL=limits.js.map

@@ -17,4 +17,3 @@ export function normalizeSourcePath(root, path, label) {
     }
     return sep === '/' ? fromRoot || '.' : (fromRoot || '.').split(sep).join('/');
 }
-//# sourceMappingURL=path.js.map

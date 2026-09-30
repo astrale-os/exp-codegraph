@@ -88,4 +88,3 @@ function prune(entries, capacity) {
 function positiveInteger(value, fallback) {
     return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-//# sourceMappingURL=catalog-store.js.map

@@ -21,4 +21,3 @@ export function decodeSQLiteCursor(cursor, generation, filter) {
 function filterSignature(filter) {
     return deriveAnalysisId('fact', 'astrale.analysis.query-filter.v1', filter);
 }
-//# sourceMappingURL=cursor.js.map

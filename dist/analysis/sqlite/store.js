@@ -220,4 +220,3 @@ function validateOptions(options) {
         throw new TypeError('payloadMaterialization must be inline-json or shard-brotli.');
     }
 }
-//# sourceMappingURL=store.js.map

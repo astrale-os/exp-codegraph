@@ -7,4 +7,3 @@ export function packageNameFromSpecifier(specifier) {
     const parts = specifier.split('/');
     return specifier.startsWith('@') ? parts.slice(0, 2).join('/') : parts[0];
 }
-//# sourceMappingURL=package-name.js.map

@@ -75,4 +75,3 @@ function isExcluded(directory, excluded) {
 function compare(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
-//# sourceMappingURL=discover.js.map

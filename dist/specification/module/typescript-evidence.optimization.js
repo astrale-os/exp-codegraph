@@ -14,4 +14,3 @@ export function createModuleTypeScriptEvidenceProjection(program, options, obser
         return { sources: selected };
     };
 }
-//# sourceMappingURL=typescript-evidence.optimization.js.map

@@ -295,4 +295,3 @@ function sameDescriptor(value, expected) {
         value.set === expected.set && value.writable === expected.writable &&
         value.enumerable === expected.enumerable && value.configurable === expected.configurable;
 }
-//# sourceMappingURL=owned-admission.js.map

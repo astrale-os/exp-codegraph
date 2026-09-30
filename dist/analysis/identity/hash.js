@@ -8,4 +8,3 @@ export function createAnalysisIdentityHash(kind, namespace) {
     return createHash('sha256').update('astrale.analysis.identity\0')
         .update(kind).update('\0').update(namespace).update('\0');
 }
-//# sourceMappingURL=hash.js.map

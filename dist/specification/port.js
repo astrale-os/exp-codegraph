@@ -102,4 +102,3 @@ function portDiagnostic(code, message, resource, pointer, declaration) {
         pointer,
     };
 }
-//# sourceMappingURL=port.js.map

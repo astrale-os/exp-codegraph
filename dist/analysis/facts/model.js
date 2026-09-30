@@ -126,4 +126,3 @@ function encodedPayloadBytes(payload) {
         throw new TypeError('Fact payload is not JSON-serializable.');
     return textEncoder.encode(encoded).byteLength;
 }
-//# sourceMappingURL=model.js.map

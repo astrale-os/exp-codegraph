@@ -97,4 +97,3 @@ function validateManifest(manifest) {
         }
     }
 }
-//# sourceMappingURL=model.js.map

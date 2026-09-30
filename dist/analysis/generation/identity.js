@@ -158,4 +158,3 @@ function flatRecord(value) {
     }
     return true;
 }
-//# sourceMappingURL=identity.js.map

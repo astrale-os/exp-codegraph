@@ -8,4 +8,3 @@ export class NativeAnalysisDistributionError extends Error {
         this.target = target;
     }
 }
-//# sourceMappingURL=model.js.map

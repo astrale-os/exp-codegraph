@@ -72,4 +72,3 @@ function declarationDependencies(specification) {
         ...specification.module.ports,
     ].flatMap((resource) => resource?.model?.dependencies?.map((entry) => entry.file) ?? []);
 }
-//# sourceMappingURL=closure.js.map

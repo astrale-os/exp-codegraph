@@ -14,4 +14,3 @@ export async function readCodegraphVersion() {
     }
     return manifest.version;
 }
-//# sourceMappingURL=version.js.map

@@ -10,4 +10,3 @@ export function applicationSchemaDependencies(ordinal, schemas) {
     }))
         .sort((left, right) => left.source.localeCompare(right.source));
 }
-//# sourceMappingURL=schema-dependency.js.map

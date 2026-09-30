@@ -13,4 +13,3 @@ export function observeModuleTypeScriptProjection(observer, phase, durationMs, i
 export function moduleTypeScriptProjectionObserver(observer) {
     return (phase, durationMs, items) => observeModuleTypeScriptProjection(observer, phase, durationMs, items);
 }
-//# sourceMappingURL=typescript-program.optimization.js.map

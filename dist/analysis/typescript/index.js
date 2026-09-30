@@ -9,4 +9,3 @@ export * from './facts/index.js';
 export * from './surface/index.js';
 export * from './value/index.js';
 export * from './project/index.js';
-//# sourceMappingURL=index.js.map

@@ -248,4 +248,3 @@ class ResidentProject {
         return result;
     }
 }
-//# sourceMappingURL=project.js.map

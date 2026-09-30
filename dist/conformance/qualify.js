@@ -308,4 +308,3 @@ function canonical(value) {
         .sort(([left], [right]) => left.localeCompare(right))
         .map(([key, entry]) => [key, canonical(entry)]));
 }
-//# sourceMappingURL=qualify.js.map

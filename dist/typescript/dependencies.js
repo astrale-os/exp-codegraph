@@ -106,4 +106,3 @@ function isModuleRequire(checker, identifier) {
         return true;
     return (symbol.declarations ?? []).every((declaration) => declaration.getSourceFile().isDeclarationFile);
 }
-//# sourceMappingURL=dependencies.js.map

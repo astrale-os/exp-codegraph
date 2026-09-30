@@ -15,4 +15,3 @@ export function createNodeSourceTextReader(root) {
         },
     };
 }
-//# sourceMappingURL=node-reader.js.map

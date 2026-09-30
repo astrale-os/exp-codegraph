@@ -51,4 +51,3 @@ async function mapConcurrent(inputs, maximum, operation) {
 function compare(left, right) {
     return left.localeCompare(right);
 }
-//# sourceMappingURL=topology.optimization.js.map

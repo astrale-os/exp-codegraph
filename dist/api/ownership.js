@@ -53,4 +53,3 @@ function apiDirectory(entrypoint) {
     const index = entrypoint.lastIndexOf('/');
     return index < 0 ? '.' : entrypoint.slice(0, index);
 }
-//# sourceMappingURL=ownership.js.map

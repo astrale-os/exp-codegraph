@@ -67,4 +67,3 @@ export function planConformance(profiles, requestedProfiles) {
 function compare(left, right) {
     return left < right ? -1 : left > right ? 1 : 0;
 }
-//# sourceMappingURL=plan.js.map

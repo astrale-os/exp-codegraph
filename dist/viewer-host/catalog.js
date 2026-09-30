@@ -21,4 +21,3 @@ export function catalogSpecMetrics(spec) {
                 (spec.modules.some((module) => module.contract) ? 'pending' : 'ok')),
     };
 }
-//# sourceMappingURL=catalog.js.map

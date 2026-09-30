@@ -21,4 +21,3 @@ export async function validateSchemaFile(options) {
 function portable(path) {
     return sep === '/' ? path : path.split(sep).join('/');
 }
-//# sourceMappingURL=file.js.map

@@ -31,4 +31,3 @@ export class TypeScriptFactContractError extends Error {
         this.diagnostics = diagnostics;
     }
 }
-//# sourceMappingURL=model.js.map

@@ -165,4 +165,3 @@ CREATE TABLE IF NOT EXISTS analysis_quarantine (
   quarantined_at INTEGER NOT NULL
 ) STRICT;
 `;
-//# sourceMappingURL=schema.js.map

@@ -344,4 +344,3 @@ export function bit(value, path) {
         throw new TypeError(`Packed ${path} must be 0 or 1.`);
     return value === 1;
 }
-//# sourceMappingURL=body-data.js.map

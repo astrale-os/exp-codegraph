@@ -37,4 +37,3 @@ export function simpleRepositoryPathMatch(path, normalizedPattern) {
         return;
     return path.startsWith(`${segment}/`) || path.includes(`/${segment}/`);
 }
-//# sourceMappingURL=directory-scope.optimization.js.map

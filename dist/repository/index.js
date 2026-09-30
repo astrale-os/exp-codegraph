@@ -2,4 +2,3 @@ export { createNodeRepositoryScanner, defaultRepositoryClassifiers, inventoryRep
 export * from './source/index.js';
 export * from './source-proof/index.js';
 export * from './statistics/index.js';
-//# sourceMappingURL=index.js.map

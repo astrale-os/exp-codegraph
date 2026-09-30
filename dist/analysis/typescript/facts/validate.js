@@ -235,4 +235,3 @@ function strings(value) {
 function optionalStringValue(value) {
     return value === undefined || string(value);
 }
-//# sourceMappingURL=validate.js.map

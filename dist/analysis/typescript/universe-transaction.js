@@ -102,4 +102,3 @@ async function readManifest(store, generation) {
         await query.dispose();
     }
 }
-//# sourceMappingURL=universe-transaction.js.map

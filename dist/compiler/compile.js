@@ -5,4 +5,3 @@ export async function compileApi(options) {
 export async function compileApis(options) {
     return compileDeclarationApis(options);
 }
-//# sourceMappingURL=compile.js.map

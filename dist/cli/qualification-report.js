@@ -85,4 +85,3 @@ function grouped(values) {
 function display(value) {
     return typeof value === 'string' ? value : JSON.stringify(value);
 }
-//# sourceMappingURL=qualification-report.js.map

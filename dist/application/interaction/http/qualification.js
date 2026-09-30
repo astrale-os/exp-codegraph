@@ -113,4 +113,3 @@ function send(response, status, value) {
     response.setHeader('cache-control', 'no-store');
     response.end(JSON.stringify(value));
 }
-//# sourceMappingURL=qualification.js.map

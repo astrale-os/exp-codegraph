@@ -79,4 +79,3 @@ function runWorker(root, groups) {
         child.stdin.end(JSON.stringify({ root, groups }));
     });
 }
-//# sourceMappingURL=typescript-process.optimization.js.map

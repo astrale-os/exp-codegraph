@@ -75,4 +75,3 @@ function density(words) {
     }
     return bits / (words.length * 32);
 }
-//# sourceMappingURL=receipt.js.map

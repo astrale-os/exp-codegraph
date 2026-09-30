@@ -61,4 +61,3 @@ function bindPortableCheckpoint(checkpoint, options) {
 function missing(reason = 'missing') {
     return { ok: false, reason };
 }
-//# sourceMappingURL=checkpoint.js.map

@@ -86,4 +86,3 @@ function launch(command, arguments_) {
         });
     });
 }
-//# sourceMappingURL=application-operations.js.map

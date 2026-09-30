@@ -260,4 +260,3 @@ function freezeWithoutInvokingGetters(value) {
     }
     return Object.freeze(value);
 }
-//# sourceMappingURL=codec.js.map

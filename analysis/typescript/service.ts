@@ -69,7 +69,9 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
     let transaction = result.transaction
     let moduleRouting = result.moduleRouting
     for (let attempt = 0; result.transaction; attempt++) {
-      if (attempt >= 3) throw new Error('Compiler inputs kept changing during discovery refresh.')
+      if (attempt >= 3) {
+        throw new Error('Compiler inputs kept changing during discovery refresh.')
+      }
       // A replayed candidate must be acknowledged before the native owner can
       // reconcile filesystem changes. Never return that intermediate snapshot.
       result = await this.refreshOnce({ discover: true, signal: options.signal })
@@ -80,10 +82,17 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
       scopeUnknown ||= result.changedModules === undefined
       for (const module of result.changedModules ?? []) changedModules.add(module)
     }
-    return { ...result, ...(transaction ? { transaction } : {}), ...(moduleRouting ? { moduleRouting } : {}),
-      changedSources: [...changedSources].sort(), invalidatedPasses: [...invalidatedPasses].sort(),
-      ...(scopeUnknown ? { changedModules: undefined } : { changedModules: [...changedModules].sort() }),
-      durationMs: performance.now() - started }
+    return {
+      ...result,
+      ...(transaction ? { transaction } : {}),
+      ...(moduleRouting ? { moduleRouting } : {}),
+      changedSources: [...changedSources].sort(),
+      invalidatedPasses: [...invalidatedPasses].sort(),
+      ...(scopeUnknown
+        ? { changedModules: undefined }
+        : { changedModules: [...changedModules].sort() }),
+      durationMs: performance.now() - started,
+    }
   }
 
   private async refreshOnce(

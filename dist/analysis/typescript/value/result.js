@@ -30,4 +30,3 @@ export function mapValueResult(result, project, options = {}) {
             return { kind: 'unsupported', construct: result.construct, evidence };
     }
 }
-//# sourceMappingURL=result.js.map

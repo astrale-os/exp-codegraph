@@ -10,4 +10,3 @@ export class SpecRevealAdapterError extends Error {
         this.code = code;
     }
 }
-//# sourceMappingURL=reveal.js.map

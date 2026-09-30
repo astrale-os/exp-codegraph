@@ -60,4 +60,3 @@ function specificationResources(specification) {
     ]);
     return [...new Map(expanded.map((resource) => [resource.source, resource])).values()];
 }
-//# sourceMappingURL=coherence.js.map

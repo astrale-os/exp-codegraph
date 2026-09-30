@@ -674,4 +674,3 @@ void _jsonBoundary;
 export function checkpointGenerations(snapshot) {
     return new Map((snapshot.analysis?.generations ?? []).map(({ universe, generation }) => [universe, generation]));
 }
-//# sourceMappingURL=checkpoint.js.map

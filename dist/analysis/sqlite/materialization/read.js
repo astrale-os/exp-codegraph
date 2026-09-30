@@ -118,4 +118,3 @@ function groupByFact(rows) {
     }
     return grouped;
 }
-//# sourceMappingURL=read.js.map

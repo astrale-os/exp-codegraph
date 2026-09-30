@@ -32,4 +32,3 @@ export function createTaskLimiter(concurrency) {
 function positiveInteger(value, fallback) {
     return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-//# sourceMappingURL=limit.js.map

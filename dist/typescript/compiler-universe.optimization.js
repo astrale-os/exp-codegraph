@@ -23,4 +23,3 @@ export function typeScriptSourceHasAmbientEffects(source) {
     ambientEffects.set(source, ambient);
     return ambient;
 }
-//# sourceMappingURL=compiler-universe.optimization.js.map

@@ -88,4 +88,3 @@ function record(value) {
 function isTarget(value) {
     return Object.hasOwn(NATIVE_ARTIFACT_PACKAGES, value);
 }
-//# sourceMappingURL=manifest.js.map

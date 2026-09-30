@@ -508,4 +508,3 @@ function coverage(value) {
         unmatched: [],
     };
 }
-//# sourceMappingURL=application-catalog.js.map

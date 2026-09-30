@@ -7,4 +7,3 @@ export function errorDiagnostic(code, error, file) {
         column: 1,
     };
 }
-//# sourceMappingURL=diagnostic.js.map

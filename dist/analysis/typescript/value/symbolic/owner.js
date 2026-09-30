@@ -128,4 +128,3 @@ function kind(namespace) {
 function matches(shard, reference) {
     return !!shard && shard.digest === reference.digest && shard.kind === kind(reference.namespace) && shard.facts.length === reference.facts;
 }
-//# sourceMappingURL=owner.js.map

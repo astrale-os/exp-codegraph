@@ -90,4 +90,3 @@ export function nodeDiagnostic(code, message, source, file, node) {
     const position = file.getLineAndCharacterOfPosition(node.getStart(file));
     return { code, message, file: source, line: position.line + 1, column: position.character + 1 };
 }
-//# sourceMappingURL=authoring-syntax.js.map

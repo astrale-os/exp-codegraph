@@ -162,4 +162,3 @@ function assertLegacyEnvelope(row, value) {
         throw new Error('Legacy stored generation columns disagree with snapshot payload.');
     }
 }
-//# sourceMappingURL=migrate.js.map

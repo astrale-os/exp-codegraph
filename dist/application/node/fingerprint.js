@@ -163,4 +163,3 @@ function defaultPackageCoordinates() {
     const candidate = resolve(import.meta.dirname, '..', '..');
     return basename(candidate) === 'dist' ? [dirname(candidate), 'compiled'] : [candidate, 'source'];
 }
-//# sourceMappingURL=fingerprint.js.map

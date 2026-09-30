@@ -14,4 +14,3 @@ export function createServerApplicationService(root, cache, native, telemetry) {
         ...(native ? { native } : {}),
     });
 }
-//# sourceMappingURL=application.js.map

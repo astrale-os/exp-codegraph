@@ -168,8 +168,8 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 	if input.Base != a.acknowledged.generation.ID && !adopting {
 		return nil, "", protocolError("BASE_STALE", "The requested base is not the resident analyzer's current private generation.")
 	}
-	// Callers own change discovery. Once a resident base exists, an empty
-	// change set is a true no-op and must not re-walk or re-extract the complete
+	// Without opt-in discovery, callers own source change tracking. After
+	// optional compiler-input discovery, an empty change set is a true no-op and must not re-walk or re-extract the complete
 	// compiler universe merely to rediscover the same content-addressed shards.
 	if input.Base != "" && !adopting && !input.Invalidate && len(changes) == 0 && !a.pendingFull {
 		return nil, input.Base, nil

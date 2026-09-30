@@ -37,4 +37,3 @@ export function moduleRouting(transaction) {
         .sort((left, right) => left.module.localeCompare(right.module));
     return { complete: !transaction.base, modules };
 }
-//# sourceMappingURL=refresh.optimization.js.map
