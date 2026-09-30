@@ -63,6 +63,8 @@ export interface TypeScriptProject {
 export interface TypeScriptProjectRefresh {
   readonly changed?: readonly string[]
   readonly changes?: readonly NativeSourceChange[]
+  /** Discover changes to compiler-owned inputs, including failed resolutions. */
+  readonly discover?: boolean
   readonly invalidate?: boolean
   readonly signal?: AbortSignal
 }

@@ -107,7 +107,18 @@ func (a *analyzer) close() error {
 	return err
 }
 
-func (a *analyzer) refresh(input request) (transaction *factTransaction, unchanged string, err error) {
+func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		transaction, unchanged, err := a.refreshOnce(input)
+		if failure, ok := err.(nativeError); !ok || failure.code != "INPUT_CHANGED" {
+			return transaction, unchanged, err
+		}
+		input.Invalidate = true
+	}
+	return nil, "", protocolError("INPUT_CHANGED", "Compiler inputs kept changing during refresh; retry when the project settles.")
+}
+
+func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unchanged string, err error) {
 	started := time.Now()
 	changes, err := admittedSourceChanges(input)
 	if err != nil {
@@ -137,6 +148,21 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 			return nil, "", protocolError("COMMIT_PENDING", "A native generation is awaiting application-store acknowledgement.")
 		}
 		return a.pending.transaction, "", nil
+	}
+	// Discovery runs only after pending publication has been replayed/acknowledged.
+	// Explicit hints and compiler-owned observations share the same apply path.
+	if input.Discover && a.session != nil {
+		discovered, rebuild := a.session.discover()
+		input.Invalidate = input.Invalidate || rebuild
+		known := map[string]bool{}
+		for _, change := range changes {
+			known[change.Path] = true
+		}
+		for _, path := range discovered {
+			if !known[path] {
+				changes = append(changes, sourceChange{Path: path, Kind: "unknown"})
+			}
+		}
 	}
 	adopting := a.acknowledged.generation.ID == "" && input.Base != ""
 	if input.Base != a.acknowledged.generation.ID && !adopting {
@@ -224,6 +250,12 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 	if a.telemetry != nil {
 		recordFactBytes(a.telemetry, input.ID, shards)
+	}
+	if input.Discover {
+		if changed, rebuild := a.session.discover(); len(changed) != 0 || rebuild {
+			a.pendingFull = true
+			return nil, "", protocolError("INPUT_CHANGED", "Compiler inputs changed during refresh.")
+		}
 	}
 
 	materializationStarted := time.Now()

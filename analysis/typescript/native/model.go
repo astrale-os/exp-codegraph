@@ -21,6 +21,7 @@ type request struct {
 	Sequence     int            `json:"sequence,omitempty"`
 	Changed      []string       `json:"changed,omitempty"`
 	Changes      []sourceChange `json:"changes,omitempty"`
+	Discover     bool           `json:"discover,omitempty"`
 	Invalidate   bool           `json:"invalidate,omitempty"`
 	RecordLimits *recordLimits  `json:"recordLimits,omitempty"`
 }

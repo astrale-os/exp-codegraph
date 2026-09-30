@@ -41,16 +41,18 @@ type compilerSession struct {
 	overlay *driver.OverlayFS
 	program *driver.Program
 	release func()
+	inputs  *compilerInputFS
 }
 
 func newCompilerSession(root, config string) (*compilerSession, []driver.Diagnostic, error) {
 	fs := shimbundled.WrapFS(shimcachedvfs.From(authoredSourceFS{FS: shimosvfs.FS()}))
-	overlay := driver.NewOverlayFS(fs)
+	inputs := newCompilerInputFS(fs, shimbundled.WrapFS(authoredSourceFS{FS: shimosvfs.FS()}))
+	overlay := driver.NewOverlayFS(inputs)
 	program, diagnostics, err := driver.LoadProgram(root, config, driver.LoadProgramOptions{ForceNoEmit: true, FS: overlay})
 	if program == nil || err != nil {
 		return nil, diagnostics, err
 	}
-	return &compilerSession{root: root, overlay: overlay, program: program, release: func() { _ = program.Close() }}, diagnostics, nil
+	return &compilerSession{root: root, overlay: overlay, program: program, inputs: inputs, release: func() { _ = program.Close() }}, diagnostics, nil
 }
 
 func (s *compilerSession) Program() *driver.Program { return s.program }
@@ -65,6 +67,7 @@ func (s *compilerSession) SourceText(path string) (string, bool) {
 
 func (s *compilerSession) Apply(path, content string) bool {
 	s.overlay.Set(path, content)
+	s.inputs.applied(path, content)
 	name := path
 	if file := s.program.SourceFile(path); file != nil {
 		name = file.FileName()

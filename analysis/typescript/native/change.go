@@ -90,6 +90,7 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 			}
 			return refreshSelection{}, false, err
 		}
+		imports := sourceImportIdentity(a.session.Program().SourceFile(absolute))
 		if reused := a.session.Apply(absolute, string(content)); !reused {
 			full = true
 		}
@@ -97,6 +98,14 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 		if updated == nil {
 			full = true
 			continue
+		}
+		if sourceImportIdentity(updated) != imports {
+			// A new resolver graph owns a new observation inventory. Retire probes
+			// from the previous import graph instead of accumulating stale reads.
+			if err := a.rebuild(); err != nil {
+				return refreshSelection{}, true, err
+			}
+			return refreshSelection{full: true}, true, nil
 		}
 		selected = append(selected, updated.FileName())
 	}
@@ -225,4 +234,21 @@ func (a *analyzer) absoluteChangedPath(path string) (string, error) {
 		return "", protocolError("PATH_OUTSIDE_ROOT", "A changed path escapes the project root.")
 	}
 	return absolute, nil
+}
+
+func sourceImportIdentity(source *shimast.SourceFile) string {
+	if source == nil {
+		return ""
+	}
+	imports := []string{}
+	for _, node := range source.Imports() {
+		imports = append(imports, node.Text())
+	}
+	references := []map[string]any{}
+	for group, files := range [][]*shimast.FileReference{source.ReferencedFiles, source.TypeReferenceDirectives, source.LibReferenceDirectives} {
+		for _, file := range files {
+			references = append(references, map[string]any{"group": group, "path": file.FileName, "mode": file.ResolutionMode, "preserve": file.Preserve})
+		}
+	}
+	return string(stableJSON(map[string]any{"imports": imports, "references": references}))
 }

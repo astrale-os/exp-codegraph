@@ -510,12 +510,12 @@ export function value() { return helper() }
       const before = await reader.facts.facts('source')
       const controller = new AbortController()
       pause = true
-      const rejected = expect(project.refresh({ signal: controller.signal })).rejects.toThrow('superseded')
+      const rejected = expect(project.refresh({ discover: true, signal: controller.signal })).rejects.toThrow('superseded')
       await started.promise
       controller.abort(new Error('superseded'))
       await rejected
       expect(await reader.facts.facts('source')).toEqual(before)
-      const recovered = await project.refresh()
+      const recovered = await project.refresh({ discover: true })
       expect(recovered.generation).toEqual(initial.generation)
       expect(recovered.transactions).toEqual([])
       expect(opens).toBe(2)

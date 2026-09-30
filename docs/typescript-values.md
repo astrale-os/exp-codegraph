@@ -99,6 +99,10 @@ const report = await current.compute(inspectRoutes, {
 
 `changedPaths` comes from the consumer's file watcher or change tracking. After the
 initial load, `refresh()` without change hints does not scan for filesystem changes.
+Use `refresh({ discover: true })` when the compiler should discover changes to its own
+source, configuration, package resolution, directory membership and failed import
+lookups. Discovery combines those observations with explicit hints, retains resident
+no-op reuse when inputs are unchanged, and rebuilds only when compiler topology changes.
 
 This observes the handler shape; a rule must separately establish the callee's library
 identity before deciding that a call declares a route. Missing arguments remain explicit,

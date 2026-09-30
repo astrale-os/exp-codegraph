@@ -10,6 +10,12 @@ const manifest = async (path: string) => JSON.parse(await readFile(resolve(root,
 const workflow = async (name: string) => parse(await readFile(resolve(root, '.github/workflows', name), 'utf8'))
 
 describe('qualified npm distribution policy', () => {
+  it('emits distribution JavaScript without references to excluded source maps', async () => {
+    const build = await manifest('tsconfig.build.json')
+    expect(build.compilerOptions.sourceMap).toBe(false)
+    expect(build.compilerOptions.declarationMap).toBe(false)
+  })
+
   it('keeps exactly six public npm packages aligned to the root version', async () => {
     const owner = await manifest('package.json')
     expect(Object.keys(owner.optionalDependencies).sort()).toEqual(nativePackages.map(([, name]) => name).sort())

@@ -41,6 +41,7 @@ export type NativeAnalysisRequest =
       readonly baseSequence?: number
       readonly changed?: readonly string[]
       readonly changes?: readonly NativeSourceChange[]
+      readonly discover?: boolean
       readonly invalidate?: boolean
     }
   | {
