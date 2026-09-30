@@ -41,7 +41,9 @@ func newCompilerInputFS(fs, disk shimvfs.FS) *compilerInputFS {
 func (fs *compilerInputFS) remember(path string, kind compilerInputKind, value string) {
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	fs.observed[compilerInputKey{filepath.Clean(path), kind}] = value
+	// Compiler paths may be virtual URIs (bundled:///libs), not OS paths.
+	// Preserve the exact filesystem identity used to obtain the observation.
+	fs.observed[compilerInputKey{path, kind}] = value
 }
 func inputText(content string, ok bool) string {
 	if !ok {

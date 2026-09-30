@@ -1,9 +1,9 @@
 import { execFile as execFileCallback } from 'node:child_process'
-import { copyFile, mkdir, readFile, writeFile, chmod } from 'node:fs/promises'
-import { createRequire } from 'node:module'
+import { copyFile, mkdir, writeFile, chmod } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
+import { resolveNativeToolchain } from './toolchain.mjs'
 import { resolveTtscNativeAnalysis } from '../../analysis/typescript/ttsc/native.ts'
 import {
   NATIVE_ARTIFACT_FORMAT,
@@ -70,24 +70,7 @@ await writeFile(resolve(output, 'build.json'), stableJson(build))
 process.stdout.write(`${stableJson({ output, build })}`)
 
 async function readToolchain() {
-  const require = createRequire(import.meta.url)
-  const ttscManifestPath = require.resolve('ttsc/package.json')
-  const ttscRoot = dirname(ttscManifestPath)
-  const ttscRequire = createRequire(ttscManifestPath)
-  const ttsc = await readJson(ttscManifestPath)
-  const goSum = await readFile(resolve(ttscRoot, 'go.sum'), 'utf8')
-  const match = /^github\.com\/microsoft\/typescript-go (v\S+) /mu.exec(goSum)
-  if (!match) throw new Error('Cannot determine the TypeScript-Go module revision from ttsc.')
-  const platformManifest = ttscRequire.resolve(`@ttsc/${target}/package.json`)
-  const goBinary = resolve(dirname(platformManifest), 'bin/go/bin', process.platform === 'win32' ? 'go.exe' : 'go')
-  const { stdout } = await execFile(goBinary, ['version'], { encoding: 'utf8' })
-  const goMatch = /\b(go\d+\.\d+(?:\.\d+)?)\b/u.exec(stdout)
-  if (!goMatch) throw new Error(`Cannot determine bundled Go version from: ${stdout.trim()}`)
-  return {
-    ttsc: requiredString(ttsc.version, 'ttsc version'),
-    typescriptGo: match[1],
-    go: goMatch[1],
-  }
+  return (await resolveNativeToolchain()).identity
 }
 
 async function sourceIdentity() {

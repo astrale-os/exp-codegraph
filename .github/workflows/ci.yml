@@ -31,6 +31,8 @@ jobs:
         run: pnpm check
       - name: Build the exact native candidate before running tests
         run: pnpm native:build
+      - name: Run the complete pinned native regression suite
+        run: pnpm native:test
       - name: Run the complete package suite
         run: pnpm test
         env:

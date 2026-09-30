@@ -104,3 +104,42 @@ it('reconciles an unpublished replay before returning discovered compiler inputs
     } finally { await pinned.dispose() }
   } finally { await service.dispose(); await backing.dispose(); await rm(root, { recursive: true, force: true }) }
 })
+
+it('keeps bundled compiler libraries stable during discovery', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codegraph-discovery-libraries-'))
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022' }, files: ['index.ts'] }))
+  await writeFile(join(root, 'index.ts'), "export const value = ['first']")
+  const project = await openTypeScriptProject({ root, binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY })
+  try {
+    const first = await project.refresh({ discover: true })
+    expect((await project.refresh({ discover: true })).generation.id).toBe(first.generation.id)
+    await writeFile(join(root, 'index.ts'), "export const value = ['other']")
+    const edited = await project.refresh({ discover: true })
+    expect(edited.generation.id).not.toBe(first.generation.id)
+    const cold = await openTypeScriptProject({ root, binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY })
+    try { expect(edited.generation.id).toBe((await cold.refresh()).generation.id) }
+    finally { await cold.dispose() }
+  } finally { await project.dispose(); await rm(root, { recursive: true, force: true }) }
+})
+
+it('discovers package metadata consumed by module projection independently of resolution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'codegraph-discovery-package-'))
+  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({ compilerOptions: { noLib: true, module: 'ESNext', moduleResolution: 'Classic' }, files: ['index.ts'] }))
+  await writeFile(join(root, 'index.ts'), 'export const value = true')
+  await writeFile(join(root, 'package.json'), JSON.stringify({ name: '@fixture/module', dependencies: { first: '1.0.0' } }))
+  const options = { root, binary: process.env.CODEGRAPH_TEST_NATIVE_BINARY,
+    capabilities: ['typescript.source', 'astrale.typescript.module'] as const,
+    modules: [{ id: 'fixture.module', name: 'FixtureModule', project: 'tsconfig.json', root: '.', entrypoint: 'index.ts', facades: [], aliases: [], internals: [] }] }
+  const project = await openTypeScriptProject(options)
+  try {
+    const first = await project.refresh({ discover: true })
+    await writeFile(join(root, 'package.json'), JSON.stringify({ name: '@fixture/module', dependencies: { other: '2.0.0' } }))
+    const next = await project.refresh({ discover: true })
+    const cold = await openTypeScriptProject(options)
+    try {
+      const fresh = await cold.refresh()
+      expect(next.generation.id).toBe(fresh.generation.id)
+      expect(next.generation.id).not.toBe(first.generation.id)
+    } finally { await cold.dispose() }
+  } finally { await project.dispose(); await rm(root, { recursive: true, force: true }) }
+})
