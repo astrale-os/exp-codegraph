@@ -9,6 +9,7 @@ import (
 
 	shimast "github.com/microsoft/typescript-go/shim/ast"
 	shimcompiler "github.com/microsoft/typescript-go/shim/compiler"
+	shimosvfs "github.com/microsoft/typescript-go/shim/vfs/osvfs"
 	"github.com/samchon/ttsc/packages/ttsc/driver"
 )
 
@@ -37,6 +38,8 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 	absolutePaths := make([]string, 0, len(paths))
 	previousFiles := make([]*shimast.SourceFile, 0, len(paths))
 	oldShapes := make(map[string]string, len(paths))
+	contents := make(map[string]string, len(paths))
+	typedProjection := a.projection.diagnostics || a.projection.modules
 	full := false
 	phase := time.Now()
 	for _, path := range paths {
@@ -44,7 +47,8 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 		if err != nil {
 			return refreshSelection{}, false, err
 		}
-		if _, resident := a.session.SourceText(absolute); !resident {
+		previousText, resident := a.session.SourceText(absolute)
+		if !resident {
 			if byPath[path] == "change" {
 				continue
 			}
@@ -53,10 +57,28 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 			}
 			return refreshSelection{full: true}, true, nil
 		}
+		content, err := readAuthoredSourceFile(absolute, shimosvfs.FS())
+		if err != nil {
+			if os.IsNotExist(err) {
+				if err := a.rebuild(); err != nil {
+					return refreshSelection{}, false, err
+				}
+				return refreshSelection{full: true}, true, nil
+			}
+			return refreshSelection{}, false, err
+		}
+		// Hints describe possible movement, not a newer compiler revision. A
+		// newly opened Program already owns these exact bytes. Comparing before
+		// declaration emit avoids rechecking every generic export on a cold
+		// inventory, and unchanged watch hints never advance the compiler.
+		if content == previousText {
+			continue
+		}
+		contents[absolute] = content
 		source := a.session.Program().SourceFile(absolute)
 		if source == nil || source.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(source) {
 			full = true
-		} else {
+		} else if typedProjection {
 			shape, err := a.session.Program().DeclarationShapeDigest(source)
 			if err != nil {
 				return refreshSelection{}, false, err
@@ -67,6 +89,9 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 		previousFiles = append(previousFiles, source)
 	}
 	a.telemetry.record(requestID, "compiler.previous-shapes", phase, map[string]any{"files": len(oldShapes)})
+	if len(absolutePaths) == 0 {
+		return refreshSelection{}, false, nil
+	}
 	trackDiagnostics := a.projection.diagnostics || a.projection.modules
 	previousDiagnostics := diagnosticProjectionFingerprint{}
 	if trackDiagnostics && !full {
@@ -80,18 +105,8 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 	public := []string{}
 	phase = time.Now()
 	for _, absolute := range absolutePaths {
-		content, err := os.ReadFile(absolute)
-		if err != nil {
-			if os.IsNotExist(err) {
-				if err := a.rebuild(); err != nil {
-					return refreshSelection{}, false, err
-				}
-				return refreshSelection{full: true}, true, nil
-			}
-			return refreshSelection{}, false, err
-		}
 		imports := sourceImportIdentity(a.session.Program().SourceFile(absolute))
-		if reused := a.session.Apply(absolute, string(content)); !reused {
+		if reused := a.session.Apply(absolute, contents[absolute]); !reused {
 			full = true
 		}
 		updated := a.session.Program().SourceFile(absolute)
@@ -112,6 +127,32 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 	a.telemetry.record(requestID, "compiler.apply", phase, map[string]any{"files": len(absolutePaths), "full": full})
 	if full {
 		return refreshSelection{full: true}, true, nil
+	}
+	if !typedProjection {
+		// Body/symbol/occurrence facts expose identities and resolved calls, not
+		// a public type surface. Computing every inferred declaration type just
+		// to prune their dependency closure can cost much more than projecting
+		// the complete compiler-reference closure. Keep that closure conservative
+		// for any real edit; typed module and diagnostic products retain precise
+		// declaration-shape invalidation below.
+		phase = time.Now()
+		changedFiles := append([]string{}, selected...)
+		selected = affectedSourceClosure(a.session.Program(), selected, changedFiles)
+		if len(a.acknowledged.sources) != 0 {
+			owned := selected[:0]
+			for _, file := range selected {
+				if _, exists := a.acknowledged.sources[file]; exists {
+					owned = append(owned, file)
+				}
+			}
+			selected = owned
+		}
+		readUpdates, callableOwners := a.revalidateCallableReads(changedFiles, selected, requestID)
+		selected = sortedUnique(append(selected, callableOwners...))
+		a.telemetry.record(requestID, "compiler.dependent-closure", phase, map[string]any{
+			"changedSources": len(changedFiles), "selectedSources": len(selected),
+		})
+		return refreshSelection{callableReads: readUpdates, files: selected}, true, nil
 	}
 	updatedFiles := make([]*shimast.SourceFile, 0, len(absolutePaths))
 	phase = time.Now()

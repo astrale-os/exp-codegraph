@@ -204,7 +204,7 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 			mode = "resident-skip"
 		}
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": mode})
-		if !compilerAdvanced && input.Base != "" {
+		if !compilerAdvanced && input.Base != "" && !adopting {
 			return nil, input.Base, nil
 		}
 	}

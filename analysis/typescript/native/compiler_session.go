@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"unsafe"
 
@@ -20,17 +21,28 @@ import (
 type authoredSourceFS struct{ shimvfs.FS }
 
 func (fs authoredSourceFS) ReadFile(path string) (string, bool) {
+	content, err := readAuthoredSourceFile(path, fs.FS)
+	return content, err == nil
+}
+
+// Compiler loading and explicit source changes share the authored decoding
+// boundary. The returned string owns its immutable read buffer.
+func readAuthoredSourceFile(path string, fallback shimvfs.FS) (string, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
-		return "", false
+		return "", err
 	}
 	if len(content) >= 2 && ((content[0] == 0xff && content[1] == 0xfe) || (content[0] == 0xfe && content[1] == 0xff)) {
 		// Preserve the compiler's decoding support for UTF-16 encoded files.
-		return fs.FS.ReadFile(path)
+		decoded, ok := fallback.ReadFile(path)
+		if !ok {
+			return "", fmt.Errorf("could not decode authored source %s", path)
+		}
+		return decoded, nil
 	}
 	// ReadFile gives us exclusive ownership; neither this buffer nor the returned
 	// immutable source text is mutated. Match tsgo's zero-copy OS reader.
-	return unsafe.String(unsafe.SliceData(content), len(content)), true
+	return unsafe.String(unsafe.SliceData(content), len(content)), nil
 }
 
 // driver.NewSession fixes its own filesystem and ignores LoadProgramOptions.FS.
