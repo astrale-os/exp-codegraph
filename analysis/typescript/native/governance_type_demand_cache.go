@@ -2,7 +2,6 @@ package main
 
 import (
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
-	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	compiler "github.com/microsoft/typescript-go/shim/compiler"
 	core "github.com/microsoft/typescript-go/shim/core"
@@ -105,14 +104,6 @@ type governanceTypeReceipt struct {
 	sources      map[string]governanceTypeSource
 	observations map[compilerInputKey]string
 	reads        map[string]compilerRawRead
-	// Pending obligations retain observed authored bytes and expected external
-	// bytes separately from actual compiler reads. Only the uncached end barrier
-	// discharges them; the private proposal is never publication authority.
-	barrierReads        map[string]compilerRawRead
-	barrierObservations map[compilerInputKey]string
-	cache               *governanceTypeDemandCache
-	cacheKeys           map[governanceTypeDemandKey]bool
-	certificateRows     []governanceObservation
 }
 
 func governanceOrdinaryTypeSource(source *ast.SourceFile) bool {
@@ -176,13 +167,20 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 		replay, valid := entry.receipt.replay(owner.project)
 		owner.validated[entry.receipt] = valid
 		if valid {
-			replay.cache = cache
-			replay.cacheKeys = map[governanceTypeDemandKey]bool{key: true}
+			lease := newGovernanceTypeCacheLease(cache, key, replay)
 			capture := owner.project.capture
-			if len(capture.typeReceipts) == 0 {
-				capture.typeReceipts = append(capture.typeReceipts, replay)
+			// Pending compiler-capsule receipts have no type-cache owner. Keep
+			// those immutable assertions distinct from current cache invalidation.
+			var target *governanceTypeCacheLease
+			for _, candidate := range capture.typeCacheLeases {
+				if candidate.cache == cache && candidate.cacheKeys != nil {
+					target = candidate
+					break
+				}
+			}
+			if target == nil {
+				capture.typeCacheLeases = append(capture.typeCacheLeases, lease)
 			} else {
-				target := capture.typeReceipts[0]
 				target.cacheKeys[key] = true
 				for path, value := range replay.barrierReads {
 					if before, seen := target.barrierReads[path]; seen && before != value {
@@ -310,12 +308,12 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 // operations actually observed in this capture can discharge an obligation
 // here. Every remaining obligation is checked with uncached I/O at final seal.
 // Expected reads are NEVER inserted into the current compiler observation map.
-func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governanceTypeReceipt, bool) {
+func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governanceCompilerReadAssertions, bool) {
 	if receipt.root != project.Root || project.capture.compiler == nil {
 		return nil, false
 	}
 	fs := project.capture.compiler
-	replay := &governanceTypeReceipt{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
+	replay := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
 	changed := map[string]bool{}
 	actualReads := map[string]compilerRawRead{}
 	actualObservations := map[compilerInputKey]string{}
@@ -391,46 +389,4 @@ func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governa
 		replay.barrierObservations[key] = current
 	}
 	return replay, true
-}
-func (receipt *governanceTypeReceipt) verifyBarrier(disk vfs.FS) bool {
-	world := &governanceTypeReplayWorld{disk: disk, reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
-	return receipt.verifyBarrierWorld(world)
-}
-func (receipt *governanceTypeReceipt) verifyBarrierWorld(world *governanceTypeReplayWorld) bool {
-	world.prepare(&governanceTypeReceipt{reads: receipt.barrierReads, observations: receipt.barrierObservations})
-	for path, before := range receipt.barrierReads {
-		if world.reads[path] != before {
-			receipt.invalidate()
-			return false
-		}
-	}
-	for key, before := range receipt.barrierObservations {
-		if world.observations[key] != before {
-			receipt.invalidate()
-			return false
-		}
-	}
-	return true
-}
-
-func (receipt *governanceTypeReceipt) invalidate() {
-	if receipt.cache != nil {
-		for key := range receipt.cacheKeys {
-			delete(receipt.cache.entries, key)
-		}
-	}
-}
-
-func (receipt *governanceTypeReceipt) certificateObservations() []governanceObservation {
-	if receipt.certificateRows == nil {
-		rows := make([]governanceObservation, 0, len(receipt.barrierReads)+len(receipt.barrierObservations))
-		for path, value := range receipt.barrierReads {
-			rows = append(rows, governanceObservation{path, "expected-type-read", inputText(value.text, value.present)})
-		}
-		for key, value := range receipt.barrierObservations {
-			rows = append(rows, governanceObservation{key.path, fmt.Sprintf("expected-type-guard:%d", key.kind), value})
-		}
-		receipt.certificateRows = rows
-	}
-	return receipt.certificateRows
 }

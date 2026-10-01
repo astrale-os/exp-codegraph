@@ -108,6 +108,10 @@ export class DecisionProcess implements NativeDecisionSession {
     return this.#request("capture-probes", request, signal);
   }
 
+  captureOwnedGeneric(request: Parameters<NonNullable<NativeDecisionSession["captureOwnedGeneric"]>>[0], signal?: AbortSignal): Promise<unknown> {
+    return this.#request("capture-owned-generic", request, signal);
+  }
+
   seal(
     request: Parameters<NativeDecisionSession["seal"]>[0],
     signal?: AbortSignal,

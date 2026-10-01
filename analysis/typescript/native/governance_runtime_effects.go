@@ -8,13 +8,16 @@ import (
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
 	"sort"
 	"strings"
+	"time"
 )
 
 // This owner exposes narrow native compiler observations. It reuses the legacy
 // thin AST admission algorithm, never allocates BodyIR or a generic fact store.
 type governanceRuntimeAuthority struct {
-	ScopedProofs   map[*ast.Node]observabledecision.EffectSummary
-	FunctionOwners map[string][]*ast.Node
+	ParameterReferenceClosure map[governanceParameterReferenceKey]bool
+	ParameterReferenceSources map[*ast.SourceFile]bool
+	ScopedProofs              map[*ast.Node]observabledecision.EffectSummary
+	FunctionOwners            map[string][]*ast.Node
 
 	Identity       *governanceRuntimeIdentity
 	Files          []observabledecision.CapturedFile
@@ -219,7 +222,9 @@ func (owner *governanceRuntimeAuthority) callObservedArguments(file observablede
 	if !forceEmptySignature && (call.Arguments == nil || len(call.Arguments.Nodes) == 0) {
 		return out
 	}
+	signatureStart := time.Now()
 	signature := check.GetResolvedSignature(matched)
+	observabledecision.DiagnosticEvent("selected-signature", file.Path, node, map[string]any{"elapsedNanoseconds": time.Since(signatureStart).Nanoseconds()})
 	parameters := checker.Signature_parameters(signature)
 	rest := checker.Signature_hasRestParameter(signature)
 	if call.Arguments != nil {
@@ -252,7 +257,9 @@ func (owner *governanceRuntimeAuthority) callTargetOwner(file observabledecision
 	check := owner.Identity.TypeOwner.program.Checker
 	call := matched.AsCallExpression()
 	x := &extractor{checker: check}
+	started := time.Now()
 	symbol := x.canonicalCallSymbol(call.Expression, func(*ast.Symbol) {})
+	observabledecision.DiagnosticEvent("canonical-target", file.Path, node, map[string]any{"elapsedNanoseconds": time.Since(started).Nanoseconds()})
 	declaration := declarationNode(symbol)
 	function := functionInitializer(declaration)
 	if declaration != nil && ast.IsFunctionLike(declaration) {
@@ -335,7 +342,13 @@ func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecisio
 	x := &extractor{checker: check}
 	for _, callNode := range thin.calls {
 		expression := callNode.AsCallExpression().Expression
+		if owner.externalFactoryMemberCannotSelf(expression, key) {
+			observabledecision.DiagnosticEvent("scoped-self-provenance-negative", request.Path, callNode, nil)
+			continue
+		}
+		scopedStart := time.Now()
 		symbol := x.canonicalCallSymbol(expression, func(*ast.Symbol) {})
+		observabledecision.DiagnosticEvent("scoped-self-target", request.Path, callNode, map[string]any{"elapsedNanoseconds": time.Since(scopedStart).Nanoseconds(), "scopedOperation": request.Operation})
 		target := owner.symbolKey(symbol)
 		declaration := declarationNode(symbol)
 		function := functionInitializer(declaration)
@@ -384,7 +397,7 @@ func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecisio
 }
 func (owner *governanceRuntimeAuthority) DemandContext(limits observabledecision.Limits) observabledecision.DemandContext {
 	core := observabledecision.NewCapturedNativeEffectCore(owner.Files, owner.EffectAuthority())
-	context := observabledecision.DemandContext{Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets(), CallShape: owner.DemandCallShapes()}
+	context := observabledecision.DemandContext{ConstructorDiscovery: owner.constructorDiscovery(core), Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets(), CallShape: owner.DemandCallShapes()}
 	reader := observabledecision.NewNativeValueReader(context)
 	context.CompilerLibraryReceiver = func(path string, call *ast.Node) observabledecision.LibraryReceiverObservation {
 		file, ok := owner.ByPath[path]

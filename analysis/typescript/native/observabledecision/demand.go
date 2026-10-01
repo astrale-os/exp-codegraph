@@ -56,6 +56,7 @@ type EffectSummary struct {
 }
 type Limits struct{ MaximumDepth, MaximumSteps, MaximumAlternatives int }
 type DemandContext struct {
+	ConstructorDiscovery func(string, *ast.Node, Limits) ConstructorExclusion
 	// CallShape observes target ownership and rest slots only. Parameter-symbol
 	// rows remain exclusively owned by the full effect Call authority.
 	CallShape                     func(path string, node *ast.Node) NativeEffectCall
@@ -374,6 +375,11 @@ func (r *demandRun) guardRequest(request EffectRequest) demandValue {
 		return demandUnknown(reason)
 	}
 	return demandKnown("guard", summary.EffectKind)
+}
+
+// CanonicalExternalOrigin uses the same runtime intrinsic registry as the reader.
+func CanonicalExternalOrigin(origin *Origin) bool {
+	return origin != nil && canonical(origin).kind == "external"
 }
 func canonical(origin *Origin) demandValue {
 	if origin == nil {
@@ -985,6 +991,7 @@ func observeQueries(context DemandContext, observer *demandObserver, includeID b
 		product.InventoryReasons = append(product.InventoryReasons, inventory.Reasons...)
 	}
 	for _, site := range inventory.Sites {
+		DiagnosticSubject = fmt.Sprintf("query-discovery:%s:%d:%d", site.Path, site.Start, site.End)
 		path, candidate := site.Path, site.Node
 		m := observer.modules[path]
 		if m == nil || m.reason != "" {
@@ -1005,6 +1012,20 @@ func observeQueries(context DemandContext, observer *demandObserver, includeID b
 			if candidate.Kind != ast.KindCallExpression || ast.GetSourceFileOfNode(candidate) != m.file.Source {
 				product.Residual = append(product.Residual, DemandOutcome{Kind: "unknown", Reason: "Runtime call anchor is not the captured AST owner."})
 				continue
+			}
+			if site.Callee.Kind == ast.KindIdentifier && context.ConstructorDiscovery != nil {
+				binding, bound := m.bindings[site.Callee.Text()]
+				eligible := !bound
+				if bound && binding.specifier != "" && !binding.namespace && context.Resolve != nil {
+					resolution := context.Resolve(path, binding.specifier, binding.export)
+					eligible = !resolution.Unavailable && resolution.Reason == "" && CanonicalExternalOrigin(resolution.Origin)
+				}
+				if eligible {
+					exclusion := context.ConstructorDiscovery(path, site.Callee, discovery.limits)
+					if exclusion.Known && exclusion.Excluded {
+						continue
+					}
+				}
 			}
 			callee := discovery.evalAt(path, site.Callee, nil, 0)
 			if discovery.migrationIncomplete {
@@ -1053,6 +1074,7 @@ func observeQueries(context DemandContext, observer *demandObserver, includeID b
 			observation.SubjectID = site.SubjectID
 		}
 		call := value.node.AsCallExpression()
+		DiagnosticSubject = fmt.Sprintf("query-shape:%s:%d:%d", path, start, end)
 		shapeRun := observer.run()
 		shapeValue := demandKnown("undefined", "")
 		if len(call.Arguments.Nodes) > 0 {
@@ -1075,13 +1097,16 @@ func observeQueries(context DemandContext, observer *demandObserver, includeID b
 			idDefinition := idRun.definitionAt(value, 1)
 			observation.ID = idRun.finish(idRun.propertyAt(idDefinition, "id", 0), "string")
 		}
+		DiagnosticSubject = fmt.Sprintf("query-build-callback-count:%s:%d:%d", path, start, end)
 		buildRun := observer.run()
 		buildDefinition := buildRun.definitionAt(value, 1)
 		buildValue := buildRun.propertyAt(buildDefinition, "build", 0)
 		observation.BuildCallbackCount = buildRun.finish(buildValue, "callback")
+		DiagnosticSubject = fmt.Sprintf("query-project-callback-count:%s:%d:%d", path, start, end)
 		projectRun := observer.run()
 		projectDefinition := projectRun.definitionAt(value, 1)
 		observation.ProjectCallbackCount = projectRun.finish(projectRun.propertyAt(projectDefinition, "project", 0), "callback")
+		DiagnosticSubject = fmt.Sprintf("query-canonical-request-count:%s:%d:%d", path, start, end)
 		requestRun := observer.run()
 		requestDefinition := requestRun.definitionAt(value, 2)
 		requestValue := requestRun.propertyAt(requestDefinition, "build", 1)

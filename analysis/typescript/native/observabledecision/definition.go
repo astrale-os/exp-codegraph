@@ -1,6 +1,7 @@
 package observabledecision
 
 import (
+	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
 )
@@ -83,6 +84,7 @@ func observeDefinitionIDs(context DemandContext, observer *demandObserver) Defin
 		product.Residual = append(product.Residual, demandOutcomeUnknown("Authored definition subject authority is unavailable."))
 	}
 	for _, site := range inventory.Sites {
+		DiagnosticSubject = fmt.Sprintf("definition-discovery:%s:%d:%d", site.Path, site.Start, site.End)
 		module := observer.modules[site.Path]
 		start, end := site.Start, site.End
 		if module != nil && site.Node != nil {

@@ -136,6 +136,7 @@ export type NativeDecisionContinuation =
         | Readonly<{ id: string; kind: "locale-sort"; groups: readonly (readonly number[])[] }>
       )[];
     }>
+  | Readonly<{ token: string; kind: "generic-retire" }>
   | Readonly<{ token: string; kind: "generic-engine"; engine: NativeDecisionGenericEngine }>
   | Readonly<{
       token: string;
@@ -154,6 +155,7 @@ export interface NativeDecisionGenericEngine {
   readonly packageRevision: string;
 }
 export interface NativeDecisionGenericRequest {
+  readonly speculative?: boolean;
   readonly status: "generic";
   readonly token: string;
   readonly generation: string;
@@ -210,6 +212,8 @@ export interface NativeDecisionSession {
     request: Readonly<{ token: string; requirements: readonly NativeDecisionCaptureRequirement[] }>,
     signal?: AbortSignal,
   ): Promise<unknown>;
+  /** Original worker belongs to the native capture, on its private verified channel. */
+  captureOwnedGeneric?(request: Readonly<{token: string; configPath: string; config?: unknown; configBytes?: readonly number[]; commandIgnorePatterns: readonly string[]}>, signal?: AbortSignal): Promise<unknown>;
   /** The final whole-input barrier runs after the client privately admits the candidate. */
   seal(request: NativeDecisionSealRequest, signal?: AbortSignal): Promise<unknown>;
   dispose(): Promise<void>;

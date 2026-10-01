@@ -146,7 +146,8 @@ func (session *governanceSession) continuePolicy(token string, authority governa
 	if err != nil {
 		return nil, err
 	}
-	project.typeDemandCache = &session.typeDemandCache
+	project.typeDemandCache = session.typeDemandOwner()
+	project.programGeneration = session.programGeneration
 	project.policyDigest = authority.Digest
 	return project, nil
 }

@@ -13,7 +13,7 @@ func TestPublicationTicketNamesOwnedActualAndExpectedState(t *testing.T) {
 	if actual == initial {
 		t.Fatal("new actual observation retained a stale publication ticket")
 	}
-	capture.typeReceipts = append(capture.typeReceipts, &governanceTypeReceipt{})
+	capture.compilerAssertions = append(capture.compilerAssertions, &governanceCompilerReadAssertions{})
 	proposed := capture.certificate()
 	if proposed == actual || len(capture.observations) != 1 {
 		t.Fatal("private expected obligations must change the ticket without forging actual observations")

@@ -6,6 +6,7 @@ import (
 	"context"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	checker "github.com/microsoft/typescript-go/shim/checker"
+	compiler "github.com/microsoft/typescript-go/shim/compiler"
 	core "github.com/microsoft/typescript-go/shim/core"
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
 	options "github.com/microsoft/typescript-go/shim/tsoptions"
@@ -22,6 +23,7 @@ type governanceTypeAuthority struct {
 	parsed            *options.ParsedCommandLine
 	roots             map[string]bool
 	program           *driver.Program
+	generationBroker  *governanceGenerationBroker
 	opened            bool
 	cells             map[governanceTypeDemandKey]governanceTypeDemandValue
 	validated         map[*governanceTypeReceipt]bool
@@ -159,7 +161,26 @@ func (owner *governanceTypeAuthority) open() {
 		overlay.Set(file.AbsolutePath, file.Text)
 	}
 	host := driver.DefaultHost(owner.project.Root, overlay)
-	program, _, err := driver.CreateProgramFromConfig(owner.parsed, host)
+	var program *compiler.Program
+	var err error
+	if generation := owner.project.programGeneration; generation != nil {
+		broker := generation.broker
+		proposalStarted := time.Now()
+		candidate, reused := generation.propose(owner.project)
+		owner.project.stats.phase("native-program-update-proposal", proposalStarted)
+		if reused {
+			owner.project.borrowedGeneration = generation
+			program = candidate
+			host = broker
+			owner.generationBroker = broker
+		}
+	}
+	if program == nil {
+		broker := &governanceGenerationBroker{host}
+		program, _, err = driver.CreateProgramFromConfig(owner.parsed, broker)
+		host = broker
+		owner.generationBroker = broker
+	}
 	if program == nil || err != nil {
 		return
 	}

@@ -38,6 +38,8 @@ type governanceIntrinsicAnswer struct {
 	Groups   [][]int `json:"groups,omitempty"`
 }
 type governanceProductsSession struct {
+	GenericSpeculative     bool
+	JoinedCaptures         []*governanceCapture
 	LeafInputs             map[string]governanceIntrinsic
 	ReplayAnswers          map[string]governanceIntrinsicAnswer
 	ReplayExpected         *governanceCapture
@@ -66,6 +68,10 @@ type governanceProductsSession struct {
 }
 
 func (session *governanceSession) discardProducts() {
+	session.drainPolicyLane()
+	if state := session.productsSession; state != nil && state.Project != nil {
+		session.retireProgramProposal(state.Project)
+	}
 	if state := session.productsSession; state != nil && state.Project != nil && state.Project.typeRelease != nil {
 		state.Project.typeRelease()
 		state.Project.typeRelease = nil
@@ -128,6 +134,10 @@ func (state *governanceProductsSession) installLeaves(neutral *string) {
 	}
 }
 func (session *governanceSession) continueProducts(raw json.RawMessage) (any, error) {
+	return session.continueProductsOwned(raw, true)
+}
+
+func (session *governanceSession) continueProductsOwned(raw json.RawMessage, forkGeneric bool) (any, error) {
 	var params struct {
 		Token                   string                             `json:"token"`
 		Kind                    string                             `json:"kind"`
@@ -141,7 +151,7 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, err
 	}
-	if params.Kind == "generic-engine" || params.Kind == "generic" {
+	if params.Kind == "generic-engine" || params.Kind == "generic" || params.Kind == "generic-retire" {
 		return session.continueGeneric(raw)
 	}
 	state := session.productsSession
@@ -152,6 +162,9 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 	case "policy":
 		if state.Project != nil || session.policySuspension == nil || params.Token != session.policySuspension.Token {
 			return map[string]any{"status": "retry"}, nil
+		}
+		if forkGeneric && governanceGenericEnabled(state.Prepare.Options) {
+			return session.startPolicyLane(raw)
 		}
 		project, err := session.continuePolicy(params.Token, params.Policy)
 		if err != nil {
@@ -449,8 +462,20 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 		return nil, err
 	}
 	if !valid {
+		session.programGeneration = nil
 		session.sealedDecisions = nil
 		return map[string]any{"status": "retry"}, nil
+	}
+	for _, capture := range state.JoinedCaptures {
+		valid, err = capture.verifyWithin(reads)
+		if err != nil {
+			return nil, err
+		}
+		if !valid {
+			session.programGeneration = nil
+			session.sealedDecisions = nil
+			return map[string]any{"status": "retry"}, nil
+		}
 	}
 	if state.ReplayExpected != nil {
 		valid, err = state.ReplayExpected.verifyWithin(reads)
@@ -459,6 +484,7 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 			return nil, err
 		}
 		if !valid {
+			session.programGeneration = nil
 			session.sealedDecisions = nil
 			return map[string]any{"status": "retry"}, nil
 		}
@@ -467,7 +493,15 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 	// A replay keeps its complete old expected closure. A fresh evaluation
 	// replaces it only after its own capture has passed the original barrier.
 	if state.ReplayExpected == nil {
+		if state.Project.typeRelease != nil {
+			state.Project.typeRelease()
+			state.Project.typeRelease = nil
+		}
+		if state.Project.typeOwner != nil && state.Project.typeOwner.program != nil {
+			session.programGeneration = governanceRetainProgramGeneration(state.Project, state.Project.typeOwner.generationBroker)
+		}
 		session.retainSealedDecisions(state)
+		state.Project.borrowedGeneration = nil
 	}
 	result := map[string]any{"status": "committed", "token": token, "generation": state.Generation, "inputCertificate": state.InputCertificate, "productsDigest": productsDigest, "reportDigest": reportDigest}
 	var debug struct {

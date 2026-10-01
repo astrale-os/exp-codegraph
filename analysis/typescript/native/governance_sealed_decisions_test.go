@@ -98,12 +98,12 @@ func TestSealedDecisionClonesPendingAndActualRawReadClosure(t *testing.T) {
 	inputs := newCompilerInputFS(disk, disk)
 	inputs.singleCapture = true
 	inputs.ReadFile(path)
-	pending := &governanceTypeReceipt{barrierReads: map[string]compilerRawRead{missing: {text: "", present: false}}, barrierObservations: map[compilerInputKey]string{}}
-	old := &governanceCapture{compiler: inputs, typeReceipts: []*governanceTypeReceipt{pending}}
+	pending := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{missing: {text: "", present: false}}, barrierObservations: map[compilerInputKey]string{}}
+	old := &governanceCapture{compiler: inputs, compilerAssertions: []*governanceCompilerReadAssertions{pending}}
 	expected := governanceExpectedCapture(old)
 	delete(pending.barrierReads, missing)
 	delete(inputs.rawReads, path)
-	if len(expected.typeReceipts) != 2 || len(expected.typeReceipts[0].barrierReads) != 1 || len(expected.typeReceipts[1].barrierReads) != 1 {
+	if len(expected.compilerAssertions) != 2 || len(expected.compilerAssertions[0].barrierReads) != 1 || len(expected.compilerAssertions[1].barrierReads) != 1 {
 		t.Fatal("raw closure borrowed or omitted")
 	}
 	if valid, err := expected.Verify(); err != nil || !valid {

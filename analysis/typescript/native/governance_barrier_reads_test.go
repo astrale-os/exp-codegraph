@@ -103,19 +103,19 @@ func TestGovernanceBarrierConflictingReceiptsAndFreshSeals(t *testing.T) {
 		t.Fatal(err)
 	}
 	capture.probe(governanceProbeRequest{ID: "bytes", Path: path, Kind: "read-bytes"})
-	receipt := &governanceTypeReceipt{barrierReads: map[string]compilerRawRead{path: {"before", true}}}
-	capture.typeReceipts = []*governanceTypeReceipt{receipt, receipt}
+	receipt := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{path: {"before", true}}}
+	capture.compilerAssertions = []*governanceCompilerReadAssertions{receipt, receipt}
 	if valid, err := capture.Verify(); !valid || err != nil {
 		t.Fatalf("equal projections failed %v %v", valid, err)
 	}
 	if len(compiler.rawReads) != 0 || len(compiler.observed) != 0 {
 		t.Fatal("expected receipts became actual observations")
 	}
-	capture.typeReceipts = append(capture.typeReceipts, &governanceTypeReceipt{barrierReads: map[string]compilerRawRead{path: {"other", true}}})
+	capture.compilerAssertions = append(capture.compilerAssertions, &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{path: {"other", true}}})
 	if valid, _ := capture.Verify(); valid {
 		t.Fatal("conflicting expected projection accepted")
 	}
-	capture.typeReceipts = []*governanceTypeReceipt{receipt}
+	capture.compilerAssertions = []*governanceCompilerReadAssertions{receipt}
 	if err := os.WriteFile(path, []byte("edited"), 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,7 @@ func (owner *governanceRuntimeAuthority) DemandCallShapes() func(string, *ast.No
 		if matched == nil {
 			return result
 		}
-		if !owner.canonicalFactoryReturnsNoRest(matched) {
+		if !owner.directParameterOrigins(matched).noRest() && !owner.mappedParameterOrigins(matched).noRest() && !owner.canonicalFactoryReturnsNoRest(matched) {
 			result = owner.Call(file, node)
 			for index := range result.Bindings {
 				result.Bindings[index].Argument = nil

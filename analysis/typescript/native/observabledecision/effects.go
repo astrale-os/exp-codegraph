@@ -161,6 +161,11 @@ func (core *NativeEffectCore) call(file CapturedFile, node *ast.Node) NativeEffe
 	return result
 }
 func (core *NativeEffectCore) computeProof(kind, symbol, localOwner string) NativeEffectProof {
+	oldKind, oldSymbol, oldOwner := DiagnosticProofKind, DiagnosticProofSymbol, DiagnosticLocalOwner
+	DiagnosticProofKind, DiagnosticProofSymbol, DiagnosticLocalOwner = kind, symbol, localOwner
+	defer func() {
+		DiagnosticProofKind, DiagnosticProofSymbol, DiagnosticLocalOwner = oldKind, oldSymbol, oldOwner
+	}()
 	result := NativeEffectProof{Known: true, Effect: "none", ChargeKey: kind + ":" + symbol + ":" + localOwner}
 	result.Reads = append(result.Reads, core.authority.MembershipReads...)
 	if !core.authority.MembershipComplete || core.invalidCapture || len(core.sources) == 0 {
@@ -358,6 +363,9 @@ func effectWitness(candidate effectCandidate) string {
 // absence of that authority is residual, never an implicit purity witness.
 func (core *NativeEffectCore) DemandEffects(other func(EffectRequest) EffectSummary) func(EffectRequest) EffectSummary {
 	return func(request EffectRequest) EffectSummary {
+		old := DiagnosticRequest
+		DiagnosticRequest = request
+		defer func() { DiagnosticRequest = old }()
 		kind := ""
 		if strings.HasPrefix(request.Operation, "binding-mutation:") {
 			kind = "mutation"

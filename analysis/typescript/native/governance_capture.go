@@ -59,27 +59,29 @@ type governedFile struct {
 	authored                                         *authoredsource.File
 }
 type governedProject struct {
-	sourceProofState *governanceProductsSession
-	Root             string
-	Files            []*governedFile
-	FilesByPath      map[string]*governedFile
-	RootEntries      []string
-	Policy           governancePolicy
-	GovernanceDigest string
-	Disabled         map[string]string
-	capture          *governanceCapture
-	verbatim         bool
-	compilerOptions  *core.CompilerOptions
-	compilerValid    bool
-	resolvers        map[bool]*governanceResolver
-	familyResidual   []string
-	sharedProject    *sourcepolicy.Project
-	familyProducts   map[string]sourcepolicy.Result
-	stats            governancePhaseCounters
-	policyDigest     string
-	typeRelease      func()
-	typeOwner        *governanceTypeAuthority
-	typeDemandCache  *governanceTypeDemandCache
+	sourceProofState   *governanceProductsSession
+	Root               string
+	Files              []*governedFile
+	FilesByPath        map[string]*governedFile
+	RootEntries        []string
+	Policy             governancePolicy
+	GovernanceDigest   string
+	Disabled           map[string]string
+	capture            *governanceCapture
+	verbatim           bool
+	compilerOptions    *core.CompilerOptions
+	compilerValid      bool
+	resolvers          map[bool]*governanceResolver
+	familyResidual     []string
+	sharedProject      *sourcepolicy.Project
+	familyProducts     map[string]sourcepolicy.Result
+	stats              governancePhaseCounters
+	policyDigest       string
+	typeRelease        func()
+	typeOwner          *governanceTypeAuthority
+	typeDemandCache    *governanceTypeDemandCache
+	programGeneration  *governanceProgramGeneration
+	borrowedGeneration *governanceProgramGeneration
 }
 type governanceObservation struct {
 	Path  string `json:"path"`
@@ -92,12 +94,18 @@ type governanceCapturedBytes struct {
 }
 
 type governanceCapture struct {
+	ownedGenericArtifact *governanceOwnedArtifactLease
 	byteCells map[string]governanceCapturedBytes
 	ticket    governanceCaptureTicket
 
-	probeObservations map[governanceProbeKey]string
-	probeInconsistent bool
-	typeReceipts      []*governanceTypeReceipt
+	ownedGenericRows          map[governanceProbeKey]governanceProbeObservation
+	ownedGenericOwner         *governanceOwnedOwner
+	ownedGenericProducerTrace []governanceOwnedPhysicalPair
+	ownedGenericBytes         map[string][]byte
+	probeObservations  map[governanceProbeKey]string
+	probeInconsistent  bool
+	compilerAssertions []*governanceCompilerReadAssertions
+	typeCacheLeases    []*governanceTypeCacheLease
 
 	observations map[string]governanceObservation
 	compiler     *compilerInputFS
@@ -184,9 +192,15 @@ func (c *governanceCapture) read(path string) ([]byte, error) {
 		c.byteCells = map[string]governanceCapturedBytes{}
 	}
 	if before, seen := c.byteCells[path]; seen {
+		if !c.ownedReadMatches(path, before.bytes, before.err) {
+			c.probeInconsistent = true
+		}
 		return append([]byte(nil), before.bytes...), before.err
 	}
 	bytes, err := os.ReadFile(path)
+	if !c.ownedReadMatches(path, bytes, err) {
+		c.probeInconsistent = true
+	}
 	c.byteCells[path] = governanceCapturedBytes{append([]byte(nil), bytes...), err}
 	if os.IsNotExist(err) {
 		c.remember(path, "read", "absent")
@@ -223,8 +237,11 @@ func (c *governanceCapture) canonicalCertificate() string {
 			rows = append(rows, governanceObservation{key.path, fmt.Sprintf("compiler:%d", key.kind), value})
 		}
 	}
-	for _, receipt := range c.typeReceipts {
+	for _, receipt := range c.compilerAssertions {
 		rows = append(rows, receipt.certificateObservations()...)
+	}
+	for _, lease := range c.typeCacheLeases {
+		rows = append(rows, lease.certificateObservations()...)
 	}
 	for key, value := range c.probeObservations {
 		rows = append(rows, governanceObservation{key.Path, fmt.Sprintf("captured-probe:%s:%t", key.Kind, key.FollowLinks), value})
@@ -247,12 +264,20 @@ func (c *governanceCapture) Verify() (bool, error) {
 }
 
 func (c *governanceCapture) verifyWithin(reads *governanceBarrierReads) (bool, error) {
+	if c.ownedGenericArtifact != nil && !c.ownedGenericArtifact.verify() {
+		return false, nil
+	}
 	var replay *governanceTypeReplayWorld
-	if len(c.typeReceipts) > 0 {
+	if len(c.compilerAssertions)+len(c.typeCacheLeases) > 0 {
 		replay = &governanceTypeReplayWorld{disk: reads.compilerDisk(c.compiler.disk), reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
 	}
-	for _, receipt := range c.typeReceipts {
+	for _, receipt := range c.compilerAssertions {
 		if !receipt.verifyBarrierWorld(replay) {
+			return false, nil
+		}
+	}
+	for _, lease := range c.typeCacheLeases {
+		if !lease.verifyBarrierWorld(replay) {
 			return false, nil
 		}
 	}

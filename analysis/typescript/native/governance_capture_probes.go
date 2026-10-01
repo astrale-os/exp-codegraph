@@ -125,7 +125,10 @@ func governanceProbeFingerprint(observation governanceProbeObservation) string {
 }
 func (c *governanceCapture) probe(requirement governanceProbeRequest) governanceProbeObservation {
 	key := governanceProbeKey{Path: requirement.Path, Kind: requirement.Kind, FollowLinks: requirement.FollowLinks}
-	out := governanceObserveProbe(key)
+	out, owned := c.ownedGenericRows[key]
+	if !owned {
+		out = governanceObserveProbe(key)
+	}
 	if c.probeObservations == nil {
 		c.probeObservations = map[governanceProbeKey]string{}
 	}

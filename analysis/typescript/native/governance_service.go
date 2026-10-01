@@ -82,19 +82,33 @@ type governancePhaseCounters struct {
 	CompilerPrograms           int                     `json:"compilerPrograms"`
 }
 type governanceSession struct {
-	sealedDecisions  *governanceSealedDecisions
-	typeDemandCache  governanceTypeDemandCache
-	productsSession  *governanceProductsSession
-	policySuspension *governancePolicySuspension
-	parseCache       map[string]*governedFile
-	root             string
-	generation       int
-	staged           *governanceCandidate
+	genericProducer   *governanceOwnedProcess
+	ownedSignals      *governanceOwnedSessionSignals
+	policyLane        *governancePolicyLane
+	sealedDecisions   *governanceSealedDecisions
+	programGeneration *governanceProgramGeneration
+	typeDemandCache   *governanceTypeDemandCache
+	productsSession   *governanceProductsSession
+	policySuspension  *governancePolicySuspension
+	parseCache        map[string]*governedFile
+	root              string
+	generation        int
+	staged            *governanceCandidate
 }
 type governanceCandidate struct {
 	token, reportDigest, inputCertificate string
 	generation                            int
 	capture                               *governanceCapture
+}
+
+// Every project, retained lease and generation callback borrows this stable heap
+// owner. Moving a session moves only its sole owning pointer; the actor being
+// retired clears its pointer rather than relocating the borrowed cache object.
+func (session *governanceSession) typeDemandOwner() *governanceTypeDemandCache {
+	if session.typeDemandCache == nil {
+		session.typeDemandCache = &governanceTypeDemandCache{}
+	}
+	return session.typeDemandCache
 }
 
 func (session *governanceSession) prepareSource(params governancePrepare) (*governedProject, governanceProduct, error) {
@@ -114,7 +128,7 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 	if err != nil {
 		return nil, product, err
 	}
-	project.typeDemandCache = &session.typeDemandCache
+	project.typeDemandCache = session.typeDemandOwner()
 	// Developer-only finite source oracle: supplied answers are the canonical
 	// SDK leaf observations, never compiler type cells or runtime authored code.
 	var proof struct {
@@ -260,8 +274,9 @@ func runDecisionServe(arguments []string) int {
 		root, _ = os.Getwd()
 	}
 	root, _ = filepath.Abs(root)
-	session := governanceSession{root: root}
+	session := governanceSession{root: root, ownedSignals: governanceNewOwnedSessionSignals()}
 	encoder := json.NewEncoder(os.Stdout)
+	defer session.ownedSignals.stop()
 	encoder.Encode(map[string]any{"service": "astrale.lint-decision", "protocol": 1, "contractRevision": 1})
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
@@ -300,6 +315,8 @@ func runDecisionServe(arguments []string) int {
 				}
 				result = map[string]any{"status": "partial", "residual": product.Residual}
 			}
+		case "capture-owned-generic":
+			result, err = session.captureOwnedGeneric(request.Params)
 		case "capture-probes":
 			result, err = session.captureProbes(request.Params)
 		case "continue":

@@ -12,6 +12,7 @@ import (
 // advances this owner revision. Compiler maps with replacing semantics cannot
 // use this ticket. Final publication still compares original uncached operations.
 type governanceCaptureTicket struct {
+	ownedProducer                              *governanceOwnedOwner
 	owner, revision                            uint64
 	observations, compilerObservations, probes int
 	compiler                                   *compilerInputFS
@@ -41,11 +42,12 @@ func (capture *governanceCapture) semanticTicket() string {
 			panic("private capture ticket identities exhausted")
 		}
 	}
-	if !ticket.initialized || ticket.observations != len(capture.observations) || ticket.compilerObservations != compilerCount || ticket.probes != len(capture.probeObservations) || ticket.compiler != capture.compiler || ticket.inconsistent != capture.probeInconsistent || ticket.compilerInconsistent != compilerConflict {
+	if !ticket.initialized || ticket.ownedProducer != capture.ownedGenericOwner || ticket.observations != len(capture.observations) || ticket.compilerObservations != compilerCount || ticket.probes != len(capture.probeObservations) || ticket.compiler != capture.compiler || ticket.inconsistent != capture.probeInconsistent || ticket.compilerInconsistent != compilerConflict {
 		ticket.revision++
 		if ticket.revision == 0 {
 			panic("private capture ticket revisions exhausted")
 		}
+		ticket.ownedProducer = capture.ownedGenericOwner
 		ticket.observations = len(capture.observations)
 		ticket.compilerObservations = compilerCount
 		ticket.probes = len(capture.probeObservations)
@@ -62,5 +64,5 @@ func (capture *governanceCapture) semanticTicket() string {
 // retain first values; pending type proposals retain separate expected inputs.
 // Neither can publish until the original uncached whole barrier passes.
 func (capture *governanceCapture) certificate() string {
-	return governanceHash([]byte(fmt.Sprintf("publication:%s:pending-types:%d", capture.semanticTicket(), len(capture.typeReceipts))))
+	return governanceHash([]byte(fmt.Sprintf("publication:%s:pending-types:%d", capture.semanticTicket(), len(capture.compilerAssertions)+len(capture.typeCacheLeases))))
 }

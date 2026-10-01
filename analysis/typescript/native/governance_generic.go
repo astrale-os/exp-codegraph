@@ -31,6 +31,9 @@ func governanceDigestValid(value string) bool {
 }
 func (state *governanceProductsSession) currentCertificate() string {
 	capture := state.Project.capture.certificate()
+	for _, joined := range state.JoinedCaptures {
+		capture = governanceHash([]byte(stableJSON([]string{capture, "joined-original-owner", joined.certificate()})))
+	}
 	if state.ReplayExpected != nil {
 		// The proposed expected closure is a deep-owned immutable snapshot. Its
 		// original certificate is computed once for that exact retained owner;
@@ -53,7 +56,7 @@ func (state *governanceProductsSession) currentCertificate() string {
 	return governanceHash(encoded)
 }
 func (state *governanceProductsSession) genericSuspension() any {
-	return map[string]any{"status": "generic", "token": state.Token, "generation": state.Generation, "root": state.Project.Root, "requestedRoot": state.Prepare.Root, "inputCertificate": state.currentCertificate(), "engine": state.GenericEngine}
+	return map[string]any{"status": "generic", "token": state.Token, "generation": state.Generation, "root": state.Project.Root, "requestedRoot": state.Prepare.Root, "inputCertificate": state.currentCertificate(), "engine": state.GenericEngine, "speculative": state.GenericSpeculative}
 }
 func (session *governanceSession) continueGeneric(raw json.RawMessage) (any, error) {
 	var params struct {
@@ -71,6 +74,12 @@ func (session *governanceSession) continueGeneric(raw json.RawMessage) (any, err
 		return map[string]any{"status": "retry"}, nil
 	}
 	switch params.Kind {
+	case "generic-retire":
+		if session.policyLane == nil {
+			return state.genericSuspension(), nil
+		}
+		joined := session.takePolicyLane()
+		return joined.result, joined.err
 	case "generic-engine":
 		engine := params.Engine
 		if state.GenericEngine != nil || engine.Version == "" || !governanceDigestValid(engine.ArtifactDigest) || !governanceDigestValid(engine.PackageRevision) || !filepath.IsAbs(engine.PackagePath) {
@@ -103,6 +112,9 @@ func (session *governanceSession) continueGeneric(raw json.RawMessage) (any, err
 			return nil, fmt.Errorf("invalid captured generic diagnostic array")
 		}
 		state.GenericProduct = &params.Generic
+		if session.policyLane != nil {
+			return session.joinPolicyLane(state)
+		}
 		return session.evaluateProducts()
 	}
 	return nil, fmt.Errorf("unsupported captured generic continuation")

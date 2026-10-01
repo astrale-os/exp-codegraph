@@ -42,15 +42,18 @@ func governanceExpectedCapture(source *governanceCapture) *governanceCapture {
 	for key, value := range source.probeObservations {
 		expected.probeObservations[key] = value
 	}
-	for _, pending := range source.typeReceipts {
-		copy := &governanceTypeReceipt{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
+	for _, pending := range source.compilerAssertions {
+		copy := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
 		for path, value := range pending.barrierReads {
 			copy.barrierReads[path] = value
 		}
 		for key, value := range pending.barrierObservations {
 			copy.barrierObservations[key] = value
 		}
-		expected.typeReceipts = append(expected.typeReceipts, copy)
+		expected.compilerAssertions = append(expected.compilerAssertions, copy)
+	}
+	for _, lease := range source.typeCacheLeases {
+		expected.compilerAssertions = append(expected.compilerAssertions, lease.assertions())
 	}
 	if source.compiler != nil {
 		source.compiler.mu.Lock()
@@ -58,11 +61,11 @@ func governanceExpectedCapture(source *governanceCapture) *governanceCapture {
 		for key, value := range source.compiler.observed {
 			expected.compiler.observed[key] = value
 		}
-		actualRaw := &governanceTypeReceipt{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
+		actualRaw := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
 		for path, value := range source.compiler.rawReads {
 			actualRaw.barrierReads[path] = value
 		}
-		expected.typeReceipts = append(expected.typeReceipts, actualRaw)
+		expected.compilerAssertions = append(expected.compilerAssertions, actualRaw)
 		source.compiler.mu.Unlock()
 	}
 	return expected
