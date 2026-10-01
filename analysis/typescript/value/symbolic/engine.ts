@@ -12,12 +12,12 @@ import { resolutionResultBytes, type ValueDependency, type ValueIndexRevision, t
 
 type Environment<Atom> = ReadonlyMap<SymbolId, Reference<Atom>>
 interface Reference<Atom> { readonly occurrence: OccurrenceId; readonly environment: Environment<Atom> }
-type Body = TypeScriptFact<'body'>
+type FunctionShape = Pick<TypeScriptFact<'body'>['payload']['body'], 'parameters' | 'execution'>
 type RuntimeValue<Atom> =
   | { readonly kind: 'literal'; readonly value: unknown }
   | { readonly kind: 'atom'; readonly value: Atom }
   | { readonly kind: 'external'; readonly symbol: SymbolId; readonly symbolOrigin?: BodyOccurrence['symbolOrigin']; readonly moduleNamespace?: boolean }
-  | { readonly kind: 'function'; readonly body: Body; readonly environment: Environment<Atom> }
+  | { readonly kind: 'function'; readonly owner: SymbolId; readonly header: FunctionShape; readonly environment: Environment<Atom> }
   | { readonly kind: 'object'; readonly properties: ReadonlyMap<string, Reference<Atom>>; readonly incomplete: boolean }
   | { readonly kind: 'alternatives'; readonly values: readonly RuntimeValue<Atom>[] }
   | { readonly kind: 'unknown'; readonly code: string; readonly reason: string; readonly candidates?: readonly RuntimeValue<Atom>[] }
@@ -299,12 +299,8 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     const call = this.#index.calls.get(id)
     if (call) return this.call(call, environment, state, depth)
     if (FUNCTION_SYNTAX.has(occurrence.syntax)) {
-      if (occurrence.symbol) {
-        this.require(state, `function:${occurrence.symbol}`)
-        this.depend(state, `function:${occurrence.symbol}`)
-      }
-      const body = occurrence.symbol && this.#index.bodies.get(occurrence.symbol)
-      return body ? { kind: 'function', body, environment } : uncertain('VALUE_BODY_MISSING', 'The function body is unavailable.')
+      return (occurrence.symbol && this.functionValue(occurrence.symbol, environment, state)) ||
+        uncertain('VALUE_BODY_MISSING', 'The function body is unavailable.')
     }
     if (occurrence.syntax === 'ObjectLiteralExpression') {
       const properties = new Map<string, Reference<Atom>>()
@@ -376,13 +372,12 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         }
       }
       if (occurrence.symbol) {
-        this.depend(state, `initializers:${occurrence.symbol}`, `function:${occurrence.symbol}`, `symbol:${occurrence.symbol}`)
+        this.depend(state, `initializers:${occurrence.symbol}`, `symbol:${occurrence.symbol}`)
         this.require(state, `initializers:${occurrence.symbol}`)
         const initializers = this.#index.initializers.get(occurrence.symbol)
         if (initializers?.length) return alternatives(initializers.map((initializer) => next(initializer)), state)
-        this.require(state, `function:${occurrence.symbol}`)
-        const body = this.#index.bodies.get(occurrence.symbol)
-        if (body) return { kind: 'function', body, environment }
+        const callable = this.functionValue(occurrence.symbol, environment, state)
+        if (callable) return callable
         this.depend(state, `owner:${occurrence.symbol}`)
         if (this.#index.callableOwners.has(occurrence.symbol)) return uncertain('VALUE_BODY_NOT_SELECTED', 'The local callable body is outside the materialized selection.')
         if (occurrence.symbolOrigin || occurrence.symbolKind === 'module-namespace') return { kind: 'external', symbol: occurrence.symbol, symbolOrigin: occurrence.symbolOrigin, moduleNamespace: occurrence.symbolKind === 'module-namespace' }
@@ -454,13 +449,22 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     // of returned/stored closures before asking for a static target fallback.
     const resolved = callee ? this.visit(callee, environment, state, depth + 1) : undefined
     const inspectable = resolved?.kind === 'function' || resolved?.kind === 'alternatives'
-    if (!inspectable && call.target) this.require(state, `function:${call.target}`)
-    const body = !inspectable && call.target ? this.#index.bodies.get(call.target) : undefined
-    const target = inspectable ? resolved : body ? { kind: 'function' as const, body, environment }
+    const callable = !inspectable && call.target ? this.functionValue(call.target, environment, state) : undefined
+    const target = inspectable ? resolved : callable ? callable
         : call.target && this.#index.callableOwners.has(call.target) ? uncertain('VALUE_BODY_NOT_SELECTED', 'The local callable body is outside the materialized selection.')
           : call.target ? { kind: 'unsupported' as const, construct: 'external-or-bodyless-call' }
           : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.')
     return this.invoke(target, state, depth + 1, call, environment)
+  }
+
+  private functionValue(owner: SymbolId, environment: Environment<Atom>, state: State): Extract<RuntimeValue<Atom>, { kind: 'function' }> | undefined {
+    this.depend(state, `header:${owner}`)
+    const header = this.#index.headers?.get(owner)
+    if (header) return { kind: 'function', owner, header, environment }
+    this.require(state, `function:${owner}`)
+    this.depend(state, `function:${owner}`)
+    const body = this.#index.bodies.get(owner)
+    return body ? { kind: 'function', owner, header: body.payload.body, environment } : undefined
   }
 
   private callPropertyName(callee: OccurrenceId, state: State, depth: number): string | undefined {
@@ -487,11 +491,14 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     if (value.kind === 'unknown' || value.kind === 'unsupported') return value
     if (value.kind === 'alternatives') return alternatives(value.values.map((item) => this.invoke(item, state, depth + 1, call, caller)), state)
     if (value.kind !== 'function') return uncertain('VALUE_NOT_CALLABLE', 'The resolved value is not an inspectable function.')
-    const body = value.body.payload.body
-    this.depend(state, `function:${body.function}`)
+    this.require(state, `function:${value.owner}`)
+    this.depend(state, `function:${value.owner}`)
+    const fact = this.#index.bodies.get(value.owner)
+    if (!fact) return uncertain('VALUE_BODY_MISSING', 'The function body is unavailable.')
+    const body = fact.payload.body
     if (body.execution !== 'sync') return uncertain('VALUE_EXECUTION_UNSUPPORTED', 'The function is not proved to produce a synchronous value.')
     if (body.summary.recursion) return uncertain('VALUE_RECURSION', 'The target function is recursive.')
-    const completeness = value.body.completeness
+    const completeness = fact.completeness
     if (completeness.kind !== 'complete' && (completeness.kind !== 'partial' || completeness.reasons.some(({ code }) => code !== 'CFG_EXPRESSION_BRANCH_PARTIAL'))) {
       return uncertain('VALUE_CONTROL_FLOW_INCOMPLETE', 'The function control flow is incomplete in this snapshot.')
     }
@@ -542,7 +549,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     if (scalar) return value.kind === 'literal' ? { kind: 'known', value: value.value, evidence }
       : { kind: 'unknown', reasons: [{ code: 'VALUE_NOT_LITERAL', message: 'The value is symbolic rather than a materialized literal.', retryable: false }], evidence }
     const projected: SymbolicValue<Atom> = value.kind === 'function'
-      ? { kind: 'function', symbol: value.body.payload.body.function, execution: value.body.payload.body.execution, parameterCount: value.body.payload.body.parameters.length }
+      ? { kind: 'function', symbol: value.owner, execution: value.header.execution, parameterCount: value.header.parameters.length }
       : value.kind === 'object' ? { kind: 'object', properties: [...value.properties.keys()].sort(), complete: !value.incomplete }
         : value.kind === 'external' ? { kind: 'external', symbol: value.symbol, ...(value.symbolOrigin ? { symbolOrigin: value.symbolOrigin } : {}) } : value
     return { kind: 'known', value: projected, evidence }

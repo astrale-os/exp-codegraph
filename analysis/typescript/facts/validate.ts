@@ -94,6 +94,22 @@ function validateBodyDemand(value: Record<string, unknown>, diagnostics: string[
       diagnostics.push('owners:invalid')
       continue
     }
+    if (owner.header !== undefined) {
+      const header = owner.header
+      if (!record(header) || !string(header.owner) || !span(header.span) ||
+        !strings(header.parameters) || new Set(header.parameters).size !== header.parameters.length ||
+        !['sync', 'async', 'generator', 'async-generator'].includes(String(header.execution))) {
+        diagnostics.push('owners:header-invalid')
+      } else {
+        if (owner.scope !== 'function') diagnostics.push('owners:header-scope')
+        if (header.owner !== owner.owner || header.span.source !== owner.span.source ||
+          header.span.revision !== owner.span.revision || header.span.start !== owner.span.start ||
+          header.span.end !== owner.span.end) diagnostics.push('owners:header-owner-span')
+        if (!record(value.completeness) || value.completeness.kind !== 'complete') {
+          diagnostics.push('owners:header-incomplete-certificate')
+        }
+      }
+    }
     if (owners.has(owner.owner)) diagnostics.push('owners:duplicate')
     if (owner.fact !== undefined && !owner.materialized) diagnostics.push('owners:unmaterialized-fact')
     owners.set(owner.owner, owner)
