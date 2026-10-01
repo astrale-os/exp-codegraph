@@ -235,6 +235,7 @@ func assertDemandMatchesFull(t *testing.T, selected, full *factTransaction) {
 	payload := demandPayload(t, selected)
 	fullShards, owners, occurrences := map[string]factShard{}, map[string]bool{}, map[string]bodyOccurrence{}
 	fullFacts := map[string]string{}
+	fullHeaders := map[string]functionHeader{}
 	for _, shard := range full.Upserts {
 		if shard.Namespace != bodyNamespace || len(shard.Facts) == 0 {
 			continue
@@ -243,6 +244,9 @@ func assertDemandMatchesFull(t *testing.T, selected, full *factTransaction) {
 		body := shard.Facts[0].Payload.(bodyFactPayload).Body
 		owners[body.Function] = true
 		fullFacts[body.Function] = shard.Facts[0].ID
+		if body.Scope == "function" {
+			fullHeaders[body.Function] = functionHeader{Owner: body.Function, Span: shard.Facts[0].Provenance.Evidence[0], Parameters: body.Parameters, Execution: body.Execution}
+		}
 		for _, occurrence := range body.Occurrences {
 			occurrences[occurrence.ID] = occurrence
 		}
@@ -254,6 +258,13 @@ func assertDemandMatchesFull(t *testing.T, selected, full *factTransaction) {
 	for _, owner := range payload.Owners {
 		if !owners[owner.Owner] {
 			t.Fatal("certificate invented a callable body owner")
+		}
+		if owner.Scope == "function" {
+			if owner.Header == nil || !reflect.DeepEqual(*owner.Header, fullHeaders[owner.Owner]) {
+				t.Fatalf("function header differs from full original metadata: %#v vs %#v", owner.Header, fullHeaders[owner.Owner])
+			}
+		} else if owner.Header != nil {
+			t.Fatal("module owner fabricated a function header")
 		}
 		selectedOwners[owner.Owner] = owner.Materialized
 		if owner.Materialized && owner.Fact != fullFacts[owner.Owner] {

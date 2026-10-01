@@ -130,24 +130,11 @@ func (x *extractor) functionID(node *shimast.Node) string {
 }
 
 func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
-	parameters := []string{}
-	var parameterNodes []*shimast.ParameterDeclarationNode
-	if function != nil {
-		parameterNodes = function.Parameters()
-	}
-	for _, parameter := range parameterNodes {
-		parameterNode := parameter.AsNode()
-		id := b.x.resolveSymbol(parameterNode.Name())
-		if id == "" {
-			id = b.x.resolveSymbol(parameterNode)
-		}
-		if id != "" {
-			parameters = append(parameters, id)
-			occurrence := b.addOccurrence(parameterNode, "definition")
-			b.setOccurrenceSymbol(occurrence, id)
-			b.defs[id] = append(b.defs[id], occurrence)
-		}
-	}
+	parameters := b.x.functionParameters(function, func(parameterNode *shimast.Node, id string) {
+		occurrence := b.addOccurrence(parameterNode, "definition")
+		b.setOccurrenceSymbol(occurrence, id)
+		b.defs[id] = append(b.defs[id], occurrence)
+	})
 
 	b.walkOwned(b.body)
 	// An expression-bodied arrow semantically returns its root expression. A
@@ -185,7 +172,7 @@ func (b *bodyBuilder) build(function *shimast.Node) bodyFactPayload {
 	sortBodyRelations(b.relations)
 
 	ir := functionBodyIR{
-		Function: b.owner, Scope: b.scope, Parameters: uniqueInOrder(parameters), Occurrences: b.occurrences,
+		Function: b.owner, Scope: b.scope, Parameters: parameters, Occurrences: b.occurrences,
 		Execution: functionExecution(function),
 		Relations: b.relations, Blocks: controlFlow.blocks,
 		Edges: controlFlow.edges, Definitions: b.definitions, Calls: b.calls,

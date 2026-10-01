@@ -20,12 +20,13 @@ type bodyDemandRecipe struct {
 }
 
 type demandOwner struct {
-	Owner        string     `json:"owner"`
-	Scope        string     `json:"scope"`
-	Span         sourceSpan `json:"span"`
-	Path         string     `json:"path"`
-	Materialized bool       `json:"materialized"`
-	Fact         string     `json:"fact,omitempty"`
+	Owner        string          `json:"owner"`
+	Scope        string          `json:"scope"`
+	Span         sourceSpan      `json:"span"`
+	Path         string          `json:"path"`
+	Materialized bool            `json:"materialized"`
+	Fact         string          `json:"fact,omitempty"`
+	Header       *functionHeader `json:"header,omitempty"`
 }
 
 type demandEffect struct {
@@ -94,6 +95,7 @@ type thinBody struct {
 	effects     []*shimast.Node
 	literals    []*shimast.Node
 	retained    bool
+	header      *functionHeader
 }
 
 func admitBodyDemand(value *bodyDemandRecipe) (*bodyDemandRecipe, error) {
@@ -311,7 +313,7 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			x.beginProjection(file)
 			if cache.reuse != nil && !cache.reuse.selected[file.FileName()] {
 				for _, owner := range cache.reuse.sources[file.FileName()].rows.owners {
-					body := &thinBody{x: x, file: file, owner: owner.Owner, scope: owner.Scope, span: owner.Span, path: owner.Path, retained: true}
+					body := &thinBody{x: x, file: file, owner: owner.Owner, scope: owner.Scope, span: owner.Span, path: owner.Path, retained: true, header: copyFunctionHeader(owner.Header)}
 					bodies = append(bodies, body)
 					byOwner[body.owner] = body
 				}
@@ -427,8 +429,15 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 	if cache.snapshot == nil {
 		payload = bodyDemandPayload{Owners: []demandOwner{}, Witnesses: []bodyOccurrence{},
 			Initializers: []demandEffect{}, Mutations: []demandEffect{}, Escapes: []demandEffect{}, Aliases: []demandAlias{}}
-		for _, body := range bodies {
-			payload.Owners = append(payload.Owners, demandOwner{Owner: body.owner, Scope: body.scope, Span: body.span, Path: body.path})
+		for index, body := range bodies {
+			// Getter/setter and malformed duplicate declarations can share the
+			// legacy owner. Do not add positive header authority for that ambiguity.
+			uniqueOwner := (index == 0 || bodies[index-1].owner != body.owner) && (index+1 == len(bodies) || bodies[index+1].owner != body.owner)
+			if body.function != nil && uniqueOwner {
+				x.beginProjection(body.file)
+				body.header = x.functionHeader(body.owner, body.span, body.function)
+			}
+			payload.Owners = append(payload.Owners, demandOwner{Owner: body.owner, Scope: body.scope, Span: body.span, Path: body.path, Header: copyFunctionHeader(body.header)})
 		}
 		for _, body := range bodies {
 			if body.retained {

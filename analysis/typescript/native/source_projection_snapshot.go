@@ -61,6 +61,7 @@ func sealSourceProjection(sources map[string]sourceRecord, payload bodyDemandPay
 		ownerSources[owner.Owner] = owner.Span.Source
 		rows := snapshot.sources[owner.Span.Source]
 		owner.Materialized, owner.Fact = false, ""
+		owner.Header = copyFunctionHeader(owner.Header)
 		snapshot.owners = append(snapshot.owners, sourceProjectionRow{owner.Span.Source, len(rows.owners)})
 		rows.owners = append(rows.owners, owner)
 		snapshot.sources[owner.Span.Source] = rows
@@ -209,6 +210,7 @@ func (snapshot *sourceProjectionSnapshot) payload(recipe *bodyDemandRecipe, sele
 	for _, ref := range snapshot.owners {
 		owner := snapshot.sources[ref.source].owners[ref.index]
 		owner.Materialized = selected[owner.Owner]
+		owner.Header = copyFunctionHeader(owner.Header)
 		payload.Owners = append(payload.Owners, owner)
 	}
 	for _, ref := range snapshot.witnesses {

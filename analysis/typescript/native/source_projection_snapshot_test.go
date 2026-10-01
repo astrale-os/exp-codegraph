@@ -9,7 +9,9 @@ import (
 
 // The hashes were captured from the qualified pre-C0 H12 binary, not generated
 // by the assembler under test. Cover both fresh products and retained-body
-// reemission; these fingerprints include every current fact byte and ID.
+// reemission; these fingerprints include every legacy fact byte and ID.
+// H17 headers are independently checked against full bodies, then projected out
+// with their derived identities to preserve this immutable pre-H17 oracle.
 func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 	encoded, err := os.ReadFile("testdata/source_projection_h12_oracle.json")
 	if err != nil {
@@ -27,6 +29,7 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 	}
 	assertProduct := func(t *testing.T, name string, transaction *factTransaction) {
 		t.Helper()
+		transaction = legacyH12Projection(t, transaction)
 		got := map[string]string{
 			"generation": transaction.Next.ID,
 			"manifest":   hashText(stableJSON(transaction.Manifest)),
