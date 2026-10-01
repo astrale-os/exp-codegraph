@@ -80,22 +80,7 @@ func governanceObserveProbe(key governanceProbeKey) governanceProbeObservation {
 	case "directory":
 		var entries []os.DirEntry
 		entries, err = os.ReadDir(key.Path)
-		if err == nil {
-			rows := []map[string]string{}
-			for _, entry := range entries {
-				kind := "other"
-				switch {
-				case entry.Type()&os.ModeSymlink != 0:
-					kind = "symlink"
-				case entry.IsDir():
-					kind = "directory"
-				case entry.Type().IsRegular():
-					kind = "file"
-				}
-				rows = append(rows, map[string]string{"name": entry.Name(), "kind": kind})
-			}
-			out.Value = map[string]any{"entries": rows}
-		}
+		return governanceDirectoryObservation(entries, err)
 	case "canonicalize":
 		var path string
 		path, err = filepath.EvalSymlinks(key.Path)
@@ -168,5 +153,40 @@ func (session *governanceSession) captureProbes(raw json.RawMessage) (any, error
 		}
 		rows = append(rows, row)
 	}
-	return map[string]any{"token": params.Token, "observations": rows}, nil
+	certificate := capture.certificate()
+	if state := session.productsSession; state != nil && state.Project != nil && state.Token == params.Token {
+		certificate = state.currentCertificate()
+	}
+	return map[string]any{"token": params.Token, "inputCertificate": certificate, "observations": rows}, nil
+}
+
+// A directory can yield entries before an iteration failure. The v1 wire has
+// no partial-entry row, so this is an authority gap, not an empty error result.
+func governanceDirectoryObservation(entries []os.DirEntry, err error) governanceProbeObservation {
+	out := governanceProbeObservation{Status: "known"}
+	if err != nil {
+		if len(entries) > 0 {
+			out.Status = "unsupported"
+			out.Value = map[string]string{"reason": "Partial directory enumeration cannot be represented by capture-probes v1."}
+			return out
+		}
+		out.Status = "error"
+		out.Error = governanceProbeFailure(err)
+		return out
+	}
+	rows := []map[string]string{}
+	for _, entry := range entries {
+		kind := "other"
+		switch {
+		case entry.Type()&os.ModeSymlink != 0:
+			kind = "symlink"
+		case entry.IsDir():
+			kind = "directory"
+		case entry.Type().IsRegular():
+			kind = "file"
+		}
+		rows = append(rows, map[string]string{"name": entry.Name(), "kind": kind})
+	}
+	out.Value = map[string]any{"entries": rows}
+	return out
 }

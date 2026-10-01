@@ -36,6 +36,9 @@ type governanceIntrinsicAnswer struct {
 	Groups   [][]int `json:"groups,omitempty"`
 }
 type governanceProductsSession struct {
+	GenericEngine    *governanceGenericEngine
+	GenericProduct   *governanceGenericProduct
+	GenericSuspended bool
 	Prepare          governancePrepare
 	Project          *governedProject
 	Token            string
@@ -108,6 +111,9 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return nil, err
+	}
+	if params.Kind == "generic-engine" || params.Kind == "generic" {
+		return session.continueGeneric(raw)
 	}
 	state := session.productsSession
 	if state == nil {
@@ -254,9 +260,7 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	if err := json.Unmarshal(state.Prepare.Options, &options); err != nil && len(state.Prepare.Options) > 0 {
 		return nil, err
 	}
-	if options.Generic == nil || *options.Generic {
-		residual = append(residual, "Captured generic lint input service unavailable.")
-	}
+	genericEnabled := options.Generic == nil || *options.Generic
 	if len(state.Contracts) != len(governanceRevisions) {
 		residual = append(residual, "Canonical whole implementation contract inventory unavailable.")
 	}
@@ -309,6 +313,10 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		session.discardProducts()
 		return map[string]any{"status": "partial", "residual": residual}, nil
 	}
+	if genericEnabled && state.GenericProduct == nil {
+		state.GenericSuspended = true
+		return state.genericSuspension(), nil
+	}
 	files := []governanceCapturedAuthority{}
 	for _, file := range project.Files {
 		starts := []int{}
@@ -324,8 +332,13 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		Files                []governanceCapturedAuthority  `json:"files"`
 		Products             []governanceRuleProduct        `json:"products"`
 		SuppressionComments  []governanceSuppressionComment `json:"suppressionComments"`
-		Generic              map[string]string              `json:"generic"`
-	}{project.Root, project.policyDigest, project.GovernanceDigest, files, products, governanceSuppressionComments(project), map[string]string{"status": "disabled"}}
+		Generic              any                            `json:"generic"`
+		GenericEngine        *governanceGenericEngine       `json:"genericEngine,omitempty"`
+	}{project.Root, project.policyDigest, project.GovernanceDigest, files, products, governanceSuppressionComments(project), map[string]string{"status": "disabled"}, nil}
+	if genericEnabled {
+		envelope.Generic = state.GenericProduct
+		envelope.GenericEngine = state.GenericEngine
+	}
 	bytes, err := json.Marshal(envelope)
 	if err != nil {
 		return nil, err
@@ -335,7 +348,7 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		return map[string]any{"status": "partial", "residual": []string{"Native product payload exceeds canonical consumer admission bound."}}, nil
 	}
 	state.ProductsDigest = governanceHash(bytes)
-	state.InputCertificate = project.capture.certificate()
+	state.InputCertificate = state.currentCertificate()
 	result := map[string]any{"status": "products", "contractRevision": 1, "token": state.Token, "generation": state.Generation, "inputCertificate": state.InputCertificate, "governanceDigest": project.GovernanceDigest, "basePolicyDigest": state.Prepare.BasePolicyDigest, "policyDigest": project.policyDigest, "productsDigest": state.ProductsDigest, "productsJSON": string(bytes)}
 	var debug struct {
 		DebugPhaseCounters bool `json:"debugPhaseCounters"`

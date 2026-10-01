@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,5 +78,26 @@ func TestGovernanceCaptureRetainsFirstObservationAcrossWithinGenerationEdit(t *t
 	capture = &governanceCapture{observations: map[string]governanceObservation{}, compiler: compiler}
 	if valid, _ := capture.Verify(); valid {
 		t.Fatal("native compiler observation replacement erased mixed capture")
+	}
+}
+
+func TestGovernanceCapturedDirectoryPartialFailureIsNotEmptyMembership(t *testing.T) {
+	root := t.TempDir()
+	governanceWrite(t, root, "one.ts", "export {}")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	complete := governanceDirectoryObservation(entries, nil)
+	if complete.Status != "known" || len(complete.Value.(map[string]any)["entries"].([]map[string]string)) != 1 {
+		t.Fatal("complete directory rows lost")
+	}
+	partial := governanceDirectoryObservation(entries, errors.New("iteration failure after first entry"))
+	if partial.Status != "unsupported" || partial.Error != nil {
+		t.Fatalf("partial rows collapsed to failed empty membership: %#v", partial)
+	}
+	absent := governanceDirectoryObservation(nil, os.ErrNotExist)
+	if absent.Status != "error" || absent.Error.Kind != "not-found" {
+		t.Fatalf("genuine absence lost: %#v", absent)
 	}
 }
