@@ -84,7 +84,7 @@ func governanceRetainProgramGeneration(project *governedProject, broker *governa
 	}
 	result := &governanceProgramGeneration{project.Root, snapshot, broker, []*governanceCompilerReadAssertions{receipt}}
 	for _, pending := range project.capture.compilerAssertions {
-		result.receipts = append(result.receipts, governanceGenerationReceiptCopy(pending))
+		result.receipts = append(result.receipts, pending.immutableSnapshot())
 	}
 	for _, lease := range project.capture.typeCacheLeases {
 		result.receipts = append(result.receipts, lease.assertions())
@@ -95,7 +95,7 @@ func governanceRetainProgramGeneration(project *governedProject, broker *governa
 	if !consistent {
 		return nil
 	}
-	result.receipts = []*governanceCompilerReadAssertions{merged}
+	result.receipts = []*governanceCompilerReadAssertions{merged.freezeOwned()}
 
 	return result
 }
@@ -146,7 +146,7 @@ func (generation *governanceProgramGeneration) propose(project *governedProject)
 		delete(receipt.barrierReads, changed.FileName())
 		delete(receipt.barrierObservations, compilerInputKey{changed.FileName(), inputRead})
 		delete(receipt.barrierObservations, compilerInputKey{changed.FileName(), inputMetadata})
-		pending = append(pending, receipt)
+		pending = append(pending, receipt.freezeOwned())
 	}
 	host, _ := governanceGenerationOverlay(project)
 	generation.broker.CompilerHost = host

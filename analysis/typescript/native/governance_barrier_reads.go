@@ -24,6 +24,9 @@ type governanceBarrierReads struct {
 	probes        map[governanceProbeKey]*governanceBarrierProbe
 	compilerWorld *governanceTypeReplayWorld
 	failedCapture *governanceCapture
+	streams       map[string]*governanceBarrierStream
+	batch         *governancePublicationWorkers
+	planCounts    governancePublicationPlanCounts
 }
 
 type governanceBarrierProbe struct {

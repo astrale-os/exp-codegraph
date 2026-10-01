@@ -9,6 +9,7 @@ type governanceCompilerReadAssertions struct {
 	barrierReads        map[string]compilerRawRead
 	barrierObservations map[compilerInputKey]string
 	certificateRows     []governanceObservation
+	frozen              *governanceCompilerExpectationPlan
 }
 
 func (assertions *governanceCompilerReadAssertions) clone() *governanceCompilerReadAssertions {
@@ -25,18 +26,7 @@ func (assertions *governanceCompilerReadAssertions) verifyBarrier(disk vfs.FS) b
 	return assertions.verifyBarrierWorld(&governanceTypeReplayWorld{disk: disk, reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}})
 }
 func (assertions *governanceCompilerReadAssertions) verifyBarrierWorld(world *governanceTypeReplayWorld) bool {
-	world.prepare(&governanceTypeReceipt{reads: assertions.barrierReads, observations: assertions.barrierObservations})
-	for key, value := range assertions.barrierReads {
-		if world.reads[key] != value {
-			return false
-		}
-	}
-	for key, value := range assertions.barrierObservations {
-		if world.observations[key] != value {
-			return false
-		}
-	}
-	return true
+	return assertions.expectationPlan().verify(world)
 }
 func compilerAssertionCertificateRows(reads map[string]compilerRawRead, observations map[compilerInputKey]string) []governanceObservation {
 	rows := make([]governanceObservation, 0, len(reads)+len(observations))
@@ -64,6 +54,7 @@ type governanceTypeCacheLease struct {
 	barrierReads        map[string]compilerRawRead
 	barrierObservations map[compilerInputKey]string
 	certificateRows     []governanceObservation
+	snapshot            *governanceCompilerReadAssertions
 }
 
 func newGovernanceTypeCacheLease(owner *governanceTypeDemandCache, key governanceTypeDemandKey, assertions *governanceCompilerReadAssertions) *governanceTypeCacheLease {
@@ -74,7 +65,10 @@ func newGovernanceTypeCacheLease(owner *governanceTypeDemandCache, key governanc
 	return &governanceTypeCacheLease{cache: owner, cacheKeys: map[governanceTypeDemandKey]bool{key: true}, barrierReads: copy.barrierReads, barrierObservations: copy.barrierObservations}
 }
 func (lease *governanceTypeCacheLease) assertions() *governanceCompilerReadAssertions {
-	return (&governanceCompilerReadAssertions{barrierReads: lease.barrierReads, barrierObservations: lease.barrierObservations}).clone()
+	if lease.snapshot == nil {
+		lease.snapshot = (&governanceCompilerReadAssertions{barrierReads: lease.barrierReads, barrierObservations: lease.barrierObservations}).immutableSnapshot()
+	}
+	return lease.snapshot
 }
 func (lease *governanceTypeCacheLease) verifyBarrierWorld(world *governanceTypeReplayWorld) bool {
 	if lease.cache == nil || lease.cacheKeys == nil {

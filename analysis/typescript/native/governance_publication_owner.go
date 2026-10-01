@@ -88,99 +88,22 @@ type governancePublicationExpected struct {
 // immutable expected receipts. The ordered original verification below keeps
 // artifact/error/lease provenance. No proposal becomes an actual observation.
 func governancePublicationConsistent(captures []*governanceCapture) bool {
-	expected := map[governancePublicationProjection]governancePublicationExpected{}
-	valid := true
-	add := func(key governancePublicationProjection, value governancePublicationExpected) {
-		if before, seen := expected[key]; seen && before != value {
-			valid = false
-		}
-		expected[key] = value
-	}
-	for _, capture := range captures {
-		if capture == nil || capture.probeInconsistent || capture.compiler != nil && capture.compiler.inconsistent {
-			valid = false
-			continue
-		}
-		for _, row := range capture.observations {
-			add(governancePublicationProjection{contract: "governed", path: row.Path, kind: row.Kind}, governancePublicationExpected{text: row.Value})
-		}
-		for key, value := range capture.probeObservations {
-			add(governancePublicationProjection{contract: "generic-original", path: key.Path, kind: key.Kind, follow: key.FollowLinks}, governancePublicationExpected{text: value})
-		}
-		if capture.compiler == nil {
-			if len(capture.compilerAssertions)+len(capture.typeCacheLeases) > 0 {
-				valid = false
-			}
-			continue
-		}
-		if !governanceOriginalCompilerBarrierOwner(capture.compiler.disk) {
-			continue
-		}
-		for key, value := range capture.compiler.observed {
-			// inputRead uses the original streaming/decoder observer; keep it separate.
-			add(governancePublicationProjection{contract: "compiler-observed", path: key.path, compilerKind: key.kind}, governancePublicationExpected{text: value})
-		}
-		check := func(reads map[string]compilerRawRead, observations map[compilerInputKey]string) {
-			for path, value := range reads {
-				add(governancePublicationProjection{contract: "compiler-raw", path: path}, governancePublicationExpected{text: value.text, present: value.present})
-			}
-			for key, value := range observations {
-				if key.kind == inputRead {
-					valid = false
-					continue
-				}
-				add(governancePublicationProjection{contract: "compiler-observed", path: key.path, compilerKind: key.kind}, governancePublicationExpected{text: value})
-			}
-		}
-		for _, assertions := range capture.compilerAssertions {
-			if assertions == nil {
-				valid = false
-				continue
-			}
-			check(assertions.barrierReads, assertions.barrierObservations)
-		}
-		for _, lease := range capture.typeCacheLeases {
-			if lease == nil || lease.cache == nil || lease.cacheKeys == nil {
-				valid = false
-				continue
-			}
-			check(lease.barrierReads, lease.barrierObservations)
-		}
-	}
-	if !valid {
-		// A contradiction identifies no particular physical winner. Retire every
-		// participating mutable lease rather than guessing which old receipt is current.
-		for _, capture := range captures {
-			if capture != nil {
-				for _, lease := range capture.typeCacheLeases {
-					if lease != nil && lease.cache != nil {
-						for key := range lease.cacheKeys {
-							delete(lease.cache.entries, key)
-						}
-					}
-				}
-			}
-		}
-	}
-	return valid
+	return governanceCompilePublication(captures).consistent
 }
+
 func governanceVerifyPublication(captures []*governanceCapture) (bool, error) {
 	valid, err, _ := governanceVerifyPublicationOwner(captures)
 	return valid, err
 }
 func governanceVerifyPublicationOwner(captures []*governanceCapture) (bool, error, *governanceBarrierReads) {
-	if !governancePublicationConsistent(captures) {
+	plan := governanceCompilePublication(captures)
+	if !plan.consistent {
 		return false, nil, nil
 	}
-	world := &governanceBarrierReads{}
-	for _, capture := range captures {
-		valid, err := capture.verifyWithin(world)
-		if err != nil || !valid {
-			world.failedCapture = capture
-			return valid, err, world
-		}
-	}
-	return true, nil, world
+	world := &governanceBarrierReads{batch: &governancePublicationWorkers{}, planCounts: plan.counts}
+	defer world.batch.close()
+	valid, err := plan.verify(world)
+	return valid, err, world
 }
 
 // Diagnostic counts name ORIGINAL adapter invocations, not OS syscalls. An

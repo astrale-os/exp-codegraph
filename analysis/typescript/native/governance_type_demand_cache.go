@@ -42,57 +42,52 @@ type governanceTypeReplayWorld struct {
 	observations map[compilerInputKey]string
 	mu           sync.Mutex
 	cells        map[compilerInputKey]*governanceFreshCompilerOperation
+	batch        *governancePublicationWorkers
+	checkedPlans map[*governanceCompilerExpectationPlan]bool
 }
 
 // Uncached replay I/O is batched once per capture; no worker touches compiler
 // AST/checker state. Results are published only after every operation finishes.
 func (world *governanceTypeReplayWorld) prepare(receipt *governanceTypeReceipt) {
-	readPaths := []string{}
-	pending := map[string]bool{}
+	a := &governanceCompilerReadAssertions{barrierReads: receipt.reads, barrierObservations: receipt.observations}
+	p := a.expectationPlan()
 	for path := range receipt.sources {
-		if _, seen := world.reads[path]; !seen {
-			pending[path] = true
+		if _, seen := receipt.reads[path]; !seen {
+			p.reads = append(p.reads, governanceCompilerExpectedRead{path: path})
 		}
 	}
-	for path := range receipt.reads {
-		if _, seen := world.reads[path]; !seen {
-			pending[path] = true
-		}
-	}
-	for path := range pending {
-		readPaths = append(readPaths, path)
-	}
+	world.preparePlan(p)
+}
+func (world *governanceTypeReplayWorld) preparePlan(plan *governanceCompilerExpectationPlan) {
+	paths := []string{}
 	keys := []compilerInputKey{}
-	for key := range receipt.observations {
-		if key.kind != inputRead {
-			if _, seen := world.observations[key]; !seen {
-				keys = append(keys, key)
+	for _, read := range plan.reads {
+		if _, seen := world.reads[read.path]; !seen {
+			paths = append(paths, read.path)
+		}
+	}
+	for _, row := range plan.observations {
+		if row.key.kind != inputRead {
+			if _, seen := world.observations[row.key]; !seen {
+				keys = append(keys, row.key)
 			}
 		}
 	}
-	readValues := make([]compilerRawRead, len(readPaths))
+	readValues := make([]compilerRawRead, len(paths))
 	values := make([]string, len(keys))
-	jobs := make(chan int)
-	var workers sync.WaitGroup
-	for worker := 0; worker < min(compilerObservationWorkers, len(readPaths)+len(keys)); worker++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			for index := range jobs {
-				if index < len(readPaths) {
-					readValues[index] = world.readActual(readPaths[index])
-				} else {
-					values[index-len(readPaths)] = world.observeActual(keys[index-len(readPaths)])
-				}
-			}
-		}()
+	batch := world.batch
+	if batch == nil {
+		batch = &governancePublicationWorkers{}
+		defer batch.close()
 	}
-	for index := 0; index < len(readPaths)+len(keys); index++ {
-		jobs <- index
-	}
-	close(jobs)
-	workers.Wait()
-	for index, path := range readPaths {
+	batch.run(len(paths)+len(keys), func(index int, _ []byte) {
+		if index < len(paths) {
+			readValues[index] = world.readActual(paths[index])
+		} else {
+			values[index-len(paths)] = world.observeActual(keys[index-len(paths)])
+		}
+	})
+	for index, path := range paths {
 		world.reads[path] = readValues[index]
 	}
 	for index, key := range keys {
@@ -189,6 +184,7 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 					}
 					if before, seen := target.barrierReads[path]; !seen || before != value {
 						target.certificateRows = nil
+						target.snapshot = nil
 					}
 					target.barrierReads[path] = value
 				}
@@ -198,6 +194,7 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 					}
 					if before, seen := target.barrierObservations[key]; !seen || before != value {
 						target.certificateRows = nil
+						target.snapshot = nil
 					}
 					target.barrierObservations[key] = value
 				}

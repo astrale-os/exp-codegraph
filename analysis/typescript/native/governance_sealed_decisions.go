@@ -43,14 +43,7 @@ func governanceExpectedCapture(source *governanceCapture) *governanceCapture {
 		expected.probeObservations[key] = value
 	}
 	for _, pending := range source.compilerAssertions {
-		copy := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
-		for path, value := range pending.barrierReads {
-			copy.barrierReads[path] = value
-		}
-		for key, value := range pending.barrierObservations {
-			copy.barrierObservations[key] = value
-		}
-		expected.compilerAssertions = append(expected.compilerAssertions, copy)
+		expected.compilerAssertions = append(expected.compilerAssertions, pending.immutableSnapshot())
 	}
 	for _, lease := range source.typeCacheLeases {
 		expected.compilerAssertions = append(expected.compilerAssertions, lease.assertions())
@@ -65,7 +58,7 @@ func governanceExpectedCapture(source *governanceCapture) *governanceCapture {
 		for path, value := range source.compiler.rawReads {
 			actualRaw.barrierReads[path] = value
 		}
-		expected.compilerAssertions = append(expected.compilerAssertions, actualRaw)
+		expected.compilerAssertions = append(expected.compilerAssertions, actualRaw.freezeOwned())
 		source.compiler.mu.Unlock()
 	}
 	return expected

@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"sync"
 )
 
 // The seal is a conjunction of independent original-operation guards. Each
@@ -11,72 +10,70 @@ import (
 // baseline, a compiler/checker, or a reusable receipt. Raw-read projections join
 // only the fresh os.ReadFile cell of this barrier. Decoder, streaming digest,
 // generic close-checked digest, and custom filesystem operations stay distinct.
+type governanceProbeExpected struct {
+	key    governanceProbeKey
+	before string
+}
+type governanceCapturedOperationPlan struct {
+	probes   []governanceProbeExpected
+	ordinary []governanceObservation
+	inputs   []compilerInputObservation
+	disk     *authoredCompilerDisk
+}
+
+func governanceCompileCapturedOperations(c *governanceCapture) *governanceCapturedOperationPlan {
+	p := &governanceCapturedOperationPlan{}
+	for key, before := range c.probeObservations {
+		p.probes = append(p.probes, governanceProbeExpected{key, before})
+	}
+	for _, row := range c.observations {
+		p.ordinary = append(p.ordinary, row)
+	}
+	if c.compiler != nil {
+		p.disk, _ = c.compiler.disk.(*authoredCompilerDisk)
+		for key, before := range c.compiler.observed {
+			p.inputs = append(p.inputs, compilerInputObservation{key, before})
+		}
+	}
+	return p
+}
 func (c *governanceCapture) verifyCapturedOperations(reads *governanceBarrierReads) bool {
 	if c.probeInconsistent || c.compiler != nil && c.compiler.inconsistent {
 		return false
 	}
-	probes := make([]governanceProbeKey, 0, len(c.probeObservations))
-	for key := range c.probeObservations {
-		probes = append(probes, key)
-	}
-	ordinary := make([]governanceObservation, 0, len(c.observations))
-	for _, row := range c.observations {
-		ordinary = append(ordinary, row)
-	}
-	inputs := []compilerInputObservation{}
-	var disk *authoredCompilerDisk
-	if c.compiler != nil {
-		disk, _ = c.compiler.disk.(*authoredCompilerDisk)
-		if disk != nil {
-			for key, before := range c.compiler.observed {
-				inputs = append(inputs, compilerInputObservation{key: key, before: before})
-			}
-		}
+	return governanceCompileCapturedOperations(c).verify(c, reads)
+}
+func (p *governanceCapturedOperationPlan) verify(c *governanceCapture, reads *governanceBarrierReads) bool {
+	probes, ordinary, inputs, disk := p.probes, p.ordinary, p.inputs, p.disk
+	// Arbitrary custom FS observed inputs keep their original separate observer.
+	if disk == nil {
+		inputs = nil
 	}
 	probeEnd := len(probes)
 	ordinaryEnd := probeEnd + len(ordinary)
 	results := make([]bool, ordinaryEnd+len(inputs))
-	jobs := make(chan int)
-	var workers sync.WaitGroup
-	for worker := 0; worker < min(compilerObservationWorkers, len(results)); worker++ {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			var buffer []byte
-			for index := range jobs {
-				switch {
-				case index < probeEnd:
-					key := probes[index]
-					results[index] = reads.probe(key) == c.probeObservations[key]
-				case index < ordinaryEnd:
-					row := ordinary[index-probeEnd]
-					value, ok := governanceBarrierObservation(row, reads)
-					results[index] = ok && value == row.Value
-				default:
-					input := inputs[index-ordinaryEnd]
-					var value string
-					if input.key.kind == inputRead {
-						if buffer == nil {
-							buffer = make([]byte, compilerObservationBufferBytes)
-						}
-						value = disk.readObservation(input.key.path, buffer)
-					} else {
-						if governanceOriginalCompilerBarrierOwner(disk) {
-							value = reads.compilerReplay(disk).observeActual(input.key)
-						} else {
-							value = observeCompilerInput(disk, input.key)
-						}
-					}
-					results[index] = value == input.before
-				}
+	reads.runBatch(len(results), func(index int, buffer []byte) {
+		switch {
+		case index < probeEnd:
+			probe := probes[index]
+			results[index] = reads.probe(probe.key) == probe.before
+		case index < ordinaryEnd:
+			row := ordinary[index-probeEnd]
+			value, ok := governanceBarrierObservation(row, reads)
+			results[index] = ok && value == row.Value
+		default:
+			input := inputs[index-ordinaryEnd]
+			var value string
+			if input.key.kind == inputRead {
+				value = reads.stream(disk, input.key.path, buffer)
+			} else if governanceOriginalCompilerBarrierOwner(disk) {
+				value = reads.compilerReplay(disk).observeActual(input.key)
+			} else {
+				value = observeCompilerInput(disk, input.key)
 			}
-		}()
-	}
-	for index := range results {
-		jobs <- index
-	}
-	close(jobs)
-	workers.Wait()
+			results[index] = value == input.before
+		}
+	})
 	for _, valid := range results {
 		if !valid {
 			return false
@@ -84,10 +81,7 @@ func (c *governanceCapture) verifyCapturedOperations(reads *governanceBarrierRea
 	}
 	if c.compiler != nil && disk == nil {
 		// The actual original custom filesystem retains its sequential observer.
-		inputs = make([]compilerInputObservation, 0, len(c.compiler.observed))
-		for key, before := range c.compiler.observed {
-			inputs = append(inputs, compilerInputObservation{key: key, before: before})
-		}
+		inputs = p.inputs
 		for index, value := range c.compiler.observe(inputs) {
 			if value != inputs[index].before {
 				return false
