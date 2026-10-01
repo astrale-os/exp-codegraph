@@ -6,7 +6,6 @@ import (
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	"sort"
 	"strings"
-	"unicode/utf16"
 )
 
 type RuntimeDefinitionInput struct {
@@ -99,12 +98,7 @@ func EvaluateRuntimeDefinitionIDs(project *Project, input RuntimeDefinitionInput
 			observations := byPath[file.Path]
 			sort.SliceStable(observations, func(i, j int) bool { return observations[i].Start < observations[j].Start })
 			for _, o := range observations {
-				var call *ast.Node
-				authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
-					if node.Kind == ast.KindCallExpression && qmTopLevel(node) && qmStart(file, node) == o.Start && len(utf16.Encode([]rune(file.Source.Text()[:node.End()]))) == o.End {
-						call = node
-					}
-				})
+				call := file.runtimeCall(o.Start, o.End, true)
 				if call == nil {
 					w.ambiguity("QLT-DEF-IDS", file, file.Source.AsNode(), "The observed "+label+" call cannot be located in the current source.")
 					continue
@@ -154,12 +148,7 @@ func EvaluateRuntimeDefinitionIDs(project *Project, input RuntimeDefinitionInput
 				if failure.Path != file.Path {
 					continue
 				}
-				var call *ast.Node
-				authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
-					if node.Kind == ast.KindCallExpression && qmTopLevel(node) && qmStart(file, node) == failure.Start && len(utf16.Encode([]rune(file.Source.Text()[:node.End()]))) == failure.End {
-						call = node
-					}
-				})
+				call := file.runtimeCall(failure.Start, failure.End, true)
 				if call == nil {
 					call = file.Source.AsNode()
 				}
@@ -199,7 +188,7 @@ func RuntimeDefinitionSubjects(project *Project) runtime.NativeDefinitionSubject
 				return
 			}
 			if node.Kind == ast.KindCallExpression {
-				result.Subjects = append(result.Subjects, runtime.CapturedDefinitionSubject{Path: file.Path, Start: qmStart(file, node), End: len(utf16.Encode([]rune(file.Source.Text()[:node.End()])))})
+				result.Subjects = append(result.Subjects, runtime.CapturedDefinitionSubject{Path: file.Path, Start: qmStart(file, node), End: qmEnd(file, node)})
 			}
 			node.ForEachChild(func(child *ast.Node) bool { walk(child); return false })
 		}

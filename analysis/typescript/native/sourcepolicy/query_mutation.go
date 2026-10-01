@@ -5,9 +5,7 @@ import (
 	runtime "astrale-typespec-v2-native-analysis/observabledecision"
 	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
-	scanner "github.com/microsoft/typescript-go/shim/scanner"
 	"strings"
-	"unicode/utf16"
 )
 
 var QueryMutationRevisions = map[string]string{
@@ -142,9 +140,6 @@ func qmCallback(property *ast.Node) *ast.Node {
 		}
 	}
 	return nil
-}
-func qmStart(file *File, node *ast.Node) int {
-	return len(utf16.Encode([]rune(file.Source.Text()[:scanner.GetTokenPosOfNode(node, file.Source, false)])))
 }
 func (w *qmWriter) projector(rule string, file *File, name, label string) {
 	a := w.project.Authored(file)

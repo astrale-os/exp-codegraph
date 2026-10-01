@@ -86,8 +86,8 @@ func observeDefinitionIDs(context DemandContext, observer *demandObserver) Defin
 		module := observer.modules[site.Path]
 		start, end := site.Start, site.End
 		if module != nil && site.Node != nil {
-			start = utf16At(module.file.Text, scanner.GetTokenPosOfNode(site.Node, module.file.Source, false))
-			end = utf16At(module.file.Text, site.Node.End())
+			start = module.utf16At(scanner.GetTokenPosOfNode(site.Node, module.file.Source, false))
+			end = module.utf16At(site.Node.End())
 		}
 		subject := CapturedDefinitionSubject{Path: site.Path, Start: start, End: end}
 		if selected != nil && !selected[subject] {

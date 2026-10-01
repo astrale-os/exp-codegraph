@@ -1,11 +1,9 @@
 package sourcepolicy
 
 import (
-	authored "astrale-typespec-v2-native-analysis/authoredsource"
 	runtime "astrale-typespec-v2-native-analysis/observabledecision"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	"strings"
-	"unicode/utf16"
 )
 
 // RuntimeQueryInput receives observation and identity products from the SAME
@@ -33,12 +31,7 @@ func EvaluateRuntimeQueries(project *Project, input RuntimeQueryInput) Result {
 			w.residual("QRY-SINGLE", nil, nil, "Runtime query source is not a current admitted source.")
 			continue
 		}
-		var node *ast.Node
-		authored.Walk(file.Source.AsNode(), func(candidate *ast.Node) {
-			if candidate.Kind == ast.KindCallExpression && qmStart(file, candidate) == value.Start && len(utf16.Encode([]rune(file.Source.Text()[:candidate.End()]))) == value.End {
-				node = candidate
-			}
-		})
+		node := file.runtimeCall(value.Start, value.End, false)
 		if node == nil {
 			for _, rule := range []string{"QRY-CANON", "QRY-SINGLE"} {
 				w.residual(rule, file, file.Source.AsNode(), "Runtime query observation does not anchor to the current captured AST.")

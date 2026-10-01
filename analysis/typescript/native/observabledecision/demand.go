@@ -5,11 +5,11 @@ package observabledecision
 // are an exploratory product, never permission to publish complete coverage.
 import (
 	js "astrale-typespec-v2-native-analysis/jsstring"
+	coordinates "astrale-typespec-v2-native-analysis/sourcecoordinates"
 	"crypto/sha256"
 	"fmt"
 	"path/filepath"
 	"strings"
-	"unicode/utf16"
 
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	core "github.com/microsoft/typescript-go/shim/core"
@@ -114,11 +114,12 @@ type demandBinding struct {
 	mutable             bool
 }
 type demandModule struct {
-	digest     string
-	file       CapturedFile
-	bindings   map[string]demandBinding
-	candidates []*ast.Node
-	reason     string
+	coordinates *coordinates.Index
+	digest      string
+	file        CapturedFile
+	bindings    map[string]demandBinding
+	candidates  []*ast.Node
+	reason      string
 }
 type demandValue struct {
 	kind, text, reason string
@@ -947,15 +948,14 @@ func (r *demandRun) finish(value demandValue, mode string) DemandOutcome {
 	}
 	return out
 }
-func utf16At(text string, offset int) int {
-	if offset < 0 {
-		offset = 0
+func utf16At(text string, offset int) int { return coordinates.Count(text, offset) }
+func (module *demandModule) utf16At(offset int) int {
+	if module.coordinates == nil || module.coordinates.Text() != module.file.Text {
+		module.coordinates = coordinates.New(module.file.Text)
 	}
-	if offset > len(text) {
-		offset = len(text)
-	}
-	return len(utf16.Encode([]rune(text[:offset])))
+	return module.coordinates.Offset(offset)
 }
+
 func ObserveQueries(context DemandContext) QueryProduct {
 	return observeQueries(context, newDemandObserver(context), false)
 }
@@ -1031,8 +1031,8 @@ func observeQueries(context DemandContext, observer *demandObserver, includeID b
 		if value.module != path {
 			continue
 		}
-		start := utf16At(m.file.Text, scanner.GetTokenPosOfNode(value.node, m.file.Source, false))
-		end := utf16At(m.file.Text, value.node.End())
+		start := m.utf16At(scanner.GetTokenPosOfNode(value.node, m.file.Source, false))
+		end := m.utf16At(value.node.End())
 		subjectID := fmt.Sprintf("%s:%d:%d", path, start, end)
 		if seen[subjectID] {
 			continue

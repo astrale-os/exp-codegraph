@@ -15,6 +15,7 @@ type File struct {
 	Submodule         string
 	Source            *ast.SourceFile
 	Imports           []Import
+	index             *fileSourceIndex
 }
 
 type Import struct {
