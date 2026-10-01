@@ -68,10 +68,9 @@ type bodyDemandCache struct {
 	byOwner       map[string]*thinBody
 	byFunction    map[*shimast.Node]*thinBody
 	modules       map[*shimast.SourceFile]*thinBody
-	effects       *bodyDemandPayload
+	snapshot      *sourceProjectionSnapshot
 	fullBodies    map[string]factShard
 	bodyReads     map[string][]callableRead
-	thinReads     map[string][]callableRead
 	ready         bool
 }
 
@@ -398,19 +397,14 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 	}
 	x.telemetry.record(x.requestID, "projection.demand-closure", started, map[string]any{"owners": len(bodies), "selectedOwners": len(selected), "paths": len(recipe.Paths)})
 
-	payload := bodyDemandPayload{Observed: recipe.Owners != nil, Paths: recipe.Paths, Owners: []demandOwner{}, Witnesses: []bodyOccurrence{},
-		Initializers: []demandEffect{}, Mutations: []demandEffect{}, Escapes: []demandEffect{}, Aliases: []demandAlias{}, Coverage: []demandCoverage{}, Completeness: complete()}
+	var payload bodyDemandPayload
 	witnesses := map[string]bodyOccurrence{}
-	for _, body := range bodies {
-		payload.Owners = append(payload.Owners, demandOwner{Owner: body.owner, Scope: body.scope, Span: body.span, Path: body.path, Materialized: selected[body.owner]})
-	}
-	if cache.effects != nil {
-		payload.Witnesses = cache.effects.Witnesses
-		payload.Initializers = cache.effects.Initializers
-		payload.Mutations = cache.effects.Mutations
-		payload.Escapes = cache.effects.Escapes
-		payload.Aliases = cache.effects.Aliases
-	} else {
+	if cache.snapshot == nil {
+		payload = bodyDemandPayload{Owners: []demandOwner{}, Witnesses: []bodyOccurrence{},
+			Initializers: []demandEffect{}, Mutations: []demandEffect{}, Escapes: []demandEffect{}, Aliases: []demandAlias{}}
+		for _, body := range bodies {
+			payload.Owners = append(payload.Owners, demandOwner{Owner: body.owner, Scope: body.scope, Span: body.span, Path: body.path})
+		}
 		for _, body := range bodies {
 			sort.Slice(body.effects, func(i, j int) bool { return body.effects[i].Pos() < body.effects[j].Pos() })
 			for _, node := range body.effects {
@@ -494,10 +488,9 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			payload.Witnesses = append(payload.Witnesses, witness)
 		}
 		sort.Slice(payload.Witnesses, func(i, j int) bool { return payload.Witnesses[i].ID < payload.Witnesses[j].ID })
-		effectSnapshot := payload
-		effectSnapshot.Owners = nil
-		cache.effects = &effectSnapshot
+		cache.snapshot = sealSourceProjection(x.sources, payload, x.callableReads)
 	}
+	payload = cache.snapshot.payload(recipe, selected)
 	// Full-body contribution order is part of bounded symbolic evaluation.
 	// Materialize every initializer/alias contributor reachable from a selected
 	// value so its real logical fact identity can retain that exact order.
@@ -541,17 +534,8 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 		coverage[path] = completeness{Kind: "unavailable", Reasons: []any{map[string]any{"code": "DEMAND_SOURCE_ABSENT", "message": "Demanded source is absent from the owned compiler universe: " + path, "retryable": false}}}
 	}
 	factsByOwner := map[string]string{}
-	if cache.thinReads == nil {
-		cache.thinReads = map[string][]callableRead{}
-		for path, reads := range x.callableReads {
-			cache.thinReads[path] = append([]callableRead{}, reads...)
-		}
-	}
 	if !x.plan.bodies {
-		x.callableReads = map[string][]callableRead{}
-		for path, reads := range cache.thinReads {
-			x.callableReads[path] = append([]callableRead{}, reads...)
-		}
+		x.callableReads = cache.snapshot.callableReads()
 	}
 	var identity bodyIdentityWorkspace
 	for _, body := range bodies {
@@ -587,7 +571,7 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			if cache.bodyReads == nil {
 				cache.bodyReads = map[string][]callableRead{}
 			}
-			cache.bodyReads[body.owner] = append([]callableRead{}, x.callableReads[body.file.FileName()][readStart:]...)
+			cache.bodyReads[body.owner] = copyProjectionReads(x.callableReads[body.file.FileName()][readStart:])
 			factsByOwner[body.owner] = shard.Facts[0].ID
 			completion = full.Completeness
 		}

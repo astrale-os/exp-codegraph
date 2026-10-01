@@ -355,6 +355,11 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 		if hasBase && base.digests[shard.Key] == shard.Digest {
 			continue
 		}
+		// Projection caches own sealed fact metadata. Re-emitting a retired
+		// shard must not rename facts in an earlier published transaction.
+		if shard.Facts != nil {
+			shard.Facts = append([]fact{}, shard.Facts...)
+		}
 		for index := range shard.Facts {
 			shard.Facts[index].Generation = generationID
 		}

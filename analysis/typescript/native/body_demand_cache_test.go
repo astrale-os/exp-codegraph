@@ -35,7 +35,7 @@ func TestBodyDemandExplicitOwnersReuseCapturedInventoryAndRetireMembership(t *te
 	}
 	original := stableJSON(initial)
 	cache := a.demandCache
-	catalogue := cache.effects
+	catalogue := cache.snapshot
 	missing := ""
 	for _, owner := range demandPayload(t, initial).Owners {
 		if owner.Materialized != (owner.Path == "entry.ts") {
@@ -61,7 +61,7 @@ func TestBodyDemandExplicitOwnersReuseCapturedInventoryAndRetireMembership(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.demandCache != cache || cache.effects != catalogue {
+	if a.demandCache != cache || cache.snapshot != catalogue {
 		t.Fatal("recipe-only expansion recaptured the global inventory")
 	}
 	assertDemandMatchesFull(t, expanded, oracle)

@@ -27,10 +27,7 @@ func (cache *bodyDemandCache) project(plan projectionPlan, maximumSemanticPayloa
 	x.payloadEncodingError = nil
 	x.telemetry = telemetry
 	x.requestID = requestID
-	x.callableReads = map[string][]callableRead{}
-	for path, reads := range cache.thinReads {
-		x.callableReads[path] = append([]callableRead{}, reads...)
-	}
+	x.callableReads = cache.snapshot.callableReads()
 	shards := append([]factShard{}, cache.nonBodyShards...)
 	for _, shard := range shards {
 		x.retainSemanticShard(shard)
@@ -52,5 +49,5 @@ func (cache *bodyDemandCache) project(plan projectionPlan, maximumSemanticPayloa
 func (x *extractor) retainBodyReads(path string, reads []callableRead) {
 	// Contributions are replayed once per selected owner in original body order.
 	// Global thin reads are cloned separately, including their original duplicates.
-	x.callableReads[path] = append(x.callableReads[path], reads...)
+	x.callableReads[path] = append(x.callableReads[path], copyProjectionReads(reads)...)
 }
