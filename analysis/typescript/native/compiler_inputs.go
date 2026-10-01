@@ -29,6 +29,10 @@ type compilerInputKey struct {
 	kind compilerInputKind
 }
 type compilerInputFS struct {
+	// A decision capture retains its first observation. Legacy resident compiler
+	// sessions can continue replacing observations between explicit generations.
+	singleCapture bool
+	inconsistent  bool
 	shimvfs.FS
 	disk     shimvfs.FS
 	mu       sync.Mutex
@@ -43,7 +47,14 @@ func (fs *compilerInputFS) remember(path string, kind compilerInputKind, value s
 	defer fs.mu.Unlock()
 	// Compiler paths may be virtual URIs (bundled:///libs), not OS paths.
 	// Preserve the exact filesystem identity used to obtain the observation.
-	fs.observed[compilerInputKey{path, kind}] = value
+	key := compilerInputKey{path, kind}
+	if before, seen := fs.observed[key]; seen && fs.singleCapture {
+		if before != value {
+			fs.inconsistent = true
+		}
+		return
+	}
+	fs.observed[key] = value
 }
 func inputText(content string, ok bool) string {
 	if !ok {

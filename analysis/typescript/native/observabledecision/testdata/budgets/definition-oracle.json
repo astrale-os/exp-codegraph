@@ -1,0 +1,4550 @@
+{
+  "nativeSHA": "8c65097ff9e72b61aeaf7600964fc2beeabbd6ad41d5e10193c1c3aa8db347fc",
+  "cases": [
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 1,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 2,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 3,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 4,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 5,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 6,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 7,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_STEP_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its step limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 8,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 9,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 10,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 11,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 12,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 13,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 14,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 15,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 16,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 17,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 18,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 19,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 20,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 21,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 22,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 23,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 24,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 25,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 26,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 27,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 28,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 29,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 30,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 31,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 32,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 33,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 34,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 35,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 36,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 37,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 38,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 39,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 64,
+        "maximumSteps": 40,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 1,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 2,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 3,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 4,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_DEPTH_LIMIT"
+            ],
+            "reasonMessages": [
+              "Bounded value evaluation exceeded its depth limit."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 5,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 6,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 7,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 8,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 9,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 10,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 11,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 12,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 13,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 14,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 15,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 16,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 17,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 18,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 19,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    },
+    {
+      "limits": {
+        "maximumDepth": 20,
+        "maximumSteps": 4096,
+        "maximumAlternatives": 32
+      },
+      "definitions": [
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 137,
+            "end": 269
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.helper"
+          }
+        },
+        {
+          "source": {
+            "path": "helper-query.ts",
+            "start": 301,
+            "end": 429
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "unknown",
+            "reasons": [
+              "VALUE_NO_SEMANTIC_PATH"
+            ],
+            "reasonMessages": [
+              "No bounded value path is available for BinaryExpression."
+            ]
+          }
+        },
+        {
+          "source": {
+            "path": "list-visible-issues.ts",
+            "start": 274,
+            "end": 1343
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.issue.list-visible"
+          }
+        },
+        {
+          "source": {
+            "path": "read-tag.ts",
+            "start": 305,
+            "end": 612
+          },
+          "identity": {
+            "kind": "known",
+            "value": "defineQuery"
+          },
+          "id": {
+            "kind": "known",
+            "value": "issues.tag.read"
+          }
+        }
+      ]
+    }
+  ]
+}

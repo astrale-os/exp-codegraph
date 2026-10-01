@@ -1,0 +1,197 @@
+package main
+
+import (
+	"astrale-typespec-v2-native-analysis/sourcepolicy"
+	"encoding/json"
+	"fmt"
+	ast "github.com/microsoft/typescript-go/shim/ast"
+	core "github.com/microsoft/typescript-go/shim/core"
+	scanner "github.com/microsoft/typescript-go/shim/scanner"
+	"os"
+	"path/filepath"
+	"runtime"
+	"sort"
+	"strings"
+)
+
+type governanceRuntimeIdentity struct {
+	Project           *governedProject
+	TypeOwner         *governanceTypeAuthority
+	Universe          string
+	Calls             map[*ast.Node]string
+	CallSpans         map[string]sourceSpan
+	OwnedProgramFiles map[string]*ast.SourceFile
+	Complete          bool
+	Reason            string
+}
+
+func governancePortableUniversePath(project *governedProject, path string) (string, error) {
+	path = filepath.Clean(path)
+	if library := typescriptLibraryFile(path); library != "" {
+		return "platform:typescript/" + library, nil
+	}
+	relative, err := filepath.Rel(project.Root, path)
+	if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		logical := filepath.ToSlash(relative)
+		if !strings.Contains(logical, "/node_modules/") && !strings.HasPrefix(logical, "node_modules/") {
+			if logical == "" {
+				return ".", nil
+			}
+			return logical, nil
+		}
+	}
+	directory := filepath.Dir(path)
+	inside := pathContains(project.Root, path)
+	for {
+		if inside && !pathContains(project.Root, directory) {
+			break
+		}
+		bytes, err := project.capture.read(filepath.Join(directory, "package.json"))
+		if err == nil {
+			var document struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(bytes, &document) != nil {
+				break
+			}
+			if document.Name != "" {
+				coordinate := "package:" + document.Name
+				if subpath, err := filepath.Rel(directory, path); err == nil && subpath != "." {
+					coordinate += "/" + filepath.ToSlash(subpath)
+				}
+				return coordinate, nil
+			}
+		} else if !os.IsNotExist(err) {
+			break
+		}
+		if inside && directory == project.Root {
+			break
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			break
+		}
+		directory = parent
+	}
+	return "", fmt.Errorf("runtime universe input has no portable coordinate: %s", path)
+}
+func governanceCapturedUniverse(owner *governanceTypeAuthority) (string, error) {
+	owner.open()
+	if owner.program == nil {
+		return "", fmt.Errorf("native runtime Program authority unavailable")
+	}
+	project := owner.project
+	configs, err := parsedProjectConfigs(owner.program)
+	if err != nil {
+		return "", err
+	}
+	paths := []string{}
+	projects := []string{}
+	for _, parsed := range configs {
+		paths = append(paths, parsed.ConfigName())
+		paths = append(paths, parsed.ExtendedSourceFiles()...)
+		logical, err := governancePortableUniversePath(project, parsed.ConfigName())
+		if err != nil {
+			return "", err
+		}
+		projects = append(projects, logical)
+	}
+	paths = sortedUnique(paths)
+	configuration := []map[string]any{}
+	for _, path := range paths {
+		if path == "" {
+			continue
+		}
+		info, err := project.capture.lstat(path)
+		if err == nil && info.IsDir() {
+			path = filepath.Join(path, "tsconfig.json")
+		}
+		content, err := project.capture.read(path)
+		if err != nil {
+			return "", err
+		}
+		logical, err := governancePortableUniversePath(project, path)
+		if err != nil {
+			return "", err
+		}
+		configuration = append(configuration, map[string]any{"path": logical, "digest": hashText(string(content))})
+	}
+	sort.Slice(configuration, func(i, j int) bool { return configuration[i]["path"].(string) < configuration[j]["path"].(string) })
+	rootConfig, err := governancePortableUniversePath(project, owner.program.ParsedConfig.ConfigName())
+	if err != nil {
+		return "", err
+	}
+	return deriveID("project-universe", "astrale.analysis.typescript.universe.v2", map[string]any{"configuration": configuration, "project": rootConfig, "projects": sortedUnique(projects), "producer": map[string]any{"name": "ttsc-typescript-go", "version": producerVersion, "ttsc": ttscVersion, "typescriptGo": core.Version(), "protocol": protocolVersion}, "platform": map[string]any{"os": runtime.GOOS, "architecture": runtime.GOARCH}}), nil
+}
+func governanceRuntimeProgramOwned(root, path string) (string, bool) {
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	relative = filepath.ToSlash(relative)
+	if strings.Contains(relative, "/node_modules/") || strings.HasPrefix(relative, "node_modules/") || strings.HasSuffix(relative, ".d.ts") || strings.HasSuffix(relative, ".d.mts") || strings.HasSuffix(relative, ".d.cts") {
+		return "", false
+	}
+	return relative, true
+}
+func governanceBuildRuntimeIdentity(project *governedProject) *governanceRuntimeIdentity {
+	out := &governanceRuntimeIdentity{Project: project, Calls: map[*ast.Node]string{}, CallSpans: map[string]sourceSpan{}, OwnedProgramFiles: map[string]*ast.SourceFile{}}
+	owner := project.typeOwner
+	if owner == nil {
+		out.Reason = "runtime demanded compiler owner unavailable"
+		return out
+	}
+	out.TypeOwner = owner
+	universe, err := governanceCapturedUniverse(owner)
+	if err != nil {
+		out.Reason = err.Error()
+		return out
+	}
+	if filepath.Clean(owner.program.ParsedConfig.ConfigName()) != filepath.Join(project.Root, "tsconfig.json") {
+		out.Reason = "runtime explicit configuration differs from demanded type ancestor configuration"
+		return out
+	}
+	out.Universe = universe
+	identity := occurrenceIdentityWorkspace{}
+	for _, source := range owner.program.TSProgram.GetSourceFiles() {
+		logical, owned := governanceRuntimeProgramOwned(project.Root, source.FileName())
+		if !owned {
+			continue
+		}
+		out.OwnedProgramFiles[logical] = source
+		sourceID := deriveID("source", "typescript:"+universe, map[string]any{"path": logical})
+		revision := deriveID("source-revision", sourceID, map[string]any{"digest": hashText(source.Text())})
+		coordinates := indexSourceCoordinates(source.Text())
+		var walk func(*ast.Node)
+		walk = func(node *ast.Node) {
+			if node.Kind == ast.KindCallExpression {
+				start := scanner.SkipTrivia(source.Text(), node.Pos())
+				span := sourceSpan{Source: sourceID, Revision: revision, Start: coordinates.utf16(start), End: coordinates.utf16(node.End())}
+				id := identity.identify(universe, span, "body-call")
+				out.Calls[node] = id
+				out.CallSpans[fmt.Sprintf("%s:%d:%d", logical, start, node.End())] = span
+			}
+			node.ForEachChild(func(child *ast.Node) bool { walk(child); return false })
+		}
+		walk(source.AsNode())
+	}
+	out.Complete = true
+	return out
+}
+func (identity *governanceRuntimeIdentity) CallIdentity(file *sourcepolicy.File, node *ast.Node) (string, bool) {
+	if !identity.Complete || file == nil || node == nil || node.Kind != ast.KindCallExpression {
+		return "", false
+	}
+	captured := identity.Project.FilesByPath[file.Path]
+	source := identity.OwnedProgramFiles[file.Path]
+	if captured == nil || source == nil || captured.Text != source.Text() {
+		return "", false
+	}
+	start := scanner.SkipTrivia(captured.Text, node.Pos())
+	span, ok := identity.CallSpans[fmt.Sprintf("%s:%d:%d", file.Path, start, node.End())]
+	if !ok {
+		return "", false
+	}
+	workspace := occurrenceIdentityWorkspace{}
+	return workspace.identify(identity.Universe, span, "body-call"), true
+}

@@ -1,8 +1,7 @@
 {
   "name": "@astrale-os/codegraph",
-  "private": false,
   "version": "0.1.0",
-  "packageManager": "pnpm@11.13.1",
+  "private": false,
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
   "license": "Apache-2.0",
   "repository": {
@@ -84,7 +83,15 @@
       "types": "./dist/workspace/index.d.ts",
       "import": "./dist/workspace/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./analysis/native": {
+      "types": "./dist/analysis/native/index.d.ts",
+      "import": "./dist/analysis/native/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   },
   "scripts": {
     "prebuild": "node scripts/clean-dist.mjs",
@@ -143,8 +150,5 @@
   "engines": {
     "node": ">=22.13 <23 || >=24 <25 || >=26 <27"
   },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
-  }
+  "packageManager": "pnpm@11.13.1"
 }
