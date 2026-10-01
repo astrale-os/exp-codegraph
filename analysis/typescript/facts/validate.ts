@@ -74,6 +74,7 @@ function validateBody(value: Record<string, unknown>, diagnostics: string[]): vo
 }
 
 function validateBodyDemand(value: Record<string, unknown>, diagnostics: string[]): void {
+  if (value.observed !== undefined && value.observed !== true) diagnostics.push('observed:invalid')
   const paths = Array.isArray(value.paths) ? value.paths : []
   const requested = new Set(paths)
   if (!strings(value.paths) || paths.some((path) => !logicalPath(path))) {

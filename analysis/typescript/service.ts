@@ -135,7 +135,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
         ...(options.discover !== undefined ? { discover: options.discover } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
-        ...(options.bodyDemand ? { bodyDemand: { paths: [...options.bodyDemand.paths] } } : {}),
+        ...(options.bodyDemand ? { bodyDemand: captureBodyDemand(options.bodyDemand) } : {}),
       },
       { signal: options.signal },
     )

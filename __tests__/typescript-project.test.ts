@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { createProcessNativeAnalysisSessionFactory, createMemoryAnalysisStore, type AnalysisStore } from '../analysis/index.ts'
+import type { NativeBodyDemand } from '../analysis/protocol/index.ts'
 import { openTypeScriptProject as openProject, resolvePackagedNativeAnalysis as resolvePackaged, TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/index.ts'
 
 // Source regressions run against the just-built candidate. Default package resolution
@@ -76,6 +77,74 @@ describe('resident TypeScript project public API', () => {
         } finally { await after.dispose() }
       } finally { await before.dispose() }
     } finally { await project.dispose() }
+  })
+
+  it('captures owner frontiers before a blocked queue and retains explicit emptiness after recovery', async () => {
+    const root = await fixture()
+    await writeFile(join(root, 'other.ts'), "export function other() { return 'other' }\n")
+    const native = await resolvePackagedNativeAnalysis()
+    const factory = createProcessNativeAnalysisSessionFactory({ command: native.command,
+      payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS })
+    let entered!: () => void, release!: () => void
+    const entering = new Promise<void>((resolve) => { entered = resolve })
+    const held = new Promise<void>((resolve) => { release = resolve })
+    let block = false, fail = false
+    const recipes: NativeBodyDemand[] = []
+    const project = await openTypeScriptProject({ root,
+      capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body-demand'],
+      sessions: { async open(descriptor, options) {
+        const session = await factory.open(descriptor, options)
+        return { async request(request, requestOptions) {
+          if (request.kind === 'refresh') {
+            if (request.bodyDemand) recipes.push(request.bodyDemand)
+            if (block) { block = false; entered(); await held }
+            if (fail) { fail = false; throw new Error('owner frontier recovery') }
+          }
+          return session.request(request, requestOptions)
+        }, acknowledge: session.acknowledge?.bind(session), dispose: () => session.dispose() }
+      } },
+    })
+    try {
+      const initial = await project.refresh({ bodyDemand: { paths: ['index.ts'], owners: [] } })
+      const seed = await project.open(initial.generation)
+      const helper = (await seed.facts.facts('body-demand')).facts[0]!.payload.owners
+        .find((owner) => owner.path === 'other.ts' && owner.scope === 'function')!.owner
+      await seed.dispose()
+      block = true
+      const first = project.refresh()
+      await entering
+      const paths = ['index.ts'], owners = [helper]
+      const second = project.refresh({ bodyDemand: { paths, owners } })
+      paths[0] = 'other.ts'; owners.length = 0; owners.push('unowned-later-input' as typeof helper)
+      const third = project.refresh()
+      release()
+      await first
+      const expanded = await second, inherited = await third
+      expect(inherited.transactions).toEqual([])
+      expect(inherited.generation.id).toBe(expanded.generation.id)
+      expect(recipes.slice(-2)).toEqual([
+        { paths: ['index.ts'], owners: [helper] }, { paths: ['index.ts'], owners: [helper] },
+      ])
+      const before = await project.open(expanded.generation)
+      try {
+        const original = (await before.facts.facts('body-demand')).facts[0]!.payload
+        expect(original.observed).toBe(true)
+        expect(original.owners.find((owner) => owner.owner === helper)?.materialized).toBe(true)
+        fail = true
+        await expect(project.refresh({ bodyDemand: { paths: ['index.ts'], owners: [] } }))
+          .rejects.toThrow('owner frontier recovery')
+        const recovered = await project.refresh()
+        const after = await project.open(recovered.generation)
+        try {
+          const certificate = (await after.facts.facts('body-demand')).facts[0]!.payload
+          expect(certificate.observed).toBe(true)
+          expect(certificate.paths).toEqual(['index.ts'])
+          expect(certificate.owners.find((owner) => owner.owner === helper)?.materialized).toBe(false)
+          expect(recipes.at(-1)).toEqual({ paths: ['index.ts'], owners: [] })
+          expect((await before.facts.facts('body-demand')).facts[0]!.payload).toEqual(original)
+        } finally { await after.dispose() }
+      } finally { await before.dispose() }
+    } finally { release(); await project.dispose() }
   })
 
   it('pins readers across edits, shares evaluators by budget and serializes refresh', async () => {

@@ -128,6 +128,8 @@ export interface TypeScriptBodyDemandEffect {
 
 /** Complete global effect/callable authority, with explicitly scoped full body coverage. */
 export interface TypeScriptBodyDemandFacts {
+  /** Explicit actual-read expansion mode; absent certificates retain conservative behavior. */
+  readonly observed?: true
   readonly paths: readonly string[]
   readonly owners: readonly {
     readonly owner: SymbolId

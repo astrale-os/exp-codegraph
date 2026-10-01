@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { validateTypeScriptFactPayload } from '../analysis/typescript/facts/validate.ts'
 import { captureBodyDemand } from '../analysis/protocol/body-demand.ts'
+import { BodyDemandExpansionRequired, type TypeScriptBodyDemandReceipt } from '../analysis/typescript/value/model.ts'
+import { deriveAnalysisId } from '../analysis/identity/index.ts'
 
 function certificate() {
   const span = { source: 'source', revision: 'revision', start: 0, end: 100 }
@@ -31,6 +33,50 @@ describe('demand body authority admission', () => {
     expect(Object.isFrozen(captured.paths)).toBe(true)
     expect(() => captureBodyDemand({ paths: ['../outside.ts'] })).toThrow('canonical owned logical')
   })
+
+  it('distinguishes a captured empty observed frontier from an omitted conservative recipe', () => {
+    const owners: string[] = []
+    const observed = captureBodyDemand({ paths: ['queries/request.ts'], owners })
+    owners.push('later-owner')
+    expect(observed.owners).toEqual([])
+    expect(captureBodyDemand({ paths: [] })).not.toHaveProperty('owners')
+    expect(validateTypeScriptFactPayload('body-demand', { ...certificate(), observed: true })).toEqual([])
+    expect(validateTypeScriptFactPayload('body-demand', { ...certificate(), observed: false })).toContain('observed:invalid')
+  })
+  it('owns receipt identities and sorted distinct requirements independently of mutable caller input', () => {
+    const generation = deriveAnalysisId('generation', 'receipt-ownership', {})
+    const sourceManifest = deriveAnalysisId('source-manifest', 'receipt-ownership', {})
+    const a = deriveAnalysisId('symbol', 'receipt-ownership', 'a')
+    const b = deriveAnalysisId('symbol', 'receipt-ownership', 'b')
+    const requirements: { owner: typeof a; kind: 'body' | 'effect-order' }[] = [
+      { owner: b, kind: 'body' }, { owner: a, kind: 'effect-order' },
+      { owner: a, kind: 'body' }, { owner: a, kind: 'body' },
+    ]
+    const input = { generation, sourceManifest, requirements }
+    const error = new BodyDemandExpansionRequired(input)
+    input.generation = deriveAnalysisId('generation', 'receipt-ownership', 'later')
+    input.sourceManifest = deriveAnalysisId('source-manifest', 'receipt-ownership', 'later')
+    requirements[0]!.owner = a
+    requirements[1]!.kind = 'body'
+    requirements.length = 0
+    expect(error.code).toBe('TYPESCRIPT_BODY_DEMAND_EXPANSION_REQUIRED')
+    expect(error.receipt).toEqual({ generation, sourceManifest, requirements: [
+      { owner: a, kind: 'body' }, { owner: a, kind: 'effect-order' }, { owner: b, kind: 'body' },
+    ].sort((left, right) => left.owner.localeCompare(right.owner) || left.kind.localeCompare(right.kind)) })
+    expect(Object.isFrozen(error.receipt)).toBe(true)
+    expect(Object.isFrozen(error.receipt.requirements)).toBe(true)
+    expect(error.receipt.requirements.every((row) => Object.isFrozen(row))).toBe(true)
+    expect(Object.isFrozen(input)).toBe(false)
+  })
+
+  it.each([['', 'body'], [7, 'body'], ['owner', 'unknown']])('rejects invalid receipt identity/kind %j/%j', (owner, kind) => {
+    expect(() => new BodyDemandExpansionRequired({
+      generation: deriveAnalysisId('generation', 'receipt-ownership', {}),
+      sourceManifest: deriveAnalysisId('source-manifest', 'receipt-ownership', {}),
+      requirements: [{ owner, kind }],
+    } as unknown as TypeScriptBodyDemandReceipt)).toThrow('Invalid body demand expansion requirement')
+  })
+
   it('admits complete global effects with omitted sibling bodies and scoped coverage', () => {
     expect(validateTypeScriptFactPayload('body-demand', certificate())).toEqual([])
   })
