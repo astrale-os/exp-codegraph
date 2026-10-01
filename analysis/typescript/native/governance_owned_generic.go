@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -56,17 +57,24 @@ func (p *governanceOwnedProcess) close() {
 	})
 }
 func governanceNewOwnedProcess(artifact []byte) (*governanceOwnedProcess, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return nil, err
+	if len(artifact) != governanceOwnedArtifactLength || governanceHash(artifact) != governanceOwnedArtifactSHA {
+		return nil, fmt.Errorf("current package bytes differ from original qualified worker")
 	}
-	return governanceNewOwnedProcessWithin(artifact, filepath.Join(filepath.Dir(executable), ".owned-artifacts-v1"))
+	store, err := governanceOwnedRuntimeArtifactStore()
+	if err != nil {
+		return nil, &governanceOwnedCapabilityUnavailable{err}
+	}
+	return governanceNewOwnedProcessWithin(artifact, store)
 }
 func governanceNewOwnedProcessWithin(artifact []byte, store string) (*governanceOwnedProcess, error) {
 	began := time.Now()
+	// Resource identity failures are not runtime capability failures.
+	if len(artifact) != governanceOwnedArtifactLength || governanceHash(artifact) != governanceOwnedArtifactSHA {
+		return nil, fmt.Errorf("current package bytes differ from original qualified worker")
+	}
 	lease, err := governanceAcquireOwnedArtifact(artifact, store)
 	if err != nil {
-		return nil, err
+		return nil, &governanceOwnedCapabilityUnavailable{err}
 	}
 	started := false
 	defer func() {
@@ -100,7 +108,7 @@ func governanceNewOwnedProcessWithin(artifact []byte, store string) (*governance
 	if err = cmd.Start(); err != nil {
 		cancel()
 		input.Close()
-		return nil, err
+		return nil, &governanceOwnedCapabilityUnavailable{err}
 	}
 	afterStart := time.Now()
 	started = true
@@ -198,6 +206,10 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 	if session.genericProducer == nil || session.genericProducer.closed.Load() {
 		session.genericProducer, err = session.startOwnedGenericProcess(artifact)
 		if err != nil {
+			var unavailable *governanceOwnedCapabilityUnavailable
+			if errors.As(err, &unavailable) {
+				return map[string]any{"status": "owned-unavailable", "token": params.Token, "reason": "runtime-artifact-unavailable"}, nil
+			}
 			return nil, err
 		}
 	}

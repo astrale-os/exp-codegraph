@@ -94,18 +94,20 @@ type governanceCapturedBytes struct {
 }
 
 type governanceCapture struct {
+	packageCoordinates governancePackageCoordinateAuthority
+
 	ownedGenericArtifact *governanceOwnedArtifactLease
-	byteCells map[string]governanceCapturedBytes
-	ticket    governanceCaptureTicket
+	byteCells            map[string]governanceCapturedBytes
+	ticket               governanceCaptureTicket
 
 	ownedGenericRows          map[governanceProbeKey]governanceProbeObservation
 	ownedGenericOwner         *governanceOwnedOwner
 	ownedGenericProducerTrace []governanceOwnedPhysicalPair
 	ownedGenericBytes         map[string][]byte
-	probeObservations  map[governanceProbeKey]string
-	probeInconsistent  bool
-	compilerAssertions []*governanceCompilerReadAssertions
-	typeCacheLeases    []*governanceTypeCacheLease
+	probeObservations         map[governanceProbeKey]string
+	probeInconsistent         bool
+	compilerAssertions        []*governanceCompilerReadAssertions
+	typeCacheLeases           []*governanceTypeCacheLease
 
 	observations map[string]governanceObservation
 	compiler     *compilerInputFS
@@ -260,7 +262,7 @@ func (c *governanceCapture) canonicalCertificate() string {
 // This proves replay equality of all observed operations, not a filesystem-wide
 // atomic transaction or immunity to an edit after the barrier has returned.
 func (c *governanceCapture) Verify() (bool, error) {
-	return c.verifyWithin(&governanceBarrierReads{})
+	return governanceVerifyPublication([]*governanceCapture{c})
 }
 
 func (c *governanceCapture) verifyWithin(reads *governanceBarrierReads) (bool, error) {
@@ -269,7 +271,7 @@ func (c *governanceCapture) verifyWithin(reads *governanceBarrierReads) (bool, e
 	}
 	var replay *governanceTypeReplayWorld
 	if len(c.compilerAssertions)+len(c.typeCacheLeases) > 0 {
-		replay = &governanceTypeReplayWorld{disk: reads.compilerDisk(c.compiler.disk), reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
+		replay = reads.compilerReplay(c.compiler.disk)
 	}
 	for _, receipt := range c.compilerAssertions {
 		if !receipt.verifyBarrierWorld(replay) {

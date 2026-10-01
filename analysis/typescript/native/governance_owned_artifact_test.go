@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -194,5 +195,134 @@ func TestOwnedArtifactRetirementDoesNotFollowForeignSymlink(t *testing.T) {
 	}
 	if !lease.verify() {
 		t.Fatal("foreign capsule was not safely replaced")
+	}
+}
+
+func TestOwnedRuntimeStoreIsOwnedByUserCacheNotPackage(t *testing.T) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		t.Skip("platform user cache unavailable")
+	}
+	store, err := governanceOwnedRuntimeArtifactStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store != filepath.Join(cache, "astrale-codegraph", "owned-artifacts-v1") {
+		t.Fatal("runtime store lost its platform owner")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Dir(store) == filepath.Dir(executable) || store == filepath.Join(filepath.Dir(executable), ".owned-artifacts-v1") {
+		t.Fatal("immutable package owns mutable runtime state")
+	}
+}
+
+func TestOwnedUnavailableCacheCannotBecomeSourceAuthority(t *testing.T) {
+	raw := ownedArtifactTestBytes(t)
+	root := ownedArtifactTestStore(t)
+	if err := os.WriteFile(root, []byte("occupied cache entry"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	producer, err := governanceNewOwnedProcessWithin(raw, root)
+	var unavailable *governanceOwnedCapabilityUnavailable
+	if producer != nil || !errors.As(err, &unavailable) {
+		t.Fatalf("unavailable runtime cache was not classified: %v", err)
+	}
+	producer, err = governanceNewOwnedProcessWithin([]byte("forged source worker"), root)
+	if producer != nil || err == nil || errors.As(err, &unavailable) {
+		t.Fatal("source identity failure was silently normalized into runtime capability failure")
+	}
+	if actual, _ := os.ReadFile(root); string(actual) != "occupied cache entry" {
+		t.Fatal("foreign store entry changed")
+	}
+}
+
+func TestOwnedRuntimeNamespaceDoesNotFollowForeignEntry(t *testing.T) {
+	for _, mode := range []string{"symlink", "permissions", "file"} {
+		t.Run(mode, func(t *testing.T) {
+			cache := t.TempDir()
+			foreign := t.TempDir()
+			sentinel := filepath.Join(foreign, "sentinel")
+			if err := os.WriteFile(sentinel, []byte("foreign owner bytes"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(foreign, 0500); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { os.Chmod(foreign, 0700) })
+			before, _ := os.Stat(foreign)
+			namespace := filepath.Join(cache, "astrale-codegraph")
+			var err error
+			switch mode {
+			case "symlink":
+				err = os.Symlink(foreign, namespace)
+			case "permissions":
+				err = os.Mkdir(namespace, 0755)
+			case "file":
+				err = os.WriteFile(namespace, []byte("occupied"), 0600)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = governanceOwnedRuntimeArtifactStoreWithin(cache); err == nil {
+				t.Fatal("foreign runtime namespace accepted")
+			}
+			after, _ := os.Stat(foreign)
+			actual, err := os.ReadFile(sentinel)
+			if err != nil || string(actual) != "foreign owner bytes" || before.Mode() != after.Mode() || !os.SameFile(before, after) {
+				t.Fatal("foreign runtime namespace target changed")
+			}
+		})
+	}
+}
+func TestOwnedArtifactStoreAndOwnerRemainCurrentThroughSeal(t *testing.T) {
+	raw := ownedArtifactTestBytes(t)
+	for _, mode := range []string{"store-permissions", "store-rename", "store-symlink", "owner-permissions", "owner-rename"} {
+		t.Run(mode, func(t *testing.T) {
+			cache := ownedArtifactTestStore(t)
+			owner := filepath.Join(cache, "astrale-codegraph")
+			if err := os.MkdirAll(owner, 0700); err != nil {
+				t.Fatal(err)
+			}
+			store := filepath.Join(owner, "owned-artifacts-v1")
+			lease, err := governanceAcquireOwnedArtifact(raw, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.close()
+			switch mode {
+			case "store-permissions":
+				err = os.Chmod(store, 0755)
+			case "store-rename":
+				err = os.Rename(store, store+".old")
+				if err == nil {
+					err = os.Mkdir(store, 0700)
+				}
+			case "store-symlink":
+				err = os.Rename(store, store+".old")
+				if err == nil {
+					err = os.Symlink(store+".old", store)
+				}
+			case "owner-permissions":
+				err = os.Chmod(owner, 0755)
+			case "owner-rename":
+				err = os.Rename(owner, owner+".old")
+				if err == nil {
+					err = os.Mkdir(owner, 0700)
+				}
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if lease.verify() {
+				t.Fatal("changed runtime owner sealed artifact")
+			}
+			capture := &governanceCapture{ownedGenericArtifact: lease}
+			if valid, _ := capture.Verify(); valid {
+				t.Fatal("changed runtime owner published capture")
+			}
+		})
 	}
 }

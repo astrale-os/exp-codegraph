@@ -19,12 +19,15 @@ const compilerObservationBufferBytes = 32 * 1024
 // Arbitrary/custom vfs.FS values retain the generic observation path.
 type authoredCompilerDisk struct {
 	shimvfs.FS
-	decoder shimvfs.FS
+	decoder         shimvfs.FS
+	originalFS      shimvfs.FS
+	originalDecoder shimvfs.FS
 }
 
 func newAuthoredCompilerDisk() *authoredCompilerDisk {
 	disk := shimosvfs.FS()
-	return &authoredCompilerDisk{FS: shimbundled.WrapFS(authoredSourceFS{FS: disk}), decoder: disk}
+	original := shimbundled.WrapFS(authoredSourceFS{FS: disk})
+	return &authoredCompilerDisk{FS: original, decoder: disk, originalFS: original, originalDecoder: disk}
 }
 
 type compilerInputObservation struct {

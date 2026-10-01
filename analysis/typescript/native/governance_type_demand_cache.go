@@ -40,6 +40,8 @@ type governanceTypeReplayWorld struct {
 	disk         vfs.FS
 	reads        map[string]compilerRawRead
 	observations map[compilerInputKey]string
+	mu           sync.Mutex
+	cells        map[compilerInputKey]*governanceFreshCompilerOperation
 }
 
 // Uncached replay I/O is batched once per capture; no worker touches compiler
@@ -78,10 +80,9 @@ func (world *governanceTypeReplayWorld) prepare(receipt *governanceTypeReceipt) 
 			defer workers.Done()
 			for index := range jobs {
 				if index < len(readPaths) {
-					text, present := world.disk.ReadFile(readPaths[index])
-					readValues[index] = compilerRawRead{text, present}
+					readValues[index] = world.readActual(readPaths[index])
 				} else {
-					values[index-len(readPaths)] = observeCompilerInput(world.disk, keys[index-len(readPaths)])
+					values[index-len(readPaths)] = world.observeActual(keys[index-len(readPaths)])
 				}
 			}
 		}()

@@ -61,7 +61,11 @@ func (c *governanceCapture) verifyCapturedOperations(reads *governanceBarrierRea
 						}
 						value = disk.readObservation(input.key.path, buffer)
 					} else {
-						value = observeCompilerInput(disk, input.key)
+						if governanceOriginalCompilerBarrierOwner(disk) {
+							value = reads.compilerReplay(disk).observeActual(input.key)
+						} else {
+							value = observeCompilerInput(disk, input.key)
+						}
 					}
 					results[index] = value == input.before
 				}

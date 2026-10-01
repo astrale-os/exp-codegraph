@@ -28,25 +28,70 @@ type controlFlowResult struct {
 	completion completeness
 }
 
+// The traversal observes block handles only for emptiness. It never reads the
+// graph, occurrence identities, or edge deduplication when deciding completion.
+// Keep that grammar shared: a new completion dependency belongs in this observer
+// contract rather than in a second classifier.
+type controlFlowObserver interface {
+	boundary(string)
+	block(*shimast.Node) string
+	evidence(*shimast.Node) string
+	addEdge(from, to, kind, evidence string)
+}
+
 type controlFlowBuilder struct {
-	body        *bodyBuilder
-	blocks      map[string]controlFlowBlock
-	blockOrder  []string
-	edges       []controlFlowEdge
-	edgeSeen    map[string]bool
-	nodeBlocks  map[*shimast.Node]string
+	controlFlowObserver
+	file        *shimast.SourceFile
 	limitations map[string]any
 }
 
+type controlFlowMaterializer struct {
+	body       *bodyBuilder
+	blocks     map[string]controlFlowBlock
+	blockOrder []string
+	edges      []controlFlowEdge
+	edgeSeen   map[string]bool
+	nodeBlocks map[*shimast.Node]string
+}
+
+// Nonempty handles preserve the traversal's entry/continue-target predicates.
+// Repeated handles are safe only because completion never observes identity or
+// membership in the graph. No occurrence or graph allocation is performed here.
+type controlFlowCompletionObserver struct{}
+
+func (controlFlowCompletionObserver) boundary(string)                        {}
+func (controlFlowCompletionObserver) block(*shimast.Node) string             { return "statement" }
+func (controlFlowCompletionObserver) evidence(*shimast.Node) string          { return "" }
+func (controlFlowCompletionObserver) addEdge(string, string, string, string) {}
+
 func buildControlFlow(body *bodyBuilder) controlFlowResult {
-	builder := &controlFlowBuilder{
+	graph := &controlFlowMaterializer{
 		body: body, blocks: map[string]controlFlowBlock{}, edgeSeen: map[string]bool{},
-		nodeBlocks:  map[*shimast.Node]string{},
+		nodeBlocks: map[*shimast.Node]string{},
+	}
+	completion := runControlFlow(body.file, body.body, graph)
+	graph.assignOccurrences()
+	blocks := make([]controlFlowBlock, 0, len(graph.blockOrder))
+	for _, id := range graph.blockOrder {
+		blocks = append(blocks, graph.blocks[id])
+	}
+	return controlFlowResult{blocks: blocks, edges: graph.edges, completion: completion}
+}
+
+// The caller supplies its current original AST; this projection neither parses
+// sources nor substitutes a different compiler grammar or ownership universe.
+func buildControlFlowCompletion(file *shimast.SourceFile, body *shimast.Node) completeness {
+	return runControlFlow(file, body, controlFlowCompletionObserver{})
+}
+
+func runControlFlow(file *shimast.SourceFile, body *shimast.Node, observer controlFlowObserver) completeness {
+	builder := &controlFlowBuilder{
+		controlFlowObserver: observer, file: file,
 		limitations: map[string]any{},
 	}
-	builder.addBlock(controlFlowBlock{ID: "entry", Occurrences: []string{}})
-	fragment := builder.statement(body.body, flowContext{})
-	builder.addBlock(controlFlowBlock{ID: "exit", Occurrences: []string{}})
+	builder.boundary("entry")
+	fragment := builder.statement(body, flowContext{})
+	builder.boundary("exit")
 	if fragment.entry == "" {
 		builder.addEdge("entry", "exit", "fallthrough", "")
 	} else {
@@ -59,12 +104,7 @@ func buildControlFlow(body *bodyBuilder) controlFlowResult {
 			builder.limitations["unresolvedBreak"] = true
 		}
 	}
-	builder.findExpressionLimitations(body.body)
-	builder.assignOccurrences()
-	blocks := make([]controlFlowBlock, 0, len(builder.blockOrder))
-	for _, id := range builder.blockOrder {
-		blocks = append(blocks, builder.blocks[id])
-	}
+	builder.findExpressionLimitations(body)
 	completion := complete()
 	if len(builder.limitations) != 0 {
 		codes := make([]string, 0, len(builder.limitations))
@@ -82,7 +122,7 @@ func buildControlFlow(body *bodyBuilder) controlFlowResult {
 		}
 		completion = completeness{Kind: "partial", Reasons: reasons}
 	}
-	return controlFlowResult{blocks: blocks, edges: builder.edges, completion: completion}
+	return completion
 }
 
 func (b *controlFlowBuilder) statement(node *shimast.Node, context flowContext) flowFragment {
@@ -91,7 +131,7 @@ func (b *controlFlowBuilder) statement(node *shimast.Node, context flowContext) 
 	}
 	switch node.Kind {
 	case shimast.KindSourceFile:
-		return b.sequence(b.body.file.Statements.Nodes, context)
+		return b.sequence(b.file.Statements.Nodes, context)
 	case shimast.KindBlock:
 		block := node.AsBlock()
 		if block.Statements == nil {
@@ -100,11 +140,11 @@ func (b *controlFlowBuilder) statement(node *shimast.Node, context flowContext) 
 		return b.sequence(block.Statements.Nodes, context)
 	case shimast.KindReturnStatement:
 		id := b.block(node)
-		b.addEdge(id, "exit", "return", b.body.occurrence[node])
+		b.addEdge(id, "exit", "return", b.evidence(node))
 		return flowFragment{entry: id, exits: []flowExit{}, breaks: []flowExit{}}
 	case shimast.KindThrowStatement:
 		id := b.block(node)
-		b.addEdge(id, "exit", "exception", b.body.occurrence[node])
+		b.addEdge(id, "exit", "exception", b.evidence(node))
 		return flowFragment{entry: id, exits: []flowExit{}, breaks: []flowExit{}}
 	case shimast.KindIfStatement:
 		return b.ifStatement(node, context)
@@ -117,7 +157,7 @@ func (b *controlFlowBuilder) statement(node *shimast.Node, context flowContext) 
 		id := b.block(node)
 		return flowFragment{
 			entry: id, exits: []flowExit{},
-			breaks: []flowExit{{block: id, kind: "fallthrough", evidence: b.body.occurrence[node]}},
+			breaks: []flowExit{{block: id, kind: "fallthrough", evidence: b.evidence(node)}},
 		}
 	case shimast.KindContinueStatement:
 		id := b.block(node)
@@ -125,7 +165,7 @@ func (b *controlFlowBuilder) statement(node *shimast.Node, context flowContext) 
 			b.limitations["CFG_UNRESOLVED_CONTINUE"] = true
 			return flowFragment{entry: id, exits: []flowExit{{block: id, kind: "fallthrough"}}}
 		}
-		b.addEdge(id, context.continueTarget, "loop", b.body.occurrence[node])
+		b.addEdge(id, context.continueTarget, "loop", b.evidence(node))
 		return flowFragment{entry: id, exits: []flowExit{}, breaks: []flowExit{}}
 	case shimast.KindLabeledStatement:
 		b.limitations["CFG_LABEL_PARTIAL"] = true
@@ -140,7 +180,7 @@ func (b *controlFlowBuilder) statement(node *shimast.Node, context flowContext) 
 	id := b.block(node)
 	return flowFragment{
 		entry:  id,
-		exits:  []flowExit{{block: id, kind: "fallthrough", evidence: b.body.occurrence[node]}},
+		exits:  []flowExit{{block: id, kind: "fallthrough", evidence: b.evidence(node)}},
 		breaks: []flowExit{},
 	}
 }
@@ -180,7 +220,7 @@ func (b *controlFlowBuilder) ifStatement(node *shimast.Node, context flowContext
 	exits := []flowExit{}
 	breaks := append([]flowExit{}, thenFlow.breaks...)
 	breaks = append(breaks, elseFlow.breaks...)
-	evidence := b.body.occurrence[node]
+	evidence := b.evidence(node)
 	if thenFlow.entry == "" {
 		exits = append(exits, flowExit{block: condition, kind: "true", evidence: evidence})
 	} else {
@@ -208,7 +248,7 @@ func (b *controlFlowBuilder) preTestLoop(node *shimast.Node, context flowContext
 		statement = node.AsForInOrOfStatement().Statement
 	}
 	body := b.statement(statement, flowContext{continueTarget: condition})
-	evidence := b.body.occurrence[node]
+	evidence := b.evidence(node)
 	if body.entry == "" {
 		b.addEdge(condition, condition, "loop", evidence)
 	} else {
@@ -227,7 +267,7 @@ func (b *controlFlowBuilder) doLoop(node *shimast.Node, context flowContext) flo
 	condition := b.block(node)
 	statement := node.AsDoStatement().Statement
 	body := b.statement(statement, flowContext{continueTarget: condition})
-	evidence := b.body.occurrence[node]
+	evidence := b.evidence(node)
 	entry := condition
 	if body.entry != "" {
 		entry = body.entry
@@ -244,7 +284,15 @@ func (b *controlFlowBuilder) doLoop(node *shimast.Node, context flowContext) flo
 	return flowFragment{entry: entry, exits: exits, breaks: []flowExit{}}
 }
 
-func (b *controlFlowBuilder) block(node *shimast.Node) string {
+func (b *controlFlowMaterializer) boundary(id string) {
+	b.addBlock(controlFlowBlock{ID: id, Occurrences: []string{}})
+}
+
+func (b *controlFlowMaterializer) evidence(node *shimast.Node) string {
+	return b.body.occurrence[node]
+}
+
+func (b *controlFlowMaterializer) block(node *shimast.Node) string {
 	occurrence := b.body.occurrence[node]
 	if occurrence == "" {
 		occurrence = b.body.addOccurrence(node, "statement")
@@ -255,7 +303,7 @@ func (b *controlFlowBuilder) block(node *shimast.Node) string {
 	return id
 }
 
-func (b *controlFlowBuilder) assignOccurrences() {
+func (b *controlFlowMaterializer) assignOccurrences() {
 	assigned := map[string][]bodyOccurrence{}
 	for node, occurrence := range b.body.occurrence {
 		block := ""
@@ -292,7 +340,7 @@ func (b *controlFlowBuilder) assignOccurrences() {
 	}
 }
 
-func (b *controlFlowBuilder) addBlock(block controlFlowBlock) {
+func (b *controlFlowMaterializer) addBlock(block controlFlowBlock) {
 	if _, exists := b.blocks[block.ID]; exists {
 		return
 	}
@@ -300,7 +348,7 @@ func (b *controlFlowBuilder) addBlock(block controlFlowBlock) {
 	b.blockOrder = append(b.blockOrder, block.ID)
 }
 
-func (b *controlFlowBuilder) addEdge(from, to, kind, evidence string) {
+func (b *controlFlowMaterializer) addEdge(from, to, kind, evidence string) {
 	key := from + "\x00" + to + "\x00" + kind + "\x00" + evidence
 	if b.edgeSeen[key] {
 		return

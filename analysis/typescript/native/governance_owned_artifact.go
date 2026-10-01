@@ -19,6 +19,10 @@ type governanceOwnedArtifactLease struct {
 	file          *os.File
 	fileInfo      os.FileInfo
 	directoryInfo os.FileInfo
+	storePath     string
+	storeInfo     os.FileInfo
+	ownerPath     string
+	ownerInfo     os.FileInfo
 	expected      []byte
 	once          sync.Once
 	mu            sync.Mutex
@@ -31,7 +35,7 @@ func (l *governanceOwnedArtifactLease) close() {
 func (l *governanceOwnedArtifactLease) verify() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.closed {
+	if l.closed || !l.verifyOwner() {
 		return false
 	}
 	now, err := os.Lstat(l.path)
@@ -48,7 +52,19 @@ func (l *governanceOwnedArtifactLease) verify() bool {
 		return false
 	}
 	after, err := os.Lstat(l.path)
-	return err == nil && os.SameFile(after, l.fileInfo) && after.Mode().Perm() == 0500 && after.ModTime().Equal(l.fileInfo.ModTime()) && after.Size() == l.fileInfo.Size()
+	return err == nil && l.verifyOwner() && os.SameFile(after, l.fileInfo) && after.Mode().Perm() == 0500 && after.ModTime().Equal(l.fileInfo.ModTime()) && after.Size() == l.fileInfo.Size()
+}
+func (l *governanceOwnedArtifactLease) verifyOwner() bool {
+	for _, entry := range []struct {
+		path string
+		info os.FileInfo
+	}{{l.storePath, l.storeInfo}, {l.ownerPath, l.ownerInfo}} {
+		current, err := os.Lstat(entry.path)
+		if err != nil || !current.IsDir() || !os.SameFile(current, entry.info) || current.Mode().Perm() != entry.info.Mode().Perm() {
+			return false
+		}
+	}
+	return true
 }
 func governanceOpenOwnedArtifact(path string, artifact []byte) (*governanceOwnedArtifactLease, error) {
 	before, err := os.Lstat(path)
@@ -65,6 +81,16 @@ func governanceOpenOwnedArtifact(path string, artifact []byte) (*governanceOwned
 	if !directory.IsDir() || directory.Mode().Perm() != 0500 {
 		return nil, fmt.Errorf("private artifact capsule is not isolated")
 	}
+	storePath := filepath.Dir(filepath.Dir(path))
+	storeInfo, err := os.Lstat(storePath)
+	if err != nil || !storeInfo.IsDir() || storeInfo.Mode().Perm() != 0700 {
+		return nil, fmt.Errorf("private artifact store is not isolated")
+	}
+	ownerPath := filepath.Dir(storePath)
+	ownerInfo, err := os.Lstat(ownerPath)
+	if err != nil || !ownerInfo.IsDir() {
+		return nil, fmt.Errorf("private artifact store owner is not a directory")
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -74,7 +100,7 @@ func governanceOpenOwnedArtifact(path string, artifact []byte) (*governanceOwned
 		file.Close()
 		return nil, fmt.Errorf("private artifact inode changed while acquiring")
 	}
-	lease := &governanceOwnedArtifactLease{path: path, file: file, fileInfo: current, directoryInfo: directory, expected: append([]byte(nil), artifact...)}
+	lease := &governanceOwnedArtifactLease{path: path, file: file, fileInfo: current, directoryInfo: directory, storePath: storePath, storeInfo: storeInfo, ownerPath: ownerPath, ownerInfo: ownerInfo, expected: append([]byte(nil), artifact...)}
 	if !lease.verify() {
 		lease.close()
 		return nil, fmt.Errorf("private artifact bytes or inode differ")
@@ -147,3 +173,43 @@ func governanceAcquireOwnedArtifact(artifact []byte, store string) (*governanceO
 	}
 	return nil, fmt.Errorf("private artifact publication did not converge")
 }
+
+// The immutable package supplies actual bytes. The user's runtime cache owns
+// executable capsules; package directories can remain entirely read-only.
+// No RPC parameter, project path or artifact descriptor chooses this store.
+func governanceOwnedRuntimeArtifactStore() (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(cache) {
+		return "", fmt.Errorf("user runtime cache is not absolute")
+	}
+	return governanceOwnedRuntimeArtifactStoreWithin(cache)
+}
+func governanceOwnedRuntimeArtifactStoreWithin(cache string) (string, error) {
+	if !filepath.IsAbs(cache) {
+		return "", fmt.Errorf("user runtime cache is not absolute")
+	}
+	if err := os.MkdirAll(cache, 0700); err != nil {
+		return "", err
+	}
+	// Create only our entry, then inspect without following a foreign symlink.
+	// Existing user cache roots retain their platform permissions.
+	owner := filepath.Join(cache, "astrale-codegraph")
+	if err := os.Mkdir(owner, 0700); err != nil && !os.IsExist(err) {
+		return "", err
+	}
+	info, err := os.Lstat(owner)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0700 {
+		return "", fmt.Errorf("runtime artifact namespace is not privately owned")
+	}
+	return filepath.Join(owner, "owned-artifacts-v1"), nil
+}
+
+type governanceOwnedCapabilityUnavailable struct{ cause error }
+
+func (e *governanceOwnedCapabilityUnavailable) Error() string {
+	return fmt.Sprintf("owned runtime artifact capability unavailable: %v", e.cause)
+}
+func (e *governanceOwnedCapabilityUnavailable) Unwrap() error { return e.cause }

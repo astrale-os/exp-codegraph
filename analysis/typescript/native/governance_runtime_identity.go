@@ -2,7 +2,6 @@ package main
 
 import (
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
-	"encoding/json"
 	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	core "github.com/microsoft/typescript-go/shim/core"
@@ -49,22 +48,19 @@ func governancePortableUniversePath(project *governedProject, path string) (stri
 		if inside && !pathContains(project.Root, directory) {
 			break
 		}
-		bytes, err := project.capture.read(filepath.Join(directory, "package.json"))
-		if err == nil {
-			var document struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(bytes, &document) != nil {
+		manifest := project.capture.packageManifestProduct(filepath.Join(directory, "package.json"))
+		if manifest.readError == nil {
+			if manifest.parseError != nil {
 				break
 			}
-			if document.Name != "" {
-				coordinate := "package:" + document.Name
+			if manifest.name != "" {
+				coordinate := "package:" + manifest.name
 				if subpath, err := filepath.Rel(directory, path); err == nil && subpath != "." {
 					coordinate += "/" + filepath.ToSlash(subpath)
 				}
 				return coordinate, nil
 			}
-		} else if !os.IsNotExist(err) {
+		} else if !os.IsNotExist(manifest.readError) {
 			break
 		}
 		if inside && directory == project.Root {

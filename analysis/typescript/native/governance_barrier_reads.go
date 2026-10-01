@@ -19,9 +19,11 @@ type governanceBarrierRead struct {
 }
 
 type governanceBarrierReads struct {
-	mu     sync.Mutex
-	reads  map[string]*governanceBarrierRead
-	probes map[governanceProbeKey]*governanceBarrierProbe
+	mu            sync.Mutex
+	reads         map[string]*governanceBarrierRead
+	probes        map[governanceProbeKey]*governanceBarrierProbe
+	compilerWorld *governanceTypeReplayWorld
+	failedCapture *governanceCapture
 }
 
 type governanceBarrierProbe struct {
@@ -112,4 +114,23 @@ func (world *governanceBarrierReads) compilerDisk(disk shimvfs.FS) shimvfs.FS {
 		return disk
 	}
 	return &governanceBarrierCompilerDisk{FS: disk, owner: owner, world: world, reads: map[string]*governanceBarrierCompilerRead{}}
+}
+
+// A private constructor binds this contract to the original bundled/authored OS
+// adapter in this controller. Changing either delegate retires that contract.
+// Custom filesystems keep their original independent replay and order.
+func governanceOriginalCompilerBarrierOwner(disk shimvfs.FS) bool {
+	owner, ok := disk.(*authoredCompilerDisk)
+	return ok && owner.originalFS != nil && owner.originalDecoder != nil && owner.FS == owner.originalFS && owner.decoder == owner.originalDecoder
+}
+func (world *governanceBarrierReads) compilerReplay(disk shimvfs.FS) *governanceTypeReplayWorld {
+	if !governanceOriginalCompilerBarrierOwner(disk) {
+		return &governanceTypeReplayWorld{disk: world.compilerDisk(disk), reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
+	}
+	world.mu.Lock()
+	defer world.mu.Unlock()
+	if world.compilerWorld == nil {
+		world.compilerWorld = &governanceTypeReplayWorld{disk: world.compilerDisk(disk), reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
+	}
+	return world.compilerWorld
 }

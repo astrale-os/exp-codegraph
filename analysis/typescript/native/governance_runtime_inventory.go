@@ -91,13 +91,8 @@ func (owner *governanceRuntimeAuthority) Calls(paths []string) observabledecisio
 			return true
 		})
 		for _, body := range bodies {
-			builder := &bodyBuilder{file: source, body: body, occurrence: map[*ast.Node]string{}, occurrenceIndex: map[string]int{}}
-			walk(body, func(node *ast.Node) bool {
-				builder.occurrence[node] = governanceRuntimeNodeKey(source, node)
-				return true
-			})
-			flow := buildControlFlow(builder)
-			for _, raw := range flow.completion.Reasons {
+			completion := buildControlFlowCompletion(source, body)
+			for _, raw := range completion.Reasons {
 				reason, ok := raw.(map[string]any)
 				if !ok {
 					out.Known = false

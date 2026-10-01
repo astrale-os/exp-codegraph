@@ -2,7 +2,6 @@ package main
 
 import (
 	"astrale-typespec-v2-native-analysis/observabledecision"
-	"encoding/json"
 	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	checker "github.com/microsoft/typescript-go/shim/checker"
@@ -246,23 +245,20 @@ func governanceRuntimeDeclarationCoordinate(project *governedProject, path strin
 		if inside && !pathContains(project.Root, directory) {
 			break
 		}
-		content, err := project.capture.read(filepath.Join(directory, "package.json"))
-		if err == nil {
-			var document struct {
-				Name string `json:"name"`
-			}
-			if json.Unmarshal(content, &document) != nil {
+		manifest := project.capture.packageManifestProduct(filepath.Join(directory, "package.json"))
+		if manifest.readError == nil {
+			if manifest.parseError != nil {
 				break
 			}
-			if document.Name != "" {
+			if manifest.name != "" {
 				relative, err := filepath.Rel(directory, path)
 				if err != nil {
 					return "", err
 				}
-				return "package:" + document.Name + "/" + filepath.ToSlash(relative), nil
+				return "package:" + manifest.name + "/" + filepath.ToSlash(relative), nil
 			}
-		} else if !os.IsNotExist(err) {
-			return "", err
+		} else if !os.IsNotExist(manifest.readError) {
+			return "", manifest.readError
 		}
 		if inside && directory == project.Root {
 			break

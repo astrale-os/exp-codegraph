@@ -13,6 +13,8 @@ func TestOwnedGenericClientCannotConstructActualJournal(t *testing.T) {
 	session := &governanceSession{}
 	for _, proposal := range []map[string]any{
 		{"token": "forged", "journal": []any{}},
+		{"token": "forged", "cachePath": "/client/cache"},
+		{"token": "forged", "runtimeArtifactStore": "/client/cache"},
 		{"token": "forged", "observations": []any{}},
 		{"token": "forged", "artifactPath": "/client/worker"},
 		{"token": "forged", "owner": map[string]any{"instance": "client", "epoch": 1}},

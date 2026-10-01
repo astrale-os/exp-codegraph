@@ -456,38 +456,22 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 	}
 	defer session.discardProducts()
 	started := time.Now()
-	reads := &governanceBarrierReads{}
-	valid, err := state.Project.capture.verifyWithin(reads)
+	captures := []*governanceCapture{state.Project.capture}
+	captures = append(captures, state.JoinedCaptures...)
+	if state.ReplayExpected != nil {
+		captures = append(captures, state.ReplayExpected)
+	}
+	valid, err, publicationOwner := governanceVerifyPublicationOwner(captures)
 	if err != nil {
+		if state.ReplayExpected != nil && publicationOwner.failedCapture == state.ReplayExpected {
+			session.sealedDecisions = nil
+		}
 		return nil, err
 	}
 	if !valid {
 		session.programGeneration = nil
 		session.sealedDecisions = nil
 		return map[string]any{"status": "retry"}, nil
-	}
-	for _, capture := range state.JoinedCaptures {
-		valid, err = capture.verifyWithin(reads)
-		if err != nil {
-			return nil, err
-		}
-		if !valid {
-			session.programGeneration = nil
-			session.sealedDecisions = nil
-			return map[string]any{"status": "retry"}, nil
-		}
-	}
-	if state.ReplayExpected != nil {
-		valid, err = state.ReplayExpected.verifyWithin(reads)
-		if err != nil {
-			session.sealedDecisions = nil
-			return nil, err
-		}
-		if !valid {
-			session.programGeneration = nil
-			session.sealedDecisions = nil
-			return map[string]any{"status": "retry"}, nil
-		}
 	}
 	state.Project.stats.phase("final-uncached-seal", started)
 	// A replay keeps its complete old expected closure. A fresh evaluation
@@ -510,6 +494,8 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 	json.Unmarshal(state.Prepare.Options, &debug)
 	if debug.DebugPhaseCounters {
 		result["phaseCounters"] = state.Project.stats
+		result["publicationCompilerOperations"] = publicationOwner.compilerOperationCounts()
+		result["originalCompilerObligationSchedule"] = governanceOriginalCompilerSchedule(captures)
 	}
 	return result, nil
 }
