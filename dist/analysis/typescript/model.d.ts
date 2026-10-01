@@ -92,6 +92,14 @@ export interface TypeScriptBodyDemandEffect {
     readonly occurrence: OccurrenceId;
     readonly owner: SymbolId;
 }
+/** Complete callable shape captured independently of full control-flow/body rows. */
+export interface TypeScriptFunctionHeader {
+    readonly owner: SymbolId;
+    readonly span: SourceSpan;
+    /** Original resolved parameter identities, unique in traversal order; not syntax arity. */
+    readonly parameters: readonly SymbolId[];
+    readonly execution: 'sync' | 'async' | 'generator' | 'async-generator';
+}
 /** Complete global effect/callable authority, with explicitly scoped full body coverage. */
 export interface TypeScriptBodyDemandFacts {
     /** Explicit actual-read expansion mode; absent certificates retain conservative behavior. */
@@ -103,6 +111,8 @@ export interface TypeScriptBodyDemandFacts {
         readonly span: SourceSpan;
         readonly path: string;
         readonly materialized: boolean;
+        /** Complete current callable shape; only on function owners in a complete certificate. */
+        readonly header?: TypeScriptFunctionHeader;
         /** Original full body fact identity, available only for materialized owners. */
         readonly fact?: FactId;
     }[];

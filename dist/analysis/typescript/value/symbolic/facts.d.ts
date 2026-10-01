@@ -2,6 +2,7 @@ import type { FactId, OccurrenceId, SourceId, SymbolId } from '../../../identity
 import { type Completeness } from '../../../facts/index.ts';
 import type { AnalysisQuery, CapabilityStatus } from '../../../query/index.ts';
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts';
+import type { TypeScriptFunctionHeader } from '../../model.ts';
 import { type TypeScriptFact } from '../../facts/index.ts';
 import type { TypeScriptBodyDemandReceipt, ValueResult } from '../model.ts';
 import { CALL_SELECTION, CallSelection } from './selection.ts';
@@ -21,6 +22,7 @@ export interface ValueIndexRevision {
 export interface ValueIndex {
     readonly callsSelection?: CallSelection;
     readonly bodies: ReadonlyMap<SymbolId, Body>;
+    readonly headers?: ReadonlyMap<SymbolId, TypeScriptFunctionHeader>;
     readonly callableOwners: ReadonlySet<SymbolId>;
     readonly effectCompleteness?: Completeness;
     readonly occurrences: ReadonlyMap<OccurrenceId, BodyOccurrence>;
@@ -56,6 +58,7 @@ export declare class IndexedValues implements ValueIndex {
         readonly contributions: number;
     };
     readonly bodies: ValueIndex['bodies'];
+    readonly headers: ReadonlyMap<SymbolId, TypeScriptFunctionHeader>;
     readonly callableOwners: ValueIndex['callableOwners'];
     readonly effectCompleteness: Completeness | undefined;
     readonly occurrences: ValueIndex['occurrences'];

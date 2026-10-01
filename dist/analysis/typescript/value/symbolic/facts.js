@@ -136,6 +136,7 @@ export class IndexedValues {
     callsSelection;
     work;
     bodies;
+    headers;
     callableOwners;
     effectCompleteness;
     occurrences;
@@ -180,6 +181,7 @@ export class IndexedValues {
         this.callsSelection = revision.selection === CALL_SELECTION ? selection : undefined;
         this.work = Object.freeze(work);
         this.bodies = columns.bodies;
+        this.headers = columns.headers;
         this.callableOwners = keysSet(fallbackMap(columns.bodies, columns.owners));
         this.effectCompleteness = effectCompleteness;
         this.occurrences = fallbackMap(projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row)), columns.witnesses);
@@ -198,6 +200,8 @@ export class IndexedValues {
         this.aliases = aliasSources;
         this.fingerprints = { get: (key) => this.fingerprint(key) };
         this.evidence = { get: (key) => {
+                if (key.startsWith('header:'))
+                    return columns.headers.evidence(key.slice(7), factEvidence);
                 if (key.startsWith('function:'))
                     return columns.bodies.evidence(key.slice(9), factEvidence);
                 if (key.startsWith('occurrence:'))
@@ -213,7 +217,7 @@ export class IndexedValues {
     }
     static empty() {
         const columns = {
-            bodies: new Column(), owners: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), ordering: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
+            bodies: new Column(), owners: new Column(), headers: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), ordering: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
             symbols: new Column(), sources: new Column(),
             initializers: new Column(undefined, flatten), mutations: new Column(undefined, flatten), escapes: new Column(undefined, flatten),
             aliases: new Column(undefined, flatten), dependents: new Column(undefined, flatten),
@@ -230,7 +234,9 @@ export class IndexedValues {
         if (key.startsWith('occurrence:')) {
             const id = key.slice(11);
             const witness = this.#columns.witnesses.get(id);
-            return !this.#columns.occurrences.has(id) && witness ? [{ owner: witness.owner, kind: 'body' }] : [];
+            const header = witness?.symbol && this.headers.get(witness.symbol);
+            const headerWitness = header && FUNCTION_SYNTAX.has(witness.syntax) && sameSpan(header.span, witness.span);
+            return !this.#columns.occurrences.has(id) && witness && !headerWitness ? [{ owner: witness.owner, kind: 'body' }] : [];
         }
         const owners = new Set(this.#columns.ordering.get(key));
         if (owners.size <= 1)
@@ -270,6 +276,8 @@ export class IndexedValues {
         return this.#witnesses.get(canonical) ?? Object.freeze({ key: canonical, fingerprint: this.fingerprint(canonical) });
     }
     fingerprint(key) {
+        if (key.startsWith('header:'))
+            return this.#columns.headers.fingerprint(key.slice(7), this.#hashes);
         if (key.startsWith('function:'))
             return this.#columns.bodies.fingerprint(key.slice(9), this.#hashes);
         if (key.startsWith('occurrence:'))
@@ -333,7 +341,19 @@ export class IndexedValues {
         const inventory = columns.demands.get('global');
         for (const fact of inventory ?? [])
             for (const owner of fact.payload.owners) {
-                if (owner.fact && columns.bodies.get(owner.owner)?.id !== owner.fact) {
+                const body = columns.bodies.get(owner.owner);
+                const header = columns.headers.get(owner.owner);
+                const source = header && columns.sources.get(header.span.source);
+                if (header && source && (source.payload.revision !== header.span.revision || source.payload.logicalPath !== owner.path)) {
+                    throw new TypeScriptFactContractError('body-demand', fact.id, ['header-source-mismatch']);
+                }
+                if (header && body && (header.owner !== body.payload.body.function || body.payload.body.scope === 'module' ||
+                    !body.provenance.evidence.some((span) => sameSpan(header.span, span)) ||
+                    header.execution !== body.payload.body.execution ||
+                    JSON.stringify(header.parameters) !== JSON.stringify(body.payload.body.parameters))) {
+                    throw new TypeScriptFactContractError('body-demand', fact.id, ['header-body-mismatch']);
+                }
+                if (owner.fact && body?.id !== owner.fact) {
                     throw new TypeScriptFactContractError('body-demand', fact.id, ['materialized-owner-fact']);
                 }
             }
@@ -379,7 +399,8 @@ export class IndexedValues {
         const aggregateEvidence = this.#aggregateEvidence.edit();
         const mutationOwners = this.#mutationOwners.edit();
         const aliasSources = this.#aliasSources.edit();
-        const directFingerprint = (key) => key.startsWith('function:')
+        const directFingerprint = (key) => key.startsWith('header:')
+            ? nextColumns.headers.fingerprint(key.slice(7), nextHashes) : key.startsWith('function:')
             ? nextColumns.bodies.fingerprint(key.slice(9), nextHashes) : key.startsWith('occurrence:')
             ? nextColumns.occurrences.fingerprint(key.slice(11), nextHashes) ?? nextColumns.witnesses.fingerprint(key.slice(11), nextHashes) : key.startsWith('symbol:')
             ? nextColumns.symbols.fingerprint(key.slice(7), nextHashes) : key.startsWith('owner:')
@@ -509,6 +530,12 @@ function primary(columns, fact, add, touched, inputs) {
         for (const member of fact.payload.owners) {
             apply(columns.owners, member.owner, member);
             touched.add(`owner:${member.owner}`);
+            if (member.header && fact.completeness.kind === 'complete' && fact.payload.completeness.kind === 'complete') {
+                const header = Object.freeze({ ...member.header, span: Object.freeze({ ...member.header.span }),
+                    parameters: Object.freeze([...member.header.parameters]) });
+                apply(columns.headers, member.owner, header);
+                touched.add(`header:${member.owner}`);
+            }
         }
         for (const witness of fact.payload.witnesses) {
             apply(columns.witnesses, witness.id, witness);
@@ -835,4 +862,8 @@ function deriveDemand(fact) {
     for (const row of fact.payload.aliases)
         append(ordering, `aliases:${row.symbol}`, row.owner);
     return { initializers, mutations, escapes, aliases, inputs: new Set(), ordering };
+}
+const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration']);
+function sameSpan(left, right) {
+    return left.source === right.source && left.revision === right.revision && left.start === right.start && left.end === right.end;
 }
