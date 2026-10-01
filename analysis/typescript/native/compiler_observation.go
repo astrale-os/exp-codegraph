@@ -17,10 +17,14 @@ const compilerObservationBufferBytes = 32 * 1024
 
 // This private owner composes exactly the authored, uncached OS filesystem.
 // Arbitrary/custom vfs.FS values retain the generic observation path.
-type authoredCompilerDisk struct{ shimvfs.FS }
+type authoredCompilerDisk struct {
+	shimvfs.FS
+	decoder shimvfs.FS
+}
 
 func newAuthoredCompilerDisk() *authoredCompilerDisk {
-	return &authoredCompilerDisk{FS: shimbundled.WrapFS(authoredSourceFS{FS: shimosvfs.FS()})}
+	disk := shimosvfs.FS()
+	return &authoredCompilerDisk{FS: shimbundled.WrapFS(authoredSourceFS{FS: disk}), decoder: disk}
 }
 
 type compilerInputObservation struct {
@@ -118,7 +122,11 @@ func (disk *authoredCompilerDisk) readObservation(path string, buffer []byte) st
 		// UTF-16 preserves the exact existing fallback decoder, including malformed
 		// and odd-length input. Its strings are deliberately not the fast path.
 		file.Close()
-		return observeCompilerInput(disk.FS, compilerInputKey{path: path, kind: inputRead})
+		// The authored reader delegates straight to this decoder after its first
+		// UTF-16 read. Retain that same second operation, without re-entering the
+		// authored wrapper and reading the file a third time.
+		content, ok := disk.decoder.ReadFile(path)
+		return inputText(content, ok)
 	}
 	digest := sha256.New()
 	digest.Write(buffer[:length])

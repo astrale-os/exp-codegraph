@@ -342,3 +342,38 @@ func TestCompilerOwnedObservationWorkersAreBoundedAndJoined(t *testing.T) {
 		t.Fatalf("worker ownership changed: active=%d calls=%d maximum=%d", gated.active.Load(), gated.calls.Load(), gated.maximum.Load())
 	}
 }
+
+// UTF-16 must retain the authored reader's direct second decoder operation.
+// Re-entering its wrapper adds another OS read and can change which encoding
+// owns the result when the file is replaced between independent reads.
+type compilerCountingDecoderFS struct {
+	shimvfs.FS
+	calls       int
+	replacePath string
+	replacement []byte
+}
+
+func (fs *compilerCountingDecoderFS) ReadFile(path string) (string, bool) {
+	fs.calls++
+	if path == fs.replacePath {
+		if err := os.WriteFile(path, fs.replacement, 0644); err != nil {
+			panic(err)
+		}
+	}
+	return fs.FS.ReadFile(path)
+}
+func TestCompilerUTF16ObservationRetainsDirectDecoderOperation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.ts")
+	if err := os.WriteFile(path, compilerObservationUTF16("export const value='é'", binary.LittleEndian), 0644); err != nil {
+		t.Fatal(err)
+	}
+	disk := newAuthoredCompilerDisk()
+	replacement := append([]byte{0xef, 0xbb, 0xbf}, []byte("export const value='changed'")...)
+	decoder := &compilerCountingDecoderFS{FS: disk.decoder, replacePath: path, replacement: replacement}
+	disk.decoder = decoder
+	actual := disk.readObservation(path, make([]byte, compilerObservationBufferBytes))
+	decoded, ok := decoder.FS.ReadFile(path)
+	if actual != inputText(decoded, ok) || decoder.calls != 1 {
+		t.Fatalf("UTF16 decoder operation changed: actual=%s expected=%s calls=%d", actual, inputText(decoded, ok), decoder.calls)
+	}
+}
