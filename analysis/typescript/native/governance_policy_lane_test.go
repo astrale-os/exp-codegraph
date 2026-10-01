@@ -58,6 +58,10 @@ func TestPolicyLaneJoinOwnsIndependentActualCapturesAndWholeBarrier(t *testing.T
 		t.Fatal(err)
 	}
 	genericOwner := session.productsSession.Project.capture
+	policyBase := map[governanceProbeKey]string{}
+	for key, value := range genericOwner.probeObservations {
+		policyBase[key] = value
+	}
 	genericOwner.probe(governanceProbeRequest{ID: "negative", Kind: "read-bytes", Path: filepath.Join(root, "missing.ignore")})
 	raw, _ = json.Marshal(map[string]any{"token": early["token"], "kind": "generic", "engine": engine, "inputCertificate": session.productsSession.currentCertificate(), "generic": governanceGenericProduct{Status: "complete", Files: 1, Diagnostics: json.RawMessage(`[]`)}})
 	response, err := session.continueGeneric(raw)
@@ -69,8 +73,13 @@ func TestPolicyLaneJoinOwnsIndependentActualCapturesAndWholeBarrier(t *testing.T
 	if out["status"] != "products" || session.policyLane != nil || state == nil || len(state.JoinedCaptures) != 1 || state.JoinedCaptures[0] != genericOwner || state.Project.capture == genericOwner {
 		t.Fatalf("separate actual owners not joined: %#v", out)
 	}
-	if len(state.Project.capture.probeObservations) != 0 || len(genericOwner.probeObservations) != 1 {
-		t.Fatal("joining merged lane maps")
+	if len(state.Project.capture.probeObservations) != len(policyBase) || len(genericOwner.probeObservations) != len(policyBase)+1 {
+		t.Fatal("joining merged lane-specific maps")
+	}
+	for key, value := range policyBase {
+		if state.Project.capture.probeObservations[key] != value || genericOwner.probeObservations[key] != value {
+			t.Fatal("policy base lost its exact original operation fingerprint")
+		}
 	}
 	governanceWrite(t, root, "missing.ignore", "now exists")
 	response, err = session.sealProducts(state.Token, state.ProductsDigest, strings.Repeat("b", 64))
@@ -170,6 +179,10 @@ func TestPolicyLaneActualCompilerOwnerRemainsPrivateDuringGenericProbes(t *testi
 	session, early := governanceLaneFixture(t, true)
 	defer session.discardProducts()
 	genericOwner := session.productsSession.Project.capture
+	policyBase := map[governanceProbeKey]string{}
+	for key, value := range genericOwner.probeObservations {
+		policyBase[key] = value
+	}
 	for index := 0; index < 40; index++ {
 		raw, _ := json.Marshal(map[string]any{"token": early["token"], "requirements": []governanceProbeRequest{{ID: fmt.Sprint(index), Kind: "read-bytes", Path: filepath.Join(session.root, fmt.Sprint(index)+".ignore")}}})
 		if _, err := session.captureProbes(raw); err != nil {
@@ -182,11 +195,16 @@ func TestPolicyLaneActualCompilerOwnerRemainsPrivateDuringGenericProbes(t *testi
 		t.Fatal(err)
 	}
 	state := session.productsSession
-	if response.(map[string]any)["status"] != "generic" || state.Project.typeOwner == nil || state.Project.typeOwner.program == nil || state.Project.capture == genericOwner || len(state.Project.capture.probeObservations) != 0 {
+	if response.(map[string]any)["status"] != "generic" || state.Project.typeOwner == nil || state.Project.typeOwner.program == nil || state.Project.capture == genericOwner || len(state.Project.capture.probeObservations) != len(policyBase) {
 		t.Fatalf("actual compiler authority leaked into generic actor: %#v", response)
 	}
-	if len(genericOwner.probeObservations) != 40 || state.GenericProduct != nil || len(state.JoinedCaptures) != 0 {
+	if len(genericOwner.probeObservations) != len(policyBase)+40 || state.GenericProduct != nil || len(state.JoinedCaptures) != 0 {
 		t.Fatal("retired speculative captures became report inputs")
+	}
+	for key, value := range policyBase {
+		if state.Project.capture.probeObservations[key] != value {
+			t.Fatal("retirement lost exact configuration topology authority")
+		}
 	}
 }
 
