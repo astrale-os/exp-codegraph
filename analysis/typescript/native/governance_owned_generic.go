@@ -135,6 +135,17 @@ type governanceOwnedRow struct {
 func governanceOwnedKey(r governanceProbeRequest) governanceProbeKey {
 	return governanceProbeKey{Path: r.Path, Kind: r.Kind, FollowLinks: r.FollowLinks}
 }
+
+// The original producer owns an operation, not a lexically normalized filename.
+// These keys are constructed only after its current actor/epoch/token/artifact
+// envelope has been authenticated. The exact emitted operand reaches every
+// physical bridge and fresh guard; e.g. symlink/../file need not denote Clean(path).
+// Kind/result qualification and journal closure remain separate admissions below.
+func governanceOwnedOperationIdentity(r governanceProbeRequest) (governanceProbeKey, bool) {
+	key := governanceOwnedKey(r)
+	return key, r.ID != "" && filepath.IsAbs(key.Path) && (!key.FollowLinks || key.Kind == "metadata")
+}
+
 func governanceOwnedErrno(code string) (int, bool) {
 	switch code {
 	case "ENOENT":
@@ -323,8 +334,8 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 			replacements := []governanceOwnedRow{}
 			for _, cell := range envelope.Journal {
 				r, row := cell.Requirement, cell.Observation
-				key := governanceOwnedKey(r)
-				if r.ID == "" || r.ID != row.ID || !filepath.IsAbs(r.Path) || filepath.Clean(r.Path) != r.Path || r.FollowLinks && r.Kind != "metadata" {
+				key, validIdentity := governanceOwnedOperationIdentity(r)
+				if !validIdentity || r.ID != row.ID {
 					return nil, fmt.Errorf("invalid native draft operation")
 				}
 				if _, seen := draftRows[key]; seen {
@@ -368,13 +379,14 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 		}
 		if envelope.Status == "go-probe" {
 			r := envelope.Requirement
-			if r.ID == "" || !filepath.IsAbs(r.Path) || filepath.Clean(r.Path) != r.Path || r.FollowLinks && r.Kind != "metadata" {
+			key, validIdentity := governanceOwnedOperationIdentity(r)
+			if !validIdentity {
 				return nil, fmt.Errorf("invalid private original IO requirement")
 			}
 			if r.Kind != "directory" && envelope.AttemptErrno == nil {
 				return nil, fmt.Errorf("known operation cannot be loaned from Go")
 			}
-			row := governanceObserveProbe(governanceOwnedKey(r))
+			row := governanceObserveProbe(key)
 			if row.Status == "unsupported" {
 				return nil, fmt.Errorf("original Go IO has an authority gap")
 			}
@@ -390,7 +402,6 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 					return map[string]any{"status": "retry"}, nil
 				}
 			}
-			key := governanceOwnedKey(r)
 			row.ID = r.ID
 			if old, seen := goRows[key]; seen && governanceProbeFingerprint(old) != governanceProbeFingerprint(row) {
 				return map[string]any{"status": "retry"}, nil
@@ -426,8 +437,8 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 
 		for _, cell := range envelope.Journal {
 			r, row := cell.Requirement, cell.Observation
-			key := governanceOwnedKey(r)
-			if r.ID == "" || r.ID != row.ID || !filepath.IsAbs(r.Path) || filepath.Clean(r.Path) != r.Path || r.FollowLinks && r.Kind != "metadata" {
+			key, validIdentity := governanceOwnedOperationIdentity(r)
+			if !validIdentity || r.ID != row.ID {
 				return nil, fmt.Errorf("invalid owned journal operation identity")
 			}
 			if _, duplicate := pending[key]; duplicate {
