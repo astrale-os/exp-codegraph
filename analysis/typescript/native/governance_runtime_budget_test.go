@@ -25,3 +25,18 @@ func TestRuntimeProofLimitsPreserveOptionalAndExplicitValues(t *testing.T) {
 		}
 	}
 }
+func TestCanonicalSDKBudgetValidationCell(t *testing.T) {
+	limits, err := governanceParseProofLimits(json.RawMessage(`{"budgetValidation":{"kind":"valid","limits":{"maximumDepth":2,"maximumSteps":3,"maximumAlternatives":4}}}`))
+	if err != nil || limits.MaximumDepth != 2 || limits.MaximumSteps != 3 || limits.MaximumAlternatives != 4 {
+		t.Fatalf("%+v %v", limits, err)
+	}
+	_, err = governanceParseProofLimits(json.RawMessage(`{"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`))
+	if err == nil || err.Error() != "Cannot analyze Domain semantics: maximumSteps must be a positive integer." {
+		t.Fatalf("lost actual original undefined validation: %v", err)
+	}
+	for _, raw := range []string{`{"kind":"invalid","field":"maximumSteps","reason":"invented"}`, `{"kind":"valid","limits":{"maximumSteps":0}}`, `{"kind":"valid","limits":{"maximumSteps":3}}`} {
+		if _, err := governanceParseProofLimits(json.RawMessage(`{"budgetValidation":` + raw + `}`)); err == nil {
+			t.Fatalf("malformed option product admitted: %s", raw)
+		}
+	}
+}

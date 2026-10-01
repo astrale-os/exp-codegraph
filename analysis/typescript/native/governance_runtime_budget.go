@@ -37,6 +37,39 @@ func governanceParseProofLimits(options json.RawMessage) (observabledecision.Lim
 	if err := json.Unmarshal(options, &object); err != nil && len(options) != 0 {
 		return limits, err
 	}
+	if validation := object["budgetValidation"]; len(validation) != 0 {
+		var product struct {
+			Kind   string          `json:"kind"`
+			Field  string          `json:"field"`
+			Reason string          `json:"reason"`
+			Limits json.RawMessage `json:"limits"`
+		}
+		if err := json.Unmarshal(validation, &product); err != nil {
+			return limits, err
+		}
+		switch product.Kind {
+		case "invalid":
+			if product.Reason != "positive-integer" {
+				return limits, fmt.Errorf("unknown canonical option-validation reason")
+			}
+			return limits, &governanceSemanticBudgetError{product.Field}
+		case "valid":
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(product.Limits, &fields); err != nil {
+				return limits, err
+			}
+			for _, name := range []string{"maximumDepth", "maximumSteps", "maximumAlternatives"} {
+				if len(fields[name]) == 0 {
+					return limits, fmt.Errorf("incomplete canonical option-validation limits")
+				}
+			}
+			// Recheck the scalar domain; the supplied product cannot weaken the
+			// original reader's positive safe-integer option contract.
+			return governanceParseProofLimits(append(append([]byte(`{"budget":`), product.Limits...), '}'))
+		default:
+			return limits, fmt.Errorf("unknown canonical option-validation product")
+		}
+	}
 	raw := object["budget"]
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 		return limits, nil

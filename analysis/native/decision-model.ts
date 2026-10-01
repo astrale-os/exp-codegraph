@@ -39,6 +39,11 @@ export interface NativeDecisionPrepareRequest {
     readonly requiredRuleIds?: readonly string[];
     readonly generic?: boolean;
     readonly fix?: boolean;
+    /** Actual canonical SDK option validator product. Errors are observed only
+     * when current admitted semantic layers request the original value reader. */
+    readonly budgetValidation?:
+      | { readonly kind: "valid"; readonly limits: { readonly maximumDepth: number; readonly maximumSteps: number; readonly maximumAlternatives: number } }
+      | { readonly kind: "invalid"; readonly field: string; readonly reason: "positive-integer" };
     readonly budget?: {
       readonly maximumDepth?: number;
       readonly maximumSteps?: number;
