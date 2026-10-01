@@ -120,30 +120,16 @@ func (fs *compilerInputFS) applied(path, content string) {
 
 func (s *compilerSession) discover() (paths []string, rebuild bool) {
 	s.inputs.mu.Lock()
-	observed := make(map[compilerInputKey]string, len(s.inputs.observed))
+	observed := make([]compilerInputObservation, 0, len(s.inputs.observed))
 	for key, value := range s.inputs.observed {
-		observed[key] = value
+		observed = append(observed, compilerInputObservation{key: key, before: value})
 	}
 	s.inputs.mu.Unlock()
+	after := s.inputs.observe(observed)
 	changed := map[string]bool{}
-	for key, before := range observed {
-		var after string
-		switch key.kind {
-		case inputRead:
-			content, ok := s.inputs.disk.ReadFile(key.path)
-			after = inputText(content, ok)
-		case inputFile:
-			after = inputBool(s.inputs.disk.FileExists(key.path))
-		case inputDirectory:
-			after = inputBool(s.inputs.disk.DirectoryExists(key.path))
-		case inputEnumeration:
-			after = inputEntries(s.inputs.disk.GetAccessibleEntries(key.path))
-		case inputRealpath:
-			after = s.inputs.disk.Realpath(key.path)
-		case inputMetadata:
-			after = inputStat(s.inputs.disk.Stat(key.path))
-		}
-		if after == before {
+	for index, observation := range observed {
+		key, before := observation.key, observation.before
+		if after[index] == before {
 			continue
 		}
 		relative, err := filepath.Rel(s.root, key.path)

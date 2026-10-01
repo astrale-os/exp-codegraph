@@ -58,7 +58,7 @@ type compilerSession struct {
 
 func newCompilerSession(root, config string) (*compilerSession, []driver.Diagnostic, error) {
 	fs := shimbundled.WrapFS(shimcachedvfs.From(authoredSourceFS{FS: shimosvfs.FS()}))
-	inputs := newCompilerInputFS(fs, shimbundled.WrapFS(authoredSourceFS{FS: shimosvfs.FS()}))
+	inputs := newCompilerInputFS(fs, newAuthoredCompilerDisk())
 	overlay := driver.NewOverlayFS(inputs)
 	program, diagnostics, err := driver.LoadProgram(root, config, driver.LoadProgramOptions{ForceNoEmit: true, FS: overlay})
 	if program == nil || err != nil {
