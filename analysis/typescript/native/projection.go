@@ -14,6 +14,8 @@ type projectionPlan struct {
 	symbols     bool
 	occurrences bool
 	bodies      bool
+	bodyDemand  bool
+	demand      *bodyDemandRecipe
 }
 
 func planProjections(capabilities []string) projectionPlan {
@@ -29,11 +31,12 @@ func planProjections(capabilities []string) projectionPlan {
 		symbols:     wanted[symbolNamespace],
 		occurrences: wanted[occurrenceNamespace],
 		bodies:      wanted[bodyNamespace],
+		bodyDemand:  wanted[bodyDemandNamespace],
 	}
 }
 
 func (p projectionPlan) sourceOwned() bool {
-	return p.sources || p.symbols || p.occurrences || p.bodies
+	return p.sources || p.symbols || p.occurrences || p.bodies || p.bodyDemand
 }
 
 func (p projectionPlan) enables(capability string) bool {
@@ -52,6 +55,8 @@ func (p projectionPlan) enables(capability string) bool {
 		return p.occurrences
 	case bodyNamespace:
 		return p.bodies
+	case bodyDemandNamespace:
+		return p.bodyDemand
 	default:
 		return false
 	}
@@ -63,6 +68,9 @@ func (p projectionPlan) capabilities() []string {
 		if p.enables(capability) {
 			capabilities = append(capabilities, capability)
 		}
+	}
+	if p.bodyDemand {
+		capabilities = append(capabilities, bodyDemandNamespace)
 	}
 	sort.Strings(capabilities)
 	return capabilities
@@ -90,6 +98,9 @@ func (p projectionPlan) stages() []string {
 	}
 	if p.bodies {
 		stages = append(stages, "bodies")
+	}
+	if p.bodyDemand {
+		stages = append(stages, "body-demand")
 	}
 	sort.Strings(stages)
 	return stages

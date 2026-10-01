@@ -13,17 +13,18 @@ const (
 )
 
 type request struct {
-	ID           int            `json:"id"`
-	Kind         string         `json:"kind"`
-	Base         string         `json:"base,omitempty"`
-	BaseSequence int            `json:"baseSequence,omitempty"`
-	Generation   string         `json:"generation,omitempty"`
-	Sequence     int            `json:"sequence,omitempty"`
-	Changed      []string       `json:"changed,omitempty"`
-	Changes      []sourceChange `json:"changes,omitempty"`
-	Discover     bool           `json:"discover,omitempty"`
-	Invalidate   bool           `json:"invalidate,omitempty"`
-	RecordLimits *recordLimits  `json:"recordLimits,omitempty"`
+	ID           int               `json:"id"`
+	Kind         string            `json:"kind"`
+	Base         string            `json:"base,omitempty"`
+	BaseSequence int               `json:"baseSequence,omitempty"`
+	Generation   string            `json:"generation,omitempty"`
+	Sequence     int               `json:"sequence,omitempty"`
+	Changed      []string          `json:"changed,omitempty"`
+	Changes      []sourceChange    `json:"changes,omitempty"`
+	Discover     bool              `json:"discover,omitempty"`
+	Invalidate   bool              `json:"invalidate,omitempty"`
+	RecordLimits *recordLimits     `json:"recordLimits,omitempty"`
+	BodyDemand   *bodyDemandRecipe `json:"bodyDemand,omitempty"`
 }
 
 // Private record-stream negotiation. Older producers ignore this request field

@@ -15,6 +15,7 @@ import (
 )
 
 type generationState struct {
+	bodyDemand         *bodyDemandRecipe
 	callableReads      callableReadIndex
 	generation         analysisGeneration
 	manifest           []factShardReference
@@ -27,6 +28,7 @@ type generationState struct {
 }
 
 type refreshSelection struct {
+	bodyDemand         *bodyDemandRecipe
 	callableReads      map[string][]callableRead
 	full               bool
 	files              []string
@@ -124,6 +126,21 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 	if err != nil {
 		return nil, "", err
 	}
+	var demand *bodyDemandRecipe
+	if a.projection.bodyDemand {
+		demand, err = admitBodyDemand(input.BodyDemand)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	if a.projection.bodyDemand && demand == nil {
+		if a.pending != nil {
+			demand = a.pending.state.bodyDemand
+		} else {
+			demand = a.acknowledged.bodyDemand
+		}
+	}
+	demandChanged := stableJSON(demand) != stableJSON(a.acknowledged.bodyDemand)
 	var before runtime.MemStats
 	if a.telemetry != nil {
 		runtime.ReadMemStats(&before)
@@ -144,7 +161,7 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 		a.telemetry.record(input.ID, "refresh.total", started, metrics)
 	}()
 	if a.pending != nil {
-		if input.Base != a.acknowledged.generation.ID || input.Invalidate || len(changes) != 0 {
+		if input.Base != a.acknowledged.generation.ID || input.Invalidate || len(changes) != 0 || stableJSON(demand) != stableJSON(a.pending.state.bodyDemand) {
 			return nil, "", protocolError("COMMIT_PENDING", "A native generation is awaiting application-store acknowledgement.")
 		}
 		return a.pending.transaction, "", nil
@@ -171,7 +188,7 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 	// Without opt-in discovery, callers own source change tracking. After
 	// optional compiler-input discovery, an empty change set is a true no-op and must not re-walk or re-extract the complete
 	// compiler universe merely to rediscover the same content-addressed shards.
-	if input.Base != "" && !adopting && !input.Invalidate && len(changes) == 0 && !a.pendingFull {
+	if input.Base != "" && !adopting && !input.Invalidate && len(changes) == 0 && !a.pendingFull && !demandChanged {
 		return nil, input.Base, nil
 	}
 	compilerAdvanced := false
@@ -204,9 +221,16 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 			mode = "resident-skip"
 		}
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": mode})
-		if !compilerAdvanced && input.Base != "" && !adopting {
+		if !compilerAdvanced && input.Base != "" && !adopting && !demandChanged {
 			return nil, input.Base, nil
 		}
+	}
+
+	selection.bodyDemand = demand
+	if a.projection.bodyDemand && (compilerAdvanced || demandChanged) {
+		// The complete effect authority and selected closure move together under
+		// one captured Program; omitted owners cannot retain stale global effects.
+		selection.full = true
 	}
 
 	universeStarted := time.Now()
@@ -364,6 +388,7 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 		readUpdates[file] = reads
 	}
 	state := generationState{
+		bodyDemand:    demand,
 		callableReads: mergeCallableReads(readBase, readUpdates),
 		generation:    generation, manifest: manifest, digests: digests,
 		sources: sourceRecordMap(sources), sourceShards: mergeSourceShardOwnership(base, sources, shards, selection.full),
@@ -431,8 +456,10 @@ func (a *analyzer) extract(
 	maximumProjectionBytes int,
 	requestID int,
 ) ([]factShard, []sourceRecord, map[string]bool, map[string][]callableRead, error) {
+	plan := a.projection
+	plan.demand = selection.bodyDemand
 	if selection.full {
-		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, plan, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
 		return shards, sources, nil, reads, err
 	}
 	selected := make(map[string]bool, len(selection.files))
@@ -441,7 +468,7 @@ func (a *analyzer) extract(
 	}
 	x, files, sources := prepareExtractor(
 		a.root, universe, a.session.Program(), a.modules,
-		a.projection,
+		plan,
 		a.payloadCodecs,
 		maximumProjectionBytes, a.maximumDecodedShardBytes,
 		base.sources, selected, a.telemetry, requestID,
@@ -841,6 +868,7 @@ func admitCapabilities(requested []string) ([]string, error) {
 	for _, capability := range supportedCapabilities {
 		supported[capability] = true
 	}
+	supported[bodyDemandNamespace] = true
 	for _, capability := range requested {
 		if !supported[capability] {
 			return nil, protocolError("CAPABILITY_UNSUPPORTED", fmt.Sprintf("Native capability %q is unsupported.", capability))

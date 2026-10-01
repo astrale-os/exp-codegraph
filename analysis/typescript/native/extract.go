@@ -284,6 +284,13 @@ func (x *extractor) sourceShards(
 		}
 		telemetry.record(requestID, "projection.bodies", phase, map[string]any{"sources": selectedCount, "shards": bodyShards})
 	}
+	if x.plan.bodyDemand {
+		demandShards, err := x.demandBodyShards(files, x.plan.demand, shards)
+		if err != nil {
+			return nil, err
+		}
+		shards = append(shards, demandShards...)
+	}
 	if x.packageCoordinates != nil {
 		telemetry.record(requestID, "projection.package-ownership", time.Now(), map[string]any{"sources": len(x.packageCoordinates.coordinates), "directories": len(x.packageCoordinates.directories), "manifestReads": x.packageCoordinates.reads})
 	}
