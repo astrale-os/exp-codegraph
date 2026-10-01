@@ -162,8 +162,9 @@ func TestUnchangedHintsDoNotSkipFreshAnalyzerAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 	for path, content := range map[string]string{
-		filepath.Join(root, "tsconfig.json"): `{"compilerOptions":{"noLib":true,"module":"ESNext","moduleResolution":"Bundler"},"files":["index.ts"]}`,
+		filepath.Join(root, "tsconfig.json"): `{"compilerOptions":{"noLib":true,"module":"ESNext","moduleResolution":"Bundler"},"include":["*.ts"]}`,
 		filepath.Join(root, "index.ts"):      `import { helper } from '../external'; export const value = helper('value')`,
+		filepath.Join(root, "retired.ts"):    `export const retired = 'previous'`,
 		filepath.Join(parent, "external.ts"): `export function helper(value:string):string { return value }`,
 	} {
 		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
@@ -179,6 +180,9 @@ func TestUnchangedHintsDoNotSkipFreshAnalyzerAdoption(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(parent, "external.ts"), []byte(`export function helper<T>(value:T):T { return value }`), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Remove(filepath.Join(root, "retired.ts")); err != nil {
+		t.Fatal(err)
+	}
 	// The fresh compiler already sees the new dependency. Its disk baseline
 	// therefore cannot discover the difference from a prior process's facts.
 	restarted := openChangeAdmissionAnalyzer(t, root, nil)
@@ -190,6 +194,18 @@ func TestUnchangedHintsDoNotSkipFreshAnalyzerAdoption(t *testing.T) {
 	}
 	if next.Next.ID == initial.Next.ID {
 		t.Fatal("external signature movement did not change the fresh generation")
+	}
+	if next.Base != "" || len(next.Deletes) != 0 || len(next.Upserts) != len(next.Manifest) {
+		t.Fatal("changed adoption is not a complete base-less snapshot")
+	}
+	for _, shard := range next.Upserts {
+		if shard.Namespace == sourceNamespace {
+			for _, fact := range shard.Facts {
+				if fact.Payload.(sourceFactPayload).LogicalPath == "retired.ts" {
+					t.Fatal("changed adoption carried a source removed from the compiler universe")
+				}
+			}
+		}
 	}
 	oracle := openChangeAdmissionAnalyzer(t, root, nil)
 	expected, _, err := oracle.refresh(request{ID: 1, Discover: true})

@@ -224,7 +224,11 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 		selection.full = true
 	}
 	baseID := input.Base
-	if rollover {
+	if rollover || adopting {
+		// A fresh analyzer can recompute the caller's base identity, but it
+		// does not own that base's shard membership. A different candidate must
+		// be complete and base-less so the application store can safely rebase
+		// it, including retiring shards absent from the fresh compiler universe.
 		baseID = ""
 	}
 	base := generationState{}
