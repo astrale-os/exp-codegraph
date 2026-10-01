@@ -20,6 +20,7 @@ type governanceRuntimeAuthority struct {
 	AdmissionsFiles           int
 	ScopedProofs              map[*ast.Node]observabledecision.EffectSummary
 	FunctionOwners            map[string][]*ast.Node
+	ProjectorArgumentShapes   map[*ast.Node]governanceArgumentShapeProduct
 
 	Identity       *governanceRuntimeIdentity
 	Files          []observabledecision.CapturedFile
@@ -263,20 +264,32 @@ func (owner *governanceRuntimeAuthority) callObservedArguments(file observablede
 	if !forceEmptySignature && (call.Arguments == nil || len(call.Arguments.Nodes) == 0) {
 		return out
 	}
-	signatureStart := time.Now()
-	signature := check.GetResolvedSignature(matched)
-	observabledecision.DiagnosticEvent("selected-signature", file.Path, node, map[string]any{"elapsedNanoseconds": time.Since(signatureStart).Nanoseconds()})
-	parameters := checker.Signature_parameters(signature)
-	rest := checker.Signature_hasRestParameter(signature)
+	shape := governanceArgumentShapeProduct{}
+	if !forceEmptySignature {
+		shape = owner.projectorArgumentShape(matched)
+	}
+	var parameters []*ast.Symbol
+	parameterCount, rest := len(shape.Parameters), shape.Rest
+	if !shape.Known {
+		signatureStart := time.Now()
+		signature := check.GetResolvedSignature(matched)
+		observabledecision.DiagnosticEvent("selected-signature", file.Path, node, map[string]any{"elapsedNanoseconds": time.Since(signatureStart).Nanoseconds()})
+		parameters = checker.Signature_parameters(signature)
+		parameterCount, rest = len(parameters), checker.Signature_hasRestParameter(signature)
+	}
 	if call.Arguments != nil {
 		for index, argument := range call.Arguments.Nodes {
 			parameterIndex := index
-			if len(parameters) != 0 && parameterIndex >= len(parameters) && rest {
-				parameterIndex = len(parameters) - 1
+			if parameterCount != 0 && parameterIndex >= parameterCount && rest {
+				parameterIndex = parameterCount - 1
 			}
 			parameter := ""
-			if parameterIndex >= 0 && parameterIndex < len(parameters) {
-				parameter = owner.symbolKey(parameters[parameterIndex])
+			if parameterIndex >= 0 && parameterIndex < parameterCount {
+				if shape.Known {
+					parameter = shape.Parameters[parameterIndex]
+				} else {
+					parameter = owner.symbolKey(parameters[parameterIndex])
+				}
 			} // Arguments are returned in the supplied capture's AST identity.
 			capturedArgument := argument
 			if file.Source != owner.Identity.OwnedProgramFiles[file.Path] {
@@ -285,7 +298,7 @@ func (owner *governanceRuntimeAuthority) callObservedArguments(file observablede
 				}
 				capturedArgument = node.AsCallExpression().Arguments.Nodes[index]
 			}
-			out.Bindings = append(out.Bindings, observabledecision.NativeEffectBinding{Argument: capturedArgument, Parameter: parameter, Rest: rest && parameterIndex == len(parameters)-1})
+			out.Bindings = append(out.Bindings, observabledecision.NativeEffectBinding{Argument: capturedArgument, Parameter: parameter, Rest: rest && parameterIndex == parameterCount-1})
 		}
 	}
 	return out
