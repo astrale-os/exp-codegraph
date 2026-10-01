@@ -3,8 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { DecisionProcess } from "../analysis/native/decision-session.ts";
 import type { NativeDecisionPrepareRequest } from "../analysis/native/decision-model.ts";
 
-const node =
-  "/Users/bryandjafer/Documents/astrale/.worktrees/linter-field-study-20260930/tools/node-v26.7.0-darwin-arm64/bin/node";
+const node = process.execPath;
 const hello = { service: "astrale.lint-decision", protocol: 1, contractRevision: 1 };
 const request: NativeDecisionPrepareRequest = {
   root: "/private/test",
@@ -135,13 +134,115 @@ describe("native decision transport source qualification", () => {
     await expect(pending).rejects.toMatchObject({ code: "CANCELLED" });
     await expect(transport.prepare(request)).rejects.toMatchObject({ code: "PROCESS" });
   });
-  it("rejects concurrent unowned requests without corrupting the first request", async () => {
+  it("owns concurrent requests in FIFO order without overlapping native work", async () => {
     const transport = service(
-      `import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);setTimeout(()=>console.log(JSON.stringify({id:r.id,result:{status:'partial',residual:['unimplemented']}})),10);});`,
+      `import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));let active=false;createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);if(active)process.exit(9);active=true;setTimeout(()=>{active=false;console.log(JSON.stringify({id:r.id,result:{id:r.id,method:r.method,token:r.params.token}}));},10);});`,
     );
     await transport.ready();
     const first = transport.prepare(request);
-    await expect(transport.prepare(request)).rejects.toMatchObject({ code: "PROTOCOL" });
-    expect(await first).toMatchObject({ status: "partial" });
+    const second = transport.captureProbes({ token: "epoch1", requirements: [] });
+    const third = transport.seal({ token: "epoch2", reportDigest: "h" });
+    expect(await Promise.all([first, second, third])).toEqual([
+      { id: 1, method: "prepare" },
+      { id: 2, method: "capture-probes", token: "epoch1" },
+      { id: 3, method: "seal", token: "epoch2" },
+    ]);
+  });
+  it("captures queued params before caller mutation and never rewrites their epoch", async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);setTimeout(()=>console.log(JSON.stringify({id:r.id,result:r.params})),10);});`);
+    await transport.ready();
+    const first = transport.prepare(request);
+    const params = { token: "old-epoch", requirements: [{ id: "a", kind: "metadata" as const, path: "/original", followLinks: true }] };
+    const queued = transport.captureProbes(params);
+    params.token = "new-epoch";
+    params.requirements[0]!.path = "/changed";
+    await first;
+    expect(await queued).toEqual({ token: "old-epoch", requirements: [{ id: "a", kind: "metadata", path: "/original", followLinks: true }] });
+  });
+  it("cancels a queued request without sending it or invalidating its actor", async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);setTimeout(()=>console.log(JSON.stringify({id:r.id,result:{id:r.id,token:r.params.token}})),10);});`);
+    await transport.ready();
+    const first = transport.prepare(request);
+    const abort = new AbortController();
+    const queued = transport.captureProbes({ token: "cancel-me", requirements: [] }, abort.signal);
+    const failure = expect(queued).rejects.toMatchObject({ code: "CANCELLED", cause: "queued" });
+    const last = transport.seal({ token: "live", reportDigest: "h" });
+    abort.abort("queued");
+    await failure;
+    expect(await first).toEqual({ id: 1 });
+    expect(await last).toEqual({ id: 3, token: "live" });
+    expect(await transport.prepare(request)).toEqual({ id: 4 });
+  });
+  it("invalidates active and queued jobs on active cancellation, then permits a fresh actor", async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',()=>{});`);
+    await transport.ready();
+    const abort = new AbortController();
+    const first = transport.prepare(request, abort.signal);
+    const queued = transport.seal({ token: "old", reportDigest: "h" });
+    const failures = Promise.allSettled([first, queued]);
+    abort.abort("active");
+    expect(await failures).toMatchObject([{ status: "rejected", reason: { code: "CANCELLED", cause: "active" } }, { status: "rejected", reason: { code: "CANCELLED", cause: "active" } }]);
+    await expect(transport.prepare(request)).rejects.toMatchObject({ code: "PROCESS" });
+    const fresh = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:r.params}));});`);
+    await fresh.ready();
+    expect(await fresh.seal({ token: "fresh", reportDigest: "h" })).toEqual({ token: "fresh", reportDigest: "h" });
+  });
+  it("detaches settled request cancellation and shares a single disposal", async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:{id:r.id}}));});`);
+    await transport.ready();
+    const abort = new AbortController();
+    expect(await transport.prepare(request, abort.signal)).toEqual({ id: 1 });
+    abort.abort("finished");
+    expect(await transport.prepare(request)).toEqual({ id: 2 });
+    const closing = transport.dispose();
+    expect(transport.dispose()).toBe(closing);
+    await closing;
+    await expect(transport.prepare(request)).rejects.toMatchObject({ code: "PROCESS" });
+  });
+  it("rejects every owned job on disposal or a malformed physical response", async () => {
+    for (const response of ["none", "invalid"]) {
+      const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',()=>{${response === "invalid" ? "setTimeout(()=>process.stdout.write('not-json\\n'),10);" : ""}});`);
+      await transport.ready();
+      const first = transport.prepare(request);
+      const second = transport.captureProbes({ token: "t", requirements: [] });
+      const failures = Promise.allSettled([first, second]);
+      if (response === "none") await transport.dispose();
+      const code = response === "none" ? "PROCESS" : "PROTOCOL";
+      expect(await failures).toMatchObject([{ status: "rejected", reason: { code } }, { status: "rejected", reason: { code } }]);
+    }
+  });
+  it("keeps native errors request-local while the queued request progresses", async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));let n=0;createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify(n++ ? {id:r.id,result:{token:r.params.token}} : {id:r.id,error:{code:'LINTER_PROJECT_INVALID',message:'Captured input invalid.'}}));});`);
+    await transport.ready();
+    const first = transport.prepare(request);
+    const second = transport.seal({ token: "actual", reportDigest: "h" });
+    await expect(first).rejects.toMatchObject({ code: "NATIVE_ERROR", nativeError: { code: "LINTER_PROJECT_INVALID", message: "Captured input invalid." } });
+    expect(await second).toEqual({ token: "actual" });
+  });
+  it("does not let an unsolicited extra frame impersonate the next queued response", async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);process.stdout.write(JSON.stringify({id:r.id,result:{first:true}})+'\\n'+JSON.stringify({id:r.id+1,result:{forged:true}})+'\\n');});`);
+    await transport.ready();
+    const first = transport.prepare(request);
+    const second = transport.seal({ token: "t", reportDigest: "h" });
+    const settled = await Promise.allSettled([first, second]);
+    expect(settled).toMatchObject([{ status: "fulfilled", value: { first: true } }, { status: "rejected", reason: { code: "PROTOCOL" } }]);
+  });
+  it("reserves FIFO ownership during reentrant encoding and recovers from local encode failure", async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:{id:r.id,method:r.method}}));});`);
+    await transport.ready();
+    let queued!: Promise<unknown>;
+    const reentrant = { ...request, toJSON() { queued = transport.seal({ token: "t", reportDigest: "h" }); return request; } };
+    const first = transport.prepare(reentrant);
+    expect(await Promise.all([first, queued])).toEqual([{ id: 1, method: "prepare" }, { id: 2, method: "seal" }]);
+    const failure = new TypeError("cannot encode");
+    const invalid = { ...request, toJSON() { queued = transport.prepare(request); throw failure; } };
+    await expect(transport.prepare(invalid)).rejects.toBe(failure);
+    expect(await queued).toEqual({ id: 4, method: "prepare" });
+  });
+  it("contains pipe failures within the actor and rejects queued work", async () => {
+    const transport = service(`import {closeSync} from 'node:fs';closeSync(0);console.log(JSON.stringify(${JSON.stringify(hello)}));setInterval(()=>{},10000);`);
+    await transport.ready();
+    const jobs = [transport.prepare(request), transport.seal({ token: "t", reportDigest: "h" })];
+    expect(await Promise.allSettled(jobs)).toMatchObject([{ status: "rejected", reason: { code: "PROCESS" } }, { status: "rejected", reason: { code: "PROCESS" } }]);
   });
 });

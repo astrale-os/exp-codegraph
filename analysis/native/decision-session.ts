@@ -6,6 +6,16 @@ const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
 const UNSUPPORTED = 'astrale-typespec-v2-analysis: unknown command "decision-serve"';
 
+interface DecisionRequest {
+  readonly id: number;
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (error: unknown) => void;
+  readonly signal?: AbortSignal;
+  abort?: () => void;
+  line?: string;
+  state: "queued" | "active" | "settled";
+}
+
 export interface NativeDecisionProcessOptions {
   readonly root: string;
   readonly binary?: string;
@@ -44,7 +54,10 @@ export class DecisionProcess implements NativeDecisionSession {
   #chunks: Buffer[] = [];
   #bytes = 0;
   #stderr = "";
-  #pending?: { id: number; resolve: (value: unknown) => void; reject: (error: Error) => void };
+  #pending?: DecisionRequest;
+  readonly #queue: DecisionRequest[] = [];
+  #pumpScheduled = false;
+  #disposing?: Promise<void>;
 
   constructor(child: ChildProcessWithoutNullStreams) {
     this.#child = child;
@@ -54,6 +67,9 @@ export class DecisionProcess implements NativeDecisionSession {
       this.#rejectHello = reject;
     });
     child.stdout.on("data", (chunk: Buffer) => this.#read(chunk));
+    child.stdin.on("error", (cause) =>
+      this.#fail(new NativeDecisionServiceError("PROCESS", "Decision request write failed.", { cause })),
+    );
     child.stderr.on("data", (chunk: Buffer) => {
       this.#stderr = (this.#stderr + chunk.toString("utf8")).slice(-MAX_STDERR_BYTES);
     });
@@ -121,14 +137,14 @@ export class DecisionProcess implements NativeDecisionSession {
     return this.#request("seal", request, signal);
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
+    if (this.#disposing) return this.#disposing;
     this.#fail(new NativeDecisionServiceError("PROCESS", "Decision session disposed."));
     const timer = setTimeout(() => this.#child.kill("SIGKILL"), 2_000);
-    try {
-      await this.#exit;
-    } finally {
+    this.#disposing = this.#exit.finally(() => {
       clearTimeout(timer);
-    }
+    });
+    return this.#disposing;
   }
 
   #request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
@@ -136,27 +152,78 @@ export class DecisionProcess implements NativeDecisionSession {
       return Promise.reject(
         new NativeDecisionServiceError("PROCESS", "Decision session is unavailable."),
       );
-    if (this.#pending)
-      return Promise.reject(
-        new NativeDecisionServiceError("PROTOCOL", "Decision requests must be serialized."),
-      );
     if (signal?.aborted) return Promise.reject(cancelled(signal.reason));
-    const id = this.#nextId++;
-    const line = JSON.stringify({ id, method, params }) + "\n";
-    if (Buffer.byteLength(line) > MAX_FRAME_BYTES)
-      return Promise.reject(
-        new NativeDecisionServiceError("PROTOCOL", "Decision request exceeds its byte limit."),
-      );
-    const response = new Promise<unknown>((resolve, reject) => {
-      this.#pending = { id, resolve, reject };
-      this.#child.stdin.write(line, (cause) => {
-        if (cause)
-          this.#fail(
-            new NativeDecisionServiceError("PROCESS", "Decision request write failed.", { cause }),
+    return new Promise<unknown>((resolve, reject) => {
+      const request: DecisionRequest = {
+        id: this.#nextId++, resolve, reject, signal, state: "queued",
+      };
+      // Reserve the FIFO position before encoding. Even a reentrant toJSON
+      // cannot dispatch a later request before this admission is complete.
+      this.#queue.push(request);
+      request.abort = () => {
+        const error = cancelled(signal?.reason);
+        if (request.state === "active") this.#fail(error);
+        else if (request.state === "queued") this.#rejectQueued(request, error);
+      };
+      signal?.addEventListener("abort", request.abort, { once: true });
+      if (signal?.aborted) request.abort();
+      if (request.state !== "queued") return;
+      try {
+        // Immutable admission bytes own the params and token. They are never
+        // reread from the caller or remapped to a subsequent capture epoch.
+        const line = JSON.stringify({ id: request.id, method, params }) + "\n";
+        if (Buffer.byteLength(line) > MAX_FRAME_BYTES)
+          throw new NativeDecisionServiceError(
+            "PROTOCOL", "Decision request exceeds its byte limit.",
           );
-      });
+        if (request.state === "queued") request.line = line;
+      } catch (cause) {
+        if (request.state === "queued") this.#rejectQueued(request, cause);
+      }
+      this.#pump();
     });
-    return this.#abortable(response, signal);
+  }
+
+  #settled(request: DecisionRequest): void {
+    request.state = "settled";
+    if (request.abort) request.signal?.removeEventListener("abort", request.abort);
+  }
+
+  #rejectQueued(request: DecisionRequest, error: unknown): void {
+    const index = this.#queue.indexOf(request);
+    if (index < 0) return;
+    this.#queue.splice(index, 1);
+    this.#settled(request);
+    request.reject(error);
+    this.#pump();
+  }
+
+  #schedulePump(): void {
+    if (this.#pumpScheduled || this.#closed) return;
+    this.#pumpScheduled = true;
+    // Drain the complete incoming chunk first. An extra unsolicited frame
+    // cannot borrow the next queued request's response identity.
+    queueMicrotask(() => {
+      this.#pumpScheduled = false;
+      this.#pump();
+    });
+  }
+
+  // This actor alone owns the physical protocol. At most one job is active;
+  // queued jobs own admission bytes but gain no authority over an active token.
+  #pump(): void {
+    if (this.#closed || this.#pending || this.#pumpScheduled) return;
+    const request = this.#queue[0];
+    if (!request?.line) return;
+    this.#queue.shift();
+    request.state = "active";
+    this.#pending = request;
+    this.#child.stdin.write(request.line, (cause) => {
+      if (cause)
+        this.#fail(
+          new NativeDecisionServiceError("PROCESS", "Decision request write failed.", { cause }),
+        );
+    });
   }
 
   async #abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
@@ -231,7 +298,6 @@ export class DecisionProcess implements NativeDecisionSession {
         );
         return;
       }
-      this.#pending = undefined;
       if ("error" in frame) {
         const error = frame.error as Record<string, unknown> | null;
         if (
@@ -244,10 +310,12 @@ export class DecisionProcess implements NativeDecisionSession {
             "PROTOCOL",
             "Malformed native decision error.",
           );
-          pending.reject(malformed);
           this.#fail(malformed);
           return;
         }
+        this.#pending = undefined;
+        this.#settled(pending);
+        this.#schedulePump();
         pending.reject(
           new NativeDecisionServiceError(
             "NATIVE_ERROR",
@@ -256,7 +324,12 @@ export class DecisionProcess implements NativeDecisionSession {
             Object.freeze({ code: error.code, message: error.message }),
           ),
         );
-      } else pending.resolve(frame.result);
+      } else {
+        this.#pending = undefined;
+        this.#settled(pending);
+        this.#schedulePump();
+        pending.resolve(frame.result);
+      }
     }
   }
 
@@ -264,8 +337,15 @@ export class DecisionProcess implements NativeDecisionSession {
     if (this.#closed) return;
     this.#closed = true;
     this.#rejectHello(error);
-    this.#pending?.reject(error);
+    if (this.#pending) {
+      this.#settled(this.#pending);
+      this.#pending.reject(error);
+    }
     this.#pending = undefined;
+    for (const request of this.#queue.splice(0)) {
+      this.#settled(request);
+      request.reject(error);
+    }
     this.#child.kill();
     this.#chunks = [];
     this.#bytes = 0;
