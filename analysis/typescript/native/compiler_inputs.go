@@ -39,10 +39,11 @@ type compilerInputFS struct {
 	singleCapture bool
 	inconsistent  bool
 	shimvfs.FS
-	disk     shimvfs.FS
-	mu       sync.Mutex
-	observed map[compilerInputKey]string
-	rawReads map[string]compilerRawRead
+	disk       shimvfs.FS
+	mu         sync.Mutex
+	observed   map[compilerInputKey]string
+	operations map[compilerInputKey]*compilerCapturedOperation
+	rawReads   map[string]compilerRawRead
 }
 
 func newCompilerInputFS(fs, disk shimvfs.FS) *compilerInputFS {
@@ -82,6 +83,13 @@ func inputEntries(entries shimvfs.Entries) string {
 	return string(stableJSON(map[string]any{"files": files, "directories": dirs}))
 }
 func (fs *compilerInputFS) ReadFile(path string) (string, bool) {
+	value := captureCompilerOperation(fs, compilerInputKey{path, inputRead}, func() compilerRawRead {
+		content, present := fs.readFile(path)
+		return compilerRawRead{content, present}
+	})
+	return value.text, value.present
+}
+func (fs *compilerInputFS) readFile(path string) (string, bool) {
 	content, ok := fs.FS.ReadFile(path)
 	fs.mu.Lock()
 	if fs.rawReads == nil {
@@ -98,29 +106,40 @@ func (fs *compilerInputFS) ReadFile(path string) (string, bool) {
 	return content, ok
 }
 func (fs *compilerInputFS) FileExists(path string) bool {
-	value := fs.FS.FileExists(path)
-	fs.remember(path, inputFile, inputBool(value))
-	return value
+	return captureCompilerOperation(fs, compilerInputKey{path, inputFile}, func() bool {
+		value := fs.FS.FileExists(path)
+		fs.remember(path, inputFile, inputBool(value))
+		return value
+	})
 }
 func (fs *compilerInputFS) DirectoryExists(path string) bool {
-	value := fs.FS.DirectoryExists(path)
-	fs.remember(path, inputDirectory, inputBool(value))
-	return value
+	return captureCompilerOperation(fs, compilerInputKey{path, inputDirectory}, func() bool {
+		value := fs.FS.DirectoryExists(path)
+		fs.remember(path, inputDirectory, inputBool(value))
+		return value
+	})
 }
 func (fs *compilerInputFS) GetAccessibleEntries(path string) shimvfs.Entries {
-	value := fs.FS.GetAccessibleEntries(path)
-	fs.remember(path, inputEnumeration, inputEntries(value))
-	return value
+	value := captureCompilerOperation(fs, compilerInputKey{path, inputEnumeration}, func() shimvfs.Entries {
+		value := copyCompilerEntries(fs.FS.GetAccessibleEntries(path))
+		fs.remember(path, inputEnumeration, inputEntries(value))
+		return value
+	})
+	return copyCompilerEntries(value)
 }
 func (fs *compilerInputFS) Realpath(path string) string {
-	value := fs.FS.Realpath(path)
-	fs.remember(path, inputRealpath, value)
-	return value
+	return captureCompilerOperation(fs, compilerInputKey{path, inputRealpath}, func() string {
+		value := fs.FS.Realpath(path)
+		fs.remember(path, inputRealpath, value)
+		return value
+	})
 }
 func (fs *compilerInputFS) Stat(path string) shimvfs.FileInfo {
-	value := fs.FS.Stat(path)
-	fs.remember(path, inputMetadata, inputStat(value))
-	return value
+	return captureCompilerOperation(fs, compilerInputKey{path, inputMetadata}, func() shimvfs.FileInfo {
+		value := fs.FS.Stat(path)
+		fs.remember(path, inputMetadata, inputStat(value))
+		return value
+	})
 }
 func inputStat(value shimvfs.FileInfo) string {
 	if value == nil {
