@@ -69,6 +69,8 @@ function admit(kind, fact) {
         diagnostics.push(`kind:${fact.kind}`);
     if (kind === 'declaration' && fact.kind !== 'declaration')
         diagnostics.push(`kind:${fact.kind}`);
+    if (kind === 'body-demand' && fact.kind !== 'body-demand')
+        diagnostics.push(`kind:${fact.kind}`);
     if (fact.schemaVersion !== 1 &&
         !((kind === 'module' || kind === 'declaration') && fact.schemaVersion === 2)) {
         diagnostics.push(`schema-version:${fact.schemaVersion}`);

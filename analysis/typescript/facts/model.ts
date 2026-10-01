@@ -1,6 +1,6 @@
 import type { Fact } from '../../facts/index.ts'
 import type { FactFilter, PageRequest } from '../../query/index.ts'
-import type { TypeScriptBodyFacts } from '../model.ts'
+import type { TypeScriptBodyFacts, TypeScriptBodyDemandFacts } from '../model.ts'
 import type { ObservedDeclaration } from '../surface/index.ts'
 import type {
   TypeScriptDiagnosticFact,
@@ -18,6 +18,7 @@ export const TYPESCRIPT_FACT_NAMESPACES = Object.freeze({
   symbol: 'typescript.symbol',
   occurrence: 'typescript.occurrence',
   body: 'typescript.body',
+  'body-demand': 'typescript.body-demand',
   module: 'astrale.typescript.module',
   declaration: 'astrale.typescript.module',
 } as const)
@@ -30,6 +31,7 @@ export const TYPESCRIPT_ANALYSIS_CAPABILITIES = Object.freeze([
   TYPESCRIPT_FACT_NAMESPACES.symbol,
   TYPESCRIPT_FACT_NAMESPACES.occurrence,
   TYPESCRIPT_FACT_NAMESPACES.body,
+  TYPESCRIPT_FACT_NAMESPACES['body-demand'],
   TYPESCRIPT_FACT_NAMESPACES.module,
 ] as const)
 
@@ -55,6 +57,7 @@ export interface TypeScriptFactPayloadByKind {
   readonly symbol: TypeScriptSymbolFact
   readonly occurrence: TypeScriptOccurrenceFact
   readonly body: TypeScriptBodyFacts
+  readonly 'body-demand': TypeScriptBodyDemandFacts
   readonly module: TypeScriptModuleFact
   readonly declaration: TypeScriptDeclarationFact
 }

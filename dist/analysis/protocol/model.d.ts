@@ -24,6 +24,10 @@ export interface NativeSourceChange {
     readonly path: string;
     readonly kind: 'change' | 'add' | 'unlink' | 'unknown';
 }
+/** Exact owned logical source roots whose complete body/call inventory is requested. */
+export interface NativeBodyDemand {
+    readonly paths: readonly string[];
+}
 export type NativeAnalysisRequest = {
     readonly id: number;
     readonly kind: 'refresh';
@@ -35,6 +39,8 @@ export type NativeAnalysisRequest = {
     /** Discover changes to compiler-owned inputs, including failed resolutions. */
     readonly discover?: boolean;
     readonly invalidate?: boolean;
+    /** Selection recipe for the explicit typescript.body-demand capability. */
+    readonly bodyDemand?: NativeBodyDemand;
 } | {
     readonly id: number;
     readonly kind: 'acknowledge';

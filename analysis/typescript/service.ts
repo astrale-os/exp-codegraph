@@ -3,7 +3,8 @@ import { isAbsolute, relative } from 'node:path'
 
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../protocol/index.ts'
 import type { NativeAnalysisSession } from '../protocol/index.ts'
-import type { NativeSourceChange } from '../protocol/index.ts'
+import type { NativeSourceChange, NativeBodyDemand } from '../protocol/index.ts'
+import { captureBodyDemand } from '../protocol/body-demand.ts'
 import type { ProjectUniverseId, SourceId } from '../identity/index.ts'
 import { deriveAnalysisId, portablePath } from '../identity/index.ts'
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
@@ -50,15 +51,21 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
   }
 
   async refresh(
-    options: {
+    input: {
       readonly changed?: readonly string[]
       readonly changes?: readonly NativeSourceChange[]
       /** Discover changes to compiler-owned inputs, including failed resolutions. */
       readonly discover?: boolean
       readonly invalidate?: boolean
+      readonly bodyDemand?: NativeBodyDemand
       readonly signal?: AbortSignal
     } = {},
   ): Promise<TypeScriptRefreshResult> {
+    const options = { ...input,
+      ...(input.changed ? { changed: [...input.changed] } : {}),
+      ...(input.changes ? { changes: input.changes.map((change) => ({ ...change })) } : {}),
+      ...(input.bodyDemand ? { bodyDemand: captureBodyDemand(input.bodyDemand) } : {}),
+    }
     const started = performance.now()
     let result = await this.refreshOnce(options)
     if (!options.discover) return result
@@ -74,7 +81,9 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
       }
       // A replayed candidate must be acknowledged before the native owner can
       // reconcile filesystem changes. Never return that intermediate snapshot.
-      result = await this.refreshOnce({ discover: true, signal: options.signal })
+      result = await this.refreshOnce({ discover: true, signal: options.signal,
+        ...(options.bodyDemand ? { bodyDemand: options.bodyDemand } : {}),
+      })
       transaction = result.transaction ?? transaction
       moduleRouting = result.moduleRouting ?? moduleRouting
       for (const source of result.changedSources) changedSources.add(source)
@@ -102,6 +111,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
       /** Discover changes to compiler-owned inputs, including failed resolutions. */
       readonly discover?: boolean
       readonly invalidate?: boolean
+      readonly bodyDemand?: NativeBodyDemand
       readonly signal?: AbortSignal
     } = {},
   ): Promise<TypeScriptRefreshResult> {
@@ -125,6 +135,7 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
         ...(options.discover !== undefined ? { discover: options.discover } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
+        ...(options.bodyDemand ? { bodyDemand: { paths: [...options.bodyDemand.paths] } } : {}),
       },
       { signal: options.signal },
     )

@@ -135,7 +135,10 @@ class Evaluator {
         const state = { limits,
             signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 };
         state.signal?.throwIfAborted();
-        const value = this.evaluatePlan(plan, state);
+        this.depend(state, 'effects:inventory');
+        const value = this.#index.effectCompleteness !== undefined && this.#index.effectCompleteness.kind !== 'complete'
+            ? uncertain('VALUE_EFFECT_INVENTORY_INCOMPLETE', 'The selected projection has no complete global effect authority.')
+            : this.evaluatePlan(plan, state);
         const evaluated = this.result(value, state, scalar);
         const bounded = state.exhausted ? {
             ...this.result(state.exhausted, state, scalar),
@@ -340,6 +343,9 @@ class Evaluator {
                 const body = this.#index.bodies.get(occurrence.symbol);
                 if (body)
                     return { kind: 'function', body, environment };
+                this.depend(state, `owner:${occurrence.symbol}`);
+                if (this.#index.callableOwners.has(occurrence.symbol))
+                    return uncertain('VALUE_BODY_NOT_SELECTED', 'The local callable body is outside the materialized selection.');
                 if (occurrence.symbolOrigin || occurrence.symbolKind === 'module-namespace')
                     return { kind: 'external', symbol: occurrence.symbol, symbolOrigin: occurrence.symbolOrigin, moduleNamespace: occurrence.symbolKind === 'module-namespace' };
             }
@@ -422,15 +428,16 @@ class Evaluator {
             return uncertain('VALUE_ARGUMENT_BINDING_UNSUPPORTED', 'Spread and rest arguments require an aggregate argument binding.');
         }
         if (call.target)
-            this.depend(state, `function:${call.target}`);
+            this.depend(state, `function:${call.target}`, `owner:${call.target}`);
         const body = call.target && this.#index.bodies.get(call.target);
         // Resolve the callee first to preserve environments of returned/stored closures.
         const resolved = callee ? this.visit(callee, environment, state, depth + 1) : undefined;
         const target = resolved?.kind === 'function' || resolved?.kind === 'alternatives'
             ? resolved
             : body ? { kind: 'function', body, environment }
-                : call.target ? { kind: 'unsupported', construct: 'external-or-bodyless-call' }
-                    : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.');
+                : call.target && this.#index.callableOwners.has(call.target) ? uncertain('VALUE_BODY_NOT_SELECTED', 'The local callable body is outside the materialized selection.')
+                    : call.target ? { kind: 'unsupported', construct: 'external-or-bodyless-call' }
+                        : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.');
         return this.invoke(target, state, depth + 1, call, environment);
     }
     callPropertyName(callee, state, depth) {

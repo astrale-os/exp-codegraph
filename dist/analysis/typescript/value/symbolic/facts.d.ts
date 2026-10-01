@@ -1,11 +1,13 @@
 import type { FactId, OccurrenceId, SourceId, SymbolId } from '../../../identity/index.ts';
+import { type Completeness } from '../../../facts/index.ts';
 import type { AnalysisQuery, CapabilityStatus } from '../../../query/index.ts';
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts';
 import { type TypeScriptFact } from '../../facts/index.ts';
 import type { ValueResult } from '../model.ts';
 import { CALL_SELECTION, CallSelection } from './selection.ts';
 type Body = TypeScriptFact<'body'>;
-export type IndexedFact = Body | TypeScriptFact<'symbol'> | TypeScriptFact<'source'>;
+type Demand = TypeScriptFact<'body-demand'>;
+export type IndexedFact = Body | Demand | TypeScriptFact<'symbol'> | TypeScriptFact<'source'>;
 export interface ValueDependency {
     readonly key: string;
     readonly fingerprint: string | undefined;
@@ -19,6 +21,8 @@ export interface ValueIndexRevision {
 export interface ValueIndex {
     readonly callsSelection?: CallSelection;
     readonly bodies: ReadonlyMap<SymbolId, Body>;
+    readonly callableOwners: ReadonlySet<SymbolId>;
+    readonly effectCompleteness?: Completeness;
     readonly occurrences: ReadonlyMap<OccurrenceId, BodyOccurrence>;
     readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>;
     readonly parents: ReadonlyMap<OccurrenceId, readonly {
@@ -50,6 +54,8 @@ export declare class IndexedValues implements ValueIndex {
         readonly contributions: number;
     };
     readonly bodies: ValueIndex['bodies'];
+    readonly callableOwners: ValueIndex['callableOwners'];
+    readonly effectCompleteness: Completeness | undefined;
     readonly occurrences: ValueIndex['occurrences'];
     readonly children: ValueIndex['children'];
     readonly parents: ValueIndex['parents'];

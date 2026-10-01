@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { isAbsolute, relative } from 'node:path';
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../protocol/index.js';
+import { captureBodyDemand } from '../protocol/body-demand.js';
 import { deriveAnalysisId, portablePath } from '../identity/index.js';
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.js';
 import { materializeNativeDelta, materializeNativeTransaction, } from './universe-transaction.js';
@@ -23,7 +24,12 @@ class ResidentTypeScriptAnalysisService {
     get universe() {
         return this.#universe;
     }
-    async refresh(options = {}) {
+    async refresh(input = {}) {
+        const options = { ...input,
+            ...(input.changed ? { changed: [...input.changed] } : {}),
+            ...(input.changes ? { changes: input.changes.map((change) => ({ ...change })) } : {}),
+            ...(input.bodyDemand ? { bodyDemand: captureBodyDemand(input.bodyDemand) } : {}),
+        };
         const started = performance.now();
         let result = await this.refreshOnce(options);
         if (!options.discover)
@@ -40,7 +46,9 @@ class ResidentTypeScriptAnalysisService {
             }
             // A replayed candidate must be acknowledged before the native owner can
             // reconcile filesystem changes. Never return that intermediate snapshot.
-            result = await this.refreshOnce({ discover: true, signal: options.signal });
+            result = await this.refreshOnce({ discover: true, signal: options.signal,
+                ...(options.bodyDemand ? { bodyDemand: options.bodyDemand } : {}),
+            });
             transaction = result.transaction ?? transaction;
             moduleRouting = result.moduleRouting ?? moduleRouting;
             for (const source of result.changedSources)
@@ -83,6 +91,7 @@ class ResidentTypeScriptAnalysisService {
             ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
             ...(options.discover !== undefined ? { discover: options.discover } : {}),
             ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
+            ...(options.bodyDemand ? { bodyDemand: { paths: [...options.bodyDemand.paths] } } : {}),
         }, { signal: options.signal });
         this.emit('native.request', request, phaseStarted, { responseKind: response.kind });
         if (response.protocolVersion !== NATIVE_ANALYSIS_PROTOCOL_VERSION) {

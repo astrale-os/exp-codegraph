@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { physicalPayloadForTransport } from '../../../facts/representation/index.js';
+import { combineCompleteness } from '../../../facts/index.js';
 import { createTypeScriptFactReader, TypeScriptFactContractError } from '../../facts/index.js';
 import { projectPackedTypeScriptBody } from '../../physical/index.js';
 import { bodyFragment } from './fragment.js';
@@ -135,6 +136,8 @@ export class IndexedValues {
     callsSelection;
     work;
     bodies;
+    callableOwners;
+    effectCompleteness;
     occurrences;
     children;
     parents;
@@ -162,7 +165,7 @@ export class IndexedValues {
     #mutationOwners;
     #aliasSources;
     #selection;
-    constructor(facts, columns, derived, hashes, factEvidence, witnesses, aggregateEvidence, mutationOwners, aliasSources, revision, work = { facts: 0, bodies: 0, contributions: 0 }, selection = new CallSelection()) {
+    constructor(facts, columns, derived, hashes, factEvidence, witnesses, aggregateEvidence, mutationOwners, aliasSources, revision, work = { facts: 0, bodies: 0, contributions: 0 }, selection = new CallSelection(), effectCompleteness) {
         this.#facts = facts;
         this.#columns = columns;
         this.#derived = derived;
@@ -177,7 +180,9 @@ export class IndexedValues {
         this.callsSelection = revision.selection === CALL_SELECTION ? selection : undefined;
         this.work = Object.freeze(work);
         this.bodies = columns.bodies;
-        this.occurrences = projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row));
+        this.callableOwners = keysSet(fallbackMap(columns.bodies, columns.owners));
+        this.effectCompleteness = effectCompleteness;
+        this.occurrences = fallbackMap(projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row)), columns.witnesses);
         this.children = projectColumn(columns.occurrences, (ref) => ref.fragment.children(ref.row), mergeChildren);
         this.parents = projectColumn(columns.occurrences, (ref) => ref.fragment.parents(ref.row), flatten);
         this.definitions = projectColumn(columns.occurrences, (ref) => ref.fragment.definitions(ref.row), flatten);
@@ -196,7 +201,11 @@ export class IndexedValues {
                 if (key.startsWith('function:'))
                     return columns.bodies.evidence(key.slice(9), factEvidence);
                 if (key.startsWith('occurrence:'))
-                    return columns.occurrences.evidence(key.slice(11), factEvidence);
+                    return columns.occurrences.evidence(key.slice(11), factEvidence) ?? columns.witnesses.evidence(key.slice(11), factEvidence);
+                if (key.startsWith('owner:'))
+                    return columns.owners.evidence(key.slice(6), factEvidence) ?? columns.bodies.evidence(key.slice(6), factEvidence);
+                if (key === 'effects:inventory')
+                    return columns.demands.evidence('global', factEvidence);
                 if (key.startsWith('symbol:'))
                     return columns.symbols.evidence(key.slice(7), factEvidence);
                 return this.#aggregateEvidence.get(key);
@@ -204,7 +213,7 @@ export class IndexedValues {
     }
     static empty() {
         const columns = {
-            bodies: new Column(), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
+            bodies: new Column(), owners: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
             symbols: new Column(), sources: new Column(),
             initializers: new Column(undefined, flatten), mutations: new Column(undefined, flatten), escapes: new Column(undefined, flatten),
             aliases: new Column(undefined, flatten), dependents: new Column(undefined, flatten),
@@ -242,7 +251,9 @@ export class IndexedValues {
         if (key.startsWith('function:'))
             return this.#columns.bodies.fingerprint(key.slice(9), this.#hashes);
         if (key.startsWith('occurrence:'))
-            return this.#columns.occurrences.fingerprint(key.slice(11), this.#hashes);
+            return this.#columns.occurrences.fingerprint(key.slice(11), this.#hashes) ?? this.#columns.witnesses.fingerprint(key.slice(11), this.#hashes);
+        if (key.startsWith('owner:'))
+            return this.#columns.owners.fingerprint(key.slice(6), this.#hashes) ?? this.#columns.bodies.fingerprint(key.slice(6), this.#hashes);
         if (key.startsWith('symbol:'))
             return this.#columns.symbols.fingerprint(key.slice(7), this.#hashes);
         return this.#witnesses.get(key)?.fingerprint;
@@ -297,10 +308,27 @@ export class IndexedValues {
                 factEvidence.delete(id);
             }
         }
+        const inventory = columns.demands.get('global');
+        for (const fact of inventory ?? [])
+            for (const owner of fact.payload.owners) {
+                if (owner.fact && columns.bodies.get(owner.owner)?.id !== owner.fact) {
+                    throw new TypeScriptFactContractError('body-demand', fact.id, ['materialized-owner-fact']);
+                }
+            }
+        const hadInventory = this.#columns.demands.has('global');
+        const effectCompleteness = demandEffectCompleteness(inventory, capabilities);
+        if (JSON.stringify(effectCompleteness) !== JSON.stringify(this.effectCompleteness))
+            touched.add('effects:inventory');
         const affected = new Set();
         for (const [id, fact] of changed)
-            if (fact?.namespace === 'typescript.body' || this.#derived.has(id))
+            if (fact?.namespace === 'typescript.body' || fact?.namespace === 'typescript.body-demand' || this.#derived.has(id))
                 affected.add(id);
+        // A revision changes effect authority atomically. Selected bodies contribute
+        // their full semantic relations; global effects come from the inventory once.
+        if (hadInventory !== !!inventory)
+            for (const [id, fact] of this.#facts)
+                if (fact.namespace === 'typescript.body')
+                    affected.add(id);
         if (inputs)
             for (const key of inputs) {
                 // Effect classification asks whether a callee body exists, not for its contents.
@@ -314,8 +342,8 @@ export class IndexedValues {
             if (previous)
                 derivedColumns(columns, id, previous, false, touched);
             const fact = facts.get(id);
-            if (fact?.namespace === 'typescript.body') {
-                const next = derive(fact, columns);
+            if (fact?.namespace === 'typescript.body' && !inventory || fact?.namespace === 'typescript.body-demand') {
+                const next = fact.namespace === 'typescript.body-demand' ? deriveDemand(fact) : derive(fact, columns);
                 derivedColumns(columns, id, next, true, touched);
                 derived.set(id, next);
             }
@@ -331,20 +359,23 @@ export class IndexedValues {
         const aliasSources = this.#aliasSources.edit();
         const directFingerprint = (key) => key.startsWith('function:')
             ? nextColumns.bodies.fingerprint(key.slice(9), nextHashes) : key.startsWith('occurrence:')
-            ? nextColumns.occurrences.fingerprint(key.slice(11), nextHashes) : key.startsWith('symbol:')
-            ? nextColumns.symbols.fingerprint(key.slice(7), nextHashes) : undefined;
-        const occurrenceFingerprint = (id) => nextColumns.occurrences.fingerprint(id, nextHashes);
-        const occurrenceEvidence = (ids) => [...new Set(ids.flatMap((id) => nextColumns.occurrences.evidence(id, nextEvidence) ?? []))];
+            ? nextColumns.occurrences.fingerprint(key.slice(11), nextHashes) ?? nextColumns.witnesses.fingerprint(key.slice(11), nextHashes) : key.startsWith('symbol:')
+            ? nextColumns.symbols.fingerprint(key.slice(7), nextHashes) : key.startsWith('owner:')
+            ? nextColumns.owners.fingerprint(key.slice(6), nextHashes) ?? nextColumns.bodies.fingerprint(key.slice(6), nextHashes) : undefined;
+        const occurrenceFingerprint = (id) => nextColumns.occurrences.fingerprint(id, nextHashes) ?? nextColumns.witnesses.fingerprint(id, nextHashes);
+        const occurrenceEvidence = (ids) => [...new Set(ids.flatMap((id) => nextColumns.occurrences.evidence(id, nextEvidence) ?? nextColumns.witnesses.evidence(id, nextEvidence) ?? []))];
         const changedKeys = new Set();
         for (const key of touched) {
             let fingerprint = directFingerprint(key);
             const separator = key.indexOf(':');
             const kind = key.slice(0, separator);
             const symbol = key.slice(separator + 1);
+            if (key === 'effects:inventory')
+                fingerprint = inventory || effectCompleteness ? JSON.stringify([nextColumns.demands.fingerprint('global', nextHashes), effectCompleteness]) : undefined;
             if (kind === 'initializers') {
                 const values = nextColumns.initializers.get(symbol);
                 if (values) {
-                    fingerprint = JSON.stringify([...values].sort().map((id) => [id, occurrenceFingerprint(id)]));
+                    fingerprint = JSON.stringify([nextColumns.initializers.fingerprint(symbol, nextHashes), [...values].sort().map((id) => [id, occurrenceFingerprint(id)])]);
                     aggregateEvidence.set(key, occurrenceEvidence(values));
                 }
                 else
@@ -356,10 +387,10 @@ export class IndexedValues {
                     (kind === 'mutation' ? nextColumns.mutations.get(symbol) : kind === 'escape' ? nextColumns.escapes.get(symbol) : undefined);
                 if (values?.length) {
                     const ids = [...new Set(values)].sort();
-                    fingerprint = JSON.stringify(ids.map((id) => [`occurrence:${id}`, occurrenceFingerprint(id)]));
+                    fingerprint = JSON.stringify([(kind === 'mutation' ? nextColumns.mutations : kind === 'escape' ? nextColumns.escapes : nextColumns.aliases).fingerprint(symbol, nextHashes), ids.map((id) => [`occurrence:${id}`, occurrenceFingerprint(id)])]);
                     aggregateEvidence.set(key, occurrenceEvidence(ids));
                     if (kind === 'mutation')
-                        mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id).fragment.owner))]);
+                        mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id)?.fragment.owner ?? nextColumns.witnesses.get(id).owner))]);
                     if (kind === 'aliases')
                         aliasSources.set(symbol, [...new Set(aliases.map((alias) => alias.from))]);
                 }
@@ -400,17 +431,19 @@ export class IndexedValues {
         const selection = this.#selection.update((function* () {
             for (const owner of bodyOwners)
                 yield [previousBodies.get(owner), nextBodies.get(owner)];
-        })(), siteSources, this.#columns, nextColumns, capabilities, initial ? undefined : changedKeys);
+        })(), siteSources, this.#columns, nextColumns, capabilities, initial ? undefined : changedKeys, inventory);
         return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(), aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(), { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys,
-            ...(capabilities ? { selection: CALL_SELECTION } : {}) }, { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) }, selection);
+            ...(capabilities ? { selection: CALL_SELECTION } : {}) }, { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) }, selection, effectCompleteness);
     }
 }
 export async function loadValueIndex(query) {
     const reader = createTypeScriptFactReader(query);
-    const [bodies, symbols, sources, capabilities] = await Promise.all([
-        readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source')), query.capabilities(),
+    const capabilities = await query.capabilities();
+    const [bodies, symbols, sources, demands] = await Promise.all([
+        readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source')),
+        capabilities.some(({ capability }) => capability === 'typescript.body-demand') ? collect(reader.export('body-demand')) : [],
     ]);
-    return IndexedValues.empty().update([...bodies, ...symbols, ...sources], [], true, capabilities);
+    return IndexedValues.empty().update([...bodies, ...symbols, ...sources, ...demands], [], true, capabilities);
 }
 function callOwnerSources(columns, id, sources) {
     const calls = columns.calls.slots.get(id);
@@ -448,8 +481,23 @@ function primary(columns, fact, add, touched, inputs) {
         apply(columns.sources, fact.payload.source, fact);
         return;
     }
+    if (fact.namespace === 'typescript.body-demand') {
+        apply(columns.demands, 'global', [fact]);
+        touched.add('effects:inventory');
+        for (const member of fact.payload.owners) {
+            apply(columns.owners, member.owner, member);
+            touched.add(`owner:${member.owner}`);
+        }
+        for (const witness of fact.payload.witnesses) {
+            apply(columns.witnesses, witness.id, witness);
+            touched.add(`occurrence:${witness.id}`);
+            inputs?.add(`occurrence:${witness.id}`);
+        }
+        return;
+    }
     const fragment = bodyFragment(fact);
     apply(columns.bodies, fragment.owner, fact);
+    touched.add(`owner:${fragment.owner}`);
     touched.add(`function:${fragment.owner}`);
     inputs?.add(`function:${fragment.owner}`);
     const occurrence = (row) => {
@@ -700,4 +748,58 @@ function projectSlot(slot, project, merge) {
     const values = [...slot.owners].sort(([a], [b]) => a.localeCompare(b))
         .flatMap(([, contribution]) => { const result = project(contribution.value); return result === undefined ? [] : [result]; });
     return values.length ? merge(values) : undefined;
+}
+/** Thin witnesses fill absent rows; full semantic rows retain projection ownership. */
+function fallbackMap(primary, fallback) {
+    const get = (key) => primary.get(key) ?? fallback.get(key);
+    const result = {
+        get, has: (key) => primary.has(key) || fallback.has(key),
+        get size() { let count = primary.size; for (const key of fallback.keys())
+            if (!primary.has(key))
+                count++; return count; },
+        *entries() {
+            yield* primary;
+            for (const [key, value] of fallback)
+                if (!primary.has(key))
+                    yield [key, value];
+        },
+        *keys() { for (const [key] of result)
+            yield key; },
+        *values() { for (const [, value] of result)
+            yield value; },
+        [Symbol.iterator]() { return this.entries(); },
+        forEach(callback, thisArg) { for (const [key, value] of result)
+            callback.call(thisArg, value, key, result); },
+    };
+    return result;
+}
+function demandEffectCompleteness(facts, capabilities) {
+    const status = capabilities?.find(({ capability }) => capability === 'typescript.body-demand');
+    if (!facts && !status)
+        return;
+    if (!facts?.length)
+        return { kind: 'unavailable', reasons: [{ code: 'VALUE_EFFECT_INVENTORY_MISSING',
+                    message: 'The selected body projection has no global effect inventory.', retryable: false }] };
+    let result = status?.completeness ?? { kind: 'complete' };
+    for (const fact of facts)
+        result = combineCompleteness(result, combineCompleteness(fact.completeness, fact.payload.completeness));
+    return result;
+}
+function deriveDemand(fact) {
+    const initializers = new Map(), mutations = new Map();
+    const escapes = new Map(), aliases = new Map();
+    const owners = new Map(fact.payload.owners.map((owner) => [owner.owner, owner]));
+    // Native materializes every contributor to initializer/alias lists reachable
+    // by selected values. Their actual original fact IDs retain the full index's
+    // ordered contribution merge, including bounded alternative/effect traversal.
+    const ordered = (rows) => [...rows].sort((left, right) => (owners.get(left.owner)?.fact ?? left.owner).localeCompare(owners.get(right.owner)?.fact ?? right.owner));
+    for (const row of ordered(fact.payload.initializers))
+        append(initializers, row.symbol, row.occurrence);
+    for (const row of fact.payload.mutations)
+        append(mutations, row.symbol, row.occurrence);
+    for (const row of fact.payload.escapes)
+        append(escapes, row.symbol, row.occurrence);
+    for (const row of ordered(fact.payload.aliases))
+        append(aliases, row.symbol, { from: row.from, occurrence: row.occurrence });
+    return { initializers, mutations, escapes, aliases, inputs: new Set() };
 }

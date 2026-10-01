@@ -26,6 +26,58 @@ async function fixture() {
 }
 
 describe('resident TypeScript project public API', () => {
+  it('owns queued demand paths and restores selection intent after native recovery', async () => {
+    const root = await fixture()
+    await writeFile(join(root, 'other.ts'), "export function other() { return 'other' }\n")
+    const native = await resolvePackagedNativeAnalysis()
+    const factory = createProcessNativeAnalysisSessionFactory({ command: native.command,
+      payloadCodecs: TYPESCRIPT_FACT_PAYLOAD_CODECS })
+    let fail = false
+    const project = await openTypeScriptProject({ root,
+      capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body-demand'],
+      sessions: {
+        async open(descriptor, options) {
+          const session = await factory.open(descriptor, options)
+          return {
+            request(request, requestOptions) {
+              if (fail && request.kind === 'refresh') {
+                fail = false
+                return Promise.reject(new Error('transient demand failure'))
+              }
+              return session.request(request, requestOptions)
+            },
+            acknowledge: session.acknowledge?.bind(session),
+            dispose: () => session.dispose(),
+          }
+        },
+      },
+    })
+    try {
+      const paths = ['index.ts']
+      const pending = project.refresh({ bodyDemand: { paths } })
+      paths[0] = 'other.ts'
+      const initial = await pending
+      const before = await project.open(initial.generation)
+      try {
+        const original = await before.facts.facts('body-demand')
+        expect(original.facts[0]!.payload.paths).toEqual(['index.ts'])
+        expect(() => project.refresh({ bodyDemand: { paths: ['../outside.ts'] } }))
+          .toThrow('canonical owned logical')
+        expect((await project.refresh()).transactions).toEqual([])
+        fail = true
+        await expect(project.refresh({ bodyDemand: { paths: ['other.ts'] } }))
+          .rejects.toThrow('transient demand failure')
+        const recovered = await project.refresh()
+        const after = await project.open(recovered.generation)
+        try {
+          expect((await after.facts.facts('body-demand')).facts[0]!.payload.paths).toEqual(['other.ts'])
+          expect(await before.facts.facts('body-demand')).toEqual(original)
+          expect((await project.refresh()).transactions).toEqual([])
+        } finally { await after.dispose() }
+      } finally { await before.dispose() }
+    } finally { await project.dispose() }
+  })
+
   it('pins readers across edits, shares evaluators by budget and serializes refresh', async () => {
     const root = await fixture()
     const project = await openTypeScriptProject({ root })
@@ -328,7 +380,7 @@ describe('resident TypeScript project public API', () => {
 
   // These lifecycle scenarios repeatedly compare resident edits with independent
   // cold compilers. Their timeout bounds qualification, not native request latency.
-  it('updates unchanged callable proofs, avoids private body fanout and removes vanished expression reads', async () => {
+  it('reprojects the complete body dependency closure without declaration emit and removes vanished expression reads', async () => {
     const root = await fixture()
     const declarations = "export function first(): string { return 'first' }\nexport function second(): string { return 'second' }\n"
     const alias = (target: string) => `import { first, second } from './functions.js'; export const alias: () => string = ${target};\n`
@@ -346,6 +398,16 @@ describe('resident TypeScript project public API', () => {
     const options = { root, capabilities: ['typescript.source', 'typescript.symbol', 'typescript.body'] as const }
     const project = await openTypeScriptProject({ ...options, sessions: createProcessNativeAnalysisSessionFactory({ command: native.command, telemetry: (event) => events.push(event) }) })
     const metrics = (phase: string) => events.find((event) => event.component === 'native' && event.phase === phase)?.metrics
+    const expectClosure = (sources: number) => {
+      // Body products replace declaration-shape pruning with conservative
+      // reverse compiler references. Already selected call owners are projected
+      // afresh rather than redundantly revalidated as foreign positional reads.
+      expect(metrics('compiler.previous-shapes')).toMatchObject({ files: 0 })
+      expect(metrics('compiler.updated-shapes')).toBeUndefined()
+      expect(metrics('compiler.dependent-closure')).toMatchObject({ changedSources: 1, selectedSources: sources })
+      expect(metrics('compiler.callable-reads')).toBeUndefined()
+      expect(metrics('projection.source-inventory')).toMatchObject({ hashedSources: sources })
+    }
     const edit = async (file: string, text: string) => {
       events.length = 0
       await writeFile(join(root, file), text)
@@ -358,25 +420,22 @@ describe('resident TypeScript project public API', () => {
     try {
       await project.refresh()
       await edit('functions.ts', declarations.replace("return 'first'", "return 'private body edit'"))
-      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 0 })
-      expect(metrics('projection.source-inventory')).toMatchObject({ hashedSources: 1 })
+      expectClosure(5)
       // Same target, different dependency path: right.ts must become a read.
       await edit('helper.ts', choose('right'))
-      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 0 })
-      expect(metrics('projection.source-inventory')).toMatchObject({ hashedSources: 1 })
+      expectClosure(2)
       await edit('right.ts', alias('second'))
-      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 1 })
-      expect(metrics('projection.source-inventory')).toMatchObject({ hashedSources: 2 })
+      expectClosure(3)
       // A missing target and repair remain exact even with the same annotation.
       await edit('right.ts', alias('missing'))
       await edit('right.ts', alias('second'))
       // Replacing the owning source clears its old positional observations.
       await edit('index.ts', 'export const result: string = "removed";\n')
       await edit('right.ts', alias('first'))
-      expect(metrics('compiler.callable-reads')).toBeUndefined()
+      expectClosure(2)
       await edit('index.ts', caller)
       await edit('right.ts', alias('second'))
-      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 1 })
+      expectClosure(3)
       // A source disappearing and returning rebuilds the read index with the
       // committed generation; no stale positional or reverse reads survive.
       await rm(join(root, 'right.ts'))
@@ -390,7 +449,7 @@ describe('resident TypeScript project public API', () => {
       try { expect((await coldWithRight.refresh()).generation.id).toBe(restored.generation.id) }
       finally { await coldWithRight.dispose() }
       await edit('right.ts', alias('second'))
-      expect(metrics('compiler.callable-reads')).toMatchObject({ invalidatedOwners: 1 })
+      expectClosure(3)
     } finally { await project.dispose() }
   }, 30_000)
 

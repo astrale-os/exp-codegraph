@@ -1,11 +1,11 @@
 import type { Completeness, SourceSpan } from '../facts/index.ts';
 import type { AnalysisGeneration, FactTransaction, ProducerIdentity } from '../generation/index.ts';
-import type { AnalysisId, OccurrenceId, PassId, ProjectUniverseId, SourceId, SourceRevisionId, SymbolId } from '../identity/index.ts';
+import type { AnalysisId, FactId, OccurrenceId, PassId, ProjectUniverseId, SourceId, SourceRevisionId, SymbolId } from '../identity/index.ts';
 import type { PortablePass } from '../pass/index.ts';
-import type { NativeAnalysisSessionFactory, NativeModuleBoundary, NativeProjectDescriptor, NativeSourceChange } from '../protocol/index.ts';
+import type { NativeAnalysisSessionFactory, NativeModuleBoundary, NativeProjectDescriptor, NativeSourceChange, NativeBodyDemand } from '../protocol/index.ts';
 import type { AnalysisStore } from '../query/index.ts';
 import type { AnalysisTelemetrySink } from '../profiling/index.ts';
-import type { FunctionBodyIR } from './body/index.ts';
+import type { BodyOccurrence, FunctionBodyIR } from './body/index.ts';
 import type { ObservationIssue, ObservedDeclaration, ObservedExport, SourceLocation } from './surface/index.ts';
 import type { ValueResult } from './value/model.ts';
 export declare const TYPESCRIPT_MODULE_FACT_NAMESPACE: 'astrale.typescript.module';
@@ -87,6 +87,39 @@ export interface TypeScriptBodyFacts {
     readonly values: Readonly<Record<string, ValueResult<unknown>>>;
     readonly completeness: Completeness;
 }
+export interface TypeScriptBodyDemandEffect {
+    readonly symbol: SymbolId;
+    readonly occurrence: OccurrenceId;
+    readonly owner: SymbolId;
+}
+/** Complete global effect/callable authority, with explicitly scoped full body coverage. */
+export interface TypeScriptBodyDemandFacts {
+    readonly paths: readonly string[];
+    readonly owners: readonly {
+        readonly owner: SymbolId;
+        readonly scope: 'module' | 'function';
+        readonly span: SourceSpan;
+        readonly path: string;
+        readonly materialized: boolean;
+        /** Original full body fact identity, available only for materialized owners. */
+        readonly fact?: FactId;
+    }[];
+    /** Original occurrence identities; witnesses never stand in for a full body. */
+    readonly witnesses: readonly BodyOccurrence[];
+    readonly initializers: readonly TypeScriptBodyDemandEffect[];
+    readonly mutations: readonly TypeScriptBodyDemandEffect[];
+    readonly escapes: readonly TypeScriptBodyDemandEffect[];
+    readonly aliases: readonly (TypeScriptBodyDemandEffect & {
+        readonly from: SymbolId;
+    })[];
+    /** Complete call inventory coverage for each requested root, including body limitations. */
+    readonly coverage: readonly {
+        readonly path: string;
+        readonly completeness: Completeness;
+    }[];
+    /** Completeness of global owners/effects, independently of selected full body coverage. */
+    readonly completeness: Completeness;
+}
 export interface TypeScriptRefreshResult {
     readonly generation: AnalysisGeneration;
     readonly transaction?: FactTransaction;
@@ -118,6 +151,7 @@ export interface TypeScriptAnalysisService {
         /** Discover changes to compiler-owned inputs, including failed resolutions. */
         readonly discover?: boolean;
         readonly invalidate?: boolean;
+        readonly bodyDemand?: NativeBodyDemand;
         readonly signal?: AbortSignal;
     }): Promise<TypeScriptRefreshResult>;
 }
