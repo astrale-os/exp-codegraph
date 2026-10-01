@@ -50,9 +50,8 @@ func governanceNewRuntimeAuthority(identity *governanceRuntimeIdentity) *governa
 		}
 		out.Files = append(out.Files, file)
 		out.ByPath[path] = file
-		nodes := map[string]*ast.Node{}
-		walk(source.AsNode(), func(node *ast.Node) bool { nodes[governanceRuntimeNodeKey(source, node)] = node; return true })
-		out.NodeLookup[path] = nodes
+		// Runtime observations use the actual owned Program AST directly. A second
+		// full node-coordinate index is created only for an authored AST bridge.
 		admit := func(body *ast.Node) {
 			thin := &thinBody{kinds: map[*ast.Node]string{}}
 			thin.walk(body)
@@ -109,7 +108,16 @@ func (owner *governanceRuntimeAuthority) node(file observabledecision.CapturedFi
 	if ast.GetSourceFileOfNode(node) != file.Source {
 		return nil, false
 	}
-	matched := owner.NodeLookup[file.Path][governanceRuntimeNodeKey(file.Source, node)]
+	if file.Source == source {
+		return node, true
+	}
+	nodes := owner.NodeLookup[file.Path]
+	if nodes == nil {
+		nodes = map[string]*ast.Node{}
+		walk(source.AsNode(), func(node *ast.Node) bool { nodes[governanceRuntimeNodeKey(source, node)] = node; return true })
+		owner.NodeLookup[file.Path] = nodes
+	}
+	matched := nodes[governanceRuntimeNodeKey(file.Source, node)]
 	return matched, matched != nil
 }
 func (owner *governanceRuntimeAuthority) symbolKey(symbol *ast.Symbol) string {
@@ -257,7 +265,7 @@ func (owner *governanceRuntimeAuthority) Call(file observabledecision.CapturedFi
 	return out
 }
 func (owner *governanceRuntimeAuthority) EffectAuthority() observabledecision.NativeEffectAuthority {
-	return observabledecision.NativeEffectAuthority{MembershipComplete: owner.Identity.Complete, MembershipReads: []observabledecision.SemanticRead{{Kind: "compiler-owned-effect-membership", Fingerprint: owner.Identity.Project.capture.certificate()}}, Symbol: owner.Symbol, Call: owner.Call, CandidateAdmitted: owner.CandidateAdmitted, DeleteAdmitted: func(file observabledecision.CapturedFile, node *ast.Node) (bool, bool) {
+	return observabledecision.NativeEffectAuthority{MembershipComplete: owner.Identity.Complete, MembershipReads: []observabledecision.SemanticRead{{Kind: "compiler-owned-effect-membership", Fingerprint: owner.Identity.Project.capture.semanticTicket()}}, Symbol: owner.Symbol, Call: owner.Call, CandidateAdmitted: owner.CandidateAdmitted, DeleteAdmitted: func(file observabledecision.CapturedFile, node *ast.Node) (bool, bool) {
 		return owner.CandidateAdmitted(file, node, "delete")
 	}}
 }

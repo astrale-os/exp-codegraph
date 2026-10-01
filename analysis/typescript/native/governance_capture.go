@@ -59,7 +59,7 @@ type governedFile struct {
 	authored                                         *authoredsource.File
 }
 type governedProject struct {
- sourceProofState *governanceProductsSession
+	sourceProofState *governanceProductsSession
 	Root             string
 	Files            []*governedFile
 	FilesByPath      map[string]*governedFile
@@ -79,15 +79,25 @@ type governedProject struct {
 	policyDigest     string
 	typeRelease      func()
 	typeOwner        *governanceTypeAuthority
+	typeDemandCache  *governanceTypeDemandCache
 }
 type governanceObservation struct {
 	Path  string `json:"path"`
 	Kind  string `json:"kind"`
 	Value string `json:"value"`
 }
+type governanceCapturedBytes struct {
+	bytes []byte
+	err   error
+}
+
 type governanceCapture struct {
+	byteCells map[string]governanceCapturedBytes
+	ticket    governanceCaptureTicket
+
 	probeObservations map[governanceProbeKey]string
 	probeInconsistent bool
+	typeReceipts      []*governanceTypeReceipt
 
 	observations map[string]governanceObservation
 	compiler     *compilerInputFS
@@ -170,12 +180,20 @@ func (c *governanceCapture) directory(path string) ([]os.DirEntry, error) {
 	return entries, nil
 }
 func (c *governanceCapture) read(path string) ([]byte, error) {
+	if c.byteCells == nil {
+		c.byteCells = map[string]governanceCapturedBytes{}
+	}
+	if before, seen := c.byteCells[path]; seen {
+		return append([]byte(nil), before.bytes...), before.err
+	}
 	bytes, err := os.ReadFile(path)
+	c.byteCells[path] = governanceCapturedBytes{append([]byte(nil), bytes...), err}
 	if os.IsNotExist(err) {
 		c.remember(path, "read", "absent")
 		return nil, err
 	}
 	if err != nil {
+		c.remember(path, "read-error", stableJSON(governanceProbeFailure(err)))
 		return nil, err
 	}
 	c.remember(path, "read", "present:"+governanceHash(bytes))
@@ -195,7 +213,7 @@ func (c *governanceCapture) optional(path string, limit int) ([]byte, error) {
 	}
 	return c.read(path)
 }
-func (c *governanceCapture) certificate() string {
+func (c *governanceCapture) canonicalCertificate() string {
 	rows := make([]governanceObservation, 0, len(c.observations))
 	for _, row := range c.observations {
 		rows = append(rows, row)
@@ -204,6 +222,9 @@ func (c *governanceCapture) certificate() string {
 		for key, value := range c.compiler.observed {
 			rows = append(rows, governanceObservation{key.path, fmt.Sprintf("compiler:%d", key.kind), value})
 		}
+	}
+	for _, receipt := range c.typeReceipts {
+		rows = append(rows, receipt.certificateObservations()...)
 	}
 	for key, value := range c.probeObservations {
 		rows = append(rows, governanceObservation{key.Path, fmt.Sprintf("captured-probe:%s:%t", key.Kind, key.FollowLinks), value})
@@ -222,6 +243,11 @@ func (c *governanceCapture) certificate() string {
 // This proves replay equality of all observed operations, not a filesystem-wide
 // atomic transaction or immunity to an edit after the barrier has returned.
 func (c *governanceCapture) Verify() (bool, error) {
+	for _, receipt := range c.typeReceipts {
+		if !receipt.verifyBarrier(c.compiler.disk) {
+			return false, nil
+		}
+	}
 	if c.probeInconsistent {
 		return false, nil
 	}
@@ -248,6 +274,13 @@ func (c *governanceCapture) Verify() (bool, error) {
 			} else if err == nil {
 				value = "present:" + governanceHash(bytes)
 			}
+		case "read-error":
+			_, failure := os.ReadFile(row.Path)
+			if failure == nil {
+				value = "known"
+			} else {
+				value = stableJSON(governanceProbeFailure(failure))
+			}
 		case "realpath":
 			value, err = filepath.EvalSymlinks(row.Path)
 		}
@@ -262,8 +295,13 @@ func (c *governanceCapture) Verify() (bool, error) {
 		if c.compiler.inconsistent {
 			return false, nil
 		}
+		inputs := make([]compilerInputObservation, 0, len(c.compiler.observed))
 		for key, before := range c.compiler.observed {
-			if observeCompilerInput(c.compiler.disk, key) != before {
+			inputs = append(inputs, compilerInputObservation{key: key, before: before})
+		}
+		after := c.compiler.observe(inputs)
+		for index, input := range inputs {
+			if after[index] != input.before {
 				return false, nil
 			}
 		}

@@ -66,19 +66,23 @@ type governanceFileSummary struct {
 	Submodule string `json:"submodule,omitempty"`
 }
 type governancePhaseCounters struct {
-	TypeRequests      []governanceTypeRequest `json:"typeRequests,omitempty"`
-	PhaseNanoseconds  map[string]int64        `json:"phaseNanoseconds,omitempty"`
-	FamilyEvaluations int                     `json:"familyEvaluations"`
-	SourceReads       int                     `json:"sourceReads"`
-	SourceBytes       int                     `json:"sourceBytes"`
-	Parses            int                     `json:"parses"`
-	ParseReuses       int                     `json:"parseReuses"`
-	RuleEvaluations   int                     `json:"ruleEvaluations"`
-	TypeCells         int                     `json:"typeCells"`
-	LiteralCells      int                     `json:"literalCells"`
-	CompilerPrograms  int                     `json:"compilerPrograms"`
+	TypeRequests               []governanceTypeRequest `json:"typeRequests,omitempty"`
+	PhaseNanoseconds           map[string]int64        `json:"phaseNanoseconds,omitempty"`
+	FamilyEvaluations          int                     `json:"familyEvaluations"`
+	SourceReads                int                     `json:"sourceReads"`
+	SourceBytes                int                     `json:"sourceBytes"`
+	Parses                     int                     `json:"parses"`
+	ParseReuses                int                     `json:"parseReuses"`
+	RuleEvaluations            int                     `json:"ruleEvaluations"`
+	TypeCells                  int                     `json:"typeCells"`
+	LiteralCells               int                     `json:"literalCells"`
+	TypeCacheHits              int                     `json:"typeCacheHits"`
+	TypeCacheMisses            int                     `json:"typeCacheMisses"`
+	TypeCacheReplayNanoseconds int64                   `json:"typeCacheReplayNanoseconds"`
+	CompilerPrograms           int                     `json:"compilerPrograms"`
 }
 type governanceSession struct {
+	typeDemandCache  governanceTypeDemandCache
 	productsSession  *governanceProductsSession
 	policySuspension *governancePolicySuspension
 	parseCache       map[string]*governedFile
@@ -109,6 +113,7 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 	if err != nil {
 		return nil, product, err
 	}
+	project.typeDemandCache = &session.typeDemandCache
 	// Developer-only finite source oracle: supplied answers are the canonical
 	// SDK leaf observations, never compiler type cells or runtime authored code.
 	var proof struct {

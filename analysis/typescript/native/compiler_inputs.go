@@ -28,6 +28,11 @@ type compilerInputKey struct {
 	path string
 	kind compilerInputKind
 }
+type compilerRawRead struct {
+	text    string
+	present bool
+}
+
 type compilerInputFS struct {
 	// A decision capture retains its first observation. Legacy resident compiler
 	// sessions can continue replacing observations between explicit generations.
@@ -37,10 +42,11 @@ type compilerInputFS struct {
 	disk     shimvfs.FS
 	mu       sync.Mutex
 	observed map[compilerInputKey]string
+	rawReads map[string]compilerRawRead
 }
 
 func newCompilerInputFS(fs, disk shimvfs.FS) *compilerInputFS {
-	return &compilerInputFS{FS: fs, disk: disk, observed: map[compilerInputKey]string{}}
+	return &compilerInputFS{FS: fs, disk: disk, observed: map[compilerInputKey]string{}, rawReads: map[string]compilerRawRead{}}
 }
 func (fs *compilerInputFS) remember(path string, kind compilerInputKind, value string) {
 	fs.mu.Lock()
@@ -77,6 +83,17 @@ func inputEntries(entries shimvfs.Entries) string {
 }
 func (fs *compilerInputFS) ReadFile(path string) (string, bool) {
 	content, ok := fs.FS.ReadFile(path)
+	fs.mu.Lock()
+	if fs.rawReads == nil {
+		fs.rawReads = map[string]compilerRawRead{}
+	}
+	value := compilerRawRead{content, ok}
+	if before, seen := fs.rawReads[path]; !seen || !fs.singleCapture {
+		fs.rawReads[path] = value
+	} else if before != value {
+		fs.inconsistent = true
+	}
+	fs.mu.Unlock()
 	fs.remember(path, inputRead, inputText(content, ok))
 	return content, ok
 }

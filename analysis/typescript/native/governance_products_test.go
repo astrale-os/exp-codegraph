@@ -134,3 +134,17 @@ func TestGovernanceProductsAdmitActualRuntimeContractsAndSealCapturedInputs(t *t
 		t.Fatal("runtime compiler consumed source edit survived final whole barrier")
 	}
 }
+
+func TestGovernanceMissingLeafDependenciesBelongToOnlyDemandingFamily(t *testing.T) {
+	state := &governanceProductsSession{}
+	state.ActiveFamily = "workflows"
+	state.require(governanceIntrinsic{ID: "negative-before-answer", Kind: "accept-step-id"})
+	state.ActiveFamily = ""
+	state.require(governanceIntrinsic{ID: "runtime-order", Kind: "locale-sort"})
+	if !state.FamilyMissing["workflows"]["negative-before-answer"] || state.FamilyMissing["workflows"]["runtime-order"] {
+		t.Fatal("missing leaves contaminate unrelated family dependencies")
+	}
+	if len(state.Requirements) != 2 {
+		t.Fatal("private missing leaf inventory lost")
+	}
+}

@@ -18,38 +18,36 @@ func governanceProbeRuntime(project *governedProject) any {
 	authority := governanceNewRuntimeAuthority(identity)
 	context := authority.DemandContext(observabledecision.Limits{})
 	runtimeProducts := observabledecision.ObserveRuntime(context)
+	return governanceProjectRuntimeProducts(project, identity, runtimeProducts)
+}
+
+func governanceProjectRuntimeProducts(project *governedProject, identity *governanceRuntimeIdentity, runtimeProducts observabledecision.RuntimeProducts) any {
+	return governanceProjectRuntimeProductsExceptReady(project, identity, runtimeProducts, nil)
+}
+
+func governanceProjectRuntimeProductsExceptReady(project *governedProject, identity *governanceRuntimeIdentity, runtimeProducts observabledecision.RuntimeProducts, ready map[string]governanceOutcome) any {
 	queries := runtimeProducts.Queries
 	definitions := runtimeProducts.Definitions
-	calls := 0
-	for _, kind := range authority.Admitted {
-		if kind == "call" {
-			calls++
-		}
-	}
 	shared := governanceSharedProject(project)
-	queryResult := sourcepolicy.EvaluateRuntimeQueries(shared, sourcepolicy.RuntimeQueryInput{Product: queries, CompleteInventory: queries.InventoryKnown, CallIdentity: func(file *sourcepolicy.File, node *ast.Node) (string, bool) {
-		captured, ok := authority.ByPath[file.Path]
-		if !ok {
-			return "", false
-		}
-		input := captured
-		input.Source = file.Source
-		matched, known := authority.node(input, node)
-		if !known || authority.Admitted[matched] != "call" {
-			return "", false
-		}
-		return identity.CallIdentity(file, node)
-	}})
-	migration, known := governanceRuntimeMigrationIDs(project)
-	definitionResult := sourcepolicy.EvaluateRuntimeDefinitionIDs(shared, sourcepolicy.RuntimeDefinitionInput{Product: definitions, Migration: migration, MigrationKnown: known, CompleteInventory: definitions.InventoryKnown, FormatLocation: func(file *sourcepolicy.File, node *ast.Node) (string, bool) {
-		captured := project.FilesByPath[file.Path]
-		if captured == nil || node == nil {
-			return "", false
-		}
-		loc := governanceLocation(captured, node)
-		return fmt.Sprintf("%s:%d:%d", loc.Path, loc.Line, loc.Column), true
-	}})
-	return map[string]any{"complete": false, "decisions": governanceRuntimeProbeDecisions(project, queryResult, definitionResult), "universe": identity.Universe, "ownedProgramFiles": len(identity.OwnedProgramFiles), "admittedBodyCalls": calls, "queries": queries, "definitions": definitions}
+	queryResult := sourcepolicy.Result{}
+	_, canonReady := ready["QRY-CANON"]
+	_, singleReady := ready["QRY-SINGLE"]
+	if !canonReady || !singleReady {
+		queryResult = sourcepolicy.EvaluateRuntimeQueries(shared, sourcepolicy.RuntimeQueryInput{Product: queries, CompleteInventory: queries.InventoryKnown, CallIdentity: identity.CallIdentity})
+	}
+	definitionResult := sourcepolicy.Result{}
+	if _, definitionReady := ready["QLT-DEF-IDS"]; !definitionReady {
+		migration, known := governanceRuntimeMigrationIDs(project)
+		definitionResult = sourcepolicy.EvaluateRuntimeDefinitionIDs(shared, sourcepolicy.RuntimeDefinitionInput{Product: definitions, Migration: migration, MigrationKnown: known, CompleteInventory: definitions.InventoryKnown, FormatLocation: func(file *sourcepolicy.File, node *ast.Node) (string, bool) {
+			captured := project.FilesByPath[file.Path]
+			if captured == nil || node == nil {
+				return "", false
+			}
+			loc := governanceLocation(captured, node)
+			return fmt.Sprintf("%s:%d:%d", loc.Path, loc.Line, loc.Column), true
+		}})
+	}
+	return map[string]any{"complete": false, "decisions": governanceRuntimeProbeDecisions(project, queryResult, definitionResult), "universe": identity.Universe, "ownedProgramFiles": len(identity.OwnedProgramFiles), "queries": queries, "definitions": definitions}
 }
 
 func governanceRuntimeMigrationIDs(project *governedProject) (sourcepolicy.Result, bool) {
@@ -117,4 +115,33 @@ func governanceRuntimeProbeDecisions(project *governedProject, results ...source
 		out = append(out, decision)
 	}
 	return out
+}
+
+// Resume semantic cells under the same private capture; ready public rule joins
+// are also retained. Only joins waiting on canonical leaves are recomputed.
+func (state *governanceProductsSession) resumeRuntimeProducts() map[string]any {
+	if state.RuntimeGraph == nil {
+		governanceSharedProject(state.Project)
+		identity := governanceBuildRuntimeIdentity(state.Project)
+		if !identity.Complete {
+			return map[string]any{"reason": identity.Reason}
+		}
+		state.RuntimeIdentity = identity
+		authority := governanceNewRuntimeAuthority(identity)
+		state.RuntimeGraph = observabledecision.NewRuntimeDecisionGraph(authority.DemandContext(observabledecision.Limits{}))
+		state.RuntimeReady = map[string]governanceOutcome{}
+	}
+	if len(state.RuntimeReady) == 3 {
+		return map[string]any{"decisions": []governanceOutcome{state.RuntimeReady["QRY-CANON"], state.RuntimeReady["QRY-SINGLE"], state.RuntimeReady["QLT-DEF-IDS"]}}
+	}
+	result := governanceProjectRuntimeProductsExceptReady(state.Project, state.RuntimeIdentity, state.RuntimeGraph.Resume(), state.RuntimeReady).(map[string]any)
+	outcomes := result["decisions"].([]governanceOutcome)
+	for i, outcome := range outcomes {
+		if ready, ok := state.RuntimeReady[outcome.Rule]; ok {
+			outcomes[i] = ready
+		} else if outcome.Status != "residual" {
+			state.RuntimeReady[outcome.Rule] = outcome
+		}
+	}
+	return result
 }

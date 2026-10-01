@@ -122,7 +122,7 @@ func (owner *governanceRuntimeAuthority) Calls(paths []string) observabledecisio
 		}
 		return a.SubjectID < b.SubjectID
 	})
-	out.Reads = []observabledecision.SemanticRead{{Kind: "native-admitted-call-inventory", Fingerprint: owner.Identity.Project.capture.certificate()}}
+	out.Reads = []observabledecision.SemanticRead{{Kind: "native-admitted-call-inventory", Fingerprint: owner.Identity.Project.capture.semanticTicket()}}
 	return out
 }
 
@@ -139,6 +139,6 @@ func (owner *governanceRuntimeAuthority) DefinitionSubjects(paths []string) obse
 		}
 	}
 	result.Subjects = filtered
-	result.Reads = []observabledecision.SemanticRead{{Kind: "governed-authored-definition-subjects", Fingerprint: owner.Identity.Project.capture.certificate()}}
+	result.Reads = []observabledecision.SemanticRead{{Kind: "governed-authored-definition-subjects", Fingerprint: owner.Identity.Project.capture.semanticTicket()}}
 	return result
 }

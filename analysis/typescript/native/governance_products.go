@@ -2,6 +2,7 @@ package main
 
 import (
 	"astrale-typespec-v2-native-analysis/jsstring"
+	"astrale-typespec-v2-native-analysis/observabledecision"
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	"encoding/json"
 	"fmt"
@@ -37,8 +38,15 @@ type governanceIntrinsicAnswer struct {
 	Groups   [][]int `json:"groups,omitempty"`
 }
 type governanceProductsSession struct {
+	RuntimeGraph     *observabledecision.RuntimeDecisionGraph
+	RuntimeIdentity  *governanceRuntimeIdentity
+	RuntimeReady     map[string]governanceOutcome
+	RuleReady        map[string]governanceOutcome
 	GenericEngine    *governanceGenericEngine
 	GenericProduct   *governanceGenericProduct
+	RulePending      bool
+	ActiveFamily     string
+	FamilyMissing    map[string]map[string]bool
 	GenericSuspended bool
 	Prepare          governancePrepare
 	Project          *governedProject
@@ -60,6 +68,15 @@ func (session *governanceSession) discardProducts() {
 	session.policySuspension = nil
 }
 func (state *governanceProductsSession) require(value governanceIntrinsic) {
+	if state.ActiveFamily != "" {
+		if state.FamilyMissing == nil {
+			state.FamilyMissing = map[string]map[string]bool{}
+		}
+		if state.FamilyMissing[state.ActiveFamily] == nil {
+			state.FamilyMissing[state.ActiveFamily] = map[string]bool{}
+		}
+		state.FamilyMissing[state.ActiveFamily][value.ID] = true
+	}
 	for _, old := range state.Requirements {
 		if old.ID == value.ID {
 			return
@@ -131,6 +148,7 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 			return map[string]any{"status": "partial", "residual": []string{"Captured canonical policy could not be admitted: " + err.Error()}}, nil
 		}
 		state.Project = project
+		project.sourceProofState = state
 		state.Token = params.Token
 		state.Generation = strconv.Itoa(session.generation)
 		state.Contracts = params.ImplementationContracts
@@ -163,7 +181,15 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 			state.Answers[answer.ID] = answer
 		}
 		state.Requirements = nil
-		state.Project.familyProducts = nil
+		for family, missing := range state.FamilyMissing {
+			for id := range missing {
+				if seen[id] {
+					delete(state.Project.familyProducts, family)
+					delete(state.FamilyMissing, family)
+					break
+				}
+			}
+		}
 		state.Project.familyResidual = nil
 	default:
 		return nil, fmt.Errorf("unsupported native continuation kind %s", params.Kind)
@@ -287,7 +313,7 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		}
 		if contract.Implementation.ID == "astrale.sdk.codegraph" && !runtimeEvaluated {
 			runtimeEvaluated = true
-			observed := governanceProbeRuntime(project).(map[string]any)
+			observed := state.resumeRuntimeProducts()
 			outcomes, ok := observed["decisions"].([]governanceOutcome)
 			if !ok {
 				residual = append(residual, "Native runtime observation authority unavailable: "+fmt.Sprint(observed["reason"]))
@@ -310,7 +336,18 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 				continue
 			}
 		} else {
-			out, _ = governanceEvaluate(project, contract.RuleID)
+			if state.RuleReady == nil {
+				state.RuleReady = map[string]governanceOutcome{}
+			}
+			if ready, ok := state.RuleReady[contract.RuleID]; ok {
+				out = ready
+			} else {
+				state.RulePending = false
+				out, _ = governanceEvaluate(project, contract.RuleID)
+				if out.Status != "residual" && !state.RulePending {
+					state.RuleReady[contract.RuleID] = out
+				}
+			}
 		}
 		if out.Status == "residual" {
 			residual = append(residual, "Native selected rule observation is incomplete: "+contract.RuleID)
@@ -379,6 +416,9 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	}
 	if debug.DebugPhaseCounters {
 		result["phaseCounters"] = project.stats
+		if state.RuntimeGraph != nil {
+			result["runtimeDecisionCounters"] = map[string]int{"queryEvaluations": state.RuntimeGraph.QueryEvaluations, "definitionEvaluations": state.RuntimeGraph.DefinitionEvaluations, "readyPublicJoins": len(state.RuntimeReady)}
+		}
 	}
 	return result, nil
 }

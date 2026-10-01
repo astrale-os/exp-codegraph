@@ -87,7 +87,7 @@ func (owner *governanceRuntimeAuthority) Resolve(path, specifier, export string)
 		captured = &governedFile{Path: path, AbsolutePath: file.AbsolutePath, Source: file.Source, Text: file.Text}
 	}
 	resolved := owner.Identity.Project.resolveImport(captured, specifier, false)
-	result.Reads = append(result.Reads, observabledecision.SemanticRead{Kind: "contextual-runtime-resolution", Path: path, Name: specifier, Fingerprint: owner.Identity.Project.capture.certificate()})
+	result.Reads = append(result.Reads, observabledecision.SemanticRead{Kind: "contextual-runtime-resolution", Path: path, Name: specifier, Fingerprint: owner.Identity.Project.capture.semanticTicket()})
 	if !resolved.IsResolved() {
 		result.Reason = "actual runtime module resolution unavailable"
 		return result
@@ -172,7 +172,7 @@ func (owner *governanceRuntimeAuthority) GlobalValue(path string, node *ast.Node
 	}
 	check := owner.Identity.TypeOwner.program.Checker
 	symbol := unalias(check, check.GetSymbolAtLocation(matched))
-	read := observabledecision.SemanticRead{Kind: "actual-global-value-origin", Path: path, Name: matched.Text(), Fingerprint: owner.Identity.Project.capture.certificate()}
+	read := observabledecision.SemanticRead{Kind: "actual-global-value-origin", Path: path, Name: matched.Text(), Fingerprint: owner.Identity.Project.capture.semanticTicket()}
 	if symbol == nil {
 		return observabledecision.GlobalValueObservation{Known: true, Reads: []observabledecision.SemanticRead{read}}
 	}

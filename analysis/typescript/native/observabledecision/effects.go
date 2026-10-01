@@ -55,12 +55,15 @@ type effectCandidate struct {
 	kind             string
 }
 type NativeEffectCore struct {
-	authority      NativeEffectAuthority
-	candidates     []effectCandidate
-	sources        map[string]CapturedFile
-	symbols        map[*ast.Node]NativeEffectSymbol
-	calls          map[*ast.Node]NativeEffectCall
-	invalidCapture bool
+	authority                  NativeEffectAuthority
+	candidates                 []effectCandidate
+	sources                    map[string]CapturedFile
+	symbols                    map[*ast.Node]NativeEffectSymbol
+	calls                      map[*ast.Node]NativeEffectCall
+	invalidCapture             bool
+	canonicalCandidates        map[string][]effectCandidate
+	canonicalCandidatesKnown   bool
+	canonicalCandidatesIndexed bool
 }
 
 // NewNativeEffectCore indexes native AST candidates only. It never reads a
@@ -168,6 +171,10 @@ func (core *NativeEffectCore) Proof(kind, symbol, localOwner string) NativeEffec
 		result.Reason = "Unknown native effect demand."
 		return result
 	}
+	indexed := core.authority.Match == nil
+	if indexed {
+		core.indexCanonicalCandidates()
+	}
 	pending := []string{symbol}
 	seen := map[string]bool{}
 	for len(pending) > 0 {
@@ -181,35 +188,42 @@ func (core *NativeEffectCore) Proof(kind, symbol, localOwner string) NativeEffec
 		mutationOwners := []string{}
 		escaped := false
 		known := true
+		candidates := core.candidates
+		if indexed {
+			known = core.canonicalCandidatesKnown
+			candidates = core.canonicalCandidates[current]
+		}
 		witnesses := []string{}
-		for _, candidate := range core.candidates {
-			if core.authority.CandidateAdmitted == nil {
-				known = false
-				continue
-			}
-			admitted, admissionKnown := core.authority.CandidateAdmitted(candidate.file, candidate.node, candidate.kind)
-			if !admissionKnown {
-				known = false
-				continue
-			}
-			if !admitted {
-				continue
-			}
-			matches, complete := false, false
-			if core.authority.Match != nil {
-				var reads []SemanticRead
-				matches, complete, reads = core.authority.Match(candidate.file, candidate.root, current)
-				result.Reads = append(result.Reads, reads...)
-			} else {
-				root := core.symbol(candidate.file, candidate.root)
-				matches, complete = root.Key == current, root.Known
-			}
-			if !complete {
-				known = false
-				continue
-			}
-			if !matches {
-				continue
+		for _, candidate := range candidates {
+			if !indexed {
+				if core.authority.CandidateAdmitted == nil {
+					known = false
+					continue
+				}
+				admitted, admissionKnown := core.authority.CandidateAdmitted(candidate.file, candidate.node, candidate.kind)
+				if !admissionKnown {
+					known = false
+					continue
+				}
+				if !admitted {
+					continue
+				}
+				matches, complete := false, false
+				if core.authority.Match != nil {
+					var reads []SemanticRead
+					matches, complete, reads = core.authority.Match(candidate.file, candidate.root, current)
+					result.Reads = append(result.Reads, reads...)
+				} else {
+					root := core.symbol(candidate.file, candidate.root)
+					matches, complete = root.Key == current, root.Known
+				}
+				if !complete {
+					known = false
+					continue
+				}
+				if !matches {
+					continue
+				}
 			}
 			switch candidate.kind {
 			case "alias":
@@ -397,5 +411,39 @@ func (core *NativeEffectCore) DemandCallTargets() func(string, *ast.Node) Native
 			return NativeEffectCall{}
 		}
 		return core.call(file, node)
+	}
+}
+
+// Partition immutable admitted effect occurrences by canonical binding ONCE.
+// A missing admission or unknown root is still a global negative-closure gap;
+// it is never erased by the partition. Detailed alias/call facts remain lazy,
+// and each bucket preserves the original candidate sequence and virtual costs.
+// Symbol-relative Match authorities retain the original demand scan path.
+func (core *NativeEffectCore) indexCanonicalCandidates() {
+	if core.canonicalCandidatesIndexed {
+		return
+	}
+	core.canonicalCandidatesIndexed = true
+	core.canonicalCandidatesKnown = true
+	core.canonicalCandidates = map[string][]effectCandidate{}
+	for _, candidate := range core.candidates {
+		if core.authority.CandidateAdmitted == nil {
+			core.canonicalCandidatesKnown = false
+			continue
+		}
+		admitted, known := core.authority.CandidateAdmitted(candidate.file, candidate.node, candidate.kind)
+		if !known {
+			core.canonicalCandidatesKnown = false
+			continue
+		}
+		if !admitted {
+			continue
+		}
+		root := core.symbol(candidate.file, candidate.root)
+		if !root.Known {
+			core.canonicalCandidatesKnown = false
+			continue
+		}
+		core.canonicalCandidates[root.Key] = append(core.canonicalCandidates[root.Key], candidate)
 	}
 }

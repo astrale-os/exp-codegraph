@@ -68,10 +68,20 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 	result, ok := project.familyProducts[group]
 	if !ok {
 		started := time.Now()
-		result = evaluate(governanceSharedProject(project))
+		if state := project.sourceProofState; state != nil {
+			prior := state.ActiveFamily
+			state.ActiveFamily = group
+			result = evaluate(governanceSharedProject(project))
+			state.ActiveFamily = prior
+		} else {
+			result = evaluate(governanceSharedProject(project))
+		}
 		project.stats.FamilyEvaluations++
 		project.stats.phase("family:"+group+":inclusive", started)
 		project.familyProducts[group] = result
+	}
+	if state := project.sourceProofState; state != nil && len(state.FamilyMissing[group]) > 0 {
+		state.RulePending = true
 	}
 	out := governanceOutcome{Rule: rule, Revision: governanceRevisions[rule], Status: "pass", Findings: []governanceEvidence{}}
 	for _, file := range project.Files {

@@ -17,12 +17,17 @@ import (
 )
 
 type governanceTypeAuthority struct {
-	project    *governedProject
-	configured bool
-	parsed     *options.ParsedCommandLine
-	roots      map[string]bool
-	program    *driver.Program
-	opened     bool
+	project           *governedProject
+	configured        bool
+	parsed            *options.ParsedCommandLine
+	roots             map[string]bool
+	program           *driver.Program
+	opened            bool
+	cells             map[governanceTypeDemandKey]governanceTypeDemandValue
+	validated         map[*governanceTypeReceipt]bool
+	validationSeen    map[*governanceTypeReceipt]bool
+	typeSourceBase    map[string]governanceTypeSource
+	typeSourceForward map[string][]string
 }
 
 func (owner *governanceTypeAuthority) configuration() {
@@ -252,6 +257,22 @@ func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression 
 	started := time.Now()
 	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
+	if names, ok := governanceEmptyConditionalNames(expression); ok {
+		owner.configuration()
+		owner.project.stats.LiteralCells++
+		if owner.roots[owner.project.FilesByPath[file.Path].AbsolutePath] {
+			return sourcepolicy.NamesObservation{Known: true, Names: names}
+		}
+		return sourcepolicy.NamesObservation{Known: true}
+	}
+	if value, ok := owner.lookupTypeDemand("property-names", file, expression); ok {
+		return value.names
+	}
+	defer func() {
+		if observed.Known {
+			owner.storeTypeDemand("property-names", file, expression, governanceTypeDemandValue{names: observed})
+		}
+	}()
 	match, known := owner.compilerNode(file, expression)
 	if known && match != nil && owner.constantUnknownCallNames(match) {
 		owner.project.stats.phase("type-constant-unknown-call-quotient", started)
@@ -281,6 +302,14 @@ func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, ex
 	started := time.Now()
 	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
+	if value, ok := owner.lookupTypeDemand("collection-brand-kind", file, expression); ok {
+		return value.kind
+	}
+	defer func() {
+		if observed.Known {
+			owner.storeTypeDemand("collection-brand-kind", file, expression, governanceTypeDemandValue{kind: observed})
+		}
+	}()
 	node, typ, known := owner.expression(file, expression)
 	if !known {
 		return sourcepolicy.KindObservation{Known: false}

@@ -1,0 +1,433 @@
+package main
+
+import (
+	"astrale-typespec-v2-native-analysis/sourcepolicy"
+	"fmt"
+	ast "github.com/microsoft/typescript-go/shim/ast"
+	compiler "github.com/microsoft/typescript-go/shim/compiler"
+	core "github.com/microsoft/typescript-go/shim/core"
+	parser "github.com/microsoft/typescript-go/shim/parser"
+	scanner "github.com/microsoft/typescript-go/shim/scanner"
+	vfs "github.com/microsoft/typescript-go/shim/vfs"
+	"strings"
+	"sync"
+	"time"
+)
+
+// Values contain no compiler pointers. Raw strings, including absent reads and
+// reference syntax, are compared directly; digests do not authorize replay.
+
+type governanceTypeDemandKey struct {
+	root, operation, path string
+	start, end            int
+}
+type governanceTypeDemandValue struct {
+	names sourcepolicy.NamesObservation
+	kind  sourcepolicy.KindObservation
+}
+type governanceTypeDemandEntry struct {
+	value   governanceTypeDemandValue
+	receipt *governanceTypeReceipt
+}
+type governanceTypeDemandCache struct {
+	entries map[governanceTypeDemandKey]governanceTypeDemandEntry
+}
+type governanceTypeSource struct {
+	text, references string
+	options          ast.SourceFileParseOptions
+	needed, ordinary bool
+}
+type governanceTypeReplayWorld struct {
+	disk         vfs.FS
+	reads        map[string]compilerRawRead
+	observations map[compilerInputKey]string
+}
+
+// Uncached replay I/O is batched once per capture; no worker touches compiler
+// AST/checker state. Results are published only after every operation finishes.
+func (world *governanceTypeReplayWorld) prepare(receipt *governanceTypeReceipt) {
+	readPaths := []string{}
+	pending := map[string]bool{}
+	for path := range receipt.sources {
+		if _, seen := world.reads[path]; !seen {
+			pending[path] = true
+		}
+	}
+	for path := range receipt.reads {
+		if _, seen := world.reads[path]; !seen {
+			pending[path] = true
+		}
+	}
+	for path := range pending {
+		readPaths = append(readPaths, path)
+	}
+	keys := []compilerInputKey{}
+	for key := range receipt.observations {
+		if key.kind != inputRead {
+			if _, seen := world.observations[key]; !seen {
+				keys = append(keys, key)
+			}
+		}
+	}
+	readValues := make([]compilerRawRead, len(readPaths))
+	values := make([]string, len(keys))
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for worker := 0; worker < min(compilerObservationWorkers, len(readPaths)+len(keys)); worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				if index < len(readPaths) {
+					text, present := world.disk.ReadFile(readPaths[index])
+					readValues[index] = compilerRawRead{text, present}
+				} else {
+					values[index-len(readPaths)] = observeCompilerInput(world.disk, keys[index-len(readPaths)])
+				}
+			}
+		}()
+	}
+	for index := 0; index < len(readPaths)+len(keys); index++ {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+	for index, path := range readPaths {
+		world.reads[path] = readValues[index]
+	}
+	for index, key := range keys {
+		world.observations[key] = values[index]
+	}
+}
+
+type governanceTypeReceipt struct {
+	root         string
+	sources      map[string]governanceTypeSource
+	observations map[compilerInputKey]string
+	reads        map[string]compilerRawRead
+	// Pending obligations retain observed authored bytes and expected external
+	// bytes separately from actual compiler reads. Only the uncached end barrier
+	// discharges them; the private proposal is never publication authority.
+	barrierReads        map[string]compilerRawRead
+	barrierObservations map[compilerInputKey]string
+	cache               *governanceTypeDemandCache
+	cacheKeys           map[governanceTypeDemandKey]bool
+	certificateRows     []governanceObservation
+}
+
+func governanceOrdinaryTypeSource(source *ast.SourceFile) bool {
+	name := strings.ToLower(source.FileName())
+	return len(source.Diagnostics()) == 0 && !source.IsDeclarationFile && (strings.HasSuffix(name, ".ts") || strings.HasSuffix(name, ".tsx")) && source.ExternalModuleIndicator != nil && !compiler.FileAffectsGlobalScope(source) && len(source.ModuleAugmentations) == 0 && !sourceHasAmbientModule(source)
+}
+
+// Keep exact resolution-affecting syntax, not merely module specifier names.
+// The compiler's own referenced-file relation supplies the actual targets.
+func governanceTypeReferenceSyntax(source *ast.SourceFile) string {
+	parts := []string{sourceImportIdentity(source)}
+	walkFile(source, func(node *ast.Node) bool {
+		relevant := false
+		switch node.Kind {
+		case ast.KindImportDeclaration, ast.KindJSImportDeclaration, ast.KindExportDeclaration, ast.KindImportEqualsDeclaration, ast.KindImportType:
+			relevant = true
+		case ast.KindCallExpression:
+			callee := node.AsCallExpression().Expression
+			relevant = callee != nil && (callee.Kind == ast.KindImportKeyword || callee.Kind == ast.KindIdentifier && callee.Text() == "require")
+		}
+		if relevant {
+			start := scanner.GetTokenPosOfNode(node, source, false)
+			parts = append(parts, node.KindString()+":"+source.Text()[start:node.End()])
+			return false
+		}
+		return true
+	})
+	return string(stableJSON(parts))
+}
+
+func (owner *governanceTypeAuthority) demandKey(operation string, file *sourcepolicy.File, node *ast.Node) governanceTypeDemandKey {
+	return governanceTypeDemandKey{owner.project.Root, operation, file.Path, scanner.GetTokenPosOfNode(node, file.Source, false), node.End()}
+}
+func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *sourcepolicy.File, node *ast.Node) (governanceTypeDemandValue, bool) {
+	key := owner.demandKey(operation, file, node)
+	if entry, ok := owner.cells[key]; ok {
+		owner.project.stats.TypeCacheHits++
+		return entry, true
+	}
+	cache := owner.project.typeDemandCache
+	if cache == nil {
+		return governanceTypeDemandValue{}, false
+	}
+	entry, ok := cache.entries[key]
+	if !ok {
+		owner.project.stats.TypeCacheMisses++
+		return governanceTypeDemandValue{}, false
+	}
+	started := time.Now()
+	defer func() { owner.project.stats.TypeCacheReplayNanoseconds += time.Since(started).Nanoseconds() }()
+	if owner.validationSeen == nil {
+		owner.validationSeen = map[*governanceTypeReceipt]bool{}
+		owner.validated = map[*governanceTypeReceipt]bool{}
+	}
+	if !owner.validationSeen[entry.receipt] {
+		owner.validationSeen[entry.receipt] = true
+		if owner.project.capture.compiler == nil {
+			disk := newAuthoredCompilerDisk()
+			owner.project.capture.compiler = governanceNewCompilerInputFS(disk)
+		}
+		replay, valid := entry.receipt.replay(owner.project)
+		owner.validated[entry.receipt] = valid
+		if valid {
+			replay.cache = cache
+			replay.cacheKeys = map[governanceTypeDemandKey]bool{key: true}
+			capture := owner.project.capture
+			if len(capture.typeReceipts) == 0 {
+				capture.typeReceipts = append(capture.typeReceipts, replay)
+			} else {
+				target := capture.typeReceipts[0]
+				target.cacheKeys[key] = true
+				for path, value := range replay.barrierReads {
+					if before, seen := target.barrierReads[path]; seen && before != value {
+						capture.probeInconsistent = true
+					}
+					if before, seen := target.barrierReads[path]; !seen || before != value {
+						target.certificateRows = nil
+					}
+					target.barrierReads[path] = value
+				}
+				for key, value := range replay.barrierObservations {
+					if before, seen := target.barrierObservations[key]; seen && before != value {
+						capture.probeInconsistent = true
+					}
+					if before, seen := target.barrierObservations[key]; !seen || before != value {
+						target.certificateRows = nil
+					}
+					target.barrierObservations[key] = value
+				}
+			}
+		}
+	}
+	if !owner.validated[entry.receipt] {
+		owner.project.stats.TypeCacheMisses++
+		return governanceTypeDemandValue{}, false
+	}
+	if owner.cells == nil {
+		owner.cells = map[governanceTypeDemandKey]governanceTypeDemandValue{}
+	}
+	owner.cells[key] = entry.value
+	owner.project.stats.TypeCacheHits++
+	return entry.value, true
+}
+func (owner *governanceTypeAuthority) storeTypeDemand(operation string, file *sourcepolicy.File, node *ast.Node, value governanceTypeDemandValue) {
+	key := owner.demandKey(operation, file, node)
+	if owner.cells == nil {
+		owner.cells = map[governanceTypeDemandKey]governanceTypeDemandValue{}
+	}
+	owner.cells[key] = value
+	cache := owner.project.typeDemandCache
+	if cache == nil || owner.program == nil || owner.project.capture.compiler.inconsistent {
+		return
+	}
+	receipt, ok := owner.captureTypeReceipt(owner.project.FilesByPath[file.Path].AbsolutePath)
+	if !ok {
+		return
+	}
+	if cache.entries == nil || len(cache.entries) > 256 {
+		cache.entries = map[governanceTypeDemandKey]governanceTypeDemandEntry{}
+	}
+	cache.entries[key] = governanceTypeDemandEntry{value, receipt}
+}
+
+func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*governanceTypeReceipt, bool) {
+	program := owner.program.TSProgram
+	receipt := &governanceTypeReceipt{root: owner.project.Root, sources: map[string]governanceTypeSource{}, observations: map[compilerInputKey]string{}, reads: map[string]compilerRawRead{}}
+	demandSource := owner.program.SourceFile(demanded)
+	if demandSource == nil {
+		return nil, false
+	}
+	needed := map[string]bool{demandSource.FileName(): true}
+	if owner.typeSourceBase == nil {
+		physical := map[string]string{}
+		base := map[string]governanceTypeSource{}
+		forward := map[string][]string{}
+		for _, source := range program.SourceFiles() {
+			path := source.FileName()
+			physical[string(source.Path())] = path
+			base[path] = governanceTypeSource{text: source.Text(), references: governanceTypeReferenceSyntax(source), options: source.ParseOptions(), ordinary: governanceOrdinaryTypeSource(source), needed: compiler.FileAffectsGlobalScope(source) || len(source.ModuleAugmentations) > 0 || sourceHasAmbientModule(source)}
+		}
+		for _, source := range program.SourceFiles() {
+			path := source.FileName()
+			for _, ref := range compiler.GetReferencedFilePaths(program, source) {
+				target, ok := physical[ref]
+				if !ok {
+					return nil, false
+				}
+				forward[path] = append(forward[path], target)
+			}
+		}
+		owner.typeSourceBase = base
+		owner.typeSourceForward = forward
+	}
+	for path, source := range owner.typeSourceBase {
+		receipt.sources[path] = source
+		if source.needed {
+			needed[path] = true
+		}
+	}
+	if _, mapped := owner.typeSourceBase[demandSource.FileName()]; !mapped {
+		return nil, false
+	}
+	forward := owner.typeSourceForward
+	queue := []string{}
+	for path := range needed {
+		queue = append(queue, path)
+	}
+	for len(queue) > 0 {
+		path := queue[0]
+		queue = queue[1:]
+		for _, target := range forward[path] {
+			if !needed[target] {
+				needed[target] = true
+				queue = append(queue, target)
+			}
+		}
+	}
+	for path, source := range receipt.sources {
+		source.needed = needed[path]
+		receipt.sources[path] = source
+	}
+	fs := owner.project.capture.compiler
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	for key, value := range fs.observed {
+		receipt.observations[key] = value
+	}
+	for path, value := range fs.rawReads {
+		receipt.reads[path] = value
+	}
+	return receipt, true
+}
+
+// A hit proposes private proof obligations. Only authored bytes and compiler
+// operations actually observed in this capture can discharge an obligation
+// here. Every remaining obligation is checked with uncached I/O at final seal.
+// Expected reads are NEVER inserted into the current compiler observation map.
+func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governanceTypeReceipt, bool) {
+	if receipt.root != project.Root || project.capture.compiler == nil {
+		return nil, false
+	}
+	fs := project.capture.compiler
+	replay := &governanceTypeReceipt{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
+	changed := map[string]bool{}
+	actualReads := map[string]compilerRawRead{}
+	actualObservations := map[compilerInputKey]string{}
+	fs.mu.Lock()
+	for path, value := range fs.rawReads {
+		actualReads[path] = value
+	}
+	for key, value := range fs.observed {
+		actualObservations[key] = value
+	}
+	fs.mu.Unlock()
+	for _, captured := range project.Files {
+		actualReads[captured.AbsolutePath] = compilerRawRead{captured.Text, true}
+	}
+	for path, old := range receipt.sources {
+		current, observed := actualReads[path]
+		if !observed {
+			current = compilerRawRead{old.text, true}
+		}
+		if !current.present {
+			return nil, false
+		}
+		replay.barrierReads[path] = current
+		if current.text == old.text {
+			continue
+		}
+		if old.needed || !old.ordinary {
+			return nil, false
+		}
+		kind := core.ScriptKindTS
+		if strings.HasSuffix(strings.ToLower(path), ".tsx") {
+			kind = core.ScriptKindTSX
+		}
+		source := parser.ParseSourceFile(old.options, current.text, kind)
+		if !governanceOrdinaryTypeSource(source) || governanceTypeReferenceSyntax(source) != old.references {
+			return nil, false
+		}
+		changed[path] = true
+	}
+	for path, old := range receipt.reads {
+		current, observed := actualReads[path]
+		if !observed {
+			if source, seen := replay.barrierReads[path]; seen {
+				current = source
+			} else {
+				current = old
+			}
+		}
+		if current != old && !changed[path] {
+			return nil, false
+		}
+		replay.barrierReads[path] = current
+	}
+	for key, old := range receipt.observations {
+		if key.kind == inputRead {
+			if _, seen := receipt.reads[key.path]; !seen {
+				return nil, false
+			}
+			continue
+		}
+		current, observed := actualObservations[key]
+		if !observed {
+			current = old
+		}
+		if key.kind == inputMetadata && changed[key.path] {
+			// Actual metadata for one admitted body/ID edit supersedes its old stat.
+			// This is a current observation, not a guessed/deferred answer.
+			current = observeCompilerInput(fs.disk, key)
+			fs.remember(key.path, key.kind, current)
+		} else if current != old {
+			return nil, false
+		}
+		replay.barrierObservations[key] = current
+	}
+	return replay, true
+}
+func (receipt *governanceTypeReceipt) verifyBarrier(disk vfs.FS) bool {
+	world := &governanceTypeReplayWorld{disk: disk, reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
+	world.prepare(&governanceTypeReceipt{reads: receipt.barrierReads, observations: receipt.barrierObservations})
+	for path, before := range receipt.barrierReads {
+		if world.reads[path] != before {
+			receipt.invalidate()
+			return false
+		}
+	}
+	for key, before := range receipt.barrierObservations {
+		if world.observations[key] != before {
+			receipt.invalidate()
+			return false
+		}
+	}
+	return true
+}
+
+func (receipt *governanceTypeReceipt) invalidate() {
+	if receipt.cache != nil {
+		for key := range receipt.cacheKeys {
+			delete(receipt.cache.entries, key)
+		}
+	}
+}
+
+func (receipt *governanceTypeReceipt) certificateObservations() []governanceObservation {
+	if receipt.certificateRows == nil {
+		rows := make([]governanceObservation, 0, len(receipt.barrierReads)+len(receipt.barrierObservations))
+		for path, value := range receipt.barrierReads {
+			rows = append(rows, governanceObservation{path, "expected-type-read", inputText(value.text, value.present)})
+		}
+		for key, value := range receipt.barrierObservations {
+			rows = append(rows, governanceObservation{key.path, fmt.Sprintf("expected-type-guard:%d", key.kind), value})
+		}
+		receipt.certificateRows = rows
+	}
+	return receipt.certificateRows
+}
