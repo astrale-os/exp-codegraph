@@ -31,22 +31,21 @@ func (session *governanceSession) captureConfiguration(root string) (map[string]
 		return nil, err
 	}
 	capture := &governanceCapture{observations: map[string]governanceObservation{}}
-	info, err := capture.lstat(absolute)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("configuration capture root requires a regular directory")
-	}
-	canonical, err := filepath.EvalSymlinks(absolute)
-	if err != nil {
-		return nil, err
+	// Configuration is a separate owned product. Root topology is captured even
+	// when absent; the SDK admits configuration and coverage before source work.
+	canonical := absolute
+	rootObservation := capture.probe(governanceProbeRequest{ID: "configuration-root", Kind: "canonicalize", Path: absolute})
+	if rootObservation.Status == "known" {
+		canonical = rootObservation.Value.(map[string]string)["path"]
 	}
 	capture.root = canonical
-	capture.remember(absolute, "realpath", canonical)
 	path := filepath.Join(canonical, "astrale.lint.json")
 	metadata := map[string]any{}
 	var raw any
-	info, err = capture.lstat(path)
+	info, err := capture.lstat(path)
 	if err != nil && !os.IsNotExist(err) {
-		return nil, err
+		metadata["kind"] = "inspection-error"
+		metadata["error"] = governanceProbeFailure(err)
 	}
 	if err == nil {
 		kind := "other"
@@ -60,17 +59,19 @@ func (session *governanceSession) captureConfiguration(root string) (map[string]
 		if kind == "regular" && info.Size() <= 65536 {
 			bytes, readError := capture.read(path)
 			if readError != nil {
-				return nil, readError
+				metadata["kind"] = "read-error"
+				metadata["error"] = governanceProbeFailure(readError)
+			} else {
+				raw = base64.StdEncoding.EncodeToString(bytes)
 			}
-			raw = base64.StdEncoding.EncodeToString(bytes)
 		}
-	} else {
+	} else if os.IsNotExist(err) {
 		metadata["kind"] = "absent"
 	}
 	session.generation++
 	token := governanceHash([]byte(fmt.Sprintf("policy:%s:%d:%s", canonical, session.generation, capture.certificate())))
 	session.policySuspension = &governancePolicySuspension{canonical, token, capture}
-	return map[string]any{"status": "configuration", "token": token, "root": absolute, "canonicalRoot": canonical, "configPath": filepath.Join(absolute, "astrale.lint.json"), "configRawBase64": raw, "configKind": metadata["kind"], "configSize": metadata["size"]}, nil
+	return map[string]any{"status": "configuration", "token": token, "root": absolute, "canonicalRoot": canonical, "configPath": filepath.Join(absolute, "astrale.lint.json"), "configRawBase64": raw, "configKind": metadata["kind"], "configSize": metadata["size"], "configError": metadata["error"]}, nil
 }
 
 // The canonical SDK owner has admitted and normalized these patterns. Native

@@ -340,7 +340,10 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		}
 		if contract.Implementation.ID == "astrale.sdk.codegraph" && !runtimeEvaluated {
 			runtimeEvaluated = true
-			observed := state.resumeRuntimeProducts()
+			observed, err := state.resumeRuntimeProducts()
+			if err != nil {
+				return nil, err
+			}
 			outcomes, ok := observed["decisions"].([]governanceOutcome)
 			if !ok {
 				residual = append(residual, "Native runtime observation authority unavailable: "+fmt.Sprint(observed["reason"]))

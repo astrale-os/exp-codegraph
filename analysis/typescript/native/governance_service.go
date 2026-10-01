@@ -339,7 +339,11 @@ func runDecisionServe(arguments []string) int {
 			err = fmt.Errorf("Unsupported decision method %s.", request.Method)
 		}
 		if err != nil {
-			encoder.Encode(map[string]any{"id": request.ID, "error": map[string]string{"code": "LINTER_PROJECT_INVALID", "message": err.Error()}})
+			code := "LINTER_PROJECT_INVALID"
+			if _, ok := err.(*governanceSemanticBudgetError); ok {
+				code = "LINTER_SEMANTIC_FAILED"
+			}
+			encoder.Encode(map[string]any{"id": request.ID, "error": map[string]string{"code": code, "message": err.Error()}})
 		} else {
 			encoder.Encode(map[string]any{"id": request.ID, "result": result})
 		}

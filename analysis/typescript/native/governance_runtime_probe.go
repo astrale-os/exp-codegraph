@@ -119,23 +119,27 @@ func governanceRuntimeProbeDecisions(project *governedProject, results ...source
 
 // Resume semantic cells under the same private capture; ready public rule joins
 // are also retained. Only joins waiting on canonical leaves are recomputed.
-func (state *governanceProductsSession) resumeRuntimeProducts() map[string]any {
+func (state *governanceProductsSession) resumeRuntimeProducts() (map[string]any, error) {
 	if len(state.RuntimeReady) == 3 {
-		return map[string]any{"decisions": []governanceOutcome{state.RuntimeReady["QRY-CANON"], state.RuntimeReady["QRY-SINGLE"], state.RuntimeReady["QLT-DEF-IDS"]}}
+		return map[string]any{"decisions": []governanceOutcome{state.RuntimeReady["QRY-CANON"], state.RuntimeReady["QRY-SINGLE"], state.RuntimeReady["QLT-DEF-IDS"]}}, nil
 	}
 	if state.RuntimeGraph == nil {
 		governanceSharedProject(state.Project)
 		identity := governanceBuildRuntimeIdentity(state.Project)
 		if !identity.Complete {
-			return map[string]any{"reason": identity.Reason}
+			return map[string]any{"reason": identity.Reason}, nil
 		}
 		state.RuntimeIdentity = identity
 		authority := governanceNewRuntimeAuthority(identity)
-		state.RuntimeGraph = observabledecision.NewRuntimeDecisionGraph(authority.DemandContext(observabledecision.Limits{}))
+		limits, err := state.runtimeProofLimits()
+		if err != nil {
+			return nil, err
+		}
+		state.RuntimeGraph = observabledecision.NewRuntimeDecisionGraph(authority.DemandContext(limits))
 		state.RuntimeReady = map[string]governanceOutcome{}
 	}
 	if len(state.RuntimeReady) == 3 {
-		return map[string]any{"decisions": []governanceOutcome{state.RuntimeReady["QRY-CANON"], state.RuntimeReady["QRY-SINGLE"], state.RuntimeReady["QLT-DEF-IDS"]}}
+		return map[string]any{"decisions": []governanceOutcome{state.RuntimeReady["QRY-CANON"], state.RuntimeReady["QRY-SINGLE"], state.RuntimeReady["QLT-DEF-IDS"]}}, nil
 	}
 	result := governanceProjectRuntimeProductsExceptReady(state.Project, state.RuntimeIdentity, state.RuntimeGraph.Resume(), state.RuntimeReady).(map[string]any)
 	outcomes := result["decisions"].([]governanceOutcome)
@@ -146,5 +150,5 @@ func (state *governanceProductsSession) resumeRuntimeProducts() map[string]any {
 			state.RuntimeReady[outcome.Rule] = outcome
 		}
 	}
-	return result
+	return result, nil
 }

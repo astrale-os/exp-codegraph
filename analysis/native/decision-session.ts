@@ -22,7 +22,9 @@ export async function openNativeDecisionSession(
   if (options.signal?.aborted) throw cancelled(options.signal.reason);
   const child = spawn(artifact.command, ["decision-serve", "--cwd", options.root], {
     stdio: "pipe",
-    cwd: options.root,
+    // Semantic cwd remains the explicit --cwd operand. A nonexistent Domain
+    // still needs configuration/coverage admission before source discovery.
+    cwd: process.cwd(),
   });
   const transport = new DecisionProcess(child);
   await transport.ready(options.signal, options.handshakeTimeoutMs ?? 30_000);
