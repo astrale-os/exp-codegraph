@@ -22,11 +22,17 @@ func legacyValueMessage(code string) string {
 		return "The definition ID has an external value whose string is unavailable."
 	case "VALUE_ESCAPE_UNSUPPORTED":
 		return "This value was passed to an unmodeled call that may mutate it."
-	case "noncallable value":
+	case "VALUE_BODY_MISSING":
+		return "The function body is unavailable."
+	case "VALUE_BODY_NOT_SELECTED":
+		return "The local callable body is outside the materialized selection."
+	case "VALUE_RECURSION":
+		return "The target function is recursive."
+	case "VALUE_NOT_CALLABLE", "noncallable value":
 		return "The resolved value is not an inspectable function."
-	case "async function invocation", "generator invocation":
+	case "VALUE_EXECUTION_UNSUPPORTED", "async function invocation", "generator invocation":
 		return "The function is not proved to produce a synchronous value."
-	case "property receiver unavailable":
+	case "VALUE_PROPERTY_UNSUPPORTED", "property receiver unavailable":
 		return "The receiver has no inspectable object properties."
 	}
 	return ""
@@ -45,6 +51,9 @@ func PublicQueryReason(value DemandOutcome) string {
 	}
 
 	if value.Kind == "ambiguous" {
+		if value.Message != "" {
+			return value.Message
+		}
 		return "value has multiple possible origins"
 	}
 	message := value.Message
@@ -61,6 +70,9 @@ func PublicQueryReason(value DemandOutcome) string {
 	return message
 }
 func PublicDefinitionReason(value DemandOutcome) string {
+	if value.Kind == "unsupported" {
+		return "unsupported value transfer (" + value.Construct + ")."
+	}
 	if value.Kind == "ambiguous" {
 		return "the projector has multiple possible IDs."
 	}

@@ -6,12 +6,18 @@ import (
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
 func legacySummary(value NativeValueSummary) map[string]any {
 	switch value.Kind {
 	case "string":
+		return map[string]any{"kind": "literal", "value": value.Literal}
+	case "literal":
+		if strings.TrimPrefix(value.Literal, "Kind") == "NullKeyword" {
+			return map[string]any{"kind": "literal", "value": nil}
+		}
 		return map[string]any{"kind": "literal", "value": value.Literal}
 	case "undefined":
 		return map[string]any{"kind": "literal"}
@@ -64,6 +70,33 @@ func TestFrozenBranchAssignmentAndCandidateBoundaries(t *testing.T) {
 	}
 	context := fixtureContext([]CapturedFile{*file})
 	context.Model = "none"
+	context.GlobalValue = func(_ string, node *ast.Node) GlobalValueObservation {
+		var target *ast.Node
+		if node.Text() == "read" || node.Text() == "outerconstant" {
+			var walk func(*ast.Node)
+			walk = func(n *ast.Node) {
+				if n.Kind == ast.KindVariableDeclaration && n.Name().Kind == ast.KindIdentifier && n.Name().Text() == node.Text() {
+					target = n
+				}
+				n.ForEachChild(func(child *ast.Node) bool { walk(child); return false })
+			}
+			walk(file.Source.AsNode())
+		}
+		return GlobalValueObservation{Known: true, Target: target, TargetPath: file.Path}
+	}
+	context.CallTarget = func(_ string, node *ast.Node) NativeEffectCall {
+		call := node.AsCallExpression()
+		target := NativeEffectCall{Known: true, Dynamic: true}
+		if call.Expression.Kind == ast.KindIdentifier && (call.Expression.Text() == "opaque" || call.Expression.Text() == "fn") {
+			target.Dynamic = false
+		}
+		if call.Expression.Kind == ast.KindIdentifier && call.Expression.Text() == "rest" {
+			target.Dynamic = false
+			target.Bindings = []NativeEffectBinding{{Rest: true}}
+		}
+		return target
+	}
+
 	context.Effect = core.DemandEffects(func(request EffectRequest) EffectSummary {
 		return EffectSummary{Pure: true, ChargeKey: request.Path + ":" + request.Operation}
 	})
@@ -103,7 +136,10 @@ func TestFrozenBranchAssignmentAndCandidateBoundaries(t *testing.T) {
 			}
 			out["candidates"] = values
 		}
-		if proof.Outcome.Kind != "known" {
+		if proof.Outcome.Kind == "unsupported" {
+			out["construct"] = proof.Outcome.Construct
+		}
+		if proof.Outcome.Kind != "known" && proof.Outcome.Kind != "unsupported" {
 			reasons := []map[string]string{}
 			if len(proof.Outcome.Reasons) > 0 {
 				for _, reason := range proof.Outcome.Reasons {

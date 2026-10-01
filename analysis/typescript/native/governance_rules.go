@@ -8,6 +8,7 @@ import (
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
 	"strings"
+	"time"
 )
 
 type governanceEvidence struct {
@@ -100,6 +101,8 @@ func governanceStaticEvidence(file *governedFile) []governanceEvidence {
 	return out
 }
 func governanceEvaluate(project *governedProject, rule string) (governanceOutcome, bool) {
+	started := time.Now()
+	defer func() { project.stats.phase("rule-dispatch-inclusive", started) }()
 	project.stats.RuleEvaluations++
 	if out, ok := governanceCombinedFamily(project, rule); ok {
 		return out, true

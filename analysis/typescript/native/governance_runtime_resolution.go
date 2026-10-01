@@ -2,9 +2,11 @@ package main
 
 import (
 	"astrale-typespec-v2-native-analysis/observabledecision"
+	"encoding/json"
 	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	checker "github.com/microsoft/typescript-go/shim/checker"
+	"os"
 	"path/filepath"
 	"strings"
 )
@@ -23,7 +25,8 @@ func (owner *governanceRuntimeAuthority) origin(symbol *ast.Symbol) (*observable
 		if source == nil {
 			return nil, "runtime declaration source unavailable"
 		}
-		coordinate, err := governancePortableUniversePath(owner.Identity.Project, source.FileName())
+
+		coordinate, err := governanceRuntimeDeclarationCoordinate(owner.Identity.Project, source.FileName())
 		if err != nil {
 			return nil, err.Error()
 		}
@@ -55,7 +58,7 @@ func (owner *governanceRuntimeAuthority) origin(symbol *ast.Symbol) (*observable
 		}
 		candidate := &observabledecision.Origin{Package: pkg, File: path, Path: names}
 		if origin != nil && stableJSON(origin) != stableJSON(candidate) {
-			return nil, "runtime merged declaration provenance differs"
+			return nil, "" // Original callTargetOrigin rejects differing declaration coordinates authoritatively.
 		}
 		origin = candidate
 	}
@@ -148,10 +151,126 @@ func (owner *governanceRuntimeAuthority) Resolve(path, specifier, export string)
 		result.Reason = "runtime helper source not captured"
 		return result
 	}
-	if filepath.Clean(declSource.FileName()) != filepath.Clean(source.FileName()) || stableSymbolName(symbol) != export {
+	if stableSymbolName(symbol) != export {
 		result.Reason = "local runtime reexport/renaming requires demanded binding adapter"
 		return result
 	}
 	result.Path = logical
 	return result
+}
+
+// Global lookup is reached only after the captured lexical/import owner misses.
+// It returns actual external value-symbol provenance, never a callable type.
+func (owner *governanceRuntimeAuthority) GlobalValue(path string, node *ast.Node) observabledecision.GlobalValueObservation {
+	file, ok := owner.ByPath[path]
+	if !ok {
+		return observabledecision.GlobalValueObservation{}
+	}
+	matched, known := owner.node(file, node)
+	if !known || matched.Kind != ast.KindIdentifier {
+		return observabledecision.GlobalValueObservation{}
+	}
+	check := owner.Identity.TypeOwner.program.Checker
+	symbol := unalias(check, check.GetSymbolAtLocation(matched))
+	read := observabledecision.SemanticRead{Kind: "actual-global-value-origin", Path: path, Name: matched.Text(), Fingerprint: owner.Identity.Project.capture.certificate()}
+	if symbol == nil {
+		return observabledecision.GlobalValueObservation{Known: true, Reads: []observabledecision.SemanticRead{read}}
+	}
+	origin, reason := owner.origin(symbol)
+	if origin == nil {
+		declaration := declarationNode(symbol)
+		if declaration != nil {
+			source := ast.GetSourceFileOfNode(declaration)
+			if source != nil {
+				if targetPath, owned := governanceRuntimeProgramOwned(owner.Identity.Project.Root, source.FileName()); owned {
+					switch declaration.Kind {
+					case ast.KindBindingElement, ast.KindParameter:
+						return observabledecision.GlobalValueObservation{Known: true, Reads: []observabledecision.SemanticRead{read}}
+					case ast.KindVariableDeclaration:
+						if owner.Admitted[declaration] != "" {
+							return observabledecision.GlobalValueObservation{Known: true, Target: declaration, TargetPath: targetPath, Reads: []observabledecision.SemanticRead{read}}
+						}
+					case ast.KindFunctionDeclaration:
+						if owner.FunctionBodies[declaration] {
+							return observabledecision.GlobalValueObservation{Known: true, Target: declaration, TargetPath: targetPath, Reads: []observabledecision.SemanticRead{read}}
+						}
+					}
+					return observabledecision.GlobalValueObservation{Reads: []observabledecision.SemanticRead{read}}
+				}
+			}
+		}
+	}
+
+	return observabledecision.GlobalValueObservation{Known: reason == "", Origin: origin, Reads: []observabledecision.SemanticRead{read}}
+}
+func (owner *governanceRuntimeAuthority) ExpressionAdmitted(path string, node *ast.Node) (bool, bool) {
+	file, ok := owner.ByPath[path]
+	if !ok {
+		return false, false
+	}
+	matched, known := owner.node(file, node)
+	if !known {
+		return false, false
+	}
+	return owner.Admitted[matched] != "", true
+}
+
+func (owner *governanceRuntimeAuthority) ReferenceAvailable(path string, node *ast.Node) (bool, bool) {
+	file, ok := owner.ByPath[path]
+	if !ok {
+		return false, false
+	}
+	matched, known := owner.node(file, node)
+	if !known || matched.Kind != ast.KindIdentifier {
+		return false, false
+	}
+	symbol := owner.Symbol(file, matched)
+	return symbol.Key != "", symbol.Known
+}
+
+// Value provenance is distinct from universe identity. The legacy producer resolves
+// relative bundled declaration paths from its project cwd, then walks manifests.
+// Every absent manifest is retained by the same immutable input capture.
+func governanceRuntimeDeclarationCoordinate(project *governedProject, path string) (string, error) {
+	if typescriptLibraryFile(path) == "" {
+		return governancePortableUniversePath(project, path)
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(project.Root, path)
+	}
+	path = filepath.Clean(path)
+	directory := filepath.Dir(path)
+	inside := pathContains(project.Root, path)
+	for {
+		if inside && !pathContains(project.Root, directory) {
+			break
+		}
+		content, err := project.capture.read(filepath.Join(directory, "package.json"))
+		if err == nil {
+			var document struct {
+				Name string `json:"name"`
+			}
+			if json.Unmarshal(content, &document) != nil {
+				break
+			}
+			if document.Name != "" {
+				relative, err := filepath.Rel(directory, path)
+				if err != nil {
+					return "", err
+				}
+				return "package:" + document.Name + "/" + filepath.ToSlash(relative), nil
+			}
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		if inside && directory == project.Root {
+			break
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			break
+		}
+		directory = parent
+	}
+	return "", nil
 }

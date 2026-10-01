@@ -18,8 +18,12 @@ type NativeEffectSymbol struct {
 type NativeEffectBinding struct {
 	Argument  *ast.Node
 	Parameter string
+	Rest      bool
 }
 type NativeEffectCall struct {
+	Target                      *ast.Node
+	TargetPath                  string
+	CallableOwner               bool
 	Known, BodyPresent, Dynamic bool
 	Bindings                    []NativeEffectBinding
 }
@@ -349,15 +353,15 @@ func (core *NativeEffectCore) DemandEffects(other func(EffectRequest) EffectSumm
 			if other != nil {
 				return other(request)
 			}
-			return EffectSummary{Reason: "Captured invocation/initializer authority is unavailable."}
+			return EffectSummary{Unavailable: true, Reason: "Captured invocation/initializer authority is unavailable."}
 		}
 		file, ok := core.sources[request.Path]
 		if !ok || request.Node == nil {
-			return EffectSummary{Reason: "Captured binding effect anchor is unavailable."}
+			return EffectSummary{Unavailable: true, Reason: "Captured binding effect anchor is unavailable."}
 		}
 		symbol := core.symbol(file, request.Node)
 		if !symbol.Known {
-			return EffectSummary{Reason: "Canonical native binding authority is unavailable."}
+			return EffectSummary{Unavailable: true, Reason: "Canonical native binding authority is unavailable."}
 		}
 		if symbol.Key == "" {
 			return EffectSummary{Pure: true, ChargeKey: request.Path + ":" + request.Operation + ":no-symbol"}
@@ -366,12 +370,12 @@ func (core *NativeEffectCore) DemandEffects(other func(EffectRequest) EffectSumm
 		if owner := effectFunctionOwner(request.Node); request.LocalAssignment && owner != nil {
 			ownerSymbol := core.symbol(file, owner)
 			if !ownerSymbol.Known {
-				return EffectSummary{Reason: "Canonical function ownership is unavailable."}
+				return EffectSummary{Unavailable: true, Reason: "Canonical function ownership is unavailable."}
 			}
 			ownerKey = ownerSymbol.Key
 		}
 		proof := core.Proof(kind, symbol.Key, ownerKey)
-		summary := EffectSummary{Pure: proof.Known && proof.Effect == "none", VirtualSteps: proof.VirtualSteps, Reads: proof.Reads, ChargeKey: proof.ChargeKey, Reason: proof.Reason, EffectKind: proof.Effect}
+		summary := EffectSummary{Unavailable: !proof.Known, Pure: proof.Known && proof.Effect == "none", VirtualSteps: proof.VirtualSteps, Reads: proof.Reads, ChargeKey: proof.ChargeKey, Reason: proof.Reason, EffectKind: proof.Effect}
 		if proof.Known && proof.Effect != "none" {
 			if kind == "escape" {
 				summary.Reason = "VALUE_ESCAPE_UNSUPPORTED"
@@ -382,5 +386,16 @@ func (core *NativeEffectCore) DemandEffects(other func(EffectRequest) EffectSumm
 			// cannot certify an initializer-only value even when ownership is local.
 		}
 		return summary
+	}
+}
+
+// DemandCallTargets reuses the same captured call authority and canonical cache.
+func (core *NativeEffectCore) DemandCallTargets() func(string, *ast.Node) NativeEffectCall {
+	return func(path string, node *ast.Node) NativeEffectCall {
+		file, ok := core.sources[path]
+		if !ok || core.invalidCapture || node == nil {
+			return NativeEffectCall{}
+		}
+		return core.call(file, node)
 	}
 }

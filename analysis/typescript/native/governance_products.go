@@ -9,6 +9,7 @@ import (
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Continuations retain the original capture. Canonical leaf answers are inputs
@@ -261,6 +262,8 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		return nil, err
 	}
 	genericEnabled := options.Generic == nil || *options.Generic
+	runtimeOutcomes := map[string]governanceOutcome{}
+	runtimeEvaluated := false
 	if len(state.Contracts) != len(governanceRevisions) {
 		residual = append(residual, "Canonical whole implementation contract inventory unavailable.")
 	}
@@ -282,17 +285,35 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		if disabled[contract.RuleID] {
 			continue
 		}
-		if contract.Implementation.ID != "astrale.sdk.typescript-source" || contract.Implementation.Version != "1" {
-			residual = append(residual, "Native runtime implementation authority unavailable: "+contract.RuleID)
-			continue
+		if contract.Implementation.ID == "astrale.sdk.codegraph" && !runtimeEvaluated {
+			runtimeEvaluated = true
+			observed := governanceProbeRuntime(project).(map[string]any)
+			outcomes, ok := observed["decisions"].([]governanceOutcome)
+			if !ok {
+				residual = append(residual, "Native runtime observation authority unavailable: "+fmt.Sprint(observed["reason"]))
+			}
+			for _, outcome := range outcomes {
+				runtimeOutcomes[outcome.Rule] = outcome
+			}
 		}
 		revision, ok := governanceRevisions[contract.RuleID]
 		if !ok || revision != contract.RuleRevision {
 			residual = append(residual, "Native source revision authority unavailable: "+contract.RuleID)
 			continue
 		}
-		out, _ := governanceEvaluate(project, contract.RuleID)
+		var out governanceOutcome
+		if contract.Implementation.ID == "astrale.sdk.codegraph" {
+			var known bool
+			out, known = runtimeOutcomes[contract.RuleID]
+			if !known {
+				residual = append(residual, "Native runtime rule observation unavailable: "+contract.RuleID)
+				continue
+			}
+		} else {
+			out, _ = governanceEvaluate(project, contract.RuleID)
+		}
 		if out.Status == "residual" {
+			residual = append(residual, "Native selected rule observation is incomplete: "+contract.RuleID)
 			continue
 		}
 		decision := governanceRuleDecision{Status: out.Status}
@@ -367,14 +388,24 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 		return map[string]any{"status": "retry"}, nil
 	}
 	defer session.discardProducts()
+	started := time.Now()
 	valid, err := state.Project.capture.Verify()
+	state.Project.stats.phase("final-uncached-seal", started)
 	if err != nil {
 		return nil, err
 	}
 	if !valid {
 		return map[string]any{"status": "retry"}, nil
 	}
-	return map[string]any{"status": "committed", "token": token, "generation": state.Generation, "inputCertificate": state.InputCertificate, "productsDigest": productsDigest, "reportDigest": reportDigest}, nil
+	result := map[string]any{"status": "committed", "token": token, "generation": state.Generation, "inputCertificate": state.InputCertificate, "productsDigest": productsDigest, "reportDigest": reportDigest}
+	var debug struct {
+		DebugPhaseCounters bool `json:"debugPhaseCounters"`
+	}
+	json.Unmarshal(state.Prepare.Options, &debug)
+	if debug.DebugPhaseCounters {
+		result["phaseCounters"] = state.Project.stats
+	}
+	return result, nil
 }
 
 // Every authored literal used by the shared text owner must be representable.

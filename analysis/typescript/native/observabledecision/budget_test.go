@@ -65,7 +65,7 @@ func TestSelectedLegacyQueryBoundaryBudgetsMatchDirectASTVirtualCharges(t *testi
 	for _, testCase := range oracle.Cases {
 		context := fixtureContext(files)
 		context.Limits = Limits{MaximumDepth: testCase.Limits.MaximumDepth, MaximumSteps: testCase.Limits.MaximumSteps, MaximumAlternatives: testCase.Limits.MaximumAlternatives}
-		product := ObserveQueries(context)
+		product := ObserveQueriesAndIDs(context)
 		if product.Complete || len(product.Observations) != len(testCase.Expected) {
 			t.Fatalf("inventory changed/hid subject at %+v", context.Limits)
 		}

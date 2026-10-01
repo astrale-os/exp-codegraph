@@ -29,7 +29,11 @@ func inspectDemandFlow(function *ast.Node) demandFlow {
 			return
 		}
 		switch node.Kind {
-		case ast.KindClassDeclaration, ast.KindClassExpression, ast.KindModuleDeclaration, ast.KindInterfaceDeclaration, ast.KindTypeAliasDeclaration:
+		case ast.KindClassDeclaration, ast.KindClassExpression, ast.KindModuleDeclaration:
+			result.complete = false
+			result.linear = false
+			return
+		case ast.KindInterfaceDeclaration, ast.KindTypeAliasDeclaration:
 			return
 		case ast.KindReturnStatement:
 			result.returns = append(result.returns, node)
@@ -128,6 +132,11 @@ func selectedLocalBinding(function, identifier *ast.Node, flow demandFlow) local
 	result := localDemandBinding{}
 	name := identifier.Text()
 	declarations := []*ast.Node{}
+	for _, parameter := range function.Parameters() {
+		if parameter.Name() != nil && parameter.Name().Kind == ast.KindIdentifier && parameter.Name().Text() == name {
+			declarations = append(declarations, parameter.Name())
+		}
+	}
 	var walk func(*ast.Node)
 	walk = func(node *ast.Node) {
 		if node != function.Body() && ast.IsFunctionLike(node) {
@@ -166,8 +175,10 @@ func selectedLocalBinding(function, identifier *ast.Node, flow demandFlow) local
 	for _, declaration := range declarations {
 		if lexicalDeclarationScope(declaration, function) == selectedScope {
 			result.definitions = append(result.definitions, declaration)
-			if initializer := declaration.Parent.AsVariableDeclaration().Initializer; initializer != nil {
-				result.initializers = append(result.initializers, initializer)
+			if declaration.Parent.Kind == ast.KindVariableDeclaration {
+				if initializer := declaration.Parent.AsVariableDeclaration().Initializer; initializer != nil {
+					result.initializers = append(result.initializers, initializer)
+				}
 			}
 		}
 	}
@@ -235,6 +246,9 @@ func (r *demandRun) localIdentifier(path string, node *ast.Node, env map[string]
 		fingerprint += fmt.Sprintf(":%d:%d", definition.Pos(), definition.End())
 	}
 	r.reads = append(r.reads, SemanticRead{Kind: "lexical-reaching-definitions", Path: path, Name: node.Text(), Fingerprint: fingerprint})
+	if node.Parent != nil && node.Parent.Kind == ast.KindParameter && node.Parent.Name() == node {
+		return r.eval(path, node.Parent, env), true
+	}
 	if node.Parent != nil && node.Parent.Kind == ast.KindVariableDeclaration && node.Parent.Name() == node {
 		return r.eval(path, node.Parent.AsVariableDeclaration().Initializer, env), true
 	}
@@ -263,11 +277,23 @@ func (r *demandRun) localIdentifier(path string, node *ast.Node, env map[string]
 	if binding.assignment != nil && guard.text == "local" {
 		return r.eval(path, binding.assignment, env), true
 	}
-	if bound, ok := env[node.Text()]; ok && !binding.found {
+	parameterBinding := false
+	for _, parameter := range function.Parameters() {
+		if parameter.Name() != nil && parameter.Name().Kind == ast.KindIdentifier && parameter.Name().Text() == node.Text() {
+			parameterBinding = true
+		}
+	}
+	if bound, ok := env[node.Text()]; ok && parameterBinding {
+		if bound.kind == "reference" {
+			return r.evalAt(bound.module, bound.node, bound.env, r.depth+1), true
+		}
 		return bound, true
 	}
 	values := []demandValue{}
 	for _, definition := range binding.definitions {
+		if definition.Parent != nil && definition.Parent.Kind == ast.KindParameter {
+			definition = definition.Parent
+		}
 		values = append(values, r.eval(path, definition, env))
 	}
 	if len(values) > 0 {

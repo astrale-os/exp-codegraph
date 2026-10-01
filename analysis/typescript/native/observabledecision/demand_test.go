@@ -45,7 +45,7 @@ func TestRealAuthoredIssuesQueryShapesAndBuildRequestsWithoutProgram(t *testing.
 		if e != nil {
 			t.Fatal(e)
 		}
-		product := ObserveQueries(fixtureContext([]CapturedFile{captured(fixture.path, string(bytes))}))
+		product := ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured(fixture.path, string(bytes))}))
 		o := onlyObservation(t, product)
 		if o.ConstructorIdentity != "astrale.sdk.defineQuery" || o.ID.Kind != "known" || o.ID.String != fixture.id || o.BuildCallbackCount.Count != 1 || o.ProjectCallbackCount.Count != 1 || o.CanonicalRequestCount.Count != 1 || !o.ProjectorShape.Callable || !o.ProjectorShape.Curried || o.ProjectorShape.ParameterCount != 1 {
 			t.Fatalf("real field observation: %+v", o)
@@ -76,17 +76,17 @@ func TestCanonicalAliasesImportedHelperAndLexicalShadowing(t *testing.T) {
  import { id } from './helper'; const alias = dq;
  export const query = alias<any>()((domain) => ({ id: id('alpha'), build: (_input) => Builder.from({nodes: []}).filter({}).select({}), project: (result) => result }));`
 	helper := CapturedFile{Path: "helper.ts", AbsolutePath: "/fixture/helper.ts", Role: "production", Layer: "shared", Text: "const prefix = 'issues.alpha'; export function id(name: string) { return prefix; }"}
-	o := onlyObservation(t, ObserveQueries(fixtureContext([]CapturedFile{captured("query.ts", source), helper})))
+	o := onlyObservation(t, ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("query.ts", source), helper})))
 	if o.ID.String != "issues.alpha" || o.CanonicalRequestCount.Count != 1 {
 		t.Fatalf("alias/helper: %+v", o)
 	}
 	shadow := strings.Replace(source, "(_input) => Builder.from", "(Builder) => Builder.from", 1)
-	o = onlyObservation(t, ObserveQueries(fixtureContext([]CapturedFile{captured("query.ts", shadow), helper})))
+	o = onlyObservation(t, ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("query.ts", shadow), helper})))
 	if o.ID.String != "issues.alpha" || o.BuildCallbackCount.Count != 1 || o.CanonicalRequestCount.Kind != "unknown" {
 		t.Fatalf("shadowed receiver guessed canonical: %+v", o)
 	}
 	namespace := `import * as sdk from '@astrale-os/sdk/query'; export const query=sdk.defineQuery<any>()((domain)=>({id:'namespace',build:()=>sdk.Query.from({}).select({}),project:result=>result}));`
-	o = onlyObservation(t, ObserveQueries(fixtureContext([]CapturedFile{captured("namespace.ts", namespace)})))
+	o = onlyObservation(t, ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("namespace.ts", namespace)})))
 	if o.ID.String != "namespace" || o.CanonicalRequestCount.Count != 1 {
 		t.Fatalf("runtime namespace origin: %+v", o)
 	}
@@ -96,7 +96,7 @@ func TestIndependentBudgetsAndEffectResidualDoNotHideSubjects(t *testing.T) {
 	helper := CapturedFile{Path: "helper.ts", AbsolutePath: "/fixture/helper.ts", Role: "production", Layer: "shared", Text: "export function id(name: string) { return 'issues.' + name; }"}
 	context := fixtureContext([]CapturedFile{captured("query.ts", source), helper})
 	context.Limits = Limits{MaximumSteps: 1, MaximumDepth: 64, MaximumAlternatives: 32}
-	o := onlyObservation(t, ObserveQueries(context))
+	o := onlyObservation(t, ObserveQueriesAndIDs(context))
 	if o.ID.Kind != "unknown" || o.ID.Reason != "VALUE_STEP_LIMIT" {
 		t.Fatalf("rule budget did not remain independent discovery: %+v", o)
 	}
@@ -108,19 +108,19 @@ func TestIndependentBudgetsAndEffectResidualDoNotHideSubjects(t *testing.T) {
 		}
 		return previous(request)
 	}
-	o = onlyObservation(t, ObserveQueries(context))
+	o = onlyObservation(t, ObserveQueriesAndIDs(context))
 	if o.ID.Kind != "unknown" || o.CanonicalRequestCount.Kind != "known" || o.CanonicalRequestCount.Count != 1 {
 		t.Fatalf("effect leaked between independent proof budgets: %+v", o)
 	}
 }
 func TestDeclarationTypeDoesNotGrantCanonicalOwnership(t *testing.T) {
 	source := `import { defineQuery as actual } from '@astrale-os/sdk/query'; const pretend: typeof actual = () => (projector) => projector; export const query=pretend<any>()((domain)=>({id:'fake',build:()=>null,project:r=>r}));`
-	product := ObserveQueries(fixtureContext([]CapturedFile{captured("lookalike.ts", source)}))
+	product := ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("lookalike.ts", source)}))
 	if len(product.Observations) != 0 {
 		t.Fatalf("type annotation became runtime constructor: %+v", product)
 	}
 	source = `import { defineQuery } from '@astrale-os/sdk/query'; const alias=defineQuery; export const query=alias<any>()((domain)=>({id:'one',build:()=>null,project:r=>r})); const same=query;`
-	product = ObserveQueries(fixtureContext([]CapturedFile{captured("deduplicate.ts", source)}))
+	product = ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("deduplicate.ts", source)}))
 	if len(product.Observations) != 1 {
 		t.Fatalf("alias duplicated source subject: %+v", product)
 	}
@@ -129,7 +129,7 @@ func TestDeclarationTypeDoesNotGrantCanonicalOwnership(t *testing.T) {
 func TestCanonicalProvenanceAndUncurriedShapeRemainObservable(t *testing.T) {
 	source := `import { defineQuery, Query } from '@astrale-os/sdk/query'; export const query=defineQuery((domain)=>({id:'uncurried',build:()=>Query.from({}).select({}),project:result=>result}));`
 	context := fixtureContext([]CapturedFile{captured("query.ts", source)})
-	o := onlyObservation(t, ObserveQueries(context))
+	o := onlyObservation(t, ObserveQueriesAndIDs(context))
 	if o.ProjectorShape.Curried || o.ID.String != "uncurried" || o.CanonicalRequestCount.Count != 1 {
 		t.Fatalf("uncurried shape erased: %+v", o)
 	}
@@ -141,7 +141,7 @@ func TestCanonicalProvenanceAndUncurriedShapeRemainObservable(t *testing.T) {
 		}
 		return r
 	}
-	o = onlyObservation(t, ObserveQueries(context))
+	o = onlyObservation(t, ObserveQueriesAndIDs(context))
 	if o.CanonicalRequestCount.Kind != "unknown" {
 		t.Fatalf("lookalike receiver provenance accepted: %+v", o)
 	}
@@ -154,12 +154,12 @@ func TestCanonicalProvenanceAndUncurriedShapeRemainObservable(t *testing.T) {
 		}
 		return r
 	}
-	product := ObserveQueries(context)
+	product := ObserveQueriesAndIDs(context)
 	if len(product.Observations) != 0 {
 		t.Fatalf("lookalike factory provenance accepted: %+v", product)
 	}
 	objectSource := `import { defineQuery } from '@astrale-os/sdk/query'; export const query=defineQuery<any>()({id:'invalid-projector'});`
-	o = onlyObservation(t, ObserveQueries(fixtureContext([]CapturedFile{captured("object.ts", objectSource)})))
+	o = onlyObservation(t, ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("object.ts", objectSource)})))
 	if o.ProjectorShape.Callable || o.BuildCallbackCount.Count != 0 || o.ProjectCallbackCount.Count != 0 || o.CanonicalRequestCount.Kind != "known" || o.CanonicalRequestCount.Count != 0 {
 		t.Fatalf("noncallable projector should have no callbacks/request: %+v", o)
 	}
@@ -167,12 +167,12 @@ func TestCanonicalProvenanceAndUncurriedShapeRemainObservable(t *testing.T) {
 
 func TestUnboundIntrinsicMemberDoesNotRetainReceiverByAccident(t *testing.T) {
 	source := `import {defineQuery,Query} from '@astrale-os/sdk/query'; const Q=Query; export const query=defineQuery<any>()((domain)=>({id:'aliased-query-object',build:()=>Q.from({}).select({}),project:r=>r}));`
-	o := onlyObservation(t, ObserveQueries(fixtureContext([]CapturedFile{captured("query.ts", source)})))
+	o := onlyObservation(t, ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("query.ts", source)})))
 	if o.CanonicalRequestCount.Count != 1 {
 		t.Fatalf("runtime object alias lost: %+v", o)
 	}
 	source = `import {defineQuery,Query} from '@astrale-os/sdk/query'; const from=Query.from; export const query=defineQuery<any>()((domain)=>({id:'unbound-method',build:()=>from({}).select({}),project:r=>r}));`
-	o = onlyObservation(t, ObserveQueries(fixtureContext([]CapturedFile{captured("query.ts", source)})))
+	o = onlyObservation(t, ObserveQueriesAndIDs(fixtureContext([]CapturedFile{captured("query.ts", source)})))
 	if o.CanonicalRequestCount.Kind != "unknown" {
 		t.Fatalf("receiver recovered from property value instead of call: %+v", o)
 	}

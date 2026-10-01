@@ -66,14 +66,17 @@ type governanceFileSummary struct {
 	Submodule string `json:"submodule,omitempty"`
 }
 type governancePhaseCounters struct {
-	SourceReads      int `json:"sourceReads"`
-	SourceBytes      int `json:"sourceBytes"`
-	Parses           int `json:"parses"`
-	ParseReuses      int `json:"parseReuses"`
-	RuleEvaluations  int `json:"ruleEvaluations"`
-	TypeCells        int `json:"typeCells"`
-	LiteralCells     int `json:"literalCells"`
-	CompilerPrograms int `json:"compilerPrograms"`
+	TypeRequests      []governanceTypeRequest `json:"typeRequests,omitempty"`
+	PhaseNanoseconds  map[string]int64        `json:"phaseNanoseconds,omitempty"`
+	FamilyEvaluations int                     `json:"familyEvaluations"`
+	SourceReads       int                     `json:"sourceReads"`
+	SourceBytes       int                     `json:"sourceBytes"`
+	Parses            int                     `json:"parses"`
+	ParseReuses       int                     `json:"parseReuses"`
+	RuleEvaluations   int                     `json:"ruleEvaluations"`
+	TypeCells         int                     `json:"typeCells"`
+	LiteralCells      int                     `json:"literalCells"`
+	CompilerPrograms  int                     `json:"compilerPrograms"`
 }
 type governanceSession struct {
 	productsSession  *governanceProductsSession
@@ -126,6 +129,7 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 			proofState.Answers[answer.ID] = answer
 		}
 		proofState.installLeaves(proof.SourceProof.NeutralClassIconSVG)
+		project.sourceProofState = proofState
 	}
 	product.Root = project.Root
 	product.GovernanceDigest = project.GovernanceDigest
@@ -207,6 +211,11 @@ func runGovernanceCheck() int {
 		}
 		if runtimeOptions.DebugRuntime {
 			product.Runtime = governanceProbeRuntime(project)
+			product.InputCertificate = project.capture.certificate()
+			product.PhaseCounters = project.stats
+			if project.sourceProofState != nil {
+				product.Requirements = project.sourceProofState.Requirements
+			}
 		}
 		product.Authored = governanceProbeAuthoring(project, params.Options)
 		for _, file := range project.Files {

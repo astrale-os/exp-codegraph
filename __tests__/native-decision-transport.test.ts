@@ -53,6 +53,39 @@ describe("native decision transport source qualification", () => {
       answers: [{ id: "units", kind: "accept-step-id", accepted: true }],
     });
   });
+  it("routes captured I/O and the bound generic descriptor through the same session", async () => {
+    const transport = service(
+      `import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify(hello)}));createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:{method:r.method,params:r.params}}));});`,
+    );
+    await transport.ready();
+    const probes = {
+      token: "capture-token",
+      requirements: [
+        {
+          id: "negative",
+          kind: "metadata" as const,
+          path: "/captured/oxlint-suppressions.json",
+          followLinks: true,
+        },
+      ],
+    };
+    expect(await transport.captureProbes(probes)).toEqual({
+      method: "capture-probes",
+      params: probes,
+    });
+    const engine = {
+      version: "1.81.0",
+      artifactDigest: "a".repeat(64),
+      packagePath: "/captured/node_modules/oxlint/package.json",
+      packageRevision: "b".repeat(64),
+    };
+    expect(
+      await transport.continue({ token: "capture-token", kind: "generic-engine", engine }),
+    ).toEqual({
+      method: "continue",
+      params: { token: "capture-token", kind: "generic-engine", engine },
+    });
+  });
   it("negotiates exact old unsupported command without masking unrelated native crash", async () => {
     const old = service(
       `process.stderr.write('astrale-typespec-v2-analysis: unknown command "decision-serve"\\n');process.exitCode=1;`,

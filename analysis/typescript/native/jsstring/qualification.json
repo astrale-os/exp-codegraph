@@ -1,0 +1,59 @@
+{
+  "schema": 1,
+  "qualified": true,
+  "source": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-perf-20261001/codegraph/.worktrees/native-decision-runtime-20261001/analysis/typescript/native/jsstring",
+  "frozen": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-perf-20261001/evidence/thin-native-runtime-v1/qualified-jsstring",
+  "files": {
+    "compiler_test.go": "986f95f4c6354cedfdd7b4ea3151d6af40c26a9217440fe33395a964506f8f9e",
+    "literal.go": "dfa3cb7482e1545a32a04338cb5ddb7456412cca7b168bca7e8777ba5e5cf805",
+    "oracle_test.go": "49d71192fb9846c69ea68ebbdef1de7a8aead7af5b82d11e95f5ad3a9e6b027b",
+    "string.go": "69bf4f62f76ced9949954d9768917ac5f7fdbc086e8bf4a1f6d0563b0748a71c",
+    "testdata/literals.json": "15a8074444e07e2857fad02250263db7ccc887ea9426d97a75883feabba3a3ce"
+  },
+  "tests": {
+    "topLevel": 4,
+    "independentSDKLiteralCases": 147,
+    "surrogateDomainUnits": 2048,
+    "log": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-perf-20261001/evidence/thin-native-runtime-v1/jsstring-qualified.stdout.log",
+    "stderr": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-perf-20261001/evidence/thin-native-runtime-v1/jsstring-qualified.stderr.log",
+    "run": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-perf-20261001/evidence/thin-native-runtime-v1/jsstring-qualified.run.json",
+    "sourceStable": true,
+    "exit": 0
+  },
+  "oracle": {
+    "module": "/Users/bryandjafer/Documents/astrale/.worktrees/codegraph-lint-20260930/sdk-qualified-staging/node_modules/.pnpm/typescript@6.0.3/node_modules/typescript/lib/typescript.js",
+    "version": "6.0.3",
+    "sha256": "569177652966bd528c319171c7dd22860dbf72bde116cbc4f644f1d02bb12e39",
+    "fixture": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-perf-20261001/codegraph/.worktrees/native-decision-runtime-20261001/analysis/typescript/native/jsstring/testdata/literals.json",
+    "fixtureSHA256": "15a8074444e07e2857fad02250263db7ccc887ea9426d97a75883feabba3a3ce",
+    "cases": 147,
+    "oracle": "Actual pinned SDK TypeScript parser literal.text code units; source is parsed, never executed."
+  },
+  "compilerScanner": {
+    "path": "/Users/bryandjafer/go/pkg/mod/github.com/microsoft/typescript-go@v0.0.0-20260429010842-56ab4af42157/internal/scanner/scanner.go",
+    "sha256": "8280ec8d04e2f05b6d47f853d96c4c04cc07c5dac09249d8964c14b5e3b133ff",
+    "revision": "v0.0.0-20260429010842-56ab4af42157"
+  },
+  "api": [
+    "String code-unit comparable immutable identity",
+    "FromLiteral(source,node), FromNode(node)",
+    "FromUnits, FromCompilerText, DecodeWire",
+    "Units owned-copy, Key, Length, Equal, Concat, Slice, ValidUnicode",
+    "MarshalJSON exact units, JSONText WTF8 evidence boundary, WTF8 internal text only"
+  ],
+  "repair": {
+    "loneSurrogates": "Shield effective fixed/extended surrogate unicode escapes by distinct absent scalars; actual pinned scanner owns all other cooking; restore units.",
+    "escapedNonASCII": "Normalize raw escaped scalars to Unicode escape and LS/PS continuation to empty sequence; pinned scanner otherwise emits invalid UTF8.",
+    "fastpath": "Ordinary literal original AST.Text; JSX attribute text has no escape cooking."
+  },
+  "limits": [
+    "Source-owned compiler literal and JSON identity qualification; no full rule service/report/capture/latency qualification.",
+    "Caller must use actual parented capture AST/source; detached/synthetic node returns unavailable error.",
+    "No source re-execution, filesystem cache, program build, commit or publication."
+  ],
+  "retainedFailures": [
+    "jsstring-compiler-1 setup filename normalization failure",
+    "jsstring-compiler-2 actual lone-surrogate AST.Text loss",
+    "jsstring-sdk-differential-1 escaped LS/PS compiler invalid UTF8"
+  ]
+}

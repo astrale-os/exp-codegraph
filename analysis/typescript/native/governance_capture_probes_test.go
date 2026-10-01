@@ -101,3 +101,46 @@ func TestGovernanceCapturedDirectoryPartialFailureIsNotEmptyMembership(t *testin
 		t.Fatalf("genuine absence lost: %#v", absent)
 	}
 }
+
+func TestGovernanceContentDigestRetainedAndSealed(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "engine.node")
+	if err := os.WriteFile(path, []byte("abc"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	session := governanceSession{}
+	_, err := session.captureConfiguration(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capture := session.policySuspension.Capture
+	row := capture.probe(governanceProbeRequest{ID: "asset", Kind: "content-digest", Path: path})
+	if row.Status != "known" {
+		t.Fatalf("digest=%#v", row)
+	}
+	value := row.Value.(map[string]any)
+	if value["sha256"] != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" || value["byteLength"] != int64(3) {
+		t.Fatalf("digest=%#v", value)
+	}
+	if valid, err := capture.Verify(); !valid || err != nil {
+		t.Fatalf("stable seal=%v %v", valid, err)
+	}
+	if err := os.WriteFile(path, []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if valid, _ := capture.Verify(); valid {
+		t.Fatal("changed bytes passed digest seal")
+	}
+	changed := capture.probe(governanceProbeRequest{ID: "asset2", Kind: "content-digest", Path: path})
+	if changed.Status != "unsupported" || !capture.probeInconsistent {
+		t.Fatal("changed reread replaced first owner")
+	}
+	missing := governanceObserveProbe(governanceProbeKey{Kind: "content-digest", Path: filepath.Join(root, "missing")})
+	if missing.Status != "error" || missing.Value != nil || missing.Error.Kind != "not-found" {
+		t.Fatalf("absence=%#v", missing)
+	}
+	directory := governanceObserveProbe(governanceProbeKey{Kind: "content-digest", Path: root})
+	if directory.Status != "error" || directory.Value != nil {
+		t.Fatalf("directory digest=%#v", directory)
+	}
+}

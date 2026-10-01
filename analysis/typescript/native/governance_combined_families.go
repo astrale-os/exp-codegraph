@@ -4,6 +4,7 @@ import (
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // Family evaluators share one captured AST/import/resolver project. A missing
@@ -66,7 +67,10 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 	}
 	result, ok := project.familyProducts[group]
 	if !ok {
+		started := time.Now()
 		result = evaluate(governanceSharedProject(project))
+		project.stats.FamilyEvaluations++
+		project.stats.phase("family:"+group+":inclusive", started)
 		project.familyProducts[group] = result
 	}
 	out := governanceOutcome{Rule: rule, Revision: governanceRevisions[rule], Status: "pass", Findings: []governanceEvidence{}}

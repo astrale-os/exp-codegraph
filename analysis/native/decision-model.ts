@@ -67,6 +67,7 @@ export type NativeDecisionPreparation =
   | NativeDecisionCandidate
   | NativeDecisionConfiguration
   | NativeDecisionProductsCandidate
+  | NativeDecisionGenericRequest
   | {
       readonly status: "intrinsics";
       readonly token: string;
@@ -134,7 +135,54 @@ export type NativeDecisionContinuation =
         | Readonly<{ id: string; kind: "accept-step-id"; accepted: boolean }>
         | Readonly<{ id: string; kind: "locale-sort"; groups: readonly (readonly number[])[] }>
       )[];
+    }>
+  | Readonly<{ token: string; kind: "generic-engine"; engine: NativeDecisionGenericEngine }>
+  | Readonly<{
+      token: string;
+      kind: "generic";
+      engine: NativeDecisionGenericEngine;
+      inputCertificate: string;
+      generic: Readonly<{ status: "complete"; files: number; diagnostics: readonly unknown[] }>;
     }>;
+
+export interface NativeDecisionGenericEngine {
+  readonly version: string;
+  readonly artifactDigest: string;
+  /** Absolute selected installed oxlint/package.json, observed by this capture. */
+  readonly packagePath: string;
+  /** SHA256 of exactly that captured package file, including the actual version. */
+  readonly packageRevision: string;
+}
+export interface NativeDecisionGenericRequest {
+  readonly status: "generic";
+  readonly token: string;
+  readonly generation: string;
+  readonly root: string;
+  readonly requestedRoot: string;
+  readonly inputCertificate: string;
+  readonly engine?: NativeDecisionGenericEngine;
+}
+export interface NativeDecisionCaptureRequirement {
+  readonly id: string;
+  readonly kind: "metadata" | "read-bytes" | "directory" | "canonicalize" | "content-digest";
+  readonly path: string;
+  readonly followLinks?: boolean;
+}
+export type NativeDecisionCaptureObservation =
+  | Readonly<{ id: string; status: "known"; value: unknown }>
+  | Readonly<{
+      id: string;
+      status: "error";
+      error: Readonly<{ kind: string; code: string; message: string }>;
+    }>
+  | Readonly<{ id: string; status: "unsupported"; value?: unknown }>;
+export type NativeDecisionCaptureResult =
+  | Readonly<{
+      token: string;
+      inputCertificate: string;
+      observations: readonly NativeDecisionCaptureObservation[];
+    }>
+  | Readonly<{ status: "retry" }>;
 
 export interface NativeDecisionSealRequest {
   readonly token: string;
@@ -157,6 +205,11 @@ export interface NativeDecisionSession {
   prepare(request: NativeDecisionPrepareRequest, signal?: AbortSignal): Promise<unknown>;
   /** Continue the same private capture with canonical policy/intrinsic observations. */
   continue?(request: NativeDecisionContinuation, signal?: AbortSignal): Promise<unknown>;
+  /** Reads belong to the same retained private capture, before products freeze. */
+  captureProbes?(
+    request: Readonly<{ token: string; requirements: readonly NativeDecisionCaptureRequirement[] }>,
+    signal?: AbortSignal,
+  ): Promise<unknown>;
   /** The final whole-input barrier runs after the client privately admits the candidate. */
   seal(request: NativeDecisionSealRequest, signal?: AbortSignal): Promise<unknown>;
   dispose(): Promise<void>;

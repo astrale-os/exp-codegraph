@@ -66,6 +66,16 @@ func governanceNewRuntimeAuthority(identity *governanceRuntimeIdentity) *governa
 		walkFile(source, func(node *ast.Node) bool {
 			if ast.IsFunctionLike(node) && node.Body() != nil {
 				out.FunctionBodies[node] = true
+				if node.Kind == ast.KindArrowFunction && node.Body().Kind != ast.KindBlock {
+					out.Admitted[node.Body()] = "expression"
+				}
+				for _, parameter := range node.Parameters() {
+					param := parameter.AsNode()
+					check := identity.TypeOwner.program.Checker
+					if check.GetSymbolAtLocation(param.Name()) != nil || check.GetSymbolAtLocation(param) != nil {
+						out.Admitted[param] = "definition"
+					}
+				}
 				key := out.functionKey(node)
 				out.FunctionOwners[key] = append(out.FunctionOwners[key], node)
 				admit(node.Body())
@@ -161,6 +171,12 @@ func (owner *governanceRuntimeAuthority) Symbol(file observabledecision.Captured
 	return observabledecision.NativeEffectSymbol{Known: true, Key: owner.symbolKey(symbol)}
 }
 func (owner *governanceRuntimeAuthority) CandidateAdmitted(file observabledecision.CapturedFile, node *ast.Node, kind string) (bool, bool) {
+	if owner.Identity.Complete && owner.Identity.OwnedProgramFiles[file.Path] == nil {
+		captured, exists := owner.ByPath[file.Path]
+		if exists && captured.Source == file.Source && captured.Text == file.Text {
+			return false, true
+		}
+	}
 	matched, known := owner.node(file, node)
 	if !known {
 		return false, false
@@ -204,6 +220,17 @@ func (owner *governanceRuntimeAuthority) Call(file observabledecision.CapturedFi
 		target = owner.functionKey(function)
 	}
 	out := observabledecision.NativeEffectCall{Known: true, BodyPresent: function != nil && owner.FunctionBodies[function], Dynamic: target == ""}
+	if function != nil {
+		if source := ast.GetSourceFileOfNode(function); source != nil {
+			if path, owned := governanceRuntimeProgramOwned(owner.Identity.Project.Root, source.FileName()); owned {
+				out.CallableOwner = true
+				if owner.FunctionBodies[function] {
+					out.Target = function
+					out.TargetPath = path
+				}
+			}
+		}
+	}
 	signature := check.GetResolvedSignature(matched)
 	parameters := checker.Signature_parameters(signature)
 	rest := checker.Signature_hasRestParameter(signature)
@@ -224,7 +251,7 @@ func (owner *governanceRuntimeAuthority) Call(file observabledecision.CapturedFi
 				}
 				capturedArgument = node.AsCallExpression().Arguments.Nodes[index]
 			}
-			out.Bindings = append(out.Bindings, observabledecision.NativeEffectBinding{Argument: capturedArgument, Parameter: parameter})
+			out.Bindings = append(out.Bindings, observabledecision.NativeEffectBinding{Argument: capturedArgument, Parameter: parameter, Rest: rest && parameterIndex == len(parameters)-1})
 		}
 	}
 	return out
@@ -330,5 +357,34 @@ func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecisio
 }
 func (owner *governanceRuntimeAuthority) DemandContext(limits observabledecision.Limits) observabledecision.DemandContext {
 	core := observabledecision.NewNativeEffectCore(owner.Files, owner.EffectAuthority())
-	return observabledecision.DemandContext{Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits}
+	context := observabledecision.DemandContext{Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets()}
+	reader := observabledecision.NewNativeValueReader(context)
+	context.CompilerLibraryReceiver = func(path string, call *ast.Node) observabledecision.LibraryReceiverObservation {
+		file, ok := owner.ByPath[path]
+		if !ok {
+			return observabledecision.LibraryReceiverObservation{}
+		}
+		matched, known := owner.node(file, call)
+		if !known || matched.Kind != ast.KindCallExpression {
+			return observabledecision.LibraryReceiverObservation{}
+		}
+		callee := matched.AsCallExpression().Expression
+		var receiver *ast.Node
+		switch callee.Kind {
+		case ast.KindPropertyAccessExpression:
+			receiver = callee.AsPropertyAccessExpression().Expression
+		case ast.KindElementAccessExpression:
+			receiver = callee.AsElementAccessExpression().Expression
+		}
+		if receiver == nil {
+			return observabledecision.LibraryReceiverObservation{Known: true}
+		}
+		proof := reader.Expression(path, receiver).Resolve(observabledecision.Limits{})
+		if proof.Outcome.MigrationIncomplete {
+			return observabledecision.LibraryReceiverObservation{Reads: proof.Outcome.Reads}
+		}
+		library := proof.Outcome.Kind == "known" && proof.Value.Kind == "external" && proof.Value.Origin != nil && strings.HasPrefix(proof.Value.Origin.File, "bundled:/") && typescriptLibraryFile(proof.Value.Origin.File) != ""
+		return observabledecision.LibraryReceiverObservation{Known: true, Library: library, Reads: proof.Outcome.Reads}
+	}
+	return context
 }

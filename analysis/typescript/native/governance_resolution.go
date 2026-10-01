@@ -1,11 +1,12 @@
 package main
 
 import (
+	module "github.com/microsoft/typescript-go/astrale-codegraph-modulebridge"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	core "github.com/microsoft/typescript-go/shim/core"
-	module "github.com/microsoft/typescript-go/astrale-codegraph-modulebridge"
 	vfs "github.com/microsoft/typescript-go/shim/vfs"
 	"strings"
+	"time"
 )
 
 type governanceResolver struct {
@@ -38,6 +39,8 @@ func (project *governedProject) resolver(packageOnly bool) *governanceResolver {
 // usage's actual compiler-selected emit/resolution mode. Conflicting modes for
 // one textual specifier are authoritatively unresolved as in SDK resolver.
 func (project *governedProject) resolveImport(file *governedFile, specifier string, packageOnly bool) *module.ResolvedModule {
+	started := time.Now()
+	defer func() { project.stats.phase("contextual-resolution-inclusive", started) }()
 	if !project.compilerValid {
 		return nil
 	}

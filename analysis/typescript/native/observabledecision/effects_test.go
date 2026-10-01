@@ -121,7 +121,7 @@ func TestNativeDemandEffectsPreserveImmutableEscapesAndRejectAliasedObjectWrites
 			// lazy object initializer; it does not certify production call provenance.
 			return EffectSummary{Pure: true, ChargeKey: request.Path + ":" + request.Operation}
 		})
-		product := ObserveQueries(context)
+		product := ObserveQueriesAndIDs(context)
 		observation := onlyObservation(t, product)
 		if observation.ID.Kind != fixture.want {
 			t.Fatalf("outcome want %s: %+v", fixture.want, observation.ID)

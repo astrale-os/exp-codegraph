@@ -13,6 +13,7 @@ import (
 	"github.com/samchon/ttsc/packages/ttsc/driver"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type governanceTypeAuthority struct {
@@ -140,6 +141,8 @@ func (owner *governanceTypeAuthority) open() {
 	if owner.opened {
 		return
 	}
+	started := time.Now()
+	defer func() { owner.project.stats.phase("native-program-and-checker", started) }()
 	owner.opened = true
 	owner.configuration()
 	if owner.parsed == nil {
@@ -160,19 +163,19 @@ func (owner *governanceTypeAuthority) open() {
 	owner.program = &driver.Program{TSProgram: program, ParsedConfig: owner.parsed, Checker: check, Host: host, FS: overlay}
 	owner.project.typeRelease = release
 }
-func (owner *governanceTypeAuthority) expression(file *sourcepolicy.File, expression *ast.Node) (*ast.Node, *checker.Type, bool) {
+func (owner *governanceTypeAuthority) compilerNode(file *sourcepolicy.File, expression *ast.Node) (*ast.Node, bool) {
 	owner.open()
 	if owner.program == nil {
-		return nil, nil, true
+		return nil, true
 	}
 	captured := owner.project.FilesByPath[file.Path]
 	source := owner.program.SourceFile(captured.AbsolutePath)
 	if source == nil {
-		return nil, nil, true
+		return nil, true
 	}
 	if source.Text() != captured.Text {
 		owner.project.familyResidual = append(owner.project.familyResidual, "Native demanded type source bytes disagree with captured authored source")
-		return nil, nil, false
+		return nil, false
 	}
 	start := scanner.GetTokenPosOfNode(expression, file.Source, false)
 	end := expression.End()
@@ -190,9 +193,19 @@ func (owner *governanceTypeAuthority) expression(file *sourcepolicy.File, expres
 	}
 	visit(source.AsNode())
 	if match == nil || !ast.IsExpressionNode(match) {
-		return nil, nil, true
+		return nil, true
 	}
-	return match, owner.program.Checker.GetTypeAtLocation(match), true
+	return match, true
+}
+func (owner *governanceTypeAuthority) expression(file *sourcepolicy.File, expression *ast.Node) (*ast.Node, *checker.Type, bool) {
+	match, known := owner.compilerNode(file, expression)
+	if match == nil {
+		return nil, nil, known
+	}
+	started := time.Now()
+	typ := owner.program.Checker.GetTypeAtLocation(match)
+	owner.project.stats.phase("type-at-location", started)
+	return match, typ, true
 }
 func (owner *governanceTypeAuthority) propertyNames(typ *checker.Type) ([]string, bool) {
 	if typ.Flags()&(checker.TypeFlagsAny|checker.TypeFlagsUnknown|checker.TypeFlagsNever|checker.TypeFlagsNull|checker.TypeFlagsUndefined) != 0 {
@@ -230,8 +243,20 @@ func (owner *governanceTypeAuthority) propertyNames(typ *checker.Type) ([]string
 	}
 	return names, true
 }
-func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression *ast.Node) sourcepolicy.NamesObservation {
+func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression *ast.Node) (observed sourcepolicy.NamesObservation) {
+	programBefore := owner.project.stats.PhaseNanoseconds["native-program-and-checker"]
+	startedProfile := time.Now()
+	defer func() {
+		owner.typeRequest("property-names", file, expression, observed.Known, observed.Names, "", startedProfile, programBefore)
+	}()
+	started := time.Now()
+	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
+	match, known := owner.compilerNode(file, expression)
+	if known && match != nil && owner.constantUnknownCallNames(match) {
+		owner.project.stats.phase("type-constant-unknown-call-quotient", started)
+		return sourcepolicy.NamesObservation{Known: true}
+	}
 	_, typ, known := owner.expression(file, expression)
 	if !known {
 		return sourcepolicy.NamesObservation{Known: false}
@@ -239,13 +264,22 @@ func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression 
 	if typ == nil {
 		return sourcepolicy.NamesObservation{Known: true}
 	}
+	projectionStarted := time.Now()
 	names, ok := owner.propertyNames(typ)
+	owner.project.stats.phase("type-property-names", projectionStarted)
 	if !ok {
 		return sourcepolicy.NamesObservation{Known: true}
 	}
 	return sourcepolicy.NamesObservation{Known: true, Names: names}
 }
-func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, expression *ast.Node) sourcepolicy.KindObservation {
+func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, expression *ast.Node) (observed sourcepolicy.KindObservation) {
+	programBefore := owner.project.stats.PhaseNanoseconds["native-program-and-checker"]
+	startedProfile := time.Now()
+	defer func() {
+		owner.typeRequest("collection-brand-kind", file, expression, observed.Known, nil, observed.Kind, startedProfile, programBefore)
+	}()
+	started := time.Now()
+	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
 	node, typ, known := owner.expression(file, expression)
 	if !known {
@@ -254,6 +288,8 @@ func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, ex
 	if typ == nil {
 		return sourcepolicy.KindObservation{Known: true}
 	}
+	projectionStarted := time.Now()
+	defer func() { owner.project.stats.phase("type-collection-brand-projection", projectionStarted) }()
 	kinds := map[string]bool{}
 	var inspect func(*checker.Type)
 	inspect = func(candidate *checker.Type) {
@@ -304,4 +340,10 @@ func governanceInstallTypeAuthority(project *governedProject, shared *sourcepoli
 	shared.ClosedLiteralPropertyNames = owner.closed
 	shared.ExpressionPropertyNames = owner.names
 	shared.QueryCollectionKind = owner.collectionKind
+}
+
+func (owner *governanceTypeAuthority) typeRequest(operation string, file *sourcepolicy.File, node *ast.Node, known bool, names []string, kind string, started time.Time, programBefore int64) {
+	start := scanner.GetTokenPosOfNode(node, file.Source, false)
+	text := file.Source.Text()[start:node.End()]
+	owner.project.stats.TypeRequests = append(owner.project.stats.TypeRequests, governanceTypeRequest{Operation: operation, Path: file.Path, Start: start, End: node.End(), Expression: text, Known: known, Names: names, Kind: kind, ElapsedNanoseconds: time.Since(started).Nanoseconds(), ProgramNanoseconds: owner.project.stats.PhaseNanoseconds["native-program-and-checker"] - programBefore})
 }

@@ -82,3 +82,55 @@ func TestGovernanceIntrinsicOrderRequiresStableCompletePermutation(t *testing.T)
 		}
 	}
 }
+
+func TestGovernanceProductsAdmitActualRuntimeContractsAndSealCapturedInputs(t *testing.T) {
+	root := t.TempDir()
+	governanceWrite(t, root, "mutations/source.ts", "export const value=1;")
+	governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"target":"ES2022"},"include":["mutations/**/*.ts"]}`)
+	project, err := captureGovernedProject(root, governanceTestPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project.Disabled = map[string]string{}
+	state := &governanceProductsSession{Project: project, Token: "runtime", Generation: "1", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false}`)}}
+	for rule, revision := range governanceRevisions {
+		implementation := "astrale.sdk.typescript-source"
+		if rule == "QRY-CANON" || rule == "QRY-SINGLE" || rule == "QLT-DEF-IDS" {
+			implementation = "astrale.sdk.codegraph"
+		} else {
+			project.Disabled[rule] = "fixture"
+		}
+		state.Contracts = append(state.Contracts, governanceImplementationContract{RuleID: rule, RuleRevision: revision, Implementation: governanceImplementation{implementation, "1"}})
+	}
+	session := governanceSession{productsSession: state}
+	response, err := session.evaluateProducts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := response.(map[string]any)
+	if out["status"] != "products" {
+		t.Fatalf("actual runtime products=%#v", out)
+	}
+	var envelope struct {
+		Products []governanceRuleProduct `json:"products"`
+	}
+	if err := json.Unmarshal([]byte(out["productsJSON"].(string)), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if len(envelope.Products) != 3 {
+		t.Fatalf("runtime products=%#v", envelope.Products)
+	}
+	for _, product := range envelope.Products {
+		if product.Implementation.ID != "astrale.sdk.codegraph" || product.RuleRevision != governanceRevisions[product.RuleID] || product.Decision.Status != "pass" {
+			t.Fatalf("runtime contract=%#v", product)
+		}
+	}
+	governanceWrite(t, root, "mutations/source.ts", "export const value=2;")
+	sealed, err := session.sealProducts(state.Token, state.ProductsDigest, strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.(map[string]any)["status"] != "retry" {
+		t.Fatal("runtime compiler consumed source edit survived final whole barrier")
+	}
+}

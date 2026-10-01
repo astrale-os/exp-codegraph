@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -65,6 +68,21 @@ func governanceObserveProbe(key governanceProbeKey) governanceProbeObservation {
 		}
 		if err == nil {
 			out.Value = map[string]any{"isDirectory": info.IsDir(), "isFile": info.Mode().IsRegular(), "isSymlink": info.Mode()&os.ModeSymlink != 0, "length": info.Size()}
+		}
+	case "content-digest":
+		var file *os.File
+		file, err = os.Open(key.Path)
+		if err == nil {
+			hash := sha256.New()
+			var length int64
+			length, err = io.Copy(hash, file)
+			closeErr := file.Close()
+			if err == nil {
+				err = closeErr
+			}
+			if err == nil {
+				out.Value = map[string]any{"sha256": hex.EncodeToString(hash.Sum(nil)), "byteLength": length}
+			}
 		}
 	case "read-bytes":
 		var bytes []byte

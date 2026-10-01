@@ -58,6 +58,15 @@ func (r *demandRun) objectLiteral(path string, node *ast.Node, env map[string]de
 		case ast.KindMethodDeclaration:
 			initializer = property
 		}
+		if initializer != nil {
+			admitted, known := r.expressionAdmission(path, initializer)
+			if !known {
+				return demandUnknown("Captured bounded expression admission authority is unavailable.")
+			}
+			if !admitted {
+				initializer = nil
+			}
+		}
 		if initializer == nil {
 			delete(value.object, key)
 			delete(value.properties, key)

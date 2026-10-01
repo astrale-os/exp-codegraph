@@ -4,6 +4,7 @@ import (
 	authored "astrale-typespec-v2-native-analysis/authoredsource"
 	runtime "astrale-typespec-v2-native-analysis/observabledecision"
 	ast "github.com/microsoft/typescript-go/shim/ast"
+	"strings"
 	"unicode/utf16"
 )
 
@@ -55,7 +56,29 @@ func EvaluateRuntimeQueries(project *Project, input RuntimeQueryInput) Result {
 			continue
 		}
 		shape := value.ProjectorShape
+		if value.Ownership.Kind != "known" {
+			value.CanonicalRequestCount.Message = value.Ownership.Message
+			value.CanonicalRequestCount.Reason = value.Ownership.Message
+			value.CanonicalRequestCount.Reasons = nil
+		}
 		observations = append(observations, qmObservation{file: file, node: node, subject: subject, identity: value.Ownership.Kind, shape: &shape, shapeProof: qmRuntimeValue(value.ProjectorProof), build: qmRuntimeValue(value.BuildCallbackCount), project: qmRuntimeValue(value.ProjectCallbackCount), request: qmRuntimeValue(value.CanonicalRequestCount)})
+	}
+	failures := []string{}
+	for _, failure := range input.Product.DiscoveryFailures {
+		failures = append(failures, failure.Path+": "+failure.Reason)
+	}
+	failures = append(failures, input.Product.InventoryReasons...)
+	if len(failures) > 0 {
+		unique := []string{}
+		seen := map[string]bool{}
+		for _, failure := range failures {
+			if !seen[failure] {
+				seen[failure] = true
+				unique = append(unique, failure)
+			}
+		}
+		reason := strings.Join(unique, "; ")
+		observations = append(observations, qmObservation{subject: "codegraph:query-call-inventory", identity: "unknown", request: qmEpistemic{state: "unknown", reason: "Query call discovery is incomplete: " + reason}})
 	}
 	w.decideQueries("QRY-CANON", observations)
 	w.decideQueries("QRY-SINGLE", observations)

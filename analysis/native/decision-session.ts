@@ -101,6 +101,13 @@ export class DecisionProcess implements NativeDecisionSession {
     return this.#request("continue", request, signal);
   }
 
+  captureProbes(
+    request: Parameters<NonNullable<NativeDecisionSession["captureProbes"]>>[0],
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return this.#request("capture-probes", request, signal);
+  }
+
   seal(
     request: Parameters<NativeDecisionSession["seal"]>[0],
     signal?: AbortSignal,

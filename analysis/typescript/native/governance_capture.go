@@ -20,6 +20,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf16"
 	"unicode/utf8"
 )
@@ -58,6 +59,7 @@ type governedFile struct {
 	authored                                         *authoredsource.File
 }
 type governedProject struct {
+ sourceProofState *governanceProductsSession
 	Root             string
 	Files            []*governedFile
 	FilesByPath      map[string]*governedFile
@@ -345,6 +347,7 @@ func captureGovernedProjectCached(requestedRoot string, policy governancePolicy,
 	return captureGovernedProjectAuthority(requestedRoot, policy, cache, nil, nil)
 }
 func captureGovernedProjectAuthority(requestedRoot string, policy governancePolicy, cache map[string]*governedFile, capture *governanceCapture, authority *governanceCompiledPolicy) (*governedProject, error) {
+	started := time.Now()
 	policy.Layers = append([]governanceLayer{}, policy.Layers...)
 	policy.RootFiles = append([]governanceRoot{}, policy.RootFiles...)
 	requestedRoot, err := filepath.Abs(requestedRoot)
@@ -368,6 +371,7 @@ func captureGovernedProjectAuthority(requestedRoot string, policy governancePoli
 	capture.remember(requestedRoot, "realpath", root)
 	capture.root = root
 	project := &governedProject{Root: root, Policy: policy, FilesByPath: map[string]*governedFile{}, Disabled: map[string]string{}, capture: capture, compilerOptions: &core.CompilerOptions{Module: core.ModuleKindNodeNext, ModuleResolution: core.ModuleResolutionKindNodeNext}, compilerValid: true, resolvers: map[bool]*governanceResolver{}}
+	defer func() { project.stats.phase("governed-capture-inclusive", started) }()
 	var ignore func(string) bool
 	if authority == nil {
 		ignore, err = governanceConfigure(project)
@@ -585,9 +589,11 @@ func captureGovernedProjectAuthority(requestedRoot string, policy governancePoli
 			file.authored = previous.authored
 			project.stats.ParseReuses++
 		} else {
+			parseStarted := time.Now()
 			file.Source = parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: absolute}, file.Text, kind)
 			ast.SetParentInChildren(file.Source.AsNode())
 			file.coordinates = indexSourceCoordinates(file.Text)
+			project.stats.phase("governed-parse", parseStarted)
 			project.stats.Parses++
 		}
 		if cache != nil {
