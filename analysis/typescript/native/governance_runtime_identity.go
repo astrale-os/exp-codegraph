@@ -15,14 +15,17 @@ import (
 )
 
 type governanceRuntimeIdentity struct {
-	Project           *governedProject
-	TypeOwner         *governanceTypeAuthority
-	Universe          string
-	Calls             map[*ast.Node]string
-	CallSpans         map[string]sourceSpan
-	OwnedProgramFiles map[string]*ast.SourceFile
-	Complete          bool
-	Reason            string
+	Project            *governedProject
+	TypeOwner          *governanceTypeAuthority
+	Universe           string
+	CallSources        map[string]*governanceRuntimeCallSource
+	CallIdentityHashes int
+	CallSeekNodes      int
+	Calls              map[*ast.Node]string
+	CallSpans          map[string]sourceSpan
+	OwnedProgramFiles  map[string]*ast.SourceFile
+	Complete           bool
+	Reason             string
 }
 
 func governancePortableUniversePath(project *governedProject, path string) (string, error) {
@@ -135,7 +138,7 @@ func governanceRuntimeProgramOwned(root, path string) (string, bool) {
 	return relative, true
 }
 func governanceBuildRuntimeIdentity(project *governedProject) *governanceRuntimeIdentity {
-	out := &governanceRuntimeIdentity{Project: project, Calls: map[*ast.Node]string{}, CallSpans: map[string]sourceSpan{}, OwnedProgramFiles: map[string]*ast.SourceFile{}}
+	out := &governanceRuntimeIdentity{Project: project, CallSources: map[string]*governanceRuntimeCallSource{}, Calls: map[*ast.Node]string{}, CallSpans: map[string]sourceSpan{}, OwnedProgramFiles: map[string]*ast.SourceFile{}}
 	owner := project.typeOwner
 	if owner == nil {
 		out.Reason = "runtime demanded compiler owner unavailable"
@@ -152,28 +155,13 @@ func governanceBuildRuntimeIdentity(project *governedProject) *governanceRuntime
 		return out
 	}
 	out.Universe = universe
-	identity := occurrenceIdentityWorkspace{}
 	for _, source := range owner.program.TSProgram.GetSourceFiles() {
 		logical, owned := governanceRuntimeProgramOwned(project.Root, source.FileName())
 		if !owned {
 			continue
 		}
 		out.OwnedProgramFiles[logical] = source
-		sourceID := deriveID("source", "typescript:"+universe, map[string]any{"path": logical})
-		revision := deriveID("source-revision", sourceID, map[string]any{"digest": hashText(source.Text())})
-		coordinates := indexSourceCoordinates(source.Text())
-		var walk func(*ast.Node)
-		walk = func(node *ast.Node) {
-			if node.Kind == ast.KindCallExpression {
-				start := scanner.SkipTrivia(source.Text(), node.Pos())
-				span := sourceSpan{Source: sourceID, Revision: revision, Start: coordinates.utf16(start), End: coordinates.utf16(node.End())}
-				id := identity.identify(universe, span, "body-call")
-				out.Calls[node] = id
-				out.CallSpans[fmt.Sprintf("%s:%d:%d", logical, start, node.End())] = span
-			}
-			node.ForEachChild(func(child *ast.Node) bool { walk(child); return false })
-		}
-		walk(source.AsNode())
+
 	}
 	out.Complete = true
 	return out
@@ -188,10 +176,71 @@ func (identity *governanceRuntimeIdentity) CallIdentity(file *sourcepolicy.File,
 		return "", false
 	}
 	start := scanner.SkipTrivia(captured.Text, node.Pos())
-	span, ok := identity.CallSpans[fmt.Sprintf("%s:%d:%d", file.Path, start, node.End())]
-	if !ok {
+	key := fmt.Sprintf("%s:%d:%d", file.Path, start, node.End())
+	if span, ok := identity.CallSpans[key]; ok {
+		identity.CallIdentityHashes++
+		workspace := occurrenceIdentityWorkspace{}
+		return workspace.identify(identity.Universe, span, "body-call"), true
+	}
+	// Authored and Program ASTs can be different original parser products. Keep
+	// the prior exact-span membership requirement, seeking only the demanded
+	// original call rather than hashing every call in every source beforehand.
+	var matched *ast.Node
+	walk(source.AsNode(), func(candidate *ast.Node) bool {
+		identity.CallSeekNodes++
+		if matched != nil {
+			return false
+		}
+		if candidate.Kind == ast.KindCallExpression && candidate.End() == node.End() && scanner.SkipTrivia(source.Text(), candidate.Pos()) == start {
+			matched = candidate
+			return false
+		}
+		return candidate.Pos() <= node.End() && candidate.End() >= start
+	})
+	if matched == nil {
 		return "", false
 	}
+	return identity.nativeCallIdentity(file.Path, matched)
+}
+
+type governanceRuntimeCallSource struct {
+	SourceID    string
+	Revision    string
+	Coordinates sourceCoordinates
+}
+
+func (identity *governanceRuntimeIdentity) callSource(path string) *governanceRuntimeCallSource {
+	if memo := identity.CallSources[path]; memo != nil {
+		return memo
+	}
+	source := identity.OwnedProgramFiles[path]
+	if source == nil {
+		return nil
+	}
+	sourceID := deriveID("source", "typescript:"+identity.Universe, map[string]any{"path": path})
+	memo := &governanceRuntimeCallSource{SourceID: sourceID, Revision: deriveID("source-revision", sourceID, map[string]any{"digest": hashText(source.Text())}), Coordinates: indexSourceCoordinates(source.Text())}
+	identity.CallSources[path] = memo
+	return memo
+}
+
+// Only the original Program's call iterator and the exact authored-span bridge
+// above invoke this private method; no client node or cached expected identity
+// is admitted as an actual call observation.
+func (identity *governanceRuntimeIdentity) nativeCallIdentity(path string, node *ast.Node) (string, bool) {
+	source := identity.OwnedProgramFiles[path]
+	if !identity.Complete || source == nil || node == nil || node.Kind != ast.KindCallExpression || ast.GetSourceFileOfNode(node) != source {
+		return "", false
+	}
+	if id, ok := identity.Calls[node]; ok {
+		return id, true
+	}
+	memo := identity.callSource(path)
+	start := scanner.SkipTrivia(source.Text(), node.Pos())
+	span := sourceSpan{Source: memo.SourceID, Revision: memo.Revision, Start: memo.Coordinates.utf16(start), End: memo.Coordinates.utf16(node.End())}
 	workspace := occurrenceIdentityWorkspace{}
-	return workspace.identify(identity.Universe, span, "body-call"), true
+	id := workspace.identify(identity.Universe, span, "body-call")
+	identity.CallIdentityHashes++
+	identity.Calls[node] = id
+	identity.CallSpans[fmt.Sprintf("%s:%d:%d", path, start, node.End())] = span
+	return id, true
 }

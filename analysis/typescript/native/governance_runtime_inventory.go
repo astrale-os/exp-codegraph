@@ -56,10 +56,11 @@ func (owner *governanceRuntimeAuthority) Calls(paths []string) observabledecisio
 	}
 	for _, path := range sourcePaths {
 		source := owner.Identity.OwnedProgramFiles[path]
+		owner.ensureAdmissions(path)
 		coordinates := indexSourceCoordinates(source.Text())
 		walk(source.AsNode(), func(node *ast.Node) bool {
 			if owner.Admitted[node] == "call" {
-				id, ok := owner.Identity.Calls[node]
+				id, ok := owner.Identity.nativeCallIdentity(path, node)
 				if !ok {
 					out.Known = false
 					return true

@@ -16,6 +16,8 @@ import (
 type governanceRuntimeAuthority struct {
 	ParameterReferenceClosure map[governanceParameterReferenceKey]bool
 	ParameterReferenceSources map[*ast.SourceFile]bool
+	AdmissionsReady           map[string]bool
+	AdmissionsFiles           int
 	ScopedProofs              map[*ast.Node]observabledecision.EffectSummary
 	FunctionOwners            map[string][]*ast.Node
 
@@ -29,7 +31,7 @@ type governanceRuntimeAuthority struct {
 }
 
 func governanceNewRuntimeAuthority(identity *governanceRuntimeIdentity) *governanceRuntimeAuthority {
-	out := &governanceRuntimeAuthority{Identity: identity, ScopedProofs: map[*ast.Node]observabledecision.EffectSummary{}, FunctionOwners: map[string][]*ast.Node{}, ByPath: map[string]observabledecision.CapturedFile{}, Admitted: map[*ast.Node]string{}, FunctionBodies: map[*ast.Node]bool{}, Symbols: map[*ast.Symbol]string{}, NodeLookup: map[string]map[string]*ast.Node{}}
+	out := &governanceRuntimeAuthority{Identity: identity, AdmissionsReady: map[string]bool{}, ScopedProofs: map[*ast.Node]observabledecision.EffectSummary{}, FunctionOwners: map[string][]*ast.Node{}, ByPath: map[string]observabledecision.CapturedFile{}, Admitted: map[*ast.Node]string{}, FunctionBodies: map[*ast.Node]bool{}, Symbols: map[*ast.Symbol]string{}, NodeLookup: map[string]map[string]*ast.Node{}}
 	if !identity.Complete {
 		return out
 	}
@@ -53,37 +55,7 @@ func governanceNewRuntimeAuthority(identity *governanceRuntimeIdentity) *governa
 		}
 		out.Files = append(out.Files, file)
 		out.ByPath[path] = file
-		// Runtime observations use the actual owned Program AST directly. A second
-		// full node-coordinate index is created only for an authored AST bridge.
-		admit := func(body *ast.Node) {
-			thin := &thinBody{kinds: map[*ast.Node]string{}}
-			thin.walk(body)
-			for node, kind := range thin.kinds {
-				out.Admitted[node] = kind
-			}
-		}
-		if !source.IsDeclarationFile && source.Text() != "" {
-			admit(source.AsNode())
-		}
-		walkFile(source, func(node *ast.Node) bool {
-			if ast.IsFunctionLike(node) && node.Body() != nil {
-				out.FunctionBodies[node] = true
-				if node.Kind == ast.KindArrowFunction && node.Body().Kind != ast.KindBlock {
-					out.Admitted[node.Body()] = "expression"
-				}
-				for _, parameter := range node.Parameters() {
-					param := parameter.AsNode()
-					check := identity.TypeOwner.program.Checker
-					if check.GetSymbolAtLocation(param.Name()) != nil || check.GetSymbolAtLocation(param) != nil {
-						out.Admitted[param] = "definition"
-					}
-				}
-				key := out.functionKey(node)
-				out.FunctionOwners[key] = append(out.FunctionOwners[key], node)
-				admit(node.Body())
-			}
-			return true
-		})
+
 	}
 	// Governed sources outside the actual Program remain visible to discovery;
 	// their compiler-dependent observations cannot be forged from parsed syntax.
@@ -96,6 +68,74 @@ func governanceNewRuntimeAuthority(identity *governanceRuntimeIdentity) *governa
 		out.ByPath[file.Path] = captured
 	}
 	return out
+}
+
+// Preserve the original admission/function-owner algorithm, but materialize it
+// only when a consumer asks about this actual Program source. Uniqueness still
+// requires all original owned sources and cannot be inferred from one file.
+func (owner *governanceRuntimeAuthority) ensureAdmissions(path string) {
+	if owner.AdmissionsReady[path] || !owner.Identity.Complete {
+		return
+	}
+	source := owner.Identity.OwnedProgramFiles[path]
+	if source == nil {
+		return
+	}
+	owner.AdmissionsReady[path] = true
+	owner.AdmissionsFiles++
+	// Runtime observations use the actual owned Program AST directly. A second
+	// full node-coordinate index is created only for an authored AST bridge.
+	admit := func(body *ast.Node) {
+		thin := &thinBody{kinds: map[*ast.Node]string{}}
+		thin.walk(body)
+		for node, kind := range thin.kinds {
+			owner.Admitted[node] = kind
+		}
+	}
+	if !source.IsDeclarationFile && source.Text() != "" {
+		admit(source.AsNode())
+	}
+	walkFile(source, func(node *ast.Node) bool {
+		if ast.IsFunctionLike(node) && node.Body() != nil {
+			owner.FunctionBodies[node] = true
+			if node.Kind == ast.KindArrowFunction && node.Body().Kind != ast.KindBlock {
+				owner.Admitted[node.Body()] = "expression"
+			}
+			for _, parameter := range node.Parameters() {
+				param := parameter.AsNode()
+				check := owner.Identity.TypeOwner.program.Checker
+				if check.GetSymbolAtLocation(param.Name()) != nil || check.GetSymbolAtLocation(param) != nil {
+					owner.Admitted[param] = "definition"
+				}
+			}
+			key := owner.functionKey(node)
+			owner.FunctionOwners[key] = append(owner.FunctionOwners[key], node)
+			admit(node.Body())
+		}
+		return true
+	})
+}
+func (owner *governanceRuntimeAuthority) ensureNodeAdmissions(node *ast.Node) {
+	if node == nil {
+		return
+	}
+	source := ast.GetSourceFileOfNode(node)
+	if source == nil {
+		return
+	}
+	if path, ok := governanceRuntimeProgramOwned(owner.Identity.Project.Root, source.FileName()); ok && owner.Identity.OwnedProgramFiles[path] == source {
+		owner.ensureAdmissions(path)
+	}
+}
+func (owner *governanceRuntimeAuthority) ensureAllAdmissions() {
+	paths := []string{}
+	for path := range owner.Identity.OwnedProgramFiles {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
+		owner.ensureAdmissions(path)
+	}
 }
 func governanceRuntimeNodeKey(source *ast.SourceFile, node *ast.Node) string {
 	return fmt.Sprintf("%d:%d:%d", scanner.GetTokenPosOfNode(node, source, false), node.End(), node.Kind)
@@ -111,6 +151,7 @@ func (owner *governanceRuntimeAuthority) node(file observabledecision.CapturedFi
 	if ast.GetSourceFileOfNode(node) != file.Source {
 		return nil, false
 	}
+	owner.ensureAdmissions(file.Path)
 	if file.Source == source {
 		return node, true
 	}
@@ -276,6 +317,7 @@ func (owner *governanceRuntimeAuthority) callTargetOwner(file observabledecision
 	if function != nil {
 		target = owner.functionKey(function)
 	}
+	owner.ensureNodeAdmissions(function)
 	out := observabledecision.NativeEffectCall{Known: true, BodyPresent: function != nil && owner.FunctionBodies[function], Dynamic: target == ""}
 	if function != nil {
 		if source := ast.GetSourceFileOfNode(function); source != nil {
@@ -326,6 +368,7 @@ func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecisio
 		out.Reason = "captured owned function body/header unavailable"
 		return out
 	}
+	owner.ensureAllAdmissions()
 	key := owner.functionKey(node)
 	if len(owner.FunctionOwners[key]) != 1 {
 		out.Reason = "captured function body ownership is not unique"

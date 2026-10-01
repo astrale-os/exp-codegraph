@@ -183,6 +183,7 @@ func (owner *governanceRuntimeAuthority) GlobalValue(path string, node *ast.Node
 			source := ast.GetSourceFileOfNode(declaration)
 			if source != nil {
 				if targetPath, owned := governanceRuntimeProgramOwned(owner.Identity.Project.Root, source.FileName()); owned {
+					owner.ensureAdmissions(targetPath)
 					switch declaration.Kind {
 					case ast.KindBindingElement, ast.KindParameter:
 						return observabledecision.GlobalValueObservation{Known: true, Reads: []observabledecision.SemanticRead{read}}
