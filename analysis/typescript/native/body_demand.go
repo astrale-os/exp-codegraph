@@ -60,18 +60,22 @@ type bodyDemandPayload struct {
 }
 
 type bodyDemandCache struct {
-	extractor     *extractor
-	files         []*shimast.SourceFile
-	sources       []sourceRecord
-	nonBodyShards []factShard
-	bodies        []*thinBody
-	byOwner       map[string]*thinBody
-	byFunction    map[*shimast.Node]*thinBody
-	modules       map[*shimast.SourceFile]*thinBody
-	snapshot      *sourceProjectionSnapshot
-	fullBodies    map[string]factShard
-	bodyReads     map[string][]callableRead
-	ready         bool
+	extractor        *extractor
+	files            []*shimast.SourceFile
+	sources          []sourceRecord
+	nonBodyShards    []factShard
+	bodies           []*thinBody
+	byOwner          map[string]*thinBody
+	byFunction       map[*shimast.Node]*thinBody
+	modules          map[*shimast.SourceFile]*thinBody
+	snapshot         *sourceProjectionSnapshot
+	fullBodies       map[string]factShard
+	bodyReads        map[string][]callableRead
+	bodyDependencies map[string][]string
+	references       *compilerReferenceSnapshot
+	reuse            *demandSourceReuse
+	sparseCatalogue  bool
+	ready            bool
 }
 
 type thinBody struct {
@@ -89,6 +93,7 @@ type thinBody struct {
 	identifiers []*shimast.Node
 	effects     []*shimast.Node
 	literals    []*shimast.Node
+	retained    bool
 }
 
 func admitBodyDemand(value *bodyDemandRecipe) (*bodyDemandRecipe, error) {
@@ -183,6 +188,7 @@ func (b *thinBody) walk(node *shimast.Node) {
 }
 
 func (b *thinBody) identifierSymbol(node *shimast.Node) *shimast.Symbol {
+	b.x.beginProjection(b.file)
 	if node == nil || node.Kind != shimast.KindIdentifier {
 		return nil
 	}
@@ -254,6 +260,9 @@ func (b *thinBody) witness(node *shimast.Node, witnesses map[string]bodyOccurren
 }
 
 func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDemandRecipe, existing []factShard) ([]factShard, error) {
+	if x.plan.demandCache.sparseCatalogue && (recipe == nil || recipe.Owners == nil) {
+		return nil, sparseDemandFallback{"conservative-recipe-needs-full-catalogue"}
+	}
 	started := time.Now()
 	if recipe == nil {
 		// A client without a selection gets honest full coverage. Explicit empty
@@ -299,6 +308,15 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			if !owned {
 				continue
 			}
+			x.beginProjection(file)
+			if cache.reuse != nil && !cache.reuse.selected[file.FileName()] {
+				for _, owner := range cache.reuse.sources[file.FileName()].rows.owners {
+					body := &thinBody{x: x, file: file, owner: owner.Owner, scope: owner.Scope, span: owner.Span, path: owner.Path, retained: true}
+					bodies = append(bodies, body)
+					byOwner[body.owner] = body
+				}
+				continue
+			}
 			if !file.IsDeclarationFile && len(file.Text()) != 0 {
 				owner := deriveID("symbol", "typescript:"+x.universe, map[string]any{"source": record.Source, "scope": "module"})
 				register(file, owner, "module", file.AsNode(), nil, x.span(file, file.AsNode()))
@@ -315,6 +333,13 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 		cache.bodies, cache.byOwner, cache.byFunction, cache.modules = bodies, byOwner, byFunction, modules
 	}
 	sort.Slice(bodies, func(i, j int) bool { return bodies[i].owner < bodies[j].owner })
+	if cache.reuse != nil {
+		for index := 1; index < len(bodies); index++ {
+			if bodies[index-1].owner == bodies[index].owner {
+				return nil, sparseDemandFallback{"ambiguous-current-owner"}
+			}
+		}
+	}
 	selected := map[string]bool{}
 	queue := []*thinBody{}
 	selectBody := func(body *thinBody) {
@@ -406,6 +431,10 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			payload.Owners = append(payload.Owners, demandOwner{Owner: body.owner, Scope: body.scope, Span: body.span, Path: body.path})
 		}
 		for _, body := range bodies {
+			if body.retained {
+				continue
+			}
+			x.beginProjection(body.file)
 			sort.Slice(body.effects, func(i, j int) bool { return body.effects[i].Pos() < body.effects[j].Pos() })
 			for _, node := range body.effects {
 				if node.Kind == shimast.KindVariableDeclaration {
@@ -462,6 +491,9 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 				// of an unselected call. Data-only arguments contribute neither.
 				target := projector.projectCallable(call.Expression, false).target
 				signature := x.checker.GetResolvedSignature(node)
+				if signature != nil {
+					x.observeProjectionNode(signature.Declaration())
+				}
 				parameters := shimchecker.Signature_parameters(signature)
 				rest := shimchecker.Signature_hasRestParameter(signature)
 				for index, symbol := range argumentSymbols {
@@ -469,6 +501,7 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 						continue
 					}
 					witness := body.witness(node, witnesses)
+					x.rawDemandCalls = append(x.rawDemandCalls, demandEffectCall{symbol, target, witness, body.owner})
 					parameterIndex := index
 					if len(parameters) != 0 && parameterIndex >= len(parameters) && rest {
 						parameterIndex = len(parameters) - 1
@@ -488,7 +521,10 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			payload.Witnesses = append(payload.Witnesses, witness)
 		}
 		sort.Slice(payload.Witnesses, func(i, j int) bool { return payload.Witnesses[i].ID < payload.Witnesses[j].ID })
-		cache.snapshot = sealSourceProjection(x.sources, payload, x.callableReads)
+		cache.snapshot = sealSourceProjection(x.sources, payload, x.callableReads, x)
+		if cache.reuse != nil {
+			cache.snapshot = cache.snapshot.mergeRetained(cache.reuse)
+		}
 	}
 	payload = cache.snapshot.payload(recipe, selected)
 	// Full-body contribution order is part of bounded symbolic evaluation.
@@ -555,6 +591,11 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 				x.retainBodyReads(body.file.FileName(), cache.bodyReads[body.owner])
 			}
 		} else {
+			if body.retained {
+				if err := body.hydrateCurrent(); err != nil {
+					return nil, err
+				}
+			}
 			readStart := len(x.callableReads[body.file.FileName()])
 			builder := newBodyBuilder(x, body.file, body.owner, body.scope, body.body)
 			full := builder.build(body.function)
@@ -572,6 +613,14 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 				cache.bodyReads = map[string][]callableRead{}
 			}
 			cache.bodyReads[body.owner] = copyProjectionReads(x.callableReads[body.file.FileName()][readStart:])
+			if cache.bodyDependencies == nil {
+				cache.bodyDependencies = map[string][]string{}
+			}
+			if !x.incompleteProjection[body.file.FileName()] {
+				cache.bodyDependencies[body.owner] = x.sourceProjectionDependencies(body.file.FileName())
+			} else {
+				delete(cache.bodyDependencies, body.owner)
+			}
 			factsByOwner[body.owner] = shard.Facts[0].ID
 			completion = full.Completeness
 		}

@@ -35,12 +35,16 @@ var supportedCapabilities = []string{
 }
 
 type extractor struct {
-	callableReads map[string][]callableRead
-	root          string
-	universe      string
-	plan          projectionPlan
-	checker       *shimchecker.Checker
-	sources       map[string]sourceRecord
+	callableReads          map[string][]callableRead
+	projectionSource       string
+	projectionDependencies map[string]map[string]bool
+	incompleteProjection   map[string]bool
+	rawDemandCalls         []demandEffectCall
+	root                   string
+	universe               string
+	plan                   projectionPlan
+	checker                *shimchecker.Checker
+	sources                map[string]sourceRecord
 
 	// Scoped to immutable compiler sources in this extraction; never keyed by path.
 	sourceCoordinates            map[*shimast.SourceFile]sourceCoordinates
@@ -74,8 +78,27 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 	if plan.bodyDemand && plan.demandCache == nil {
 		plan.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
 	}
-	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, maximumDecodedShardBytes, nil, nil, telemetry, requestID)
+	var prior map[string]sourceRecord
+	var selected map[string]bool
+	if plan.demandCache != nil && plan.demandCache.reuse != nil {
+		prior = map[string]sourceRecord{}
+		for physical, source := range plan.demandCache.reuse.sources {
+			prior[physical] = source.rows.record
+		}
+		selected = plan.demandCache.reuse.selected
+	}
+	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, maximumDecodedShardBytes, prior, selected, telemetry, requestID)
 	var shards []factShard
+	if selected != nil {
+		for physical, source := range plan.demandCache.reuse.sources {
+			if !selected[physical] {
+				for _, shard := range source.shards {
+					shards = append(shards, shard)
+					x.retainSemanticShard(shard)
+				}
+			}
+		}
+	}
 	telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
 		"capabilities": strings.Join(plan.capabilities(), ","),
 		"stages":       strings.Join(plan.stages(), ","),
@@ -107,7 +130,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		})
 	}
 	if plan.sourceOwned() {
-		sourceShards, err := x.sourceShards(files, nil, telemetry, requestID)
+		sourceShards, err := x.sourceShards(files, selected, telemetry, requestID)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -132,6 +155,13 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 			}
 		}
 		cache.ready = true
+		if cache.references == nil {
+			cache.references = captureCompilerReferences(program)
+		}
+		if cache.reuse != nil {
+			telemetry.record(requestID, "projection.source-reuse", time.Now(), map[string]any{"recapturedSources": len(cache.reuse.selected), "reusedSources": len(cache.reuse.sources) - len(cache.reuse.selected)})
+			cache.reuse = nil
+		}
 	}
 	return shards, records, x.callableReads, nil
 }
@@ -381,6 +411,7 @@ func (x *extractor) sourceShard(file *shimast.SourceFile, record sourceRecord) f
 }
 
 func (x *extractor) discoverSymbols(file *shimast.SourceFile) {
+	x.beginProjection(file)
 	walkFile(file, func(node *shimast.Node) bool {
 		symbol := unalias(x.checker, node.Symbol())
 		if symbol == nil || len(symbol.Declarations) == 0 {
@@ -411,6 +442,7 @@ func (x *extractor) symbolShard(file *shimast.SourceFile, record sourceRecord) f
 }
 
 func (x *extractor) occurrenceShard(file *shimast.SourceFile, record sourceRecord) factShard {
+	x.beginProjection(file)
 	var facts []preparedFact
 	walkFile(file, func(node *shimast.Node) bool {
 		kind, reference := occurrenceKind(node)
@@ -494,6 +526,7 @@ func (x *extractor) symbolID(symbol *shimast.Symbol) string {
 	if symbol == nil {
 		return ""
 	}
+	x.observeProjectionSymbol(symbol)
 	if id := x.symbolIDs[symbol]; id != "" {
 		return id
 	}

@@ -102,6 +102,7 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 		previousDependencies = a.moduleDependencyFingerprint(a.session.Program(), previousFiles)
 	}
 	selected := make([]string, 0, len(absolutePaths))
+	reuse := a.detachDemandForApply(absolutePaths, requestID)
 	public := []string{}
 	phase = time.Now()
 	for _, absolute := range absolutePaths {
@@ -142,7 +143,26 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 		// declaration-shape invalidation below.
 		phase = time.Now()
 		changedFiles := append([]string{}, selected...)
-		selected = affectedSourceClosure(a.session.Program(), selected, changedFiles)
+		if reuse != nil {
+			captureStarted := time.Now()
+			next := captureCompilerReferences(a.session.Program())
+			a.telemetry.record(requestID, "compiler.projection-reference-capture", captureStarted, map[string]any{"sources": len(next.files), "complete": next.complete})
+			if !next.complete || !sameSourceMembership(reuse.references.files, next.files) {
+				reuse = nil
+			} else {
+				closureStarted := time.Now()
+				selected = reuse.closure(next, changedFiles)
+				a.telemetry.record(requestID, "compiler.projection-source-closure", closureStarted, map[string]any{"eligible": reuse.selected != nil, "reason": reuse.fallbackReason, "selectedSources": len(selected)})
+				if reuse.selected == nil {
+					reuse = nil
+				} else {
+					reuse.references = next
+				}
+			}
+		}
+		if reuse == nil {
+			selected = affectedSourceClosure(a.session.Program(), selected, changedFiles)
+		}
 		if len(a.acknowledged.sources) != 0 {
 			owned := selected[:0]
 			for _, file := range selected {
@@ -157,7 +177,7 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 		a.telemetry.record(requestID, "compiler.dependent-closure", phase, map[string]any{
 			"changedSources": len(changedFiles), "selectedSources": len(selected),
 		})
-		return refreshSelection{callableReads: readUpdates, files: selected}, true, nil
+		return refreshSelection{callableReads: readUpdates, files: selected, demandReuse: reuse}, true, nil
 	}
 	updatedFiles := make([]*shimast.SourceFile, 0, len(absolutePaths))
 	phase = time.Now()

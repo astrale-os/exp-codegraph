@@ -28,6 +28,7 @@ type generationState struct {
 }
 
 type refreshSelection struct {
+	demandReuse        *demandSourceReuse
 	bodyDemand         *bodyDemandRecipe
 	callableReads      map[string][]callableRead
 	full               bool
@@ -230,6 +231,9 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 
 	if compilerAdvanced {
 		a.demandCache = nil
+		if selection.demandReuse != nil && demand != nil && demand.Owners != nil {
+			a.demandCache = newSparseDemandCache(selection.demandReuse)
+		}
 	}
 	selection.bodyDemand = demand
 	if a.projection.bodyDemand && (compilerAdvanced || demandChanged) {
@@ -476,11 +480,23 @@ func (a *analyzer) extract(
 		plan.demandCache = a.demandCache
 		if a.demandCache.ready && !plan.bodies {
 			shards, sources, reads, err := a.demandCache.project(plan, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
-			return shards, sources, nil, reads, err
+			if _, fallback := err.(sparseDemandFallback); !fallback {
+				return shards, sources, nil, reads, err
+			}
+			a.telemetry.record(requestID, "projection.incremental-fallback", time.Now(), map[string]any{"reason": err.Error()})
+			a.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
+			plan.demandCache = a.demandCache
+			selection.full = true
 		}
 	}
 	if selection.full {
 		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, plan, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		if _, fallback := err.(sparseDemandFallback); fallback {
+			a.telemetry.record(requestID, "projection.incremental-fallback", time.Now(), map[string]any{"reason": err.Error()})
+			a.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
+			plan.demandCache = a.demandCache
+			shards, sources, reads, err = extractProgram(a.root, universe, a.session.Program(), a.modules, plan, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		}
 		return shards, sources, nil, reads, err
 	}
 	selected := make(map[string]bool, len(selection.files))

@@ -79,6 +79,7 @@ func (x *extractor) bodyShards(file *shimast.SourceFile, record sourceRecord, id
 }
 
 func newBodyBuilder(x *extractor, file *shimast.SourceFile, owner, scope string, body *shimast.Node) *bodyBuilder {
+	x.beginProjection(file)
 	return &bodyBuilder{
 		x: x, file: file, owner: owner, scope: scope, body: body,
 		occurrences: []bodyOccurrence{}, relations: []bodyRelation{},
@@ -311,6 +312,7 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 	if node.Kind == shimast.KindPropertyAccessExpression && node.Name() != nil {
 		b.occurrences[len(b.occurrences)-1].PropertyName = node.Name().Text()
 		member := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(node.Name()))
+		b.x.observeProjectionSymbol(member)
 		// Only exported module members need a namespace join. Avoid computing the
 		// receiver type for ordinary fluent calls and structural object properties.
 		if member != nil && (isModuleNamespaceSymbol(member.Parent) || isModuleNamespaceSymbol(member)) {
@@ -338,6 +340,7 @@ func (b *bodyBuilder) identifier(node *shimast.Node) {
 	typeOnly := false
 	seen := map[*shimast.Symbol]bool{}
 	for symbol != nil && symbol.Flags&shimast.SymbolFlagsAlias != 0 && !seen[symbol] {
+		b.x.observeProjectionSymbol(symbol)
 		seen[symbol] = true
 		if b.x.checker.GetTypeOnlyAliasDeclaration(symbol) != nil {
 			typeOnly = true
@@ -419,6 +422,7 @@ func (b *bodyBuilder) call(node *shimast.Node, occurrence string) resolvedCall {
 	}
 	signature := b.x.checker.GetResolvedSignature(node)
 	if signature != nil {
+		b.x.observeProjectionNode(signature.Declaration())
 		result.Signature = b.x.signatureIdentity(signature)
 	}
 	parameters := shimchecker.Signature_parameters(signature)

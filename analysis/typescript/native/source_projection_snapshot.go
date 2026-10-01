@@ -1,29 +1,44 @@
 package main
 
+import "sort"
+
 // sourceProjectionSnapshot owns the complete thin semantic rows of one compiler
 // capture. It deliberately contains no extractor, checker, node or symbol. The
 // live body-demand cache may still use those objects within that same capture to
 // materialize a body, but they are not the authority for these sealed rows.
 type sourceProjectionSnapshot struct {
-	sources      map[string]sourceProjectionRows
-	owners       []sourceProjectionRow
-	witnesses    []sourceProjectionRow
-	initializers []sourceProjectionRow
-	mutations    []sourceProjectionRow
-	escapes      []sourceProjectionRow
-	aliases      []sourceProjectionRow
+	sources              map[string]sourceProjectionRows
+	owners               []sourceProjectionRow
+	witnesses            []sourceProjectionRow
+	initializers         []sourceProjectionRow
+	mutations            []sourceProjectionRow
+	escapes              []sourceProjectionRow
+	aliases              []sourceProjectionRow
+	dependenciesCaptured bool
 }
 
 type sourceProjectionRows struct {
-	record       sourceRecord
-	owners       []demandOwner
-	witnesses    []bodyOccurrence
-	initializers []demandEffect
-	mutations    []demandEffect
-	escapes      []demandEffect
-	aliases      []demandAlias
-	thinReads    []callableRead
-	hasThinReads bool
+	record               sourceRecord
+	owners               []demandOwner
+	witnesses            []bodyOccurrence
+	initializers         []demandEffect
+	mutations            []demandEffect
+	escapes              []demandEffect
+	aliases              []demandAlias
+	thinReads            []callableRead
+	hasThinReads         bool
+	rawCalls             []demandEffectCall
+	dependencies         []string
+	dependenciesComplete bool
+}
+
+// Keep every root argument call, including calls suppressed as local. Current
+// complete owner membership can then reclassify escapes without an old AST.
+type demandEffectCall struct {
+	Symbol     string
+	Target     string
+	Occurrence string
+	Owner      string
 }
 
 // Preserve the existing global array order separately from source ownership.
@@ -34,7 +49,7 @@ type sourceProjectionRow struct {
 	index  int
 }
 
-func sealSourceProjection(sources map[string]sourceRecord, payload bodyDemandPayload, reads map[string][]callableRead) *sourceProjectionSnapshot {
+func sealSourceProjection(sources map[string]sourceRecord, payload bodyDemandPayload, reads map[string][]callableRead, observations ...*extractor) *sourceProjectionSnapshot {
 	snapshot := &sourceProjectionSnapshot{sources: map[string]sourceProjectionRows{}}
 	for physical, record := range sources {
 		record.canonical = append([]byte(nil), record.canonical...)
@@ -84,7 +99,101 @@ func sealSourceProjection(sources map[string]sourceRecord, payload bodyDemandPay
 		rows.aliases = append(rows.aliases, row)
 		snapshot.sources[source] = rows
 	}
+	if len(observations) != 0 {
+		x := observations[0]
+		snapshot.dependenciesCaptured = true
+		for source, rows := range snapshot.sources {
+			rows.dependencies = x.sourceProjectionDependencies(rows.record.Physical)
+			_, captured := x.projectionDependencies[rows.record.Physical]
+			rows.dependenciesComplete = captured && !x.incompleteProjection[rows.record.Physical]
+			snapshot.sources[source] = rows
+		}
+		for _, call := range x.rawDemandCalls {
+			source := ownerSources[call.Owner]
+			rows := snapshot.sources[source]
+			rows.rawCalls = append(rows.rawCalls, call)
+			snapshot.sources[source] = rows
+		}
+	}
 	return snapshot
+}
+
+func (snapshot *sourceProjectionSnapshot) mergeRetained(reuse *demandSourceReuse) *sourceProjectionSnapshot {
+	merged := &sourceProjectionSnapshot{sources: map[string]sourceProjectionRows{}, dependenciesCaptured: true}
+	for source, rows := range snapshot.sources {
+		if retained, exists := reuse.sources[rows.record.Physical]; exists && !reuse.selected[rows.record.Physical] {
+			rows = retained.rows
+		}
+		merged.sources[source] = rows
+	}
+	membership := map[string]bool{}
+	for _, rows := range merged.sources {
+		for _, owner := range rows.owners {
+			membership[owner.Owner] = true
+		}
+	}
+	for source, rows := range merged.sources {
+		// Copy-on-write even when membership did not change. Never rewrite the
+		// older acknowledged authority's slices during candidate preparation.
+		rows.escapes = []demandEffect{}
+		for _, call := range rows.rawCalls {
+			if call.Target == "" || !membership[call.Target] {
+				rows.escapes = append(rows.escapes, demandEffect{call.Symbol, call.Occurrence, call.Owner})
+			}
+		}
+		merged.sources[source] = rows
+		refs := func(count int) []sourceProjectionRow {
+			result := make([]sourceProjectionRow, count)
+			for index := range result {
+				result[index] = sourceProjectionRow{source, index}
+			}
+			return result
+		}
+		merged.owners = append(merged.owners, refs(len(rows.owners))...)
+		merged.witnesses = append(merged.witnesses, refs(len(rows.witnesses))...)
+		merged.initializers = append(merged.initializers, refs(len(rows.initializers))...)
+		merged.mutations = append(merged.mutations, refs(len(rows.mutations))...)
+		merged.escapes = append(merged.escapes, refs(len(rows.escapes))...)
+		merged.aliases = append(merged.aliases, refs(len(rows.aliases))...)
+	}
+	// Each eligible owner is unique. Sorting by owner preserves the original
+	// within-owner rows; witness IDs follow the baseline global deduped order.
+	sort.Slice(merged.owners, func(i, j int) bool {
+		a, b := merged.owners[i], merged.owners[j]
+		return merged.sources[a.source].owners[a.index].Owner < merged.sources[b.source].owners[b.index].Owner
+	})
+	sort.Slice(merged.witnesses, func(i, j int) bool {
+		a, b := merged.witnesses[i], merged.witnesses[j]
+		return merged.sources[a.source].witnesses[a.index].ID < merged.sources[b.source].witnesses[b.index].ID
+	})
+	for _, kind := range []string{"initializers", "mutations", "escapes", "aliases"} {
+		var rows []sourceProjectionRow
+		switch kind {
+		case "initializers":
+			rows = merged.initializers
+		case "mutations":
+			rows = merged.mutations
+		case "escapes":
+			rows = merged.escapes
+		case "aliases":
+			rows = merged.aliases
+		}
+		owner := func(ref sourceProjectionRow) string {
+			row := merged.sources[ref.source]
+			switch kind {
+			case "initializers":
+				return row.initializers[ref.index].Owner
+			case "mutations":
+				return row.mutations[ref.index].Owner
+			case "escapes":
+				return row.escapes[ref.index].Owner
+			default:
+				return row.aliases[ref.index].Owner
+			}
+		}
+		sort.SliceStable(rows, func(i, j int) bool { return owner(rows[i]) < owner(rows[j]) })
+	}
+	return merged
 }
 
 // Each certificate owns its arrays and mutable origin metadata. Materialization,
