@@ -47,7 +47,7 @@ func (c *governanceCapture) verifyCapturedOperations(reads *governanceBarrierRea
 				switch {
 				case index < probeEnd:
 					key := probes[index]
-					results[index] = governanceProbeFingerprint(governanceObserveProbeWithRead(key, reads.read)) == c.probeObservations[key]
+					results[index] = reads.probe(key) == c.probeObservations[key]
 				case index < ordinaryEnd:
 					row := ordinary[index-probeEnd]
 					value, ok := governanceBarrierObservation(row, reads)

@@ -19,8 +19,34 @@ type governanceBarrierRead struct {
 }
 
 type governanceBarrierReads struct {
-	mu    sync.Mutex
-	reads map[string]*governanceBarrierRead
+	mu     sync.Mutex
+	reads  map[string]*governanceBarrierRead
+	probes map[governanceProbeKey]*governanceBarrierProbe
+}
+
+type governanceBarrierProbe struct {
+	once        sync.Once
+	fingerprint string
+}
+
+// Current and proposed captures use distinct guards over a fresh exact original
+// probe operation. Expected fingerprints never initialize these actual cells.
+// The same world is private to one final seal and discarded on every retry.
+func (world *governanceBarrierReads) probe(key governanceProbeKey) string {
+	world.mu.Lock()
+	if world.probes == nil {
+		world.probes = map[governanceProbeKey]*governanceBarrierProbe{}
+	}
+	cell := world.probes[key]
+	if cell == nil {
+		cell = &governanceBarrierProbe{}
+		world.probes[key] = cell
+	}
+	world.mu.Unlock()
+	cell.once.Do(func() {
+		cell.fingerprint = governanceProbeFingerprint(governanceObserveProbeWithRead(key, world.read))
+	})
+	return cell.fingerprint
 }
 
 func (world *governanceBarrierReads) read(path string) ([]byte, error) {

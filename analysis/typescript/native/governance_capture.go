@@ -243,7 +243,10 @@ func (c *governanceCapture) canonicalCertificate() string {
 // This proves replay equality of all observed operations, not a filesystem-wide
 // atomic transaction or immunity to an edit after the barrier has returned.
 func (c *governanceCapture) Verify() (bool, error) {
-	reads := &governanceBarrierReads{}
+	return c.verifyWithin(&governanceBarrierReads{})
+}
+
+func (c *governanceCapture) verifyWithin(reads *governanceBarrierReads) (bool, error) {
 	var replay *governanceTypeReplayWorld
 	if len(c.typeReceipts) > 0 {
 		replay = &governanceTypeReplayWorld{disk: reads.compilerDisk(c.compiler.disk), reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}

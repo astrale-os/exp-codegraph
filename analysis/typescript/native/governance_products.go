@@ -441,8 +441,8 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 	}
 	defer session.discardProducts()
 	started := time.Now()
-	valid, err := state.Project.capture.Verify()
-	state.Project.stats.phase("final-uncached-seal", started)
+	reads := &governanceBarrierReads{}
+	valid, err := state.Project.capture.verifyWithin(reads)
 	if err != nil {
 		return nil, err
 	}
@@ -451,7 +451,7 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 		return map[string]any{"status": "retry"}, nil
 	}
 	if state.ReplayExpected != nil {
-		valid, err = state.ReplayExpected.Verify()
+		valid, err = state.ReplayExpected.verifyWithin(reads)
 		if err != nil {
 			session.sealedDecisions = nil
 			return nil, err
@@ -461,6 +461,7 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 			return map[string]any{"status": "retry"}, nil
 		}
 	}
+	state.Project.stats.phase("final-uncached-seal", started)
 	// A replay keeps its complete old expected closure. A fresh evaluation
 	// replaces it only after its own capture has passed the original barrier.
 	if state.ReplayExpected == nil {

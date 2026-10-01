@@ -135,3 +135,48 @@ func TestGovernanceBarrierOperationWorkersJoinBeforePublication(t *testing.T) {
 		t.Fatalf("barrier did not own bounded joined workers: active=%d calls=%d maximum=%d", gated.active.Load(), gated.calls.Load(), gated.maximum.Load())
 	}
 }
+
+func TestGovernanceBarrierCurrentAndExpectedGuardsOwnOneFreshProbe(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "source.ts")
+	if err := os.WriteFile(path, []byte("before"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	current := &governanceCapture{}
+	for _, kind := range []string{"read-bytes", "content-digest"} {
+		current.probe(governanceProbeRequest{Kind: kind, Path: path})
+	}
+	expected := governanceExpectedCapture(current)
+	world := &governanceBarrierReads{}
+	if valid, _ := current.verifyWithin(world); !valid {
+		t.Fatal("fresh current original probe was rejected")
+	}
+	if valid, _ := expected.verifyWithin(world); !valid {
+		t.Fatal("same original probe lost a distinct expected guard")
+	}
+	if err := os.WriteFile(path, []byte("after!"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	changed := &governanceCapture{}
+	for _, kind := range []string{"read-bytes", "content-digest"} {
+		changed.probe(governanceProbeRequest{Kind: kind, Path: path})
+	}
+	if valid, _ := changed.verifyWithin(world); valid {
+		t.Fatal("contradictory expected fingerprints initialized the actual operation cell")
+	}
+	if valid, _ := changed.Verify(); !valid {
+		t.Fatal("new barrier did not execute fresh original operations")
+	}
+	if valid, _ := current.Verify(); valid {
+		t.Fatal("old original probes survived a fresh changed-byte barrier")
+	}
+	// Metadata follow-link ownership remains a different key even at one path.
+	link := filepath.Join(filepath.Dir(path), "alias.ts")
+	if err := os.Symlink(path, link); err != nil {
+		t.Fatal(err)
+	}
+	first := world.probe(governanceProbeKey{Path: link, Kind: "metadata", FollowLinks: false})
+	second := world.probe(governanceProbeKey{Path: link, Kind: "metadata", FollowLinks: true})
+	if first == second {
+		t.Fatal("distinct original metadata modes were merged")
+	}
+}
