@@ -5,7 +5,7 @@ import (
 	"sort"
 )
 
-// A sealed decision owns values and expected observations, never a checker,
+// A sealed decision owns typed values and expected observations, never a checker,
 // AST, or borrowed callbacks. Expected cells are proposals, not current reads.
 type governanceSealedDecisions struct {
 	prepare   string
@@ -13,8 +13,8 @@ type governanceSealedDecisions struct {
 	contracts string
 	neutral   string
 	sources   string
-	rules     []byte
-	runtime   []byte
+	rules     map[string]governanceOutcome
+	runtime   map[string]governanceOutcome
 	leaves    []byte
 	answers   []byte
 	expected  *governanceCapture
@@ -74,14 +74,8 @@ func (session *governanceSession) retainSealedDecisions(state *governanceProduct
 	if len(state.Requirements) != 0 || len(state.RuleReady) == 0 || len(state.RuntimeReady) != 3 {
 		return
 	}
-	rules, err := json.Marshal(state.RuleReady)
-	if err != nil {
-		return
-	}
-	runtime, err := json.Marshal(state.RuntimeReady)
-	if err != nil {
-		return
-	}
+	rules := governanceOwnedOutcomes(state.RuleReady)
+	runtime := governanceOwnedOutcomes(state.RuntimeReady)
 	session.sealedDecisions = &governanceSealedDecisions{
 		prepare:   governanceDecisionPrepareKey(state.Prepare),
 		policy:    string(stableJSON(state.Project.Policy)) + string(stableJSON(state.Project.Disabled)) + state.Project.policyDigest,
@@ -110,10 +104,7 @@ func (session *governanceSession) proposeSealedDecisions(state *governanceProduc
 			return false
 		}
 	}
-	var rules, runtime map[string]governanceOutcome
-	if json.Unmarshal(sealed.rules, &rules) != nil || json.Unmarshal(sealed.runtime, &runtime) != nil {
-		return false
-	}
+	rules, runtime := governanceOwnedOutcomes(sealed.rules), governanceOwnedOutcomes(sealed.runtime)
 	state.RuleReady, state.RuntimeReady, state.ReplayExpected = rules, runtime, sealed.expected
 	var leaves map[string]governanceIntrinsic
 	if json.Unmarshal(sealed.leaves, &leaves) != nil || json.Unmarshal(sealed.answers, &state.ReplayAnswers) != nil {
@@ -131,6 +122,31 @@ func (session *governanceSession) proposeSealedDecisions(state *governanceProduc
 		state.require(leaves[id])
 	}
 	return true
+}
+
+// Evidence strings are immutable native WTF8 values. JSON decoding is not an
+// ownership operation: encoding/json replaces lone UTF16 surrogates. Preserve
+// their exact strings while copying every mutable aggregate/location pointer.
+func governanceOwnedOutcomes(source map[string]governanceOutcome) map[string]governanceOutcome {
+	if source == nil {
+		return nil
+	}
+	out := make(map[string]governanceOutcome, len(source))
+	for key, value := range source {
+		if value.Findings != nil {
+			findings := make([]governanceEvidence, len(value.Findings))
+			copy(findings, value.Findings)
+			for i := range findings {
+				if location := findings[i].Location; location != nil {
+					owned := *location
+					findings[i].Location = &owned
+				}
+			}
+			value.Findings = findings
+		}
+		out[key] = value
+	}
+	return out
 }
 
 func (session *governanceSession) observeSealedLeaf(state *governanceProductsSession, answer governanceIntrinsicAnswer) {

@@ -38,29 +38,31 @@ type governanceIntrinsicAnswer struct {
 	Groups   [][]int `json:"groups,omitempty"`
 }
 type governanceProductsSession struct {
-	LeafInputs       map[string]governanceIntrinsic
-	ReplayAnswers    map[string]governanceIntrinsicAnswer
-	ReplayExpected   *governanceCapture
-	NeutralLeaf      string
-	RuntimeGraph     *observabledecision.RuntimeDecisionGraph
-	RuntimeIdentity  *governanceRuntimeIdentity
-	RuntimeReady     map[string]governanceOutcome
-	RuleReady        map[string]governanceOutcome
-	GenericEngine    *governanceGenericEngine
-	GenericProduct   *governanceGenericProduct
-	RulePending      bool
-	ActiveFamily     string
-	FamilyMissing    map[string]map[string]bool
-	GenericSuspended bool
-	Prepare          governancePrepare
-	Project          *governedProject
-	Token            string
-	Contracts        []governanceImplementationContract
-	Requirements     []governanceIntrinsic
-	Answers          map[string]governanceIntrinsicAnswer
-	ProductsDigest   string
-	InputCertificate string
-	Generation       string
+	LeafInputs             map[string]governanceIntrinsic
+	ReplayAnswers          map[string]governanceIntrinsicAnswer
+	ReplayExpected         *governanceCapture
+	replayCertificateOwner *governanceCapture
+	replayCertificate      string
+	NeutralLeaf            string
+	RuntimeGraph           *observabledecision.RuntimeDecisionGraph
+	RuntimeIdentity        *governanceRuntimeIdentity
+	RuntimeReady           map[string]governanceOutcome
+	RuleReady              map[string]governanceOutcome
+	GenericEngine          *governanceGenericEngine
+	GenericProduct         *governanceGenericProduct
+	RulePending            bool
+	ActiveFamily           string
+	FamilyMissing          map[string]map[string]bool
+	GenericSuspended       bool
+	Prepare                governancePrepare
+	Project                *governedProject
+	Token                  string
+	Contracts              []governanceImplementationContract
+	Requirements           []governanceIntrinsic
+	Answers                map[string]governanceIntrinsicAnswer
+	ProductsDigest         string
+	InputCertificate       string
+	Generation             string
 }
 
 func (session *governanceSession) discardProducts() {

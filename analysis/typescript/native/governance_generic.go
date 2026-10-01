@@ -32,7 +32,16 @@ func governanceDigestValid(value string) bool {
 func (state *governanceProductsSession) currentCertificate() string {
 	capture := state.Project.capture.certificate()
 	if state.ReplayExpected != nil {
-		capture = governanceHash([]byte(stableJSON([]string{capture, "expected-sealed-decisions", state.ReplayExpected.certificate()})))
+		// The proposed expected closure is a deep-owned immutable snapshot. Its
+		// original certificate is computed once for that exact retained owner;
+		// the actual current capture ticket still advances on every new read.
+		// Re-serializing the old compiler closure at every generic probe turns
+		// one frozen obligation into O(closure size × protocol waves) work.
+		if state.replayCertificateOwner != state.ReplayExpected || state.replayCertificate == "" {
+			state.replayCertificate = state.ReplayExpected.certificate()
+			state.replayCertificateOwner = state.ReplayExpected
+		}
+		capture = governanceHash([]byte(stableJSON([]string{capture, "expected-sealed-decisions", state.replayCertificate})))
 	}
 	if state.GenericEngine == nil {
 		return capture

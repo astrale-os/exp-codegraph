@@ -1,10 +1,37 @@
 package main
 
 import (
+	"astrale-typespec-v2-native-analysis/jsstring"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestOwnedSealedOutcomesPreserveUTF16EvidenceAndLocations(t *testing.T) {
+	text := jsstring.FromUnits([]uint16{'i', 'd', 0xD800, 'x', 0xDC00}).WTF8()
+	location := &decisionLocation{Path: "query.ts", Line: 1, Column: 2, Offset: 1, Length: 3}
+	source := map[string]governanceOutcome{"rule": {Rule: "rule", Status: "fail", Findings: []governanceEvidence{{Rule: "rule", Evidence: text, Location: location}}}}
+	before, err := json.Marshal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed := governanceOwnedOutcomes(source)
+	now := governanceOwnedOutcomes(sealed)
+	after, err := json.Marshal(now)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("UTF16 public finding changed: %q != %q (%v)", before, after, err)
+	}
+	if now["rule"].Findings[0].Evidence != text {
+		t.Fatal("native evidence code units were replaced")
+	}
+	location.Line = 99
+	source["rule"].Findings[0].Evidence = "mutated"
+	now["rule"].Findings[0].Location.Column = 99
+	if sealed["rule"].Findings[0].Evidence != text || sealed["rule"].Findings[0].Location.Line != 1 || sealed["rule"].Findings[0].Location.Column != 2 {
+		t.Fatal("sealed outcome borrowed mutable source/current location or slice")
+	}
+}
 
 func TestSealedDecisionExpectedReadsAreNotCurrentObservations(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "helper.ts")
