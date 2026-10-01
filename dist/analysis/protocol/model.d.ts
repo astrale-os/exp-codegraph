@@ -27,6 +27,8 @@ export interface NativeSourceChange {
 /** Exact owned logical source roots whose complete body/call inventory is requested. */
 export interface NativeBodyDemand {
     readonly paths: readonly string[];
+    /** Omitted: conservative closure. Present, including []: exact observed owner expansion. */
+    readonly owners?: readonly string[];
 }
 export type NativeAnalysisRequest = {
     readonly id: number;

@@ -9,5 +9,11 @@ export function captureBodyDemand(input) {
     if (paths.some((path) => !isBodyDemandPath(path))) {
         throw new TypeError('Body demand requires canonical owned logical source paths.');
     }
-    return Object.freeze({ paths: Object.freeze([...new Set(paths)].sort()) });
+    const owners = input.owners === undefined ? undefined : [...input.owners];
+    if (owners?.some((owner) => typeof owner !== 'string' || owner.length === 0)) {
+        throw new TypeError('Body demand requires nonempty owner identities.');
+    }
+    return Object.freeze({ paths: Object.freeze([...new Set(paths)].sort()),
+        ...(owners !== undefined ? { owners: Object.freeze([...new Set(owners)].sort()) } : {}),
+    });
 }

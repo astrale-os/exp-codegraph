@@ -1,4 +1,5 @@
 import { loadValueIndex } from './facts.js';
+import { BodyDemandExpansionRequired } from '../model.js';
 import { resolveBoundedValueLimits } from '../limits.js';
 import { createCallProjection } from './calls.js';
 import { resolutionResultBytes } from './cache.js';
@@ -12,13 +13,14 @@ export function createValueEvaluatorFactory(query, cache, load, scope) {
         pending ??= loadValueIndex(query).catch((error) => { pending = undefined; throw error; });
         return pending;
     });
+    const generation = Object.freeze({ generation: query.generation.id, sourceManifest: query.generation.sourceManifest });
     const calls = createCallProjection(query, index);
     return Object.assign(async (options = {}) => {
         scope?.check();
         const materialized = await index().catch((error) => { scope?.fail(); throw error; });
         scope?.check();
         context ??= createProofContext(materialized, cache);
-        return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache, scope);
+        return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, generation, cache, scope);
     }, { calls: async (options = {}) => {
             scope?.check();
             const signal = scope?.signal && options.signal ? AbortSignal.any([scope.signal, options.signal]) : scope?.signal ?? options.signal;
@@ -66,8 +68,9 @@ class Evaluator {
     #cache;
     #context;
     #scope;
+    #generation;
     #operands = new WeakMap();
-    constructor(index, model, limits, context, cache, scope) {
+    constructor(index, model, limits, context, generation, cache, scope) {
         this.#index = index;
         this.#model = model;
         this.#modelIdentity = model && modelIdentity(model);
@@ -75,6 +78,7 @@ class Evaluator {
         this.#cache = cache;
         this.#context = context;
         this.#scope = scope;
+        this.#generation = generation;
     }
     value(occurrence) { return this.plan({ kind: 'value', occurrence }); }
     canReuse(proof) {
@@ -133,12 +137,25 @@ class Evaluator {
             return cached;
         }
         const state = { limits,
-            signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 };
+            signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), requirements: new Map(), steps: 0 };
         state.signal?.throwIfAborted();
         this.depend(state, 'effects:inventory');
-        const value = this.#index.effectCompleteness !== undefined && this.#index.effectCompleteness.kind !== 'complete'
-            ? uncertain('VALUE_EFFECT_INVENTORY_INCOMPLETE', 'The selected projection has no complete global effect authority.')
-            : this.evaluatePlan(plan, state);
+        let value;
+        try {
+            value = this.#index.effectCompleteness !== undefined && this.#index.effectCompleteness.kind !== 'complete'
+                ? uncertain('VALUE_EFFECT_INVENTORY_INCOMPLETE', 'The selected projection has no complete global effect authority.')
+                : this.evaluatePlan(plan, state);
+        }
+        catch (error) {
+            state.signal?.throwIfAborted();
+            if (state.expansion)
+                throw state.expansion;
+            throw error;
+        }
+        // A model may catch an operand exception. It cannot certify a value after
+        // reading missing semantic data, nor insert that provisional result in cache.
+        if (state.expansion)
+            throw state.expansion;
         const evaluated = this.result(value, state, scalar);
         const bounded = state.exhausted ? {
             ...this.result(state.exhausted, state, scalar),
@@ -204,6 +221,7 @@ class Evaluator {
         const frames = state.active.get(id) ?? new Set();
         if (frames.has(environment))
             return uncertain('VALUE_RECURSION', 'Value propagation encountered a recursive occurrence.');
+        this.require(state, `occurrence:${id}`);
         this.depend(state, `occurrence:${id}`);
         const occurrence = this.#index.occurrences.get(id);
         if (!occurrence)
@@ -234,8 +252,10 @@ class Evaluator {
         if (call)
             return this.call(call, environment, state, depth);
         if (FUNCTION_SYNTAX.has(occurrence.syntax)) {
-            if (occurrence.symbol)
+            if (occurrence.symbol) {
+                this.require(state, `function:${occurrence.symbol}`);
                 this.depend(state, `function:${occurrence.symbol}`);
+            }
             const body = occurrence.symbol && this.#index.bodies.get(occurrence.symbol);
             return body ? { kind: 'function', body, environment } : uncertain('VALUE_BODY_MISSING', 'The function body is unavailable.');
         }
@@ -314,6 +334,7 @@ class Evaluator {
                     if (localAssignment && effect === 'local')
                         return next(localAssignment);
                     this.depend(state, `initializers:${occurrence.symbol}`);
+                    this.require(state, `initializers:${occurrence.symbol}`);
                     const observed = (this.#index.initializers.get(occurrence.symbol) ?? []).map((initializer) => next(initializer));
                     const bound = environment.get(occurrence.symbol);
                     if (bound)
@@ -337,9 +358,11 @@ class Evaluator {
             }
             if (occurrence.symbol) {
                 this.depend(state, `initializers:${occurrence.symbol}`, `function:${occurrence.symbol}`, `symbol:${occurrence.symbol}`);
+                this.require(state, `initializers:${occurrence.symbol}`);
                 const initializers = this.#index.initializers.get(occurrence.symbol);
                 if (initializers?.length)
                     return alternatives(initializers.map((initializer) => next(initializer)), state);
+                this.require(state, `function:${occurrence.symbol}`);
                 const body = this.#index.bodies.get(occurrence.symbol);
                 if (body)
                     return { kind: 'function', body, environment };
@@ -429,15 +452,17 @@ class Evaluator {
         }
         if (call.target)
             this.depend(state, `function:${call.target}`, `owner:${call.target}`);
-        const body = call.target && this.#index.bodies.get(call.target);
-        // Resolve the callee first to preserve environments of returned/stored closures.
+        // Consult the model before any body requirement, then preserve environments
+        // of returned/stored closures before asking for a static target fallback.
         const resolved = callee ? this.visit(callee, environment, state, depth + 1) : undefined;
-        const target = resolved?.kind === 'function' || resolved?.kind === 'alternatives'
-            ? resolved
-            : body ? { kind: 'function', body, environment }
-                : call.target && this.#index.callableOwners.has(call.target) ? uncertain('VALUE_BODY_NOT_SELECTED', 'The local callable body is outside the materialized selection.')
-                    : call.target ? { kind: 'unsupported', construct: 'external-or-bodyless-call' }
-                        : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.');
+        const inspectable = resolved?.kind === 'function' || resolved?.kind === 'alternatives';
+        if (!inspectable && call.target)
+            this.require(state, `function:${call.target}`);
+        const body = !inspectable && call.target ? this.#index.bodies.get(call.target) : undefined;
+        const target = inspectable ? resolved : body ? { kind: 'function', body, environment }
+            : call.target && this.#index.callableOwners.has(call.target) ? uncertain('VALUE_BODY_NOT_SELECTED', 'The local callable body is outside the materialized selection.')
+                : call.target ? { kind: 'unsupported', construct: 'external-or-bodyless-call' }
+                    : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.');
         return this.invoke(target, state, depth + 1, call, environment);
     }
     callPropertyName(callee, state, depth) {
@@ -452,6 +477,7 @@ class Evaluator {
             exhaust(state, 'VALUE_DEPTH_LIMIT', 'Bounded value evaluation exceeded its depth limit.');
             return;
         }
+        this.require(state, `occurrence:${callee}`);
         this.depend(state, `occurrence:${callee}`);
         const occurrence = this.#index.occurrences.get(callee);
         return occurrence?.syntax === 'PropertyAccessExpression' ? occurrence.propertyName : undefined;
@@ -565,6 +591,7 @@ class Evaluator {
                 }
                 result = 'local';
             }
+            this.require(state, `aliases:${current}`);
             for (const alias of this.#index.aliases.get(current) ?? []) {
                 if (++state.steps > state.limits.maximumSteps) {
                     exhaust(state, 'VALUE_STEP_LIMIT', 'Bounded value evaluation exceeded its step limit.');
@@ -575,6 +602,18 @@ class Evaluator {
         }
         state.effects.set(cacheKey, result);
         return result;
+    }
+    require(state, ...keys) {
+        let missing = false;
+        for (const key of keys)
+            for (const requirement of this.#index.requirements?.(key) ?? []) {
+                state.requirements.set(`${requirement.kind}:${requirement.owner}`, requirement);
+                missing = true;
+            }
+        if (!missing)
+            return;
+        state.expansion = new BodyDemandExpansionRequired({ ...this.#generation, requirements: [...state.requirements.values()] });
+        throw state.expansion;
     }
     depend(state, ...keys) {
         for (const key of keys) {

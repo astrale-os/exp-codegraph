@@ -71,6 +71,8 @@ function validateBody(value, diagnostics) {
         diagnostics.push('completeness:invalid');
 }
 function validateBodyDemand(value, diagnostics) {
+    if (value.observed !== undefined && value.observed !== true)
+        diagnostics.push('observed:invalid');
     const paths = Array.isArray(value.paths) ? value.paths : [];
     const requested = new Set(paths);
     if (!strings(value.paths) || paths.some((path) => !logicalPath(path))) {

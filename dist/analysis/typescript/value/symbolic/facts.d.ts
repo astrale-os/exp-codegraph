@@ -3,7 +3,7 @@ import { type Completeness } from '../../../facts/index.ts';
 import type { AnalysisQuery, CapabilityStatus } from '../../../query/index.ts';
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts';
 import { type TypeScriptFact } from '../../facts/index.ts';
-import type { ValueResult } from '../model.ts';
+import type { TypeScriptBodyDemandReceipt, ValueResult } from '../model.ts';
 import { CALL_SELECTION, CallSelection } from './selection.ts';
 type Body = TypeScriptFact<'body'>;
 type Demand = TypeScriptFact<'body-demand'>;
@@ -43,6 +43,8 @@ export interface ValueIndex {
     readonly fingerprints: Pick<ReadonlyMap<string, string>, 'get'>;
     readonly evidence: Pick<ReadonlyMap<string, readonly FactId[]>, 'get'>;
     readonly revision: ValueIndexRevision;
+    /** Missing observed-mode data required before consuming this semantic read. */
+    requirements?(key: string): TypeScriptBodyDemandReceipt['requirements'];
     dependency(key: string): ValueDependency;
 }
 export declare class IndexedValues implements ValueIndex {
@@ -75,6 +77,7 @@ export declare class IndexedValues implements ValueIndex {
     readonly revision: ValueIndexRevision;
     private constructor();
     static empty(): IndexedValues;
+    requirements(key: string): TypeScriptBodyDemandReceipt['requirements'];
     dependency(key: string): ValueDependency;
     private fingerprint;
     update(upserts: readonly IndexedFact[], deletes: readonly FactId[], initial?: boolean, capabilities?: readonly CapabilityStatus[]): IndexedValues;

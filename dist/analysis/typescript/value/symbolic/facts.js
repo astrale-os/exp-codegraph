@@ -213,12 +213,34 @@ export class IndexedValues {
     }
     static empty() {
         const columns = {
-            bodies: new Column(), owners: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
+            bodies: new Column(), owners: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), ordering: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
             symbols: new Column(), sources: new Column(),
             initializers: new Column(undefined, flatten), mutations: new Column(undefined, flatten), escapes: new Column(undefined, flatten),
             aliases: new Column(undefined, flatten), dependents: new Column(undefined, flatten),
         };
         return new IndexedValues(new ValueIndexTable(), columns, new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), { token: {}, changed: new Set() });
+    }
+    requirements(key) {
+        if (!this.#columns.demands.get('global')?.some((fact) => fact.payload.observed === true))
+            return [];
+        if (key.startsWith('function:')) {
+            const owner = key.slice(9);
+            return this.#columns.owners.has(owner) && !this.bodies.has(owner) ? [{ owner, kind: 'body' }] : [];
+        }
+        if (key.startsWith('occurrence:')) {
+            const id = key.slice(11);
+            const witness = this.#columns.witnesses.get(id);
+            return !this.#columns.occurrences.has(id) && witness ? [{ owner: witness.owner, kind: 'body' }] : [];
+        }
+        const owners = new Set(this.#columns.ordering.get(key));
+        if (owners.size <= 1)
+            return [];
+        return [...owners].flatMap((owner) => {
+            const member = this.#columns.owners.get(owner);
+            if (!member)
+                throw new TypeScriptFactContractError('body-demand', this.#columns.demands.get('global')[0].id, ['effect-owner-missing']);
+            return member.fact ? [] : [{ owner, kind: 'effect-order' }];
+        });
     }
     dependency(key) {
         let canonical = key;
@@ -629,7 +651,7 @@ function derive(fact, columns) {
     else
         for (const reference of fragment.logicalCalls())
             deriveCall(reference.row);
-    return { initializers, mutations, escapes, aliases, inputs };
+    return { initializers, mutations, escapes, aliases, inputs, ordering: new Map() };
 }
 function derivedColumns(columns, owner, value, add, touched) {
     for (const [column, prefix, entries] of [
@@ -650,6 +672,12 @@ function derivedColumns(columns, owner, value, add, touched) {
         else
             columns.aliases.delete(key, owner);
         touched.add(`aliases:${key}`);
+    }
+    for (const [key, owners] of value.ordering) {
+        if (add)
+            columns.ordering.set(key, owner, owners);
+        else
+            columns.ordering.delete(key, owner);
     }
     for (const key of value.inputs) {
         if (add)
@@ -789,9 +817,9 @@ function deriveDemand(fact) {
     const initializers = new Map(), mutations = new Map();
     const escapes = new Map(), aliases = new Map();
     const owners = new Map(fact.payload.owners.map((owner) => [owner.owner, owner]));
-    // Native materializes every contributor to initializer/alias lists reachable
-    // by selected values. Their actual original fact IDs retain the full index's
-    // ordered contribution merge, including bounded alternative/effect traversal.
+    // Actual original fact IDs retain the full index's contribution order. Lists
+    // with several owners remain unreadable until each ID is supplied; a single
+    // owner's rows already retain their native order without loading its body.
     const ordered = (rows) => [...rows].sort((left, right) => (owners.get(left.owner)?.fact ?? left.owner).localeCompare(owners.get(right.owner)?.fact ?? right.owner));
     for (const row of ordered(fact.payload.initializers))
         append(initializers, row.symbol, row.occurrence);
@@ -801,5 +829,10 @@ function deriveDemand(fact) {
         append(escapes, row.symbol, row.occurrence);
     for (const row of ordered(fact.payload.aliases))
         append(aliases, row.symbol, { from: row.from, occurrence: row.occurrence });
-    return { initializers, mutations, escapes, aliases, inputs: new Set() };
+    const ordering = new Map();
+    for (const row of fact.payload.initializers)
+        append(ordering, `initializers:${row.symbol}`, row.owner);
+    for (const row of fact.payload.aliases)
+        append(ordering, `aliases:${row.symbol}`, row.owner);
+    return { initializers, mutations, escapes, aliases, inputs: new Set(), ordering };
 }

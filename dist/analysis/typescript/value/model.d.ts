@@ -1,8 +1,22 @@
 import type { AnalysisFailure, AnalysisLimit } from '../../facts/index.ts';
-import type { FactId } from '../../identity/index.ts';
+import type { FactId, AnalysisGenerationId, SourceManifestId } from '../../identity/index.ts';
 import type { OccurrenceId, SymbolId } from '../../identity/index.ts';
 import type { BodyOccurrence, FunctionBodyIR, ResolvedCall } from '../body/index.ts';
 import type { AnalysisQuery } from '../../query/index.ts';
+export interface TypeScriptBodyDemandReceipt {
+    readonly generation: AnalysisGenerationId;
+    readonly sourceManifest: SourceManifestId;
+    readonly requirements: readonly {
+        readonly owner: SymbolId;
+        readonly kind: 'body' | 'effect-order';
+    }[];
+}
+/** Private computation must be replayed against an expanded immutable generation. */
+export declare class BodyDemandExpansionRequired extends Error {
+    readonly code = "TYPESCRIPT_BODY_DEMAND_EXPANSION_REQUIRED";
+    readonly receipt: TypeScriptBodyDemandReceipt;
+    constructor(input: TypeScriptBodyDemandReceipt);
+}
 export type ValueResult<Value> = {
     readonly kind: 'known';
     readonly value: Value;
