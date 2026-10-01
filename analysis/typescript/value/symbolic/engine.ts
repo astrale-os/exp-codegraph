@@ -3,6 +3,7 @@ import type { AnalysisQuery } from '../../../query/index.ts'
 import type { BodyOccurrence, ResolvedCall, TypeScriptCallInventory, TypeScriptCallQuery } from '../../body/index.ts'
 import type { TypeScriptFact } from '../../facts/index.ts'
 import { loadValueIndex, type ValueIndex as Index } from './facts.ts'
+import { BodyDemandExpansionRequired, type TypeScriptBodyDemandReceipt } from '../model.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions, BoundedValueLimits, EvaluatedValueResult, ValueResult } from '../model.ts'
 import { resolveBoundedValueLimits } from '../limits.ts'
 import type { SymbolicCallModel, SymbolicOperandPlan, SymbolicValue, SymbolicValuePlan, SymbolicValueResolveOptions } from './model.ts'
@@ -32,6 +33,8 @@ interface State {
   readonly effects: Map<string, 'none' | 'local' | 'other'>
   steps: number
   exhausted?: Extract<RuntimeValue<never>, { kind: 'unknown' }>
+  expansion?: BodyDemandExpansionRequired
+  readonly requirements: Map<string, TypeScriptBodyDemandReceipt['requirements'][number]>
 }
 
 type Plan<Atom> =
@@ -72,13 +75,14 @@ export function createValueEvaluatorFactory(query: AnalysisQuery, cache?: ValueR
     pending ??= loadValueIndex(query).catch((error) => { pending = undefined; throw error })
     return pending
   })
+  const generation = Object.freeze({ generation: query.generation.id, sourceManifest: query.generation.sourceManifest })
   const calls = createCallProjection(query, index)
   return Object.assign(async <Atom = never>(options: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'> = {}) => {
     scope?.check()
     const materialized = await index().catch((error) => { scope?.fail(); throw error })
     scope?.check()
     context ??= createProofContext(materialized, cache)
-    return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, cache, scope)
+    return new Evaluator(materialized, options.call, resolveBoundedValueLimits(options.limits), context, generation, cache, scope)
   },
   { calls: async (options: TypeScriptCallQuery = {}) => {
     scope?.check()
@@ -132,9 +136,10 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   readonly #cache: ValueResolutionCache | undefined
   readonly #context: ProofContext
   readonly #scope: ValueReadScope | undefined
+  readonly #generation: Pick<TypeScriptBodyDemandReceipt, 'generation' | 'sourceManifest'>
   readonly #operands = new WeakMap<SymbolicOperandPlan<Atom>, { readonly state: State; readonly read: () => RuntimeValue<Atom> }>()
 
-  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, context: ProofContext, cache?: ValueResolutionCache, scope?: ValueReadScope) {
+  constructor(index: Index, model: SymbolicCallModel<Atom> | undefined, limits: Readonly<Required<BoundedValueLimits>>, context: ProofContext, generation: Pick<TypeScriptBodyDemandReceipt, 'generation' | 'sourceManifest'>, cache?: ValueResolutionCache, scope?: ValueReadScope) {
     this.#index = index
     this.#model = model
     this.#modelIdentity = model && modelIdentity(model)
@@ -142,6 +147,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     this.#cache = cache
     this.#context = context
     this.#scope = scope
+    this.#generation = generation
   }
 
   value(occurrence: OccurrenceId): SymbolicValuePlan<Atom> { return this.plan({ kind: 'value', occurrence }) }
@@ -193,12 +199,22 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
       return cached
     }
     const state: State = { limits,
-      signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), steps: 0 }
+      signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), requirements: new Map(), steps: 0 }
     state.signal?.throwIfAborted()
     this.depend(state, 'effects:inventory')
-    const value = this.#index.effectCompleteness !== undefined && this.#index.effectCompleteness.kind !== 'complete'
-      ? uncertain('VALUE_EFFECT_INVENTORY_INCOMPLETE', 'The selected projection has no complete global effect authority.')
-      : this.evaluatePlan(plan, state)
+    let value: RuntimeValue<Atom>
+    try {
+      value = this.#index.effectCompleteness !== undefined && this.#index.effectCompleteness.kind !== 'complete'
+        ? uncertain('VALUE_EFFECT_INVENTORY_INCOMPLETE', 'The selected projection has no complete global effect authority.')
+        : this.evaluatePlan(plan, state)
+    } catch (error) {
+      state.signal?.throwIfAborted()
+      if (state.expansion) throw state.expansion
+      throw error
+    }
+    // A model may catch an operand exception. It cannot certify a value after
+    // reading missing semantic data, nor insert that provisional result in cache.
+    if (state.expansion) throw state.expansion
     const evaluated = this.result(value, state, scalar)
     const bounded = state.exhausted ? {
       ...this.result(state.exhausted, state, scalar),
@@ -258,6 +274,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     if (depth > state.limits.maximumDepth) return exhaust(state, 'VALUE_DEPTH_LIMIT', 'Bounded value evaluation exceeded its depth limit.')
     const frames = state.active.get(id) ?? new Set<object>()
     if (frames.has(environment)) return uncertain('VALUE_RECURSION', 'Value propagation encountered a recursive occurrence.')
+    this.require(state, `occurrence:${id}`)
     this.depend(state, `occurrence:${id}`)
     const occurrence = this.#index.occurrences.get(id)
     if (!occurrence) return uncertain('VALUE_OCCURRENCE_MISSING', `Occurrence ${id} is unavailable.`)
@@ -282,7 +299,10 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     const call = this.#index.calls.get(id)
     if (call) return this.call(call, environment, state, depth)
     if (FUNCTION_SYNTAX.has(occurrence.syntax)) {
-      if (occurrence.symbol) this.depend(state, `function:${occurrence.symbol}`)
+      if (occurrence.symbol) {
+        this.require(state, `function:${occurrence.symbol}`)
+        this.depend(state, `function:${occurrence.symbol}`)
+      }
       const body = occurrence.symbol && this.#index.bodies.get(occurrence.symbol)
       return body ? { kind: 'function', body, environment } : uncertain('VALUE_BODY_MISSING', 'The function body is unavailable.')
     }
@@ -337,6 +357,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         if (effect !== 'none') {
           if (localAssignment && effect === 'local') return next(localAssignment)
           this.depend(state, `initializers:${occurrence.symbol}`)
+          this.require(state, `initializers:${occurrence.symbol}`)
           const observed = (this.#index.initializers.get(occurrence.symbol) ?? []).map((initializer) => next(initializer))
           const bound = environment.get(occurrence.symbol)
           if (bound) observed.push(next(bound.occurrence, bound.environment))
@@ -356,8 +377,10 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
       }
       if (occurrence.symbol) {
         this.depend(state, `initializers:${occurrence.symbol}`, `function:${occurrence.symbol}`, `symbol:${occurrence.symbol}`)
+        this.require(state, `initializers:${occurrence.symbol}`)
         const initializers = this.#index.initializers.get(occurrence.symbol)
         if (initializers?.length) return alternatives(initializers.map((initializer) => next(initializer)), state)
+        this.require(state, `function:${occurrence.symbol}`)
         const body = this.#index.bodies.get(occurrence.symbol)
         if (body) return { kind: 'function', body, environment }
         this.depend(state, `owner:${occurrence.symbol}`)
@@ -427,12 +450,13 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
       return uncertain('VALUE_ARGUMENT_BINDING_UNSUPPORTED', 'Spread and rest arguments require an aggregate argument binding.')
     }
     if (call.target) this.depend(state, `function:${call.target}`, `owner:${call.target}`)
-    const body = call.target && this.#index.bodies.get(call.target)
-    // Resolve the callee first to preserve environments of returned/stored closures.
+    // Consult the model before any body requirement, then preserve environments
+    // of returned/stored closures before asking for a static target fallback.
     const resolved = callee ? this.visit(callee, environment, state, depth + 1) : undefined
-    const target = resolved?.kind === 'function' || resolved?.kind === 'alternatives'
-      ? resolved
-      : body ? { kind: 'function' as const, body, environment }
+    const inspectable = resolved?.kind === 'function' || resolved?.kind === 'alternatives'
+    if (!inspectable && call.target) this.require(state, `function:${call.target}`)
+    const body = !inspectable && call.target ? this.#index.bodies.get(call.target) : undefined
+    const target = inspectable ? resolved : body ? { kind: 'function' as const, body, environment }
         : call.target && this.#index.callableOwners.has(call.target) ? uncertain('VALUE_BODY_NOT_SELECTED', 'The local callable body is outside the materialized selection.')
           : call.target ? { kind: 'unsupported' as const, construct: 'external-or-bodyless-call' }
           : resolved?.kind === 'unknown' ? resolved : uncertain('VALUE_DYNAMIC_CALL', 'The call target is unresolved or dynamic.')
@@ -444,6 +468,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     if (state.exhausted) return
     if (++state.steps > state.limits.maximumSteps) { exhaust(state, 'VALUE_STEP_LIMIT', 'Bounded value evaluation exceeded its step limit.'); return }
     if (depth > state.limits.maximumDepth) { exhaust(state, 'VALUE_DEPTH_LIMIT', 'Bounded value evaluation exceeded its depth limit.'); return }
+    this.require(state, `occurrence:${callee}`)
     this.depend(state, `occurrence:${callee}`)
     const occurrence = this.#index.occurrences.get(callee)
     return occurrence?.syntax === 'PropertyAccessExpression' ? occurrence.propertyName : undefined
@@ -541,6 +566,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         if (current !== symbol || !localOwner || owners?.some((owner) => owner !== localOwner)) { result = 'other'; break }
         result = 'local'
       }
+      this.require(state, `aliases:${current}`)
       for (const alias of this.#index.aliases.get(current) ?? []) {
         if (++state.steps > state.limits.maximumSteps) {
           exhaust(state, 'VALUE_STEP_LIMIT', 'Bounded value evaluation exceeded its step limit.')
@@ -551,6 +577,17 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     }
     state.effects.set(cacheKey, result)
     return result
+  }
+
+  private require(state: State, ...keys: readonly string[]): void {
+    let missing = false
+    for (const key of keys) for (const requirement of this.#index.requirements?.(key) ?? []) {
+      state.requirements.set(`${requirement.kind}:${requirement.owner}`, requirement)
+      missing = true
+    }
+    if (!missing) return
+    state.expansion = new BodyDemandExpansionRequired({ ...this.#generation, requirements: [...state.requirements.values()] })
+    throw state.expansion
   }
 
   private depend(state: State, ...keys: readonly string[]): void {

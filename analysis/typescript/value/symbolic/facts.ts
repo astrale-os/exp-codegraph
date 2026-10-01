@@ -5,7 +5,7 @@ import { combineCompleteness, type Completeness } from '../../../facts/index.ts'
 import type { AnalysisQuery, CapabilityStatus } from '../../../query/index.ts'
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts'
 import { createTypeScriptFactReader, TypeScriptFactContractError, type TypeScriptFact } from '../../facts/index.ts'
-import type { ValueResult } from '../model.ts'
+import type { TypeScriptBodyDemandReceipt, ValueResult } from '../model.ts'
 import { projectPackedTypeScriptBody } from '../../physical/index.ts'
 import { bodyFragment, type BodyFragment, type NodeReference } from './fragment.ts'
 import { ValueIndexTable, type ValueIndexTableEdit } from './table.ts'
@@ -44,6 +44,8 @@ export interface ValueIndex {
   readonly fingerprints: Pick<ReadonlyMap<string, string>, 'get'>
   readonly evidence: Pick<ReadonlyMap<string, readonly FactId[]>, 'get'>
   readonly revision: ValueIndexRevision
+  /** Missing observed-mode data required before consuming this semantic read. */
+  requirements?(key: string): TypeScriptBodyDemandReceipt['requirements']
   dependency(key: string): ValueDependency
 }
 
@@ -161,12 +163,14 @@ interface Derived {
   readonly escapes: ReadonlyMap<SymbolId, readonly OccurrenceId[]>
   readonly aliases: ReadonlyMap<SymbolId, readonly Alias[]>
   readonly inputs: ReadonlySet<string>
+  readonly ordering: ReadonlyMap<string, readonly SymbolId[]>
 }
 interface Columns {
   readonly bodies: Column<SymbolId, Body>
   readonly owners: Column<SymbolId, DemandOwner>
   readonly witnesses: Column<OccurrenceId, BodyOccurrence>
   readonly demands: Column<'global', readonly Demand[]>
+  readonly ordering: Column<string, readonly SymbolId[]>
   readonly occurrences: Column<OccurrenceId, NodeReference>
   readonly calls: Column<OccurrenceId, NodeReference>
   readonly callsBySource: Column<SourceId, readonly OccurrenceId[]>
@@ -259,7 +263,7 @@ export class IndexedValues implements ValueIndex {
 
   static empty(): IndexedValues {
     const columns: Columns = {
-      bodies: new Column(), owners: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
+      bodies: new Column(), owners: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), ordering: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
       symbols: new Column(), sources: new Column(),
       initializers: new Column(undefined, flatten), mutations: new Column(undefined, flatten), escapes: new Column(undefined, flatten),
       aliases: new Column(undefined, flatten), dependents: new Column(undefined, flatten),
@@ -267,6 +271,26 @@ export class IndexedValues implements ValueIndex {
     return new IndexedValues(new ValueIndexTable(), columns, new ValueIndexTable(), new ValueIndexTable(),
       new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(),
       { token: {}, changed: new Set() })
+  }
+
+  requirements(key: string): TypeScriptBodyDemandReceipt['requirements'] {
+    if (!this.#columns.demands.get('global')?.some((fact) => fact.payload.observed === true)) return []
+    if (key.startsWith('function:')) {
+      const owner = key.slice(9) as SymbolId
+      return this.#columns.owners.has(owner) && !this.bodies.has(owner) ? [{ owner, kind: 'body' }] : []
+    }
+    if (key.startsWith('occurrence:')) {
+      const id = key.slice(11) as OccurrenceId
+      const witness = this.#columns.witnesses.get(id)
+      return !this.#columns.occurrences.has(id) && witness ? [{ owner: witness.owner, kind: 'body' }] : []
+    }
+    const owners = new Set(this.#columns.ordering.get(key))
+    if (owners.size <= 1) return []
+    return [...owners].flatMap((owner) => {
+      const member = this.#columns.owners.get(owner)
+      if (!member) throw new TypeScriptFactContractError('body-demand', this.#columns.demands.get('global')![0]!.id, ['effect-owner-missing'])
+      return member.fact ? [] : [{ owner, kind: 'effect-order' as const }]
+    })
   }
 
   dependency(key: string): ValueDependency {
@@ -603,7 +627,7 @@ function derive(fact: Body, columns: Edits): Derived {
   }
   if (fragment.packed) for (let row = 0; row < fragment.packed.calls.length; row++) deriveCall(row)
   else for (const reference of fragment.logicalCalls()) deriveCall(reference.row)
-  return { initializers, mutations, escapes, aliases, inputs }
+  return { initializers, mutations, escapes, aliases, inputs, ordering: new Map() }
 }
 
 function derivedColumns(columns: Edits, owner: FactId, value: Derived, add: boolean, touched: Set<string>): void {
@@ -621,6 +645,10 @@ function derivedColumns(columns: Edits, owner: FactId, value: Derived, add: bool
     if (add) columns.aliases.set(key, owner, items)
     else columns.aliases.delete(key, owner)
     touched.add(`aliases:${key}`)
+  }
+  for (const [key, owners] of value.ordering) {
+    if (add) columns.ordering.set(key, owner, owners)
+    else columns.ordering.delete(key, owner)
   }
   for (const key of value.inputs) {
     if (add) columns.dependents.set(key, owner, [owner])
@@ -739,14 +767,17 @@ function deriveDemand(fact: Demand): Derived {
   const initializers = new Map<SymbolId, OccurrenceId[]>(), mutations = new Map<SymbolId, OccurrenceId[]>()
   const escapes = new Map<SymbolId, OccurrenceId[]>(), aliases = new Map<SymbolId, Alias[]>()
   const owners = new Map(fact.payload.owners.map((owner) => [owner.owner, owner]))
-  // Native materializes every contributor to initializer/alias lists reachable
-  // by selected values. Their actual original fact IDs retain the full index's
-  // ordered contribution merge, including bounded alternative/effect traversal.
+  // Actual original fact IDs retain the full index's contribution order. Lists
+  // with several owners remain unreadable until each ID is supplied; a single
+  // owner's rows already retain their native order without loading its body.
   const ordered = <Row extends { readonly owner: SymbolId }>(rows: readonly Row[]) => [...rows].sort((left, right) =>
     (owners.get(left.owner)?.fact ?? left.owner).localeCompare(owners.get(right.owner)?.fact ?? right.owner))
   for (const row of ordered(fact.payload.initializers)) append(initializers, row.symbol, row.occurrence)
   for (const row of fact.payload.mutations) append(mutations, row.symbol, row.occurrence)
   for (const row of fact.payload.escapes) append(escapes, row.symbol, row.occurrence)
   for (const row of ordered(fact.payload.aliases)) append(aliases, row.symbol, { from: row.from, occurrence: row.occurrence })
-  return { initializers, mutations, escapes, aliases, inputs: new Set() }
+  const ordering = new Map<string, SymbolId[]>()
+  for (const row of fact.payload.initializers) append(ordering, `initializers:${row.symbol}`, row.owner)
+  for (const row of fact.payload.aliases) append(ordering, `aliases:${row.symbol}`, row.owner)
+  return { initializers, mutations, escapes, aliases, inputs: new Set(), ordering }
 }
