@@ -12,14 +12,15 @@ import (
 // References and retained projections outlive an Apply only as plain values.
 // driver.Program itself is a mutable wrapper, not an old-capture lease.
 type compilerReferenceSnapshot struct {
-	files     map[string]bool
-	reverse   map[string][]string
-	complete  bool
-	sensitive map[string]bool
+	files         map[string]bool
+	reverse       map[string][]string
+	complete      bool
+	sensitive     map[string]bool
+	augmentations map[string]compilerAugmentationCapture
 }
 
 func captureCompilerReferences(program *driver.Program) *compilerReferenceSnapshot {
-	graph := &compilerReferenceSnapshot{files: map[string]bool{}, reverse: map[string][]string{}, sensitive: map[string]bool{}, complete: true}
+	graph := &compilerReferenceSnapshot{files: map[string]bool{}, reverse: map[string][]string{}, sensitive: map[string]bool{}, augmentations: map[string]compilerAugmentationCapture{}, complete: true}
 	physical := map[string]string{}
 	// The driver excludes declarations; dependency provenance includes every
 	// captured library/ambient input, even when it is not a projectable source.
@@ -38,6 +39,9 @@ func captureCompilerReferences(program *driver.Program) *compilerReferenceSnapsh
 				continue
 			}
 			graph.reverse[target] = append(graph.reverse[target], file.FileName())
+		}
+		if graph.sensitive[file.FileName()] {
+			graph.augmentations[file.FileName()] = captureExternalAugmentation(program, file, graph.files)
 		}
 	}
 	return graph
@@ -152,6 +156,18 @@ func (reuse *demandSourceReuse) closure(next *compilerReferenceSnapshot, changed
 		for target, owners := range graph.reverse {
 			reverse[target] = append(reverse[target], owners...)
 		}
+		for augmenter, capture := range graph.augmentations {
+			if !capture.complete {
+				continue
+			}
+			// A merge may affect the declaration owner behind a forwarding
+			// module, including users which import that owner directly. Keep
+			// the old AND new contributions, not only the package entry file.
+			for _, owner := range capture.owners {
+				reverse[augmenter] = append(reverse[augmenter], owner)
+				reverse[owner] = append(reverse[owner], augmenter)
+			}
+		}
 	}
 	for physical, retained := range reuse.sources {
 		for _, dependency := range retained.rows.dependencies {
@@ -209,7 +225,7 @@ func (reuse *demandSourceReuse) closure(next *compilerReferenceSnapshot, changed
 	selected := []string{}
 	reuse.selected = map[string]bool{}
 	for path := range seen {
-		if reuse.references.sensitive[path] || next.sensitive[path] {
+		if (reuse.references.sensitive[path] || next.sensitive[path]) && !unchangedExternalAugmentation(reuse.references, next, path) {
 			reuse.selected = nil
 			reuse.fallbackReason = "sensitive-dependent-source:" + path
 			return nil
