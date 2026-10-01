@@ -18,8 +18,8 @@ func originalRuntimeCall(file *File, start, end int, top bool) *ast.Node {
 	var found *ast.Node
 	authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
 		if node.Kind == ast.KindCallExpression && (!top || qmTopLevel(node)) {
-			a, b := originalAnchor(file, node)
-			if a == start && b == end {
+			a := len(utf16.Encode([]rune(file.Source.Text()[:scanner.GetTokenPosOfNode(node, file.Source, false)])))
+			if a == start && len(utf16.Encode([]rune(file.Source.Text()[:node.End()]))) == end {
 				found = node
 			}
 		}
@@ -81,5 +81,78 @@ func TestRuntimeAnchorOwnerReplacementAndLookupAllocation(t *testing.T) {
 	file.Source = parse("/*😀*/const a=g();")
 	if file.runtimeCall(start, end, false) != originalRuntimeCall(file, start, end, false) {
 		t.Fatal("old coordinate survived changed source")
+	}
+}
+
+func TestRuntimeAnchorOriginalShortCircuitMalformedRanges(t *testing.T) {
+	parse := func() *File {
+		return &File{Path: "malformed.ts", Source: parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: "/fixture/malformed.ts"}, "f(); function h(){g()}", core.ScriptKindTS)}
+	}
+	panicOf := func(f func()) (panics bool) { defer func() { panics = recover() != nil }(); f(); return }
+	t.Run("nested excluded before invalid start", func(t *testing.T) {
+		file := parse()
+		authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
+			if node.Kind == ast.KindCallExpression && !qmTopLevel(node) {
+				node.Loc = core.NewTextRange(999, 1000)
+			}
+		})
+		if panicOf(func() { _ = originalRuntimeCall(file, 0, 3, true) }) || panicOf(func() { _ = file.runtimeCall(0, 3, true) }) {
+			t.Fatal("excluded nested range evaluated")
+		}
+	})
+	t.Run("end only when start matches", func(t *testing.T) {
+		for _, target := range []int{0, 1} {
+			file := parse()
+			authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
+				if node.Kind == ast.KindCallExpression && qmTopLevel(node) {
+					node.Loc = core.NewTextRange(node.Pos(), 999)
+				}
+			})
+			old := panicOf(func() { _ = originalRuntimeCall(file, target, 3, true) })
+			current := panicOf(func() { _ = file.runtimeCall(target, 3, true) })
+			if old != current || current != (target == 0) {
+				t.Fatalf("start%d panic old%v current%v", target, old, current)
+			}
+		}
+	})
+	t.Run("ordered duplicate starts retain last matching end", func(t *testing.T) {
+		file := &File{Source: parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: "/fixture/duplicate.ts"}, "f();g();h();", core.ScriptKindTS)}
+		count := 0
+		authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
+			if node.Kind == ast.KindCallExpression {
+				count++
+				end := 3
+				if count == 2 {
+					end = 2
+				}
+				node.Loc = core.NewTextRange(0, end)
+			}
+		})
+		for _, end := range []int{2, 3, 4} {
+			if file.runtimeCall(0, end, false) != originalRuntimeCall(file, 0, end, false) {
+				t.Fatal("duplicate start reordered")
+			}
+		}
+	})
+}
+
+func TestMalformedASTKeepsOriginalFirstPanic(t *testing.T) {
+	file := &File{Source: parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: "/fixture/invalid.ts"}, "f();g();", core.ScriptKindTS)}
+	n := 0
+	authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
+		if node.Kind == ast.KindCallExpression {
+			n++
+			if n == 1 {
+				node.Loc = core.NewTextRange(0, 999)
+			} else {
+				node.Loc = core.NewTextRange(1000, 1001)
+			}
+		}
+	})
+	fault := func(f func()) (value any) { defer func() { value = recover() }(); f(); return }
+	old := fault(func() { _ = originalRuntimeCall(file, 0, 3, false) })
+	current := fault(func() { _ = file.runtimeCall(0, 3, false) })
+	if old == nil || current == nil || old.(error).Error() != current.(error).Error() {
+		t.Fatalf("original panic order changed: old%v current%v", old, current)
 	}
 }
