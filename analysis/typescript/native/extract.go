@@ -71,6 +71,9 @@ type extractor struct {
 }
 
 func extractProgram(root, universe string, program *driver.Program, modules []moduleBoundary, plan projectionPlan, payloadCodecs map[string]bool, maximumSemanticPayloadBytes, maximumDecodedShardBytes int, telemetry *nativeTelemetry, requestID int) ([]factShard, []sourceRecord, map[string][]callableRead, error) {
+	if plan.bodyDemand && plan.demandCache == nil {
+		plan.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
+	}
 	x, files, records := prepareExtractor(root, universe, program, modules, plan, payloadCodecs, maximumSemanticPayloadBytes, maximumDecodedShardBytes, nil, nil, telemetry, requestID)
 	var shards []factShard
 	telemetry.record(requestID, "projection.plan", time.Now(), map[string]any{
@@ -117,6 +120,19 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		return nil, nil, nil, x.payloadEncodingError
 	}
 	sort.Slice(shards, func(i, j int) bool { return shards[i].Key < shards[j].Key })
+	if plan.bodyDemand {
+		cache := plan.demandCache
+		cache.extractor = x
+		cache.files = files
+		cache.sources = records
+		cache.nonBodyShards = nil
+		for _, shard := range shards {
+			if shard.Namespace != bodyNamespace && shard.Namespace != bodyDemandNamespace {
+				cache.nonBodyShards = append(cache.nonBodyShards, shard)
+			}
+		}
+		cache.ready = true
+	}
 	return shards, records, x.callableReads, nil
 }
 

@@ -52,6 +52,7 @@ type analyzer struct {
 	maximumSemanticPayloadBytes int
 	maximumDecodedShardBytes    int
 	session                     *compilerSession
+	demandCache                 *bodyDemandCache
 	// Only the acknowledged base and its unpublished candidate belong to this
 	// process. Historical snapshots and reader leases belong to the client store.
 	acknowledged generationState
@@ -98,6 +99,7 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 }
 
 func (a *analyzer) close() error {
+	a.demandCache = nil
 	a.acknowledged = generationState{}
 	a.pending = nil
 	a.pendingFull = false
@@ -226,6 +228,9 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 		}
 	}
 
+	if compilerAdvanced {
+		a.demandCache = nil
+	}
 	selection.bodyDemand = demand
 	if a.projection.bodyDemand && (compilerAdvanced || demandChanged) {
 		// The complete effect authority and selected closure move together under
@@ -241,6 +246,7 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 	}
 	rollover := nextUniverse != a.universe
 	if rollover {
+		a.demandCache = nil
 		// A universe boundary is not an incremental source delta. The first
 		// generation in the new lineage is a complete transaction with no base;
 		// the caller may rebase that complete snapshot when an identical portable
@@ -458,6 +464,16 @@ func (a *analyzer) extract(
 ) ([]factShard, []sourceRecord, map[string]bool, map[string][]callableRead, error) {
 	plan := a.projection
 	plan.demand = selection.bodyDemand
+	if plan.bodyDemand {
+		if a.demandCache == nil {
+			a.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
+		}
+		plan.demandCache = a.demandCache
+		if a.demandCache.ready && !plan.bodies {
+			shards, sources, reads, err := a.demandCache.project(plan, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+			return shards, sources, nil, reads, err
+		}
+	}
 	if selection.full {
 		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, plan, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
 		return shards, sources, nil, reads, err
@@ -856,6 +872,7 @@ func (a *analyzer) rebuild() error {
 		return fmt.Errorf("TypeScript driver returned no resident program")
 	}
 	previous := a.session
+	a.demandCache = nil
 	a.session = next
 	return previous.Close()
 }

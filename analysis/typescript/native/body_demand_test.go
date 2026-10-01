@@ -257,7 +257,7 @@ func assertDemandMatchesFull(t *testing.T, selected, full *factTransaction) {
 		}
 		selectedOwners[owner.Owner] = owner.Materialized
 		if owner.Materialized && owner.Fact != fullFacts[owner.Owner] {
-			t.Fatal("materialized owner lost its original logical fact identity")
+			t.Fatalf("materialized owner %s (%s) lost its original logical fact identity: %s != %s", owner.Owner, owner.Path, owner.Fact, fullFacts[owner.Owner])
 		}
 		if !owner.Materialized && owner.Fact != "" {
 			t.Fatal("omitted owner advertised an absent body fact")

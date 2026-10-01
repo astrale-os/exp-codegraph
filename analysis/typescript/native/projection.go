@@ -16,6 +16,7 @@ type projectionPlan struct {
 	bodies      bool
 	bodyDemand  bool
 	demand      *bodyDemandRecipe
+	demandCache *bodyDemandCache
 }
 
 func planProjections(capabilities []string) projectionPlan {

@@ -15,7 +15,8 @@ const bodyDemandNamespace = "typescript.body-demand"
 // Demand is explicit selection authority, not a promise of global body IR.
 // Owned source identities and effects always cover the complete Program.
 type bodyDemandRecipe struct {
-	Paths []string `json:"paths"`
+	Paths  []string  `json:"paths"`
+	Owners *[]string `json:"owners,omitempty"`
 }
 
 type demandOwner struct {
@@ -46,6 +47,7 @@ type demandCoverage struct {
 }
 
 type bodyDemandPayload struct {
+	Observed     bool             `json:"observed,omitempty"`
 	Paths        []string         `json:"paths"`
 	Owners       []demandOwner    `json:"owners"`
 	Witnesses    []bodyOccurrence `json:"witnesses"`
@@ -55,6 +57,22 @@ type bodyDemandPayload struct {
 	Aliases      []demandAlias    `json:"aliases"`
 	Coverage     []demandCoverage `json:"coverage"`
 	Completeness completeness     `json:"completeness"`
+}
+
+type bodyDemandCache struct {
+	extractor     *extractor
+	files         []*shimast.SourceFile
+	sources       []sourceRecord
+	nonBodyShards []factShard
+	bodies        []*thinBody
+	byOwner       map[string]*thinBody
+	byFunction    map[*shimast.Node]*thinBody
+	modules       map[*shimast.SourceFile]*thinBody
+	effects       *bodyDemandPayload
+	fullBodies    map[string]factShard
+	bodyReads     map[string][]callableRead
+	thinReads     map[string][]callableRead
+	ready         bool
 }
 
 type thinBody struct {
@@ -85,7 +103,22 @@ func admitBodyDemand(value *bodyDemandRecipe) (*bodyDemandRecipe, error) {
 		}
 		paths = append(paths, path)
 	}
-	return &bodyDemandRecipe{Paths: sortedUnique(paths)}, nil
+	var owners []string
+	if value.Owners != nil {
+		owners = []string{}
+		for _, owner := range *value.Owners {
+			if !strings.HasPrefix(owner, "symbol:") || strings.ContainsAny(owner, "\\\x00") {
+				return nil, protocolError("DEMAND_OWNER_INVALID", "Body demand owner must be an admitted symbol identity.")
+			}
+			owners = append(owners, owner)
+		}
+		owners = sortedUnique(owners)
+	}
+	var ownerRecipe *[]string
+	if value.Owners != nil {
+		ownerRecipe = &owners
+	}
+	return &bodyDemandRecipe{Paths: sortedUnique(paths), Owners: ownerRecipe}, nil
 }
 
 func (b *thinBody) mark(node *shimast.Node, kind string) {
@@ -238,44 +271,49 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			existingBodies[shard.Facts[0].Subject] = shard
 		}
 	}
-	bodies := []*thinBody{}
-	byOwner := map[string]*thinBody{}
-	byFunction := map[*shimast.Node]*thinBody{}
-	modules := map[*shimast.SourceFile]*thinBody{}
-	register := func(file *shimast.SourceFile, owner, scope string, node, function *shimast.Node, span sourceSpan) {
-		body := &thinBody{x: x, file: file, owner: owner, scope: scope, body: node, function: function,
-			span: span, path: x.sources[file.FileName()].Path,
-			kinds: map[*shimast.Node]string{}, symbols: map[*shimast.Node]*shimast.Symbol{}}
+	cache := x.plan.demandCache
+	bodies, byOwner, byFunction, modules := cache.bodies, cache.byOwner, cache.byFunction, cache.modules
+	if bodies == nil {
+		bodies = []*thinBody{}
+		byOwner = map[string]*thinBody{}
+		byFunction = map[*shimast.Node]*thinBody{}
+		modules = map[*shimast.SourceFile]*thinBody{}
+		register := func(file *shimast.SourceFile, owner, scope string, node, function *shimast.Node, span sourceSpan) {
+			body := &thinBody{x: x, file: file, owner: owner, scope: scope, body: node, function: function,
+				span: span, path: x.sources[file.FileName()].Path,
+				kinds: map[*shimast.Node]string{}, symbols: map[*shimast.Node]*shimast.Symbol{}}
 
-		body.walk(node)
-		if scope == "module" && len(body.kinds) == 0 && (file.Statements == nil || len(file.Statements.Nodes) == 0) {
-			return
-		}
-		bodies = append(bodies, body)
-		byOwner[owner] = body
-		if function != nil {
-			byFunction[function] = body
-		} else {
-			modules[file] = body
-		}
-	}
-	for _, file := range files {
-		record, owned := x.sources[file.FileName()]
-		if !owned {
-			continue
-		}
-		if !file.IsDeclarationFile && len(file.Text()) != 0 {
-			owner := deriveID("symbol", "typescript:"+x.universe, map[string]any{"source": record.Source, "scope": "module"})
-			register(file, owner, "module", file.AsNode(), nil, x.span(file, file.AsNode()))
-		}
-		walkFile(file, func(node *shimast.Node) bool {
-			if shimast.IsFunctionLike(node) && node.Body() != nil {
-				if owner := x.functionID(node); owner != "" {
-					register(file, owner, "function", node.Body(), node, x.span(file, node))
-				}
+			body.walk(node)
+			if scope == "module" && len(body.kinds) == 0 && (file.Statements == nil || len(file.Statements.Nodes) == 0) {
+				return
 			}
-			return true
-		})
+			bodies = append(bodies, body)
+			byOwner[owner] = body
+			if function != nil {
+				byFunction[function] = body
+			} else {
+				modules[file] = body
+			}
+		}
+		for _, file := range files {
+			record, owned := x.sources[file.FileName()]
+			if !owned {
+				continue
+			}
+			if !file.IsDeclarationFile && len(file.Text()) != 0 {
+				owner := deriveID("symbol", "typescript:"+x.universe, map[string]any{"source": record.Source, "scope": "module"})
+				register(file, owner, "module", file.AsNode(), nil, x.span(file, file.AsNode()))
+			}
+			walkFile(file, func(node *shimast.Node) bool {
+				if shimast.IsFunctionLike(node) && node.Body() != nil {
+					if owner := x.functionID(node); owner != "" {
+						register(file, owner, "function", node.Body(), node, x.span(file, node))
+					}
+				}
+				return true
+			})
+		}
+		cache.bodies, cache.byOwner, cache.byFunction, cache.modules = bodies, byOwner, byFunction, modules
 	}
 	sort.Slice(bodies, func(i, j int) bool { return bodies[i].owner < bodies[j].owner })
 	selected := map[string]bool{}
@@ -293,6 +331,11 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 	for _, body := range bodies {
 		if roots[body.path] || x.plan.bodies {
 			selectBody(body)
+		}
+	}
+	if recipe.Owners != nil {
+		for _, owner := range *recipe.Owners {
+			selectBody(byOwner[owner])
 		}
 	}
 	declarationBody := func(node *shimast.Node) *thinBody {
@@ -348,91 +391,112 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 			}
 		}
 	}
-	expandBodyDependencies()
+	if recipe.Owners == nil {
+		expandBodyDependencies()
+	} else {
+		queue = nil
+	}
 	x.telemetry.record(x.requestID, "projection.demand-closure", started, map[string]any{"owners": len(bodies), "selectedOwners": len(selected), "paths": len(recipe.Paths)})
 
-	payload := bodyDemandPayload{Paths: recipe.Paths, Owners: []demandOwner{}, Witnesses: []bodyOccurrence{},
+	payload := bodyDemandPayload{Observed: recipe.Owners != nil, Paths: recipe.Paths, Owners: []demandOwner{}, Witnesses: []bodyOccurrence{},
 		Initializers: []demandEffect{}, Mutations: []demandEffect{}, Escapes: []demandEffect{}, Aliases: []demandAlias{}, Coverage: []demandCoverage{}, Completeness: complete()}
 	witnesses := map[string]bodyOccurrence{}
 	for _, body := range bodies {
 		payload.Owners = append(payload.Owners, demandOwner{Owner: body.owner, Scope: body.scope, Span: body.span, Path: body.path, Materialized: selected[body.owner]})
-		sort.Slice(body.effects, func(i, j int) bool { return body.effects[i].Pos() < body.effects[j].Pos() })
-		for _, node := range body.effects {
-			if node.Kind == shimast.KindVariableDeclaration {
-				declaration := node.AsVariableDeclaration()
-				name, initializer := declaration.Name(), declaration.Initializer
-				symbol := x.symbolID(body.identifierSymbol(name))
-				if symbol != "" && initializer != nil {
-					if witness := body.witness(initializer, witnesses); witness != "" {
-						payload.Initializers = append(payload.Initializers, demandEffect{symbol, witness, body.owner})
-						if target := body.rootSymbol(initializer); target != "" && target != symbol {
-							payload.Aliases = append(payload.Aliases, demandAlias{target, symbol, witness, body.owner})
+	}
+	if cache.effects != nil {
+		payload.Witnesses = cache.effects.Witnesses
+		payload.Initializers = cache.effects.Initializers
+		payload.Mutations = cache.effects.Mutations
+		payload.Escapes = cache.effects.Escapes
+		payload.Aliases = cache.effects.Aliases
+	} else {
+		for _, body := range bodies {
+			sort.Slice(body.effects, func(i, j int) bool { return body.effects[i].Pos() < body.effects[j].Pos() })
+			for _, node := range body.effects {
+				if node.Kind == shimast.KindVariableDeclaration {
+					declaration := node.AsVariableDeclaration()
+					name, initializer := declaration.Name(), declaration.Initializer
+					symbol := x.symbolID(body.identifierSymbol(name))
+					if symbol != "" && initializer != nil {
+						if witness := body.witness(initializer, witnesses); witness != "" {
+							payload.Initializers = append(payload.Initializers, demandEffect{symbol, witness, body.owner})
+							if target := body.rootSymbol(initializer); target != "" && target != symbol {
+								payload.Aliases = append(payload.Aliases, demandAlias{target, symbol, witness, body.owner})
+							}
 						}
 					}
 				}
+				var target *shimast.Node
+				if node.Kind == shimast.KindBinaryExpression && bodyKind(node) == "assignment" {
+					target = node.AsBinaryExpression().Left
+				} else if node.Kind == shimast.KindDeleteExpression {
+					// The baseline relation projector only exposes a target when the
+					// authored child is labelled expression (not an ordinal child).
+					position := 0
+					node.ForEachChild(func(child *shimast.Node) bool {
+						if childRole(node, child, position) == "expression" {
+							target = child
+						}
+						position++
+						return false
+					})
+				}
+				if symbol := body.rootSymbol(target); symbol != "" {
+					payload.Mutations = append(payload.Mutations, demandEffect{symbol, body.witness(node, witnesses), body.owner})
+				}
 			}
-			var target *shimast.Node
-			if node.Kind == shimast.KindBinaryExpression && bodyKind(node) == "assignment" {
-				target = node.AsBinaryExpression().Left
-			} else if node.Kind == shimast.KindDeleteExpression {
-				// The baseline relation projector only exposes a target when the
-				// authored child is labelled expression (not an ordinal child).
-				position := 0
-				node.ForEachChild(func(child *shimast.Node) bool {
-					if childRole(node, child, position) == "expression" {
-						target = child
-					}
-					position++
-					return false
-				})
-			}
-			if symbol := body.rootSymbol(target); symbol != "" {
-				payload.Mutations = append(payload.Mutations, demandEffect{symbol, body.witness(node, witnesses), body.owner})
-			}
-		}
-		projector := &bodyBuilder{x: x, file: body.file, owner: body.owner}
-		sort.Slice(body.calls, func(i, j int) bool {
-			return x.occurrenceID(x.span(body.file, body.calls[i]), "body-call") < x.occurrenceID(x.span(body.file, body.calls[j]), "body-call")
-		})
-		for _, node := range body.calls {
-			call := node.AsCallExpression()
-			if call.Arguments == nil {
-				continue
-			}
-			argumentSymbols := make([]string, len(call.Arguments.Nodes))
-			needed := false
-			for index, argument := range call.Arguments.Nodes {
-				argumentSymbols[index] = body.rootSymbol(argument)
-				needed = needed || argumentSymbols[index] != ""
-			}
-			if !needed {
-				continue
-			}
-			// Alias bindings and escape classification are the only global reads
-			// of an unselected call. Data-only arguments contribute neither.
-			target := projector.projectCallable(call.Expression, false).target
-			signature := x.checker.GetResolvedSignature(node)
-			parameters := shimchecker.Signature_parameters(signature)
-			rest := shimchecker.Signature_hasRestParameter(signature)
-			for index, symbol := range argumentSymbols {
-				if symbol == "" {
+			projector := &bodyBuilder{x: x, file: body.file, owner: body.owner}
+			sort.Slice(body.calls, func(i, j int) bool {
+				return x.occurrenceID(x.span(body.file, body.calls[i]), "body-call") < x.occurrenceID(x.span(body.file, body.calls[j]), "body-call")
+			})
+			for _, node := range body.calls {
+				call := node.AsCallExpression()
+				if call.Arguments == nil {
 					continue
 				}
-				witness := body.witness(node, witnesses)
-				parameterIndex := index
-				if len(parameters) != 0 && parameterIndex >= len(parameters) && rest {
-					parameterIndex = len(parameters) - 1
+				argumentSymbols := make([]string, len(call.Arguments.Nodes))
+				needed := false
+				for index, argument := range call.Arguments.Nodes {
+					argumentSymbols[index] = body.rootSymbol(argument)
+					needed = needed || argumentSymbols[index] != ""
 				}
-				if parameterIndex < len(parameters) {
-					if parameter := x.symbolID(parameters[parameterIndex]); parameter != "" && parameter != symbol {
-						payload.Aliases = append(payload.Aliases, demandAlias{symbol, parameter, witness, body.owner})
+				if !needed {
+					continue
+				}
+				// Alias bindings and escape classification are the only global reads
+				// of an unselected call. Data-only arguments contribute neither.
+				target := projector.projectCallable(call.Expression, false).target
+				signature := x.checker.GetResolvedSignature(node)
+				parameters := shimchecker.Signature_parameters(signature)
+				rest := shimchecker.Signature_hasRestParameter(signature)
+				for index, symbol := range argumentSymbols {
+					if symbol == "" {
+						continue
 					}
-				}
-				if target == "" || byOwner[target] == nil {
-					payload.Escapes = append(payload.Escapes, demandEffect{symbol, witness, body.owner})
+					witness := body.witness(node, witnesses)
+					parameterIndex := index
+					if len(parameters) != 0 && parameterIndex >= len(parameters) && rest {
+						parameterIndex = len(parameters) - 1
+					}
+					if parameterIndex < len(parameters) {
+						if parameter := x.symbolID(parameters[parameterIndex]); parameter != "" && parameter != symbol {
+							payload.Aliases = append(payload.Aliases, demandAlias{symbol, parameter, witness, body.owner})
+						}
+					}
+					if target == "" || byOwner[target] == nil {
+						payload.Escapes = append(payload.Escapes, demandEffect{symbol, witness, body.owner})
+					}
 				}
 			}
 		}
+		for _, witness := range witnesses {
+			payload.Witnesses = append(payload.Witnesses, witness)
+		}
+		sort.Slice(payload.Witnesses, func(i, j int) bool { return payload.Witnesses[i].ID < payload.Witnesses[j].ID })
+		effectSnapshot := payload
+		effectSnapshot.Owners = nil
+		cache.effects = &effectSnapshot
 	}
 	// Full-body contribution order is part of bounded symbolic evaluation.
 	// Materialize every initializer/alias contributor reachable from a selected
@@ -445,7 +509,7 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 	for _, initializer := range payload.Initializers {
 		initializersBySymbol[initializer.Symbol] = append(initializersBySymbol[initializer.Symbol], initializer)
 	}
-	for len(queue) != 0 || len(pendingSymbols) != 0 {
+	for recipe.Owners == nil && (len(queue) != 0 || len(pendingSymbols) != 0) {
 		expandBodyDependencies()
 		if len(pendingSymbols) == 0 {
 			continue
@@ -463,10 +527,6 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 	for index := range payload.Owners {
 		payload.Owners[index].Materialized = selected[payload.Owners[index].Owner]
 	}
-	for _, witness := range witnesses {
-		payload.Witnesses = append(payload.Witnesses, witness)
-	}
-	sort.Slice(payload.Witnesses, func(i, j int) bool { return payload.Witnesses[i].ID < payload.Witnesses[j].ID })
 	shards := []factShard{}
 	coverage := map[string]completeness{}
 	for _, path := range recipe.Paths {
@@ -481,16 +541,37 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 		coverage[path] = completeness{Kind: "unavailable", Reasons: []any{map[string]any{"code": "DEMAND_SOURCE_ABSENT", "message": "Demanded source is absent from the owned compiler universe: " + path, "retryable": false}}}
 	}
 	factsByOwner := map[string]string{}
+	if cache.thinReads == nil {
+		cache.thinReads = map[string][]callableRead{}
+		for path, reads := range x.callableReads {
+			cache.thinReads[path] = append([]callableRead{}, reads...)
+		}
+	}
+	if !x.plan.bodies {
+		x.callableReads = map[string][]callableRead{}
+		for path, reads := range cache.thinReads {
+			x.callableReads[path] = append([]callableRead{}, reads...)
+		}
+	}
 	var identity bodyIdentityWorkspace
 	for _, body := range bodies {
 		if !selected[body.owner] {
 			continue
 		}
 		completion := complete()
+		if cached, exists := cache.fullBodies[body.owner]; exists && !x.plan.bodies {
+			existingBodies[body.owner] = cached
+		}
 		if existing, alreadyFull := existingBodies[body.owner]; alreadyFull {
 			completion = existing.Completion
 			factsByOwner[body.owner] = existing.Facts[0].ID
+			if !x.plan.bodies {
+				shards = append(shards, existing)
+				x.retainSemanticShard(existing)
+				x.retainBodyReads(body.file.FileName(), cache.bodyReads[body.owner])
+			}
 		} else {
+			readStart := len(x.callableReads[body.file.FileName()])
 			builder := newBodyBuilder(x, body.file, body.owner, body.scope, body.body)
 			full := builder.build(body.function)
 			kind := "function-body"
@@ -502,6 +583,11 @@ func (x *extractor) demandBodyShards(files []*shimast.SourceFile, recipe *bodyDe
 				return nil, err
 			}
 			shards = append(shards, shard)
+			cache.fullBodies[body.owner] = shard
+			if cache.bodyReads == nil {
+				cache.bodyReads = map[string][]callableRead{}
+			}
+			cache.bodyReads[body.owner] = append([]callableRead{}, x.callableReads[body.file.FileName()][readStart:]...)
 			factsByOwner[body.owner] = shard.Facts[0].ID
 			completion = full.Completeness
 		}
