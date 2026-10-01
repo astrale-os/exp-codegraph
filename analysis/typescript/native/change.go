@@ -114,6 +114,11 @@ func (a *analyzer) apply(changed []sourceChange, requestID int) (refreshSelectio
 			full = true
 			continue
 		}
+		if updated.IsDeclarationFile || shimcompiler.FileAffectsGlobalScope(updated) {
+			// An external module can become a script without changing imports.
+			// Its globals may then affect files outside the reverse import graph.
+			full = true
+		}
 		if sourceImportIdentity(updated) != imports {
 			// A new resolver graph owns a new observation inventory. Retire probes
 			// from the previous import graph instead of accumulating stale reads.

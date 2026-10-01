@@ -275,6 +275,41 @@ func TestBodyProjectionRechecksTransitiveCallSignaturesWithoutDeclarationEmit(t 
 	}
 }
 
+func TestBodyProjectionRechecksModuleToGlobalScopeTransition(t *testing.T) {
+	root := t.TempDir()
+	for path, content := range map[string]string{
+		"tsconfig.json": `{"compilerOptions":{"noLib":true,"module":"ESNext"},"include":["*.ts"]}`,
+		"provider.ts":   `export function shared(value:string) { return value }`,
+		"consumer.ts":   `export const result = shared('value')`,
+	} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := openChangeAdmissionAnalyzer(t, root, nil)
+	defer a.close()
+	initial, _, err := a.refresh(request{ID: 1, Discover: true})
+	if err != nil || initial == nil {
+		t.Fatalf("initial module scope: %v", err)
+	}
+	if err := a.acknowledge(request{Generation: initial.Next.ID, Sequence: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "provider.ts"), []byte(`function shared(value:string) { return value }`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := a.refresh(request{ID: 2, Base: initial.Next.ID, BaseSequence: 1, Changed: []string{"provider.ts"}, Discover: true})
+	if err != nil || next == nil {
+		t.Fatalf("module-to-global movement: %v", err)
+	}
+	oracle := openChangeAdmissionAnalyzer(t, root, nil)
+	expected, _, err := oracle.refresh(request{ID: 1, Discover: true})
+	oracle.close()
+	if err != nil || expected == nil || next.Next.ID != expected.Next.ID {
+		t.Fatalf("global scope movement differs from independent extraction: %v", err)
+	}
+}
+
 func writeChangeAdmissionFixture(t *testing.T, root string) {
 	t.Helper()
 	for path, content := range map[string]string{
