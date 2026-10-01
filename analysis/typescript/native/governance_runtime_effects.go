@@ -203,9 +203,51 @@ func (owner *governanceRuntimeAuthority) CandidateAdmitted(file observabledecisi
 	return false, false
 }
 func (owner *governanceRuntimeAuthority) Call(file observabledecision.CapturedFile, node *ast.Node) observabledecision.NativeEffectCall {
+	return owner.callObservedArguments(file, node, false)
+}
+
+// The original selected signature is observed only through per-argument rows.
+// Target/body ownership above this cut remains actual compiler symbol authority.
+// forceEmptySignature is a differential oracle for the former complete reader.
+func (owner *governanceRuntimeAuthority) callObservedArguments(file observabledecision.CapturedFile, node *ast.Node, forceEmptySignature bool) observabledecision.NativeEffectCall {
+	out, matched := owner.callTargetOwner(file, node)
+	if matched == nil {
+		return out
+	}
+	check := owner.Identity.TypeOwner.program.Checker
+	call := matched.AsCallExpression()
+	if !forceEmptySignature && (call.Arguments == nil || len(call.Arguments.Nodes) == 0) {
+		return out
+	}
+	signature := check.GetResolvedSignature(matched)
+	parameters := checker.Signature_parameters(signature)
+	rest := checker.Signature_hasRestParameter(signature)
+	if call.Arguments != nil {
+		for index, argument := range call.Arguments.Nodes {
+			parameterIndex := index
+			if len(parameters) != 0 && parameterIndex >= len(parameters) && rest {
+				parameterIndex = len(parameters) - 1
+			}
+			parameter := ""
+			if parameterIndex >= 0 && parameterIndex < len(parameters) {
+				parameter = owner.symbolKey(parameters[parameterIndex])
+			} // Arguments are returned in the supplied capture's AST identity.
+			capturedArgument := argument
+			if file.Source != owner.Identity.OwnedProgramFiles[file.Path] {
+				if node.AsCallExpression().Arguments == nil || index >= len(node.AsCallExpression().Arguments.Nodes) {
+					return observabledecision.NativeEffectCall{}
+				}
+				capturedArgument = node.AsCallExpression().Arguments.Nodes[index]
+			}
+			out.Bindings = append(out.Bindings, observabledecision.NativeEffectBinding{Argument: capturedArgument, Parameter: parameter, Rest: rest && parameterIndex == len(parameters)-1})
+		}
+	}
+	return out
+}
+func (owner *governanceRuntimeAuthority) callTargetOwner(file observabledecision.CapturedFile, node *ast.Node) (observabledecision.NativeEffectCall, *ast.Node) {
 	matched, known := owner.node(file, node)
 	if !known || matched.Kind != ast.KindCallExpression {
-		return observabledecision.NativeEffectCall{}
+		return observabledecision.NativeEffectCall{}, nil
 	}
 	check := owner.Identity.TypeOwner.program.Checker
 	call := matched.AsCallExpression()
@@ -239,30 +281,7 @@ func (owner *governanceRuntimeAuthority) Call(file observabledecision.CapturedFi
 			}
 		}
 	}
-	signature := check.GetResolvedSignature(matched)
-	parameters := checker.Signature_parameters(signature)
-	rest := checker.Signature_hasRestParameter(signature)
-	if call.Arguments != nil {
-		for index, argument := range call.Arguments.Nodes {
-			parameterIndex := index
-			if len(parameters) != 0 && parameterIndex >= len(parameters) && rest {
-				parameterIndex = len(parameters) - 1
-			}
-			parameter := ""
-			if parameterIndex >= 0 && parameterIndex < len(parameters) {
-				parameter = owner.symbolKey(parameters[parameterIndex])
-			} // Arguments are returned in the supplied capture's AST identity.
-			capturedArgument := argument
-			if file.Source != owner.Identity.OwnedProgramFiles[file.Path] {
-				if node.AsCallExpression().Arguments == nil || index >= len(node.AsCallExpression().Arguments.Nodes) {
-					return observabledecision.NativeEffectCall{}
-				}
-				capturedArgument = node.AsCallExpression().Arguments.Nodes[index]
-			}
-			out.Bindings = append(out.Bindings, observabledecision.NativeEffectBinding{Argument: capturedArgument, Parameter: parameter, Rest: rest && parameterIndex == len(parameters)-1})
-		}
-	}
-	return out
+	return out, matched
 }
 func (owner *governanceRuntimeAuthority) EffectAuthority() observabledecision.NativeEffectAuthority {
 	return observabledecision.NativeEffectAuthority{MembershipComplete: owner.Identity.Complete, MembershipReads: []observabledecision.SemanticRead{{Kind: "compiler-owned-effect-membership", Fingerprint: owner.Identity.Project.capture.semanticTicket()}}, Symbol: owner.Symbol, Call: owner.Call, CandidateAdmitted: owner.CandidateAdmitted, DeleteAdmitted: func(file observabledecision.CapturedFile, node *ast.Node) (bool, bool) {
@@ -364,8 +383,8 @@ func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecisio
 	return out
 }
 func (owner *governanceRuntimeAuthority) DemandContext(limits observabledecision.Limits) observabledecision.DemandContext {
-	core := observabledecision.NewNativeEffectCore(owner.Files, owner.EffectAuthority())
-	context := observabledecision.DemandContext{Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets()}
+	core := observabledecision.NewCapturedNativeEffectCore(owner.Files, owner.EffectAuthority())
+	context := observabledecision.DemandContext{Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets(), CallShape: owner.DemandCallShapes()}
 	reader := observabledecision.NewNativeValueReader(context)
 	context.CompilerLibraryReceiver = func(path string, call *ast.Node) observabledecision.LibraryReceiverObservation {
 		file, ok := owner.ByPath[path]

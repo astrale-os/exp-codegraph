@@ -56,6 +56,9 @@ type EffectSummary struct {
 }
 type Limits struct{ MaximumDepth, MaximumSteps, MaximumAlternatives int }
 type DemandContext struct {
+	// CallShape observes target ownership and rest slots only. Parameter-symbol
+	// rows remain exclusively owned by the full effect Call authority.
+	CallShape                     func(path string, node *ast.Node) NativeEffectCall
 	CallTarget                    func(path string, node *ast.Node) NativeEffectCall
 	ReferenceAvailable            func(path string, node *ast.Node) (available, known bool)
 	GlobalValue                   func(path string, node *ast.Node) GlobalValueObservation
@@ -674,8 +677,12 @@ func (r *demandRun) eval(path string, n *ast.Node, env map[string]demandValue) d
 			}
 		}
 		var callTarget NativeEffectCall
-		if r.observer.context.CallTarget != nil {
-			callTarget = r.observer.context.CallTarget(path, n)
+		callObservation := r.observer.context.CallShape
+		if callObservation == nil {
+			callObservation = r.observer.context.CallTarget
+		}
+		if callObservation != nil {
+			callTarget = callObservation(path, n)
 			if !callTarget.Known {
 				r.migrationIncomplete = true
 				return demandUnknown("Captured call target authority is unavailable.")

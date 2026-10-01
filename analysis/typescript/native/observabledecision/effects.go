@@ -55,6 +55,8 @@ type effectCandidate struct {
 	kind             string
 }
 type NativeEffectCore struct {
+	immutableProofOwner        bool
+	proofCells                 map[nativeEffectProofKey]NativeEffectProof
 	authority                  NativeEffectAuthority
 	candidates                 []effectCandidate
 	sources                    map[string]CapturedFile
@@ -158,7 +160,7 @@ func (core *NativeEffectCore) call(file CapturedFile, node *ast.Node) NativeEffe
 	core.calls[node] = result
 	return result
 }
-func (core *NativeEffectCore) Proof(kind, symbol, localOwner string) NativeEffectProof {
+func (core *NativeEffectCore) computeProof(kind, symbol, localOwner string) NativeEffectProof {
 	result := NativeEffectProof{Known: true, Effect: "none", ChargeKey: kind + ":" + symbol + ":" + localOwner}
 	result.Reads = append(result.Reads, core.authority.MembershipReads...)
 	if !core.authority.MembershipComplete || core.invalidCapture || len(core.sources) == 0 {
