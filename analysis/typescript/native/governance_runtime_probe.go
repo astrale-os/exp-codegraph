@@ -120,6 +120,9 @@ func governanceRuntimeProbeDecisions(project *governedProject, results ...source
 // Resume semantic cells under the same private capture; ready public rule joins
 // are also retained. Only joins waiting on canonical leaves are recomputed.
 func (state *governanceProductsSession) resumeRuntimeProducts() map[string]any {
+	if len(state.RuntimeReady) == 3 {
+		return map[string]any{"decisions": []governanceOutcome{state.RuntimeReady["QRY-CANON"], state.RuntimeReady["QRY-SINGLE"], state.RuntimeReady["QLT-DEF-IDS"]}}
+	}
 	if state.RuntimeGraph == nil {
 		governanceSharedProject(state.Project)
 		identity := governanceBuildRuntimeIdentity(state.Project)

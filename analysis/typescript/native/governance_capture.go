@@ -243,70 +243,17 @@ func (c *governanceCapture) canonicalCertificate() string {
 // This proves replay equality of all observed operations, not a filesystem-wide
 // atomic transaction or immunity to an edit after the barrier has returned.
 func (c *governanceCapture) Verify() (bool, error) {
+	reads := &governanceBarrierReads{}
+	var replay *governanceTypeReplayWorld
+	if len(c.typeReceipts) > 0 {
+		replay = &governanceTypeReplayWorld{disk: reads.compilerDisk(c.compiler.disk), reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
+	}
 	for _, receipt := range c.typeReceipts {
-		if !receipt.verifyBarrier(c.compiler.disk) {
+		if !receipt.verifyBarrierWorld(replay) {
 			return false, nil
 		}
 	}
-	if c.probeInconsistent {
-		return false, nil
-	}
-	for key, before := range c.probeObservations {
-		if governanceProbeFingerprint(governanceObserveProbe(key)) != before {
-			return false, nil
-		}
-	}
-
-	for _, row := range c.observations {
-		var value string
-		var err error
-		switch row.Kind {
-		case "lstat":
-			value, err = governanceLstatValue(row.Path)
-		case "directory":
-			value, err = governanceDirectoryValue(row.Path)
-		case "read":
-			var bytes []byte
-			bytes, err = os.ReadFile(row.Path)
-			if os.IsNotExist(err) {
-				err = nil
-				value = "absent"
-			} else if err == nil {
-				value = "present:" + governanceHash(bytes)
-			}
-		case "read-error":
-			_, failure := os.ReadFile(row.Path)
-			if failure == nil {
-				value = "known"
-			} else {
-				value = stableJSON(governanceProbeFailure(failure))
-			}
-		case "realpath":
-			value, err = filepath.EvalSymlinks(row.Path)
-		}
-		if err != nil {
-			return false, nil
-		}
-		if value != row.Value {
-			return false, nil
-		}
-	}
-	if c.compiler != nil {
-		if c.compiler.inconsistent {
-			return false, nil
-		}
-		inputs := make([]compilerInputObservation, 0, len(c.compiler.observed))
-		for key, before := range c.compiler.observed {
-			inputs = append(inputs, compilerInputObservation{key: key, before: before})
-		}
-		after := c.compiler.observe(inputs)
-		for index, input := range inputs {
-			if after[index] != input.before {
-				return false, nil
-			}
-		}
-	}
-	return true, nil
+	return c.verifyCapturedOperations(reads), nil
 }
 
 type governanceConfigHost struct {

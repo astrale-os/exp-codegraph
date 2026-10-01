@@ -56,6 +56,9 @@ func governanceProbeFailure(err error) *governanceProbeError {
 	return &governanceProbeError{kind, code, err.Error()}
 }
 func governanceObserveProbe(key governanceProbeKey) governanceProbeObservation {
+	return governanceObserveProbeWithRead(key, os.ReadFile)
+}
+func governanceObserveProbeWithRead(key governanceProbeKey, read func(string) ([]byte, error)) governanceProbeObservation {
 	out := governanceProbeObservation{Status: "known"}
 	var err error
 	switch key.Kind {
@@ -86,7 +89,7 @@ func governanceObserveProbe(key governanceProbeKey) governanceProbeObservation {
 		}
 	case "read-bytes":
 		var bytes []byte
-		bytes, err = os.ReadFile(key.Path)
+		bytes, err = read(key.Path)
 		if err == nil {
 			if len(bytes) > 32*1024*1024 {
 				out.Status = "unsupported"

@@ -394,6 +394,9 @@ func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governa
 }
 func (receipt *governanceTypeReceipt) verifyBarrier(disk vfs.FS) bool {
 	world := &governanceTypeReplayWorld{disk: disk, reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
+	return receipt.verifyBarrierWorld(world)
+}
+func (receipt *governanceTypeReceipt) verifyBarrierWorld(world *governanceTypeReplayWorld) bool {
 	world.prepare(&governanceTypeReceipt{reads: receipt.barrierReads, observations: receipt.barrierObservations})
 	for path, before := range receipt.barrierReads {
 		if world.reads[path] != before {

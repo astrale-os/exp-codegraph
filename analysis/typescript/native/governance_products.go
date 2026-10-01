@@ -38,6 +38,10 @@ type governanceIntrinsicAnswer struct {
 	Groups   [][]int `json:"groups,omitempty"`
 }
 type governanceProductsSession struct {
+	LeafInputs       map[string]governanceIntrinsic
+	ReplayAnswers    map[string]governanceIntrinsicAnswer
+	ReplayExpected   *governanceCapture
+	NeutralLeaf      string
 	RuntimeGraph     *observabledecision.RuntimeDecisionGraph
 	RuntimeIdentity  *governanceRuntimeIdentity
 	RuntimeReady     map[string]governanceOutcome
@@ -68,6 +72,10 @@ func (session *governanceSession) discardProducts() {
 	session.policySuspension = nil
 }
 func (state *governanceProductsSession) require(value governanceIntrinsic) {
+	if state.LeafInputs == nil {
+		state.LeafInputs = map[string]governanceIntrinsic{}
+	}
+	state.LeafInputs[value.ID] = value
 	if state.ActiveFamily != "" {
 		if state.FamilyMissing == nil {
 			state.FamilyMissing = map[string]map[string]bool{}
@@ -89,6 +97,7 @@ func governanceIntrinsicID(kind string, value any) string {
 	return governanceHash(append([]byte(kind+":"), bytes...))
 }
 func (state *governanceProductsSession) installLeaves(neutral *string) {
+	state.NeutralLeaf = string(stableJSON(neutral))
 	project := governanceSharedProject(state.Project)
 	project.NeutralClassIconSVG = neutral
 	project.AcceptStepIDUnits = func(units []uint16) (bool, error) {
@@ -154,6 +163,7 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 		state.Contracts = params.ImplementationContracts
 		state.Answers = map[string]governanceIntrinsicAnswer{}
 		state.installLeaves(params.LeafAuthority.NeutralClassIconSVG)
+		session.proposeSealedDecisions(state)
 	case "intrinsics":
 		if state.Project == nil || state.Token != params.Token || state.ProductsDigest != "" {
 			return map[string]any{"status": "retry"}, nil
@@ -172,6 +182,7 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 				return nil, fmt.Errorf("unexpected canonical intrinsic answer")
 			}
 			seen[answer.ID] = true
+			session.observeSealedLeaf(state, answer)
 			if answer.Kind == "accept-step-id" && answer.Accepted == nil {
 				return nil, fmt.Errorf("missing canonical step-ID answer")
 			}
@@ -181,6 +192,7 @@ func (session *governanceSession) continueProducts(raw json.RawMessage) (any, er
 			state.Answers[answer.ID] = answer
 		}
 		state.Requirements = nil
+		state.ReplayAnswers = nil
 		for family, missing := range state.FamilyMissing {
 			for id := range missing {
 				if seen[id] {
@@ -435,7 +447,24 @@ func (session *governanceSession) sealProducts(token, productsDigest, reportDige
 		return nil, err
 	}
 	if !valid {
+		session.sealedDecisions = nil
 		return map[string]any{"status": "retry"}, nil
+	}
+	if state.ReplayExpected != nil {
+		valid, err = state.ReplayExpected.Verify()
+		if err != nil {
+			session.sealedDecisions = nil
+			return nil, err
+		}
+		if !valid {
+			session.sealedDecisions = nil
+			return map[string]any{"status": "retry"}, nil
+		}
+	}
+	// A replay keeps its complete old expected closure. A fresh evaluation
+	// replaces it only after its own capture has passed the original barrier.
+	if state.ReplayExpected == nil {
+		session.retainSealedDecisions(state)
 	}
 	result := map[string]any{"status": "committed", "token": token, "generation": state.Generation, "inputCertificate": state.InputCertificate, "productsDigest": productsDigest, "reportDigest": reportDigest}
 	var debug struct {

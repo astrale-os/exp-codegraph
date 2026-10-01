@@ -31,6 +31,9 @@ func governanceDigestValid(value string) bool {
 }
 func (state *governanceProductsSession) currentCertificate() string {
 	capture := state.Project.capture.certificate()
+	if state.ReplayExpected != nil {
+		capture = governanceHash([]byte(stableJSON([]string{capture, "expected-sealed-decisions", state.ReplayExpected.certificate()})))
+	}
 	if state.GenericEngine == nil {
 		return capture
 	}

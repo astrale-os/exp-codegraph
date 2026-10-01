@@ -82,6 +82,7 @@ type governancePhaseCounters struct {
 	CompilerPrograms           int                     `json:"compilerPrograms"`
 }
 type governanceSession struct {
+	sealedDecisions  *governanceSealedDecisions
 	typeDemandCache  governanceTypeDemandCache
 	productsSession  *governanceProductsSession
 	policySuspension *governancePolicySuspension
