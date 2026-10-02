@@ -371,8 +371,15 @@ func TestGovernanceBasicFamilyPreservesEveryRegisteredRuleDispatch(t *testing.T)
 						governanceWrite(t, root, layer+"/source.ts", `export const value=1;`)
 					}
 				}
+				if populated {
+					// Existing SDK source-rule regression inputs, rules.test.ts
+					// QRY-CANON and MUT-CANON: no invented typed authority.
+					governanceWrite(t, root, "queries/source.ts", "import { defineQuery } from '@astrale-os/sdk'\nexport const q = defineQuery<any>()(() => ({ id: 'q', build: () => ({ raw: true }) }))\n")
+					governanceWrite(t, root, "mutations/source.ts", "import { defineMutation } from '@astrale-os/sdk'\ndefineMutation<any>()(() => ({ id: 'm', build: () => ({ raw: true }) }))\n")
+				}
 				old, a := basicFamilyCapture(t, root)
 				new, b := basicFamilyCapture(t, root)
+				queryEvidence, mutationEvidence := false, false
 				order := append([]string{}, ids...)
 				if reverse {
 					slices.Reverse(order)
@@ -380,6 +387,12 @@ func TestGovernanceBasicFamilyPreservesEveryRegisteredRuleDispatch(t *testing.T)
 				for _, rule := range order {
 					want, wantKnown := governanceEvaluateOriginal(old, rule)
 					got, gotKnown := governanceEvaluate(new, rule)
+					if rule == "QRY-CANON" {
+						queryEvidence = len(want.Findings) > 0 || want.Status == "residual"
+					}
+					if rule == "MUT-CANON" {
+						mutationEvidence = len(want.Findings) > 0 || want.Status == "residual"
+					}
 					if wantKnown != gotKnown || !reflect.DeepEqual(want, got) {
 						t.Fatalf("original registered dispatcher differs for %s: %#v / %#v", rule, want, got)
 					}
@@ -396,6 +409,9 @@ func TestGovernanceBasicFamilyPreservesEveryRegisteredRuleDispatch(t *testing.T)
 							}
 						}
 					}
+				}
+				if populated && (!queryEvidence || !mutationEvidence) {
+					t.Fatal("original query/mutation semantic fixtures did not produce evidence")
 				}
 				if _, present := new.familyProducts["queries"]; !present {
 					t.Fatal("registered query family intercepted")
