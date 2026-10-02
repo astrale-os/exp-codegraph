@@ -806,7 +806,3 @@ func nodeText(file *shimast.SourceFile, node *shimast.Node) string {
 	}
 	return strings.TrimSpace(text[start:end])
 }
-
-func extractionError(format string, arguments ...any) error {
-	return fmt.Errorf("native TypeScript extraction: "+format, arguments...)
-}

@@ -3,7 +3,6 @@ package main
 import (
 	"astrale-typespec-v2-native-analysis/authoredsource"
 	"encoding/json"
-	ast "github.com/microsoft/typescript-go/shim/ast"
 )
 
 type governanceAuthoredDescriptor struct {
@@ -66,10 +65,4 @@ func governanceProbeAuthoring(project *governedProject, options json.RawMessage)
 		}
 	}
 	return out
-}
-
-// This helper exposes the source-authority predicate to family adapters. Runtime
-// intrinsic provenance remains a different observation with different premises.
-func governanceImportedSymbol(file *governedFile, expression *ast.Node) (authoredsource.Origin, bool) {
-	return file.authoring().ImportedSymbol(expression)
 }

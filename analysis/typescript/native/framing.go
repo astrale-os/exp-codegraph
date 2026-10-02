@@ -56,21 +56,6 @@ func writeTransactionResponse(
 	)
 }
 
-func writeDeltaResponse(
-	output io.Writer,
-	id int,
-	delta *factDelta,
-	maximumFrameBytes int,
-	transactionChunkFrameBytes int,
-	maximumTransactionBytes int,
-	telemetry *nativeTelemetry,
-) error {
-	return writePayloadResponse(
-		output, id, "delta", delta,
-		maximumFrameBytes, transactionChunkFrameBytes, maximumTransactionBytes, telemetry,
-	)
-}
-
 func writePayloadResponse(
 	output io.Writer,
 	id int,
