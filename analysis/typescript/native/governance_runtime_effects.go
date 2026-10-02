@@ -361,6 +361,13 @@ func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecisio
 // The reducer and its ordering are shared with the original-member reader in
 // regression tests; the callback decides only the same negative origin fact.
 func (owner *governanceRuntimeAuthority) scopedEffectsWithMemberOrigin(request observabledecision.EffectRequest, cannotSelf func(*ast.Node, string) bool) observabledecision.EffectSummary {
+	return owner.scopedEffectsWithReaders(request, cannotSelf, buildControlFlowCompletion)
+}
+
+// The private regression seam pairs the former materializer with the existing
+// completion producer. Both retain the exact preceding ownership, self checks
+// and later reducer; no persistent strategy or compiler state is introduced.
+func (owner *governanceRuntimeAuthority) scopedEffectsWithReaders(request observabledecision.EffectRequest, cannotSelf func(*ast.Node, string) bool, completion func(*ast.SourceFile, *ast.Node) completeness) observabledecision.EffectSummary {
 	file, exists := owner.ByPath[request.Path]
 	if !exists {
 		return observabledecision.EffectSummary{Reason: "captured scoped owner unavailable"}
@@ -433,17 +440,11 @@ func (owner *governanceRuntimeAuthority) scopedEffectsWithMemberOrigin(request o
 			return out
 		}
 	}
-	// This is one demanded legacy CFG proof, not generic whole-body IR. Private
-	// anchors let the original CFG owner calculate completeness without values,
-	// symbols, resolved-call rows, definition-use indexes or published body facts.
-	builder := &bodyBuilder{file: file.Source, body: node.Body(), occurrence: map[*ast.Node]string{}, occurrenceIndex: map[string]int{}}
-	walk(node.Body(), func(child *ast.Node) bool {
-		builder.occurrence[child] = governanceRuntimeNodeKey(file.Source, child)
-		return true
-	})
-	flow := buildControlFlow(builder)
-	if flow.completion.Kind != "complete" {
-		for _, raw := range flow.completion.Reasons {
+	// Completion is the only demanded CFG product. This is the same original
+	// traversal used by Calls; graph blocks, edges and occurrences are not read.
+	flow := completion(file.Source, node.Body())
+	if flow.Kind != "complete" {
+		for _, raw := range flow.Reasons {
 			reason, ok := raw.(map[string]any)
 			if !ok || reason["code"] != "CFG_EXPRESSION_BRANCH_PARTIAL" {
 				out.Reason = "VALUE_CONTROL_FLOW_INCOMPLETE"
