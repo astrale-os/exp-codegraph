@@ -151,10 +151,12 @@ func (a *analyzer) detachDemandForApply(changed []string, requestID int) *demand
 }
 
 func (reuse *demandSourceReuse) closure(next *compilerReferenceSnapshot, changed []string) []string {
-	reverse := map[string][]string{}
+	projectionReverse := map[string][]string{}
 	for _, graph := range []*compilerReferenceSnapshot{reuse.references, next} {
-		for target, owners := range graph.reverse {
-			reverse[target] = append(reverse[target], owners...)
+		for target := range graph.reverse {
+			if _, exists := projectionReverse[target]; !exists {
+				projectionReverse[target] = nil
+			}
 		}
 		for augmenter, capture := range graph.augmentations {
 			if !capture.complete {
@@ -164,30 +166,30 @@ func (reuse *demandSourceReuse) closure(next *compilerReferenceSnapshot, changed
 			// module, including users which import that owner directly. Keep
 			// the old AND new contributions, not only the package entry file.
 			for _, owner := range capture.owners {
-				reverse[augmenter] = append(reverse[augmenter], owner)
-				reverse[owner] = append(reverse[owner], augmenter)
+				projectionReverse[augmenter] = append(projectionReverse[augmenter], owner)
+				projectionReverse[owner] = append(projectionReverse[owner], augmenter)
 			}
 		}
 	}
 	for physical, retained := range reuse.sources {
 		for _, dependency := range retained.rows.dependencies {
-			reverse[dependency] = append(reverse[dependency], physical)
+			projectionReverse[dependency] = append(projectionReverse[dependency], physical)
 		}
 		for _, read := range retained.rows.thinReads {
 			for _, dependency := range read.dependencies {
-				reverse[dependency] = append(reverse[dependency], physical)
+				projectionReverse[dependency] = append(projectionReverse[dependency], physical)
 			}
 		}
 		for _, reads := range retained.bodyReads {
 			for _, read := range reads {
 				for _, dependency := range read.dependencies {
-					reverse[dependency] = append(reverse[dependency], physical)
+					projectionReverse[dependency] = append(projectionReverse[dependency], physical)
 				}
 			}
 		}
 		for _, dependencies := range retained.bodyDependencies {
 			for _, dependency := range dependencies {
-				reverse[dependency] = append(reverse[dependency], physical)
+				projectionReverse[dependency] = append(projectionReverse[dependency], physical)
 			}
 		}
 		// Symbol facts belong to the first declaration source. A contributing
@@ -197,14 +199,14 @@ func (reuse *demandSourceReuse) closure(next *compilerReferenceSnapshot, changed
 				for _, entry := range shard.Facts {
 					for _, span := range entry.Provenance.Evidence {
 						if rows, exists := reuse.snapshot.sources[span.Source]; exists {
-							reverse[rows.record.Physical] = append(reverse[rows.record.Physical], physical)
+							projectionReverse[rows.record.Physical] = append(projectionReverse[rows.record.Physical], physical)
 						}
 					}
 				}
 			}
 		}
 	}
-	for target := range reverse {
+	for target := range projectionReverse {
 		if !reuse.references.files[target] {
 			reuse.selected = nil
 			reuse.fallbackReason = "unmapped-projection-dependency:" + target
@@ -220,7 +222,9 @@ func (reuse *demandSourceReuse) closure(next *compilerReferenceSnapshot, changed
 			continue
 		}
 		seen[path] = true
-		queue = append(queue, reverse[path]...)
+		queue = append(queue, projectionReverse[path]...)
+		queue = append(queue, reuse.references.reverse[path]...)
+		queue = append(queue, next.reverse[path]...)
 	}
 	selected := []string{}
 	reuse.selected = map[string]bool{}
