@@ -139,8 +139,9 @@ type demandValue struct {
 	incomplete         bool
 }
 type demandObserver struct {
-	context DemandContext
-	modules map[string]*demandModule
+	context    DemandContext
+	modules    map[string]*demandModule
+	structures map[*ast.Node]*demandFunctionStructure
 }
 type demandRun struct {
 	migrationIncomplete bool
@@ -168,7 +169,7 @@ func normalizedLimits(l Limits) Limits {
 	return l
 }
 func newDemandObserver(context DemandContext) *demandObserver {
-	o := &demandObserver{context: context, modules: map[string]*demandModule{}}
+	o := &demandObserver{context: context, modules: map[string]*demandModule{}, structures: map[*ast.Node]*demandFunctionStructure{}}
 	for _, f := range context.Files {
 		if previous, duplicate := o.modules[f.Path]; duplicate {
 			previous.reason = "duplicate captured path"
@@ -839,7 +840,7 @@ func (r *demandRun) invoke(v demandValue, args []demandValue) demandValue {
 	if body.Kind != ast.KindBlock {
 		return r.evalAt(v.module, body, env, r.depth+1)
 	}
-	flow := inspectDemandFlow(v.node)
+	flow := r.observer.functionFlow(v.module, v.node)
 	if !flow.complete {
 		return demandUnknown("VALUE_CONTROL_FLOW_INCOMPLETE")
 	}

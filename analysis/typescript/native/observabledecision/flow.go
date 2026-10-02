@@ -236,8 +236,7 @@ func (r *demandRun) localIdentifier(path string, node *ast.Node, env map[string]
 	if function == nil {
 		return demandValue{}, false
 	}
-	flow := inspectDemandFlow(function)
-	binding := selectedLocalBinding(function, node, flow)
+	binding := r.observer.localStructure(path, function, node)
 	if !binding.found {
 		return demandValue{}, false
 	}
