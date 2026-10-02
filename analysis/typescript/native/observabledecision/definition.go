@@ -83,6 +83,7 @@ func observeDefinitionIDs(context DemandContext, observer *demandObserver) Defin
 	} else if supplied {
 		product.Residual = append(product.Residual, demandOutcomeUnknown("Authored definition subject authority is unavailable."))
 	}
+	reader := &NativeValueReader{observer: observer}
 	for _, site := range inventory.Sites {
 		DiagnosticSubject = fmt.Sprintf("definition-discovery:%s:%d:%d", site.Path, site.Start, site.End)
 		module := observer.modules[site.Path]
@@ -122,7 +123,7 @@ func observeDefinitionIDs(context DemandContext, observer *demandObserver) Defin
 			kind, _, _ := discovery.projected(callee)
 			if (selected != nil && kind != "known") || discovery.exhausted != "" {
 				if context.CompilerLibraryReceiver != nil {
-					library := context.CompilerLibraryReceiver(site.Path, site.Node)
+					library := context.CompilerLibraryReceiver(site.Path, site.Node, reader)
 					discovery.reads = append(discovery.reads, library.Reads...)
 					if !library.Known {
 						product.Residual = append(product.Residual, demandOutcomeUnknown("Runtime compiler-library receiver authority is unavailable."))

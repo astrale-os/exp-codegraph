@@ -66,7 +66,7 @@ type DemandContext struct {
 	GlobalValue                   func(path string, node *ast.Node) GlobalValueObservation
 	ExpressionAdmitted            func(path string, node *ast.Node) (admitted, known bool)
 	DefinitionSubjects            func(paths []string) NativeDefinitionSubjects
-	CompilerLibraryReceiver       func(path string, call *ast.Node) LibraryReceiverObservation
+	CompilerLibraryReceiver       func(path string, call *ast.Node, reader *NativeValueReader) LibraryReceiverObservation
 	Calls                         func(paths []string) NativeCallInventory
 	Model                         string
 	ExperimentalPrimitiveAddition bool

@@ -241,7 +241,7 @@ JSON.parse('{}');
 	// A builtin declaration path alone must never mint a known external value.
 	// The same bounded runtime reader supplies the receiver proof; migration gaps
 	// stay explicit rather than being converted to an invented library identity.
-	receiver := context.CompilerLibraryReceiver(file.Path, jsonCall)
+	receiver := context.CompilerLibraryReceiver(file.Path, jsonCall, observabledecision.NewNativeValueReader(context))
 	if receiver.Library {
 		t.Fatal("builtin declaration alone became runtime library identity")
 	}

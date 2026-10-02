@@ -461,8 +461,7 @@ func (owner *governanceRuntimeAuthority) scopedEffectsWithReaders(request observ
 func (owner *governanceRuntimeAuthority) DemandContext(limits observabledecision.Limits) observabledecision.DemandContext {
 	core := observabledecision.NewCapturedNativeEffectCore(owner.Files, owner.EffectAuthority())
 	context := observabledecision.DemandContext{ConstructorDiscovery: owner.constructorDiscovery(core), Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets(), CallShape: owner.DemandCallShapes()}
-	reader := observabledecision.NewNativeValueReader(context)
-	context.CompilerLibraryReceiver = func(path string, call *ast.Node) observabledecision.LibraryReceiverObservation {
+	context.CompilerLibraryReceiver = func(path string, call *ast.Node, reader *observabledecision.NativeValueReader) observabledecision.LibraryReceiverObservation {
 		file, ok := owner.ByPath[path]
 		if !ok {
 			return observabledecision.LibraryReceiverObservation{}
