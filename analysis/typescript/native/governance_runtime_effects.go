@@ -355,6 +355,12 @@ func (owner *governanceRuntimeAuthority) EffectAuthority() observabledecision.Na
 // properties remain lazy; invocation demands only owned unique body/header,
 // execution, recursion and CFG completeness for the selected function.
 func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecision.EffectRequest) observabledecision.EffectSummary {
+	return owner.scopedEffectsWithMemberOrigin(request, owner.externalFactoryMemberCannotSelf)
+}
+
+// The reducer and its ordering are shared with the original-member reader in
+// regression tests; the callback decides only the same negative origin fact.
+func (owner *governanceRuntimeAuthority) scopedEffectsWithMemberOrigin(request observabledecision.EffectRequest, cannotSelf func(*ast.Node, string) bool) observabledecision.EffectSummary {
 	file, exists := owner.ByPath[request.Path]
 	if !exists {
 		return observabledecision.EffectSummary{Reason: "captured scoped owner unavailable"}
@@ -398,7 +404,7 @@ func (owner *governanceRuntimeAuthority) ScopedEffects(request observabledecisio
 	x := &extractor{checker: check}
 	for _, callNode := range thin.calls {
 		expression := callNode.AsCallExpression().Expression
-		if owner.externalFactoryMemberCannotSelf(expression, key) {
+		if cannotSelf(expression, key) {
 			observabledecision.DiagnosticEvent("scoped-self-provenance-negative", request.Path, callNode, nil)
 			continue
 		}

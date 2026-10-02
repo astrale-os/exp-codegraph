@@ -7,7 +7,7 @@ import (
 
 // Exploratory consumer projection: only direct external interface return heads.
 // It does not certify a Call product or change the general value/effect reader.
-func (owner *governanceRuntimeAuthority) externalFactoryMemberCannotSelf(expression *ast.Node, self string) bool {
+func (owner *governanceRuntimeAuthority) externalFactoryMemberCannotSelfOriginal(expression *ast.Node, self string) bool {
 	if self == "" || expression == nil || expression.Kind != ast.KindPropertyAccessExpression || expression.Name() == nil || expression.Name().Kind != ast.KindIdentifier {
 		return false
 	}
