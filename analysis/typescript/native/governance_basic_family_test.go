@@ -3,9 +3,11 @@ package main
 import (
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	"encoding/json"
+	"fmt"
 	vfs "github.com/microsoft/typescript-go/shim/vfs"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -289,7 +291,7 @@ func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *te
 			implementation = "astrale.sdk.codegraph"
 		}
 		state.Contracts = append(state.Contracts, governanceImplementationContract{RuleID: rule, RuleRevision: governanceRevisions[rule], Implementation: governanceImplementation{implementation, "1"}})
-		if _, basic := sourcepolicy.Revisions[rule]; !basic {
+		if !slices.Contains(basicFamilyRules, rule) {
 			project.Disabled[rule] = "fixture"
 		}
 	}
@@ -345,5 +347,71 @@ func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *te
 	}
 	if state.Generation != "1" {
 		t.Fatal("resume changed current capture generation")
+	}
+}
+
+func TestGovernanceBasicFamilyPreservesEveryRegisteredRuleDispatch(t *testing.T) {
+	// Revisions is deliberately NOT a basic-only catalog: query_mutation.init
+	// adds entries. This test runs the actual original dispatcher rather than
+	// deriving expected rule routing from the candidate's catalog tests.
+	if _, present := sourcepolicy.Revisions["QRY-CANON"]; !present {
+		t.Fatal("missing actual merged revision registration")
+	}
+	ids := []string{}
+	for rule := range governanceRevisions {
+		ids = append(ids, rule)
+	}
+	sort.Strings(ids)
+	for _, populated := range []bool{false, true} {
+		for _, reverse := range []bool{false, true} {
+			t.Run(fmt.Sprintf("populated=%v/reverse=%v", populated, reverse), func(t *testing.T) {
+				root := t.TempDir()
+				if populated {
+					for _, layer := range []string{"schema", "mutations", "rules", "integrations", "ui", "utils", "providers", "queries", "functions", "migrations"} {
+						governanceWrite(t, root, layer+"/source.ts", `export const value=1;`)
+					}
+				}
+				old, a := basicFamilyCapture(t, root)
+				new, b := basicFamilyCapture(t, root)
+				order := append([]string{}, ids...)
+				if reverse {
+					slices.Reverse(order)
+				}
+				for _, rule := range order {
+					want, wantKnown := governanceEvaluateOriginal(old, rule)
+					got, gotKnown := governanceEvaluate(new, rule)
+					if wantKnown != gotKnown || !reflect.DeepEqual(want, got) {
+						t.Fatalf("original registered dispatcher differs for %s: %#v / %#v", rule, want, got)
+					}
+					basicFamilySamePrefix(t, old, new, a, b)
+					for group := range old.familyProducts {
+						if _, present := new.familyProducts[group]; !present {
+							t.Fatalf("original family %s lost after %s", group, rule)
+						}
+					}
+					for group := range new.familyProducts {
+						if group != "basic" {
+							if _, present := old.familyProducts[group]; !present {
+								t.Fatalf("family %s admitted before its original dispatcher after %s", group, rule)
+							}
+						}
+					}
+				}
+				if _, present := new.familyProducts["queries"]; !present {
+					t.Fatal("registered query family intercepted")
+				}
+				if _, present := new.familyProducts["mutations"]; !present {
+					t.Fatal("registered mutation family intercepted")
+				}
+				if new.stats.FamilyEvaluations != old.stats.FamilyEvaluations+1 {
+					t.Fatalf("expected only added basic product count, original=%d new=%d", old.stats.FamilyEvaluations, new.stats.FamilyEvaluations)
+				}
+				for _, project := range []*governedProject{old, new} {
+					if same, err := project.capture.Verify(); err != nil || !same {
+						t.Fatalf("registered-dispatch final seal=%v %v", same, err)
+					}
+				}
+			})
+		}
 	}
 }

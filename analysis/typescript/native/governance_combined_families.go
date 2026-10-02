@@ -14,23 +14,7 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 	group := ""
 	scope := ""
 	var evaluate func(*sourcepolicy.Project) sourcepolicy.Result
-	if _, ok := sourcepolicy.Revisions[rule]; ok {
-		group = "basic"
-		switch rule {
-		case "RUL-SYNC", "RUL-PURE":
-			scope = "rules"
-		case "INT-PURE":
-			scope = "integrations"
-		case "UI-NO-DOMAIN":
-			scope = "ui"
-		case "UTL-PUBLIC-DEPS":
-			scope = "utils"
-		}
-		evaluate = func(shared *sourcepolicy.Project) sourcepolicy.Result {
-			return sourcepolicy.Evaluate(shared.Files, sourcepolicy.Authority{Resolve: shared.Resolve,
-				LocallyBound: func(identifier *ast.Node) bool { return governanceLocallyOwned(identifier, true) }})
-		}
-	} else if _, ok := sourcepolicy.SchemaRevisions[rule]; ok {
+	if _, ok := sourcepolicy.SchemaRevisions[rule]; ok {
 		group = "schema"
 		scope = "schema"
 		evaluate = sourcepolicy.EvaluateSchema
@@ -74,6 +58,27 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 			group = "views"
 			scope = "ui"
 			evaluate = sourcepolicy.EvaluateViews
+		}
+	}
+	// Revisions also contains registered query/mutation rules. Preserve the
+	// original combined-family priority before the old basic fallback.
+	if evaluate == nil {
+		if _, ok := sourcepolicy.Revisions[rule]; ok {
+			group = "basic"
+			switch rule {
+			case "RUL-SYNC", "RUL-PURE":
+				scope = "rules"
+			case "INT-PURE":
+				scope = "integrations"
+			case "UI-NO-DOMAIN":
+				scope = "ui"
+			case "UTL-PUBLIC-DEPS":
+				scope = "utils"
+			}
+			evaluate = func(shared *sourcepolicy.Project) sourcepolicy.Result {
+				return sourcepolicy.Evaluate(shared.Files, sourcepolicy.Authority{Resolve: shared.Resolve,
+					LocallyBound: func(identifier *ast.Node) bool { return governanceLocallyOwned(identifier, true) }})
+			}
 		}
 	}
 	if evaluate == nil {
