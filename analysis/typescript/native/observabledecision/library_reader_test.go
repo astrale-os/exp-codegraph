@@ -11,11 +11,16 @@ import (
 // Resolver/effect premises are fixtureContext's explicit scalar authorities;
 // this checks the reader handoff, not compiler-library origin production.
 func TestLibraryReceiverBorrowsCaptureWithoutSharingProofAllowances(t *testing.T) {
-	for _, fixture := range []struct{ name, binding string }{
-		{"library", `import {library} from 'fixture-library';`},
-		{"shadow", `const library={};`},
-		{"missing", ``},
-		{"nested-unknown", `const library=(()=>unknown)();`},
+	for _, fixture := range []struct {
+		name, binding string
+		proofs, failures int
+	}{
+		{"library", `import {library} from 'fixture-library';`, 2, 0},
+		// A closed missing property is known undefined: discovery must not ask
+		// for library authority or turn this original negative into a failure.
+		{"shadow", `const library={};`, 0, 0},
+		{"missing", ``, 2, 2},
+		{"nested-unknown", `const library=(()=>unknown)();`, 2, 2},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			text := fixture.binding + `const alias=library;alias.parse({id:'one'});alias.parse({id:'two'});`
@@ -86,11 +91,11 @@ func TestLibraryReceiverBorrowsCaptureWithoutSharingProofAllowances(t *testing.T
 					return LibraryReceiverObservation{Known: !proof.Outcome.MigrationIncomplete, Library: library, Reads: proof.Outcome.Reads}
 				}
 				products[mode] = NewRuntimeDecisionGraph(context).Resume()
-				if len(proofs[mode]) != 2 || !reflect.DeepEqual(proofs[mode][0], proofs[mode][1]) {
+				if len(proofs[mode]) != fixture.proofs || (len(proofs[mode]) == 2 && !reflect.DeepEqual(proofs[mode][0], proofs[mode][1])) {
 					t.Fatal("receiver proofs were omitted or inherited earlier consumption", proofs[mode])
 				}
 				failures := len(products[mode].Definitions.DiscoveryFailures)
-				if (fixture.name == "library" && failures != 0) || (fixture.name != "library" && failures != 2) {
+				if failures != fixture.failures {
 					t.Fatal("library/shadow distinction lost", products[mode])
 				}
 			}
