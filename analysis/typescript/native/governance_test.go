@@ -218,6 +218,7 @@ func TestGovernanceResidentCaptureReusesOnlyIdenticalAuthoredBytes(t *testing.T)
 	if first.stats.Parses != 2 {
 		t.Fatalf("cold parses %+v", first.stats)
 	}
+	cache = first.FilesByPath
 	governanceWrite(t, root, "mutations/a.ts", `const a=2;`)
 	second, err := captureGovernedProjectCached(root, governanceTestPolicy(), cache)
 	if err != nil {

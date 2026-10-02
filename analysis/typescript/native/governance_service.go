@@ -121,13 +121,11 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 	if root == "" {
 		root = session.root
 	}
-	if session.parseCache == nil {
-		session.parseCache = map[string]*governedFile{}
-	}
 	project, err := captureGovernedProjectCached(root, *params.PolicySource, session.parseCache)
 	if err != nil {
 		return nil, product, err
 	}
+	session.parseCache = project.FilesByPath
 	project.typeDemandCache = session.typeDemandOwner()
 	// Developer-only finite source oracle: supplied answers are the canonical
 	// SDK leaf observations, never compiler type cells or runtime authored code.

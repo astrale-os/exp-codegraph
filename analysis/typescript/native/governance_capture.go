@@ -598,7 +598,7 @@ func captureGovernedProjectAuthority(requestedRoot string, policy governancePoli
 		}
 		project.stats.SourceReads++
 		project.stats.SourceBytes += len(bytes)
-		if previous := cache[absolute]; previous != nil && previous.Text == file.Text {
+		if previous := cache[logical]; previous != nil && previous.AbsolutePath == absolute && previous.Text == file.Text {
 			file.Source = previous.Source
 			file.coordinates = previous.coordinates
 			file.authored = previous.authored
@@ -610,9 +610,6 @@ func captureGovernedProjectAuthority(requestedRoot string, policy governancePoli
 			file.coordinates = indexSourceCoordinates(file.Text)
 			project.stats.phase("governed-parse", parseStarted)
 			project.stats.Parses++
-		}
-		if cache != nil {
-			cache[absolute] = file
 		}
 		file.Imports = governanceCollectImports(file.Source, project.verbatim)
 		for _, diagnostic := range file.Source.Diagnostics() {

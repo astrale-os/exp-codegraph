@@ -140,13 +140,11 @@ func (session *governanceSession) continuePolicy(token string, authority governa
 		return nil, fmt.Errorf("unknown or consumed policy capture token")
 	}
 	session.policySuspension = nil
-	if session.parseCache == nil {
-		session.parseCache = map[string]*governedFile{}
-	}
 	project, err := captureGovernedProjectAuthority(suspension.Root, authority.Source, session.parseCache, suspension.Capture, &authority)
 	if err != nil {
 		return nil, err
 	}
+	session.parseCache = project.FilesByPath
 	project.typeDemandCache = session.typeDemandOwner()
 	project.programGeneration = session.programGeneration
 	project.policyDigest = authority.Digest
