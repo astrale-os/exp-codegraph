@@ -456,4 +456,9 @@ func (core *NativeEffectCore) indexCanonicalCandidates() {
 		}
 		core.canonicalCandidates[root.Key] = append(core.canonicalCandidates[root.Key], candidate)
 	}
+	// Only the immutable owner transfers storage; exploratory authorities retain
+	// their original scan pool if a later demand supplies a Match callback.
+	if core.immutableProofOwner && core.authority.Match == nil {
+		core.candidates = nil
+	}
 }

@@ -77,12 +77,21 @@ func TestNativeEffectsCaptureAndNegativeAuthorityAreRequired(t *testing.T) {
 	if core.Proof("mutation", "object", "").Known {
 		t.Fatal("unresolved potential alias cannot be ignored")
 	}
+	matches := 0
 	core.authority.Match = func(_ CapturedFile, node *ast.Node, symbol string) (bool, bool, []SemanticRead) {
+		matches++
 		return node.Text() == symbol, true, []SemanticRead{{Kind: "binding-comparison", Name: node.Text(), Fingerprint: symbol}}
 	}
 	proof := core.Proof("mutation", "object", "")
 	if !proof.Known || proof.Effect != "none" {
 		t.Fatalf("certified negative comparison: %+v", proof)
+	}
+	comparisonRead := false
+	for _, read := range proof.Reads {
+		comparisonRead = comparisonRead || read.Kind == "binding-comparison" && read.Name == "unrelated" && read.Fingerprint == "object"
+	}
+	if matches == 0 || !comparisonRead {
+		t.Fatal("later Match authority lost original callbacks/negative reads", matches, proof)
 	}
 	damaged := *file
 	damaged.Text += " "
