@@ -12,7 +12,7 @@ import (
 // this checks the reader handoff, not compiler-library origin production.
 func TestLibraryReceiverBorrowsCaptureWithoutSharingProofAllowances(t *testing.T) {
 	for _, fixture := range []struct {
-		name, binding string
+		name, binding    string
 		proofs, failures int
 	}{
 		{"library", `import {library} from 'fixture-library';`, 2, 0},
