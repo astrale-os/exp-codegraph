@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	core "github.com/microsoft/typescript-go/shim/core"
@@ -139,9 +140,10 @@ type demandValue struct {
 	incomplete         bool
 }
 type demandObserver struct {
-	context    DemandContext
-	modules    map[string]*demandModule
-	structures map[*ast.Node]*demandFunctionStructure
+	context      DemandContext
+	modules      map[string]*demandModule
+	structuresMu sync.RWMutex
+	structures   map[*ast.Node]*demandFunctionStructure
 }
 type demandRun struct {
 	migrationIncomplete bool

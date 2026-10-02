@@ -3,13 +3,16 @@ package observabledecision
 import (
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	"sort"
+	"sync"
 )
 
 // Only captured syntactic facts are retained. Values, environments, reads,
 // effects and evaluation allowances belong to each fresh demandRun.
 type demandFunctionStructure struct {
-	flow    demandFlow
-	lexical *demandLexicalIndex
+	flowOnce    sync.Once
+	flow        demandFlow
+	lexicalOnce sync.Once
+	lexical     *demandLexicalIndex
 }
 
 type demandLexicalIndex struct {
@@ -33,14 +36,28 @@ func (o *demandObserver) ownsFunctionStructure(path string, function *ast.Node) 
 }
 
 func (o *demandObserver) functionStructure(path string, function *ast.Node) *demandFunctionStructure {
-	if o.structures == nil || !o.ownsFunctionStructure(path, function) {
+	if !o.ownsFunctionStructure(path, function) {
 		return nil
 	}
-	if structure := o.structures[function]; structure != nil {
-		return structure
+	o.structuresMu.RLock()
+	enabled := o.structures != nil
+	structure := o.structures[function]
+	o.structuresMu.RUnlock()
+	if !enabled {
+		return nil
 	}
-	structure := &demandFunctionStructure{flow: inspectDemandFlow(function)}
-	o.structures[function] = structure
+	if structure == nil {
+		o.structuresMu.Lock()
+		structure = o.structures[function]
+		if structure == nil {
+			structure = &demandFunctionStructure{}
+			o.structures[function] = structure
+		}
+		o.structuresMu.Unlock()
+	}
+	// Only initialization waits. No semantic evaluation or callback runs under
+	// the map lock or either Once, and different functions initialize separately.
+	structure.flowOnce.Do(func() { structure.flow = inspectDemandFlow(function) })
 	return structure
 }
 
@@ -58,9 +75,7 @@ func (o *demandObserver) localStructure(path string, function, identifier *ast.N
 	if structure == nil || !o.ownsFunctionStructure(path, identifier) || effectFunctionOwner(identifier) != function {
 		return selectedLocalBinding(function, identifier, inspectDemandFlow(function))
 	}
-	if structure.lexical == nil {
-		structure.lexical = newDemandLexicalIndex(function)
-	}
+	structure.lexicalOnce.Do(func() { structure.lexical = newDemandLexicalIndex(function) })
 	return structure.lexical.selectBinding(function, identifier, structure.flow.linear)
 }
 
