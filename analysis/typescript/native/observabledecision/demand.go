@@ -549,7 +549,7 @@ func (r *demandRun) eval(path string, n *ast.Node, env map[string]demandValue) d
 							return demandUnknown("Captured global initializer AST ownership is unavailable.")
 						}
 						if global.Target.Kind == ast.KindFunctionDeclaration {
-							return demandValue{kind: "function", node: global.Target, module: global.TargetPath, env: captureDemandEnvironment(global.TargetPath, global.Target, env)}
+							return demandValue{kind: "function", node: global.Target, module: global.TargetPath, env: r.observer.captureDemandEnvironment(global.TargetPath, global.Target, env)}
 						}
 						return r.evalAt(global.TargetPath, global.Target, env, r.depth+1)
 					}
@@ -626,7 +626,7 @@ func (r *demandRun) eval(path string, n *ast.Node, env map[string]demandValue) d
 		}
 		return r.alternatives([]demandValue{r.eval(path, conditional.WhenTrue, env), r.eval(path, conditional.WhenFalse, env)})
 	case ast.KindArrowFunction, ast.KindFunctionExpression, ast.KindFunctionDeclaration, ast.KindMethodDeclaration:
-		return demandValue{kind: "function", node: n, module: path, env: captureDemandEnvironment(path, n, env)}
+		return demandValue{kind: "function", node: n, module: path, env: r.observer.captureDemandEnvironment(path, n, env)}
 	case ast.KindArrayLiteralExpression:
 		return demandValue{kind: "object", object: map[string]*ast.Node{}, properties: map[string]demandValue{}, module: path, node: n, env: env, incomplete: true}
 	case ast.KindObjectLiteralExpression:
@@ -731,7 +731,7 @@ func (r *demandRun) eval(path string, n *ast.Node, env map[string]demandValue) d
 		}
 		if callee.kind != "function" && callee.kind != "alternatives" && callTarget.Known && !callTarget.Dynamic {
 			if callTarget.Target != nil && callTarget.BodyPresent {
-				callee = demandValue{kind: "function", node: callTarget.Target, module: callTarget.TargetPath, env: captureDemandEnvironment(callTarget.TargetPath, callTarget.Target, env)}
+				callee = demandValue{kind: "function", node: callTarget.Target, module: callTarget.TargetPath, env: r.observer.captureDemandEnvironment(callTarget.TargetPath, callTarget.Target, env)}
 			} else if callTarget.CallableOwner {
 				callee = demandValue{kind: "unknown", reason: "VALUE_BODY_NOT_SELECTED", text: "The local callable body is outside the materialized selection."}
 			} else {

@@ -13,6 +13,8 @@ type demandFunctionStructure struct {
 	flow        demandFlow
 	lexicalOnce sync.Once
 	lexical     *demandLexicalIndex
+	captureOnce sync.Once
+	capture     *demandCaptureIndex
 }
 
 type demandLexicalIndex struct {
@@ -35,7 +37,7 @@ func (o *demandObserver) ownsFunctionStructure(path string, function *ast.Node) 
 		module.file.Source != nil && ast.GetSourceFileOfNode(function) == module.file.Source
 }
 
-func (o *demandObserver) functionStructure(path string, function *ast.Node) *demandFunctionStructure {
+func (o *demandObserver) functionStructureOwner(path string, function *ast.Node) *demandFunctionStructure {
 	if !o.ownsFunctionStructure(path, function) {
 		return nil
 	}
@@ -55,9 +57,16 @@ func (o *demandObserver) functionStructure(path string, function *ast.Node) *dem
 		}
 		o.structuresMu.Unlock()
 	}
-	// Only initialization waits. No semantic evaluation or callback runs under
-	// the map lock or either Once, and different functions initialize separately.
-	structure.flowOnce.Do(func() { structure.flow = inspectDemandFlow(function) })
+	return structure
+}
+
+func (o *demandObserver) functionStructure(path string, function *ast.Node) *demandFunctionStructure {
+	structure := o.functionStructureOwner(path, function)
+	if structure != nil {
+		// Only initialization waits. No semantic evaluation or callback runs under
+		// the map lock or either Once, and different functions initialize separately.
+		structure.flowOnce.Do(func() { structure.flow = inspectDemandFlow(function) })
+	}
 	return structure
 }
 
