@@ -17,7 +17,7 @@ var basicFamilyRules = []string{"RUL-SYNC", "RUL-PURE", "INT-PURE", "UI-NO-DOMAI
 
 func basicFamilyPolicy() governancePolicy {
 	policy := governanceTestPolicy()
-	for _, layer := range []string{"rules", "integrations", "ui", "utils", "providers"} {
+	for _, layer := range []string{"rules", "integrations", "ui", "utils", "providers", "queries"} {
 		policy.Layers = append(policy.Layers, governanceLayer{ID: layer, SourcePath: layer + "/"})
 	}
 	return policy
