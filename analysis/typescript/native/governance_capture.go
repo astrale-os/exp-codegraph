@@ -74,6 +74,7 @@ type governedProject struct {
 	resolvers          map[bool]*governanceResolver
 	familyResidual     []string
 	sharedProject      *sourcepolicy.Project
+	sharedFileOwners   map[*sourcepolicy.File]*governedFile
 	familyProducts     map[string]sourcepolicy.Result
 	stats              governancePhaseCounters
 	policyDigest       string

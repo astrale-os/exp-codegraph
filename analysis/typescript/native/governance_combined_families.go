@@ -3,6 +3,7 @@ package main
 import (
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	"fmt"
+	ast "github.com/microsoft/typescript-go/shim/ast"
 	"strings"
 	"time"
 )
@@ -13,7 +14,23 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 	group := ""
 	scope := ""
 	var evaluate func(*sourcepolicy.Project) sourcepolicy.Result
-	if _, ok := sourcepolicy.SchemaRevisions[rule]; ok {
+	if _, ok := sourcepolicy.Revisions[rule]; ok {
+		group = "basic"
+		switch rule {
+		case "RUL-SYNC", "RUL-PURE":
+			scope = "rules"
+		case "INT-PURE":
+			scope = "integrations"
+		case "UI-NO-DOMAIN":
+			scope = "ui"
+		case "UTL-PUBLIC-DEPS":
+			scope = "utils"
+		}
+		evaluate = func(shared *sourcepolicy.Project) sourcepolicy.Result {
+			return sourcepolicy.Evaluate(shared.Files, sourcepolicy.Authority{Resolve: shared.Resolve,
+				LocallyBound: func(identifier *ast.Node) bool { return governanceLocallyOwned(identifier, true) }})
+		}
+	} else if _, ok := sourcepolicy.SchemaRevisions[rule]; ok {
 		group = "schema"
 		scope = "schema"
 		evaluate = sourcepolicy.EvaluateSchema
@@ -83,7 +100,11 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 	if state := project.sourceProofState; state != nil && len(state.FamilyMissing[group]) > 0 {
 		state.RulePending = true
 	}
-	out := governanceOutcome{Rule: rule, Revision: governanceRevisions[rule], Status: "pass", Findings: []governanceEvidence{}}
+	revision := governanceRevisions[rule]
+	if group == "basic" {
+		revision = sourcepolicy.Revisions[rule]
+	}
+	out := governanceOutcome{Rule: rule, Revision: revision, Status: "pass", Findings: []governanceEvidence{}}
 	for _, file := range project.Files {
 		if file.Role == "production" && file.Layer == scope {
 			out.SubjectCount++
@@ -94,12 +115,16 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 			continue
 		}
 		var file *governedFile
-		if item.File != nil {
+		if group == "basic" {
+			file = project.sharedFileOwners[item.File]
+		} else if item.File != nil {
 			file = project.FilesByPath[item.File.Path]
 		}
 		e := governanceViolation(rule, file, item.Node, item.Evidence)
 		e.Kind = item.Kind
-		e.AmbiguityReason = item.AmbiguityReason
+		if group != "basic" {
+			e.AmbiguityReason = item.AmbiguityReason
+		}
 		out.Findings = append(out.Findings, e)
 		if e.Kind == "violation" {
 			out.Status = "fail"

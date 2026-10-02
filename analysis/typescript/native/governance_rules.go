@@ -2,7 +2,6 @@ package main
 
 import (
 	"astrale-typespec-v2-native-analysis/jsstring"
-	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	"encoding/json"
 	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
@@ -130,9 +129,6 @@ func governanceEvaluate(project *governedProject, rule string) (governanceOutcom
 	}
 	if rule == "QLT-DEF-IDS" {
 		return governanceDefinitionIDs(project), true
-	}
-	if _, ok := sourcepolicy.Revisions[rule]; ok {
-		return governanceSourceFamily(project, rule), true
 	}
 	revision, ok := governanceRevisions[rule]
 	if !ok {
