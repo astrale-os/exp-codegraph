@@ -19,6 +19,10 @@ export interface EdgeBuilder<T=unknown> {readonly input:T;expand(value:any):Expa
 export interface ExpandedBuilder {expand(value:any):ExpandedBuilder;filter(value:any):ExpandedBuilder;select(value:any):number}
 export interface QueryAPI {from<T extends {nodes:unknown[]}>(value:T):NodeBuilder<T>;from<T extends {edges:unknown[]}>(value:T):EdgeBuilder<T>;from(value:any):NodeBuilder|EdgeBuilder}
 export declare const Query:QueryAPI;
+export interface QueryPropertyEqualPredicate {readonly kind:'property.equal';readonly property:string;readonly value:string}
+export interface QueryPropertyPresentPredicate {readonly kind:'property.present';readonly property:string}
+export interface QueryPropertyPredicateBuilder {equals(value:string):QueryPropertyEqualPredicate;isPresent():QueryPropertyPresentPredicate}
+export declare function Property(input:string):QueryPropertyPredicateBuilder;
 `
 
 type declaredHeadsCase struct {
@@ -69,7 +73,10 @@ func declaredHeadsRoot(t *testing.T, item declaredHeadsCase) string {
 		declaration = `export interface ExpandedBuilder {select(value:any):number}export interface QueryAPI {from(value:any):ExpandedBuilder}export declare const Query:QueryAPI;`
 	}
 	governanceWrite(t, root, "node_modules/@astrale-os/kernel-core/index.d.ts", declaration)
-	prefix := `import {Query,Query as Renamed,type QueryAPI,type ExpandedBuilder} from '@astrale-os/kernel-core';`
+	prefix := `import {Query,Query as Renamed,type QueryAPI,type ExpandedBuilder,Property,type QueryPropertyEqualPredicate,type QueryPropertyPredicateBuilder} from '@astrale-os/kernel-core';`
+	if item.name == "flow-predicate-self" || item.name == "assertion-alias-self" {
+		prefix = `import {Query,Query as Renamed,type QueryAPI,type ExpandedBuilder} from '@astrale-os/kernel-core';`
+	}
 	if item.name == "shadowed-root" {
 		prefix = "export {};"
 	}
@@ -100,7 +107,7 @@ func declaredHeadsOwner(t *testing.T, root string) (*governanceRuntimeAuthority,
 		if node.Kind == ast.KindFunctionExpression && node.Name() != nil && node.Name().Text() == "self" {
 			fn = node
 		}
-		if node.Kind == ast.KindPropertyAccessExpression && node.Name().Text() == "select" && fn != nil && node.Pos() >= fn.Pos() && node.End() <= fn.End() {
+		if node.Kind == ast.KindPropertyAccessExpression && (node.Name().Text() == "select" || node.Name().Text() == "equals") && fn != nil && node.Pos() >= fn.Pos() && node.End() <= fn.End() {
 			expression = node
 		}
 		return true
@@ -238,6 +245,9 @@ func TestDeclaredMemberHeadsProductionReducerBeforeUnrelatedSuffix(t *testing.T)
 	cases := []declaredHeadsCase{
 		{"two-external-calls", `const callback=()=>{Query.from({nodes:[]}).expand({}).filter({});Query.from({edges:[]}).expand({}).filter({});return 1};`, "", true},
 		{"external-then-self", `const callback=():number=>{Query.from({nodes:[]}).expand({}).filter({});callback();return 1};`, "", true},
+		{"direct-property-two-calls", `const callback=()=>{Property('key').equals('slug');Property('key').isPresent();return 1};`, "", true},
+		{"direct-property-then-self", `const callback=():number=>{Property('key').equals('slug');callback();return 1};`, "", true},
+		{"direct-property-current-overload-fallback", `declare module '@astrale-os/kernel-core' {function Property(input:number):QueryPropertyPredicateBuilder}const callback=()=>{Property('key').equals('slug');return 1};`, "", false},
 		{"missing-head-fallback", `const callback=()=>{Query.from({nodes:[]}).expand({}).filter({});return 1};`, `export interface QueryAPI {from(value:string):Missing}`, false},
 	}
 	for _, item := range cases {
@@ -287,7 +297,7 @@ func TestDeclaredMemberHeadsProductionReducerBeforeUnrelatedSuffix(t *testing.T)
 			if !reflect.DeepEqual(summaries[0], summaries[1]) || !reflect.DeepEqual(suffixes[0], suffixes[1]) {
 				t.Fatalf("original summary=%#v suffix=%v; candidate summary=%#v suffix=%v", summaries[0], suffixes[0], summaries[1], suffixes[1])
 			}
-			if item.name == "external-then-self" && summaries[1].Reason != "VALUE_RECURSION" {
+			if (item.name == "external-then-self" || item.name == "direct-property-then-self") && summaries[1].Reason != "VALUE_RECURSION" {
 				t.Fatal("second call self recurrence was lost")
 			}
 		})

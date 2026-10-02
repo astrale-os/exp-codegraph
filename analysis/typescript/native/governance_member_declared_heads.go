@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	ast "github.com/microsoft/typescript-go/shim/ast"
+	checker "github.com/microsoft/typescript-go/shim/checker"
 )
 
 // A missed declaration proof preserves the original helper, including its
@@ -82,6 +83,9 @@ func (proof *governanceDeclaredHeads) valueHeads(node *ast.Node, depth int) ([]*
 		return nil, false
 	}
 	callee := node.AsCallExpression().Expression
+	if callee != nil && callee.Kind == ast.KindIdentifier {
+		return proof.directCallableHeads(callee)
+	}
 	if !governanceDirectMemberAccess(callee) {
 		return nil, false
 	}
@@ -101,6 +105,55 @@ func (proof *governanceDeclaredHeads) valueHeads(node *ast.Node, depth int) ([]*
 		return nil, false
 	}
 	return proof.callHeads(parents, callee.Name().Text())
+}
+
+// A direct factory's binding is not its current callable authority. Flow,
+// assertions and aliases can change that view while retaining a runtime symbol.
+// Obtain the original current callee type, then inspect ALL call signatures.
+// Only fixed annotated canonical declarations enter the existing head product.
+func (proof *governanceDeclaredHeads) directCallableHeads(callee *ast.Node) ([]*ast.Symbol, bool) {
+	if !proof.step() {
+		return nil, false
+	}
+	check := proof.owner.Identity.TypeOwner.program.Checker
+	value := check.GetTypeAtLocation(callee)
+	if value == nil || value.Flags()&(checker.TypeFlagsAny|checker.TypeFlagsUnknown|checker.TypeFlagsNever|checker.TypeFlagsUnion|checker.TypeFlagsIntersection|checker.TypeFlagsNull|checker.TypeFlagsUndefined|checker.TypeFlagsInstantiable) != 0 {
+		return nil, false
+	}
+	signatures := checker.Checker_getSignaturesOfType(check, value, checker.SignatureKindCall)
+	if len(signatures) == 0 || len(checker.Checker_getSignaturesOfType(check, value, checker.SignatureKindConstruct)) != 0 {
+		return nil, false
+	}
+	var heads []*ast.Symbol
+	for _, signature := range signatures {
+		if !proof.step() || signature == nil || signature.Target() != nil {
+			return nil, false
+		}
+		declaration := signature.Declaration()
+		if declaration == nil || declaration.Kind != ast.KindFunctionDeclaration || declaration.Name() == nil || !proof.canonical(declaration) {
+			return nil, false
+		}
+		// A composite can retain one constituent declaration while changing its
+		// return. Require the actual signature object owned by that declaration's
+		// original current binding, not merely the same declaration coordinates.
+		declaredType := check.GetTypeAtLocation(declaration.Name())
+		if declaredType == nil {
+			return nil, false
+		}
+		raw := false
+		for _, declared := range checker.Checker_getSignaturesOfType(check, declaredType, checker.SignatureKindCall) {
+			raw = raw || declared == signature
+		}
+		if !raw {
+			return nil, false
+		}
+		part, ok := proof.returnHeads(declaration.Type())
+		if !ok {
+			return nil, false
+		}
+		heads = governanceAppendHeads(heads, part)
+	}
+	return heads, len(heads) != 0
 }
 
 func (proof *governanceDeclaredHeads) returnHeads(node *ast.Node) ([]*ast.Symbol, bool) {
