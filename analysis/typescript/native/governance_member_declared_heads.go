@@ -25,7 +25,7 @@ func (owner *governanceRuntimeAuthority) externalDeclaredMemberCannotSelf(expres
 		return false
 	}
 	receiver := expression.AsPropertyAccessExpression().Expression
-	if receiver == nil || receiver.Kind != ast.KindCallExpression {
+	if receiver == nil || (receiver.Kind != ast.KindCallExpression && receiver.Kind != ast.KindIdentifier) {
 		return false
 	}
 	proof := governanceDeclaredHeads{owner: owner, remaining: 1024}
@@ -79,7 +79,17 @@ func (proof *governanceDeclaredHeads) canonical(node *ast.Node) bool {
 // Binding Query alone cannot certify its current flow-narrowed member origins.
 // We never run this lookup on a receiver containing an earlier fluent call.
 func (proof *governanceDeclaredHeads) valueHeads(node *ast.Node, depth int) ([]*ast.Symbol, bool) {
-	if node == nil || depth >= 32 || !proof.step() || node.Kind != ast.KindCallExpression || node.Flags&ast.NodeFlagsOptionalChain != 0 {
+	if node == nil || depth >= 32 || !proof.step() || node.Flags&ast.NodeFlagsOptionalChain != 0 {
+		return nil, false
+	}
+	if node.Kind == ast.KindIdentifier {
+		initializer, ok := proof.currentConstInitializer(node)
+		if !ok {
+			return nil, false
+		}
+		return proof.valueHeads(initializer, depth+1)
+	}
+	if node.Kind != ast.KindCallExpression {
 		return nil, false
 	}
 	callee := node.AsCallExpression().Expression
@@ -91,6 +101,13 @@ func (proof *governanceDeclaredHeads) valueHeads(node *ast.Node, depth int) ([]*
 	}
 	receiver := callee.AsPropertyAccessExpression().Expression
 	if receiver != nil && receiver.Kind == ast.KindIdentifier {
+		if initializer, ok := proof.currentConstInitializer(receiver); ok {
+			parents, ok := proof.valueHeads(initializer, depth+1)
+			if !ok {
+				return nil, false
+			}
+			return proof.callHeads(parents, callee.Name().Text())
+		}
 		check := proof.owner.Identity.TypeOwner.program.Checker
 		// Do not canonicalize a const initializer here: runtime alias identity
 		// can survive an assertion that changes the current callable return head.
