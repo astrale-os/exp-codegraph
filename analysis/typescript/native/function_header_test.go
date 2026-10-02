@@ -128,6 +128,7 @@ func TestFunctionHeadersRetainOwnedRowsAndExpandRealBodiesAcrossEdits(t *testing
 			writeFunctionHeaderFixture(t, root)
 			a := openBodyDemandAnalyzer(t, root)
 			defer a.close()
+			root = a.root
 			if codec != "" {
 				a.payloadCodecs = map[string]bool{codec: true}
 			}
@@ -139,7 +140,30 @@ func TestFunctionHeadersRetainOwnedRowsAndExpandRealBodiesAcrossEdits(t *testing
 			}
 			initial := current
 			original := stableJSON(initial)
-			before := a.demandCache.snapshot.sources[a.demandCache.extractor.sources[filepath.Join(root, "headers.ts")].Source]
+			record, exists := a.demandCache.extractor.sources[filepath.Join(root, "headers.ts")]
+			if !exists || record.Source == "" {
+				t.Fatal("independent header source was not captured")
+			}
+			before, exists := a.demandCache.snapshot.sources[record.Source]
+			if !exists || before.record.Source != record.Source || before.record.Physical != record.Physical || len(before.owners) == 0 {
+				t.Fatal("independent header source lacks its actual owned rows")
+			}
+			headers := 0
+			for _, owner := range before.owners {
+				if owner.Owner == "" || owner.Span.Source != record.Source {
+					t.Fatal("independent header owner lacks its source identity")
+				}
+				if owner.Scope != "function" {
+					continue
+				}
+				if owner.Header == nil || owner.Header.Owner != owner.Owner {
+					t.Fatal("independent header owner lacks its sealed header")
+				}
+				headers++
+			}
+			if headers == 0 {
+				t.Fatal("independent header source lacks function headers")
+			}
 			if err := a.acknowledge(request{Generation: current.Next.ID, Sequence: 1}); err != nil {
 				t.Fatal(err)
 			}
@@ -150,7 +174,8 @@ func TestFunctionHeadersRetainOwnedRowsAndExpandRealBodiesAcrossEdits(t *testing
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !a.demandCache.sparseCatalogue || !reflect.DeepEqual(before, a.demandCache.snapshot.sources[before.record.Source]) {
+			retained, exists := a.demandCache.snapshot.sources[before.record.Source]
+			if !a.demandCache.sparseCatalogue || !exists || !reflect.DeepEqual(before, retained) {
 				t.Fatal("independent header contribution was recaptured/mutated")
 			}
 			assertSparseDemandFresh(t, a, current, recipe)

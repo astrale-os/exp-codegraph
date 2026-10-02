@@ -198,6 +198,74 @@ func TestSourceProjectionSnapshotContainsNoCompilerObjects(t *testing.T) {
 	visit(reflect.TypeFor[sourceProjectionSnapshot]())
 }
 
+func TestRetainedSourceEscapesPreserveRepresentationAndCurrentMembership(t *testing.T) {
+	reader := sourceRecord{Physical: "/reader.ts", Source: "source:reader", Revision: "revision:reader"}
+	callee := sourceRecord{Physical: "/callee.ts", Source: "source:callee", Revision: "revision:callee"}
+	outside := demandEffect{"value", "outside", "reader"}
+	local := demandEffect{"value", "local", "reader"}
+	for _, name := range []string{"nil", "empty", "ordered"} {
+		t.Run(name, func(t *testing.T) {
+			payload := bodyDemandPayload{Owners: []demandOwner{
+				{Owner: "reader", Scope: "function", Span: sourceSpan{Source: reader.Source}},
+				{Owner: "callee", Scope: "function", Span: sourceSpan{Source: callee.Source}},
+			}}
+			x := &extractor{}
+			if name == "ordered" {
+				payload.Escapes = []demandEffect{outside, outside}
+				x.rawDemandCalls = []demandEffectCall{
+					{Symbol: "value", Occurrence: "outside", Owner: "reader"},
+					{Symbol: "value", Target: "callee", Occurrence: "local", Owner: "reader"},
+					{Symbol: "value", Occurrence: "outside", Owner: "reader"},
+				}
+			}
+			old := sealSourceProjection(map[string]sourceRecord{reader.Physical: reader, callee.Physical: callee}, payload, nil, x)
+			if name == "empty" {
+				rows := old.sources[reader.Source]
+				rows.escapes = []demandEffect{}
+				old.sources[reader.Source] = rows
+			}
+			before := old.sources[reader.Source]
+			retained := map[string]retainedSourceProjection{
+				reader.Physical: {rows: before}, callee.Physical: {rows: old.sources[callee.Source]},
+			}
+			// An unchanged owner inventory must retain the complete row, including
+			// nil/empty shape; duplicate escapes are observable and remain ordered.
+			unchanged := old.mergeRetained(&demandSourceReuse{sources: retained, selected: map[string]bool{}})
+			if !reflect.DeepEqual(unchanged.sources[reader.Source], before) {
+				t.Fatal("unchanged membership replaced sealed source rows")
+			}
+			if name != "ordered" {
+				return
+			}
+			// The selected source dropped its local callee. Its old contribution
+			// must not suppress the reader's newly external call.
+			next := sealSourceProjection(map[string]sourceRecord{reader.Physical: reader, callee.Physical: callee}, bodyDemandPayload{}, nil)
+			dropped := next.mergeRetained(&demandSourceReuse{sources: retained, selected: map[string]bool{callee.Physical: true}})
+			want := []demandEffect{outside, local, outside}
+			if !reflect.DeepEqual(dropped.sources[reader.Source].escapes, want) {
+				t.Fatal("current membership lost escape order or duplicates")
+			}
+			owners := []string{"reader"}
+			recipe := &bodyDemandRecipe{Paths: []string{}, Owners: &owners}
+			for _, selected := range []map[string]bool{{}, {"reader": true}} {
+				view := dropped.payload(recipe, selected)
+				if !reflect.DeepEqual(view.Escapes, want) || len(view.Owners) != 1 || view.Owners[0].Materialized != selected["reader"] {
+					t.Fatal("body demand changed current escape authority")
+				}
+				view.Escapes[0].Symbol = "publication-mutated"
+			}
+			// Restoring the callee removes just that escape. Reclassification and
+			// publication views must never mutate either older sealed authority.
+			retained[reader.Physical] = retainedSourceProjection{rows: dropped.sources[reader.Source]}
+			restored := old.mergeRetained(&demandSourceReuse{sources: retained, selected: map[string]bool{callee.Physical: true}})
+			if !reflect.DeepEqual(restored.sources[reader.Source].escapes, []demandEffect{outside, outside}) ||
+				!reflect.DeepEqual(dropped.sources[reader.Source].escapes, want) || !reflect.DeepEqual(old.sources[reader.Source], before) {
+				t.Fatal("membership recovery or publication mutated sealed escape rows")
+			}
+		})
+	}
+}
+
 func TestSourceProjectionReexpansionDetachesPublicationAndMatchesFresh(t *testing.T) {
 	for _, codec := range []string{"", typescriptBodyPayloadCodec} {
 		t.Run(codec, func(t *testing.T) {

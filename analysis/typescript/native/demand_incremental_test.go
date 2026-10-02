@@ -73,6 +73,7 @@ func TestSparseDemandRealEditsRetainIndependentSourcesAndMatchFresh(t *testing.T
 			}
 			a := openBodyDemandAnalyzer(t, root)
 			defer a.close()
+			root = a.root
 			if codec != "" {
 				a.payloadCodecs = map[string]bool{codec: true}
 			}
@@ -93,7 +94,19 @@ func TestSparseDemandRealEditsRetainIndependentSourcesAndMatchFresh(t *testing.T
 					t.Fatal(err)
 				}
 				old := a.demandCache.snapshot
-				idle := old.sources[a.acknowledged.sources[filepath.Join(root, "idle.ts")].Source]
+				record, exists := a.acknowledged.sources[filepath.Join(root, "idle.ts")]
+				if !exists || record.Source == "" {
+					t.Fatal("independent physical source was not captured")
+				}
+				idle, exists := old.sources[record.Source]
+				if !exists || idle.record.Source != record.Source || idle.record.Physical != record.Physical || len(idle.owners) == 0 {
+					t.Fatal("independent sealed source lacks its actual owned rows")
+				}
+				for _, owner := range idle.owners {
+					if owner.Owner == "" || owner.Span.Source != record.Source {
+						t.Fatal("independent sealed owner lacks its source identity")
+					}
+				}
 				if err := os.WriteFile(filepath.Join(root, edit.path), []byte(edit.text), 0644); err != nil {
 					t.Fatal(err)
 				}
@@ -104,8 +117,8 @@ func TestSparseDemandRealEditsRetainIndependentSourcesAndMatchFresh(t *testing.T
 				if !a.demandCache.sparseCatalogue || a.demandCache.reuse != nil {
 					t.Fatal("ordinary module edit did not activate isolated sparse recapture")
 				}
-				retained := a.demandCache.snapshot.sources[idle.record.Source]
-				if !reflect.DeepEqual(retained, idle) {
+				retained, exists := a.demandCache.snapshot.sources[idle.record.Source]
+				if !exists || !reflect.DeepEqual(retained, idle) {
 					t.Fatal("independent sealed source changed")
 				}
 				if stableJSON(demandPayload(t, current)) == "" || stableJSON(current) == original {

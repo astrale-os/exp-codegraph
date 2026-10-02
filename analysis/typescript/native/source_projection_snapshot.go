@@ -1,6 +1,9 @@
 package main
 
-import "sort"
+import (
+	"slices"
+	"sort"
+)
 
 // sourceProjectionSnapshot owns the complete thin semantic rows of one compiler
 // capture. It deliberately contains no extractor, checker, node or symbol. The
@@ -134,13 +137,16 @@ func (snapshot *sourceProjectionSnapshot) mergeRetained(reuse *demandSourceReuse
 		}
 	}
 	for source, rows := range merged.sources {
-		// Copy-on-write even when membership did not change. Never rewrite the
-		// older acknowledged authority's slices during candidate preparation.
-		rows.escapes = []demandEffect{}
+		// Reclassify against current owner membership without rewriting the old
+		// authority. Equal ordered rows retain their exact nil/empty representation.
+		var escapes []demandEffect
 		for _, call := range rows.rawCalls {
 			if call.Target == "" || !membership[call.Target] {
-				rows.escapes = append(rows.escapes, demandEffect{call.Symbol, call.Occurrence, call.Owner})
+				escapes = append(escapes, demandEffect{call.Symbol, call.Occurrence, call.Owner})
 			}
+		}
+		if !slices.Equal(rows.escapes, escapes) {
+			rows.escapes = escapes
 		}
 		merged.sources[source] = rows
 		refs := func(count int) []sourceProjectionRow {
