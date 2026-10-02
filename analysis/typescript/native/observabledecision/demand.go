@@ -132,7 +132,6 @@ type demandValue struct {
 	node               *ast.Node
 	module             string
 	env                map[string]demandValue
-	object             map[string]*ast.Node
 	properties         map[string]demandValue
 	origin             *Origin
 	receiver           *demandValue
@@ -628,7 +627,7 @@ func (r *demandRun) eval(path string, n *ast.Node, env map[string]demandValue) d
 	case ast.KindArrowFunction, ast.KindFunctionExpression, ast.KindFunctionDeclaration, ast.KindMethodDeclaration:
 		return demandValue{kind: "function", node: n, module: path, env: r.observer.captureDemandEnvironment(path, n, env)}
 	case ast.KindArrayLiteralExpression:
-		return demandValue{kind: "object", object: map[string]*ast.Node{}, properties: map[string]demandValue{}, module: path, node: n, env: env, incomplete: true}
+		return demandValue{kind: "object", properties: map[string]demandValue{}, module: path, node: n, env: env, incomplete: true}
 	case ast.KindObjectLiteralExpression:
 		if guard := r.guard(path, "object-initializer-effects", n); guard.kind == "unknown" {
 			return guard
@@ -774,11 +773,6 @@ func (r *demandRun) property(v demandValue, name string) demandValue {
 	}
 	if v.kind == "object" {
 		reference, present := v.properties[name]
-		if v.properties == nil {
-			node, legacyPresent := v.object[name]
-			present = legacyPresent
-			reference = demandValue{kind: "reference", node: node, module: v.module, env: v.env}
-		}
 		r.reads = append(r.reads, SemanticRead{Kind: "own-property", Path: v.module, Name: name, Fingerprint: fmt.Sprint(present)})
 		if !present {
 			if v.incomplete {

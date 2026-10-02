@@ -59,7 +59,7 @@ func valueSummary(value demandValue) NativeValueSummary {
 	}
 	if value.kind == "object" {
 		summary.Properties = []string{}
-		for key := range value.object {
+		for key := range value.properties {
 			summary.Properties = append(summary.Properties, key)
 		}
 		sort.Strings(summary.Properties)

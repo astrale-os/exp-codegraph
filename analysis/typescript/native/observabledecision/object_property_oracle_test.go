@@ -3,11 +3,18 @@ package observabledecision
 import (
 	js "astrale-typespec-v2-native-analysis/jsstring"
 	ast "github.com/microsoft/typescript-go/shim/ast"
+	"sort"
 )
 
-func (r *demandRun) objectLiteral(path string, node *ast.Node, env map[string]demandValue) demandValue {
+// originalObjectLiteral retains the pre-removal builder and AST-key map only
+// as a test oracle. Spread evaluation and downstream interpretation use the
+// unchanged demand engine; this is a constructor boundary oracle, not a second
+// interpreter or a whole native authority implementation.
+func originalObjectLiteral(r *demandRun, path string, node *ast.Node, env map[string]demandValue) (demandValue, []string) {
+	oldAST := map[string]*ast.Node{}
 	value := demandValue{kind: "object", properties: map[string]demandValue{}, module: path, node: node, env: env}
 	clear := func() {
+		oldAST = map[string]*ast.Node{}
 		value.properties = map[string]demandValue{}
 		value.incomplete = true
 	}
@@ -23,6 +30,7 @@ func (r *demandRun) objectLiteral(path string, node *ast.Node, env map[string]de
 			}
 			for key, reference := range spread.properties {
 				value.properties[key] = reference
+				oldAST[key] = reference.node
 			}
 			continue
 		}
@@ -59,18 +67,25 @@ func (r *demandRun) objectLiteral(path string, node *ast.Node, env map[string]de
 		if initializer != nil {
 			admitted, known := r.expressionAdmission(path, initializer)
 			if !known {
-				return demandUnknown("Captured bounded expression admission authority is unavailable.")
+				return demandUnknown("Captured bounded expression admission authority is unavailable."), nil
 			}
 			if !admitted {
 				initializer = nil
 			}
 		}
 		if initializer == nil {
+			delete(oldAST, key)
 			delete(value.properties, key)
 			value.incomplete = true
 			continue
 		}
+		oldAST[key] = initializer
 		value.properties[key] = demandValue{kind: "reference", node: initializer, module: path, env: env}
 	}
-	return value
+	keys := []string{}
+	for key := range oldAST {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return value, keys
 }
