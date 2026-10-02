@@ -3,12 +3,17 @@ package main
 import (
 	"astrale-typespec-v2-native-analysis/observabledecision"
 	ast "github.com/microsoft/typescript-go/shim/ast"
+	checker "github.com/microsoft/typescript-go/shim/checker"
 	"strings"
 )
 
 // This product deliberately omits argument/parameter symbol relations. Effects
 // continue to request Call independently, including its selected signature.
 func (owner *governanceRuntimeAuthority) DemandCallShapes() func(string, *ast.Node) observabledecision.NativeEffectCall {
+	return owner.demandCallShapes(owner.currentCallableHasNoRest)
+}
+
+func (owner *governanceRuntimeAuthority) demandCallShapes(currentNoRest func(*ast.Node) bool) func(string, *ast.Node) observabledecision.NativeEffectCall {
 	cache := map[*ast.Node]observabledecision.NativeEffectCall{}
 	return func(path string, node *ast.Node) observabledecision.NativeEffectCall {
 		if result, ok := cache[node]; ok {
@@ -22,7 +27,7 @@ func (owner *governanceRuntimeAuthority) DemandCallShapes() func(string, *ast.No
 		if matched == nil {
 			return result
 		}
-		if !owner.directParameterOrigins(matched).noRest() && !owner.mappedParameterOrigins(matched).noRest() && !owner.canonicalFactoryReturnsNoRest(matched) {
+		if !owner.directParameterOrigins(matched).noRest() && !owner.mappedParameterOrigins(matched).noRest() && !owner.canonicalFactoryReturnsNoRest(matched) && !currentNoRest(matched) {
 			result = owner.Call(file, node)
 			for index := range result.Bindings {
 				result.Bindings[index].Argument = nil
@@ -32,6 +37,47 @@ func (owner *governanceRuntimeAuthority) DemandCallShapes() func(string, *ast.No
 		cache[node] = result
 		return result
 	}
+}
+
+// Value demand observes only whether a supplied argument binds a rest parameter.
+// It does not observe the selected signature, its inferred return, or parameter
+// symbol identities. All CURRENT candidates without rest therefore have the
+// same negative projection, including ordinary instantiation and overload-error
+// recovery. Effects continue to request the complete original Call separately.
+func (owner *governanceRuntimeAuthority) currentCallableHasNoRest(node *ast.Node) bool {
+	if node == nil || node.Kind != ast.KindCallExpression || node.Flags&ast.NodeFlagsOptionalChain != 0 {
+		return false
+	}
+	call := node.AsCallExpression()
+	if call.Expression == nil || call.Expression.Flags&ast.NodeFlagsOptionalChain != 0 {
+		return false
+	}
+	if call.Arguments != nil {
+		for _, argument := range call.Arguments.Nodes {
+			if argument.Kind == ast.KindSpreadElement {
+				return false
+			}
+		}
+	}
+	check := owner.Identity.TypeOwner.program.Checker
+	current := check.GetTypeAtLocation(call.Expression)
+	if current == nil || current.Flags()&(checker.TypeFlagsAny|checker.TypeFlagsUnknown|checker.TypeFlagsNever|checker.TypeFlagsNull|checker.TypeFlagsUndefined|checker.TypeFlagsUnion|checker.TypeFlagsIntersection|checker.TypeFlagsInstantiable) != 0 {
+		return false
+	}
+	current = check.GetApparentType(current)
+	if current == nil || current.Flags()&(checker.TypeFlagsAny|checker.TypeFlagsUnknown|checker.TypeFlagsNever|checker.TypeFlagsNull|checker.TypeFlagsUndefined|checker.TypeFlagsUnion|checker.TypeFlagsIntersection|checker.TypeFlagsInstantiable) != 0 {
+		return false
+	}
+	signatures := checker.Checker_getSignaturesOfType(check, current, checker.SignatureKindCall)
+	if len(signatures) == 0 || len(checker.Checker_getSignaturesOfType(check, current, checker.SignatureKindConstruct)) != 0 {
+		return false
+	}
+	for _, signature := range signatures {
+		if signature == nil || checker.Signature_hasRestParameter(signature) {
+			return false
+		}
+	}
+	return true
 }
 
 // A direct SDK factory's declared return interface is sufficient for the
