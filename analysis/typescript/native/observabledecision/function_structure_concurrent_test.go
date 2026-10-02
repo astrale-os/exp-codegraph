@@ -15,7 +15,7 @@ import (
 // unchanged helper walks; only the actual reader starts concurrent initialization.
 // The fixture also fails if semantic callbacks are serialized behind a plan lock.
 func TestFunctionStructureConcurrentReaderFreshProofs(t *testing.T) {
-	file, _ := structuralFixture(`const f=(parameter)=>{let value=parameter;return value;};const g=(parameter)=>{const value=parameter+'!';return value;};const left='left';const right='right';`)
+	file, _ := structuralFixture(`const f=(parameter)=>{let value=parameter;return value;};const g=(parameter)=>{const value=parameter;return value;};const left='left';const right='right';`)
 	var functions, arguments []*ast.Node
 	visitStructuralNodes(file.Source.AsNode(), func(node *ast.Node) {
 		if node.Kind == ast.KindArrowFunction {
