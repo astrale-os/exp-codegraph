@@ -174,7 +174,7 @@ func TestClosedSourceScalarDifferential(t *testing.T) {
 			state := &governanceProductsSession{Project: current, Token: "scalar-" + sample.ID, Generation: "1", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
 			session := governanceSession{productsSession: state}
 			defer session.discardProducts()
-			frame, err := session.closedSourceHandoff()
+			frame, err := session.closedSourceHandoff(false)
 			if err != nil {
 				t.Fatal(err)
 			}

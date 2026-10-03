@@ -35,6 +35,10 @@ func (fs *compilerInputFS) certifyJSON(path, text string) {
 	}
 	faithful := governanceJSONLiteralFidelity(path, text)
 	fs.mu.Lock()
+	if fs.metadataPaths == nil {
+		fs.metadataPaths = map[string]bool{}
+	}
+	fs.metadataPaths[path] = true
 	fs.metadataLossy = fs.metadataLossy || !faithful
 	fs.mu.Unlock()
 }

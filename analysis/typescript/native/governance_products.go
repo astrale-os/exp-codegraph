@@ -217,7 +217,7 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 			return session.evaluateProducts()
 		}
 		if governanceClosedSourceOffered(state.Prepare.Options) {
-			return session.closedSourceHandoff()
+			return session.closedSourceHandoff(false)
 		}
 		return session.evaluateProducts()
 	case "intrinsics":
@@ -452,7 +452,7 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	// No partial source decisions enter the final envelope.
 	if sourceRequired {
 		if governanceClosedSourceOffered(state.Prepare.Options) {
-			return session.closedSourceHandoff()
+			return session.closedSourceHandoff(true)
 		}
 		session.discardProducts()
 		return map[string]any{"status": "partial", "residual": []string{"Captured Source49 owner capability unavailable."}}, nil

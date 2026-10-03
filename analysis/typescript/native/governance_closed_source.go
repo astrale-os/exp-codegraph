@@ -10,18 +10,23 @@ import (
 
 // Experimental private source phase; the original capture owns each scalar.
 type governanceClosedSourceRequest struct {
-	Token, SourceSnapshotDigest, Path, Operation string
-	SpecifierUnits                               []uint16
-	Start, End                                   int
-	PackageOnly                                  bool
+	Token, Generation, SourceSnapshotDigest, Path, Operation string
+	Input                                                    *governanceClosedSourceInputRequest
+	SpecifierUnits                                           []uint16
+	Start, End                                               int
+	PackageOnly                                              bool
 }
 type governanceClosedSourceAnswer struct {
-	Status     string                            `json:"status"`
-	Reason     string                            `json:"reason,omitempty"`
-	Names      []jsstring.JSONText               `json:"names"`
-	Kind       *string                           `json:"kind"`
-	Mapping    string                            `json:"mapping,omitempty"`
-	Resolution *governanceClosedSourceResolution `json:"resolution"`
+	Token                string                            `json:"token,omitempty"`
+	Generation           string                            `json:"generation,omitempty"`
+	SourceSnapshotDigest string                            `json:"sourceSnapshotDigest,omitempty"`
+	Row                  *compilerResolutionInput          `json:"row,omitempty"`
+	Status               string                            `json:"status"`
+	Reason               string                            `json:"reason,omitempty"`
+	Names                []jsstring.JSONText               `json:"names"`
+	Kind                 *string                           `json:"kind"`
+	Mapping              string                            `json:"mapping,omitempty"`
+	Resolution           *governanceClosedSourceResolution `json:"resolution"`
 }
 type governanceClosedSourceResolution struct {
 	ResolvedPath jsstring.JSONText `json:"resolvedPath"`
@@ -30,6 +35,9 @@ type governanceClosedSourceResolution struct {
 // The main actor must receive the original typed owner before any operation.
 // Pending never reads the lane's Program, parser cache or IO-only actor seed.
 func (session *governanceSession) observeClosedSource(request governanceClosedSourceRequest) (answer governanceClosedSourceAnswer, err error) {
+	if request.Operation == "input" {
+		return session.observeClosedSourceInput(request)
+	}
 	state := session.productsSession
 	if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || state.Token != request.Token {
 		return governanceClosedSourceAnswer{}, fmt.Errorf("closed source attempt is retired")

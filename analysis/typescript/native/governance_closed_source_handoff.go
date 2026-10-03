@@ -21,7 +21,7 @@ func governanceClosedSourceOffered(raw json.RawMessage) bool {
 
 // This is an experimental private suspension, never a partially admitted report.
 // It precedes ProductsDigest. The existing lane transfers the same owner back.
-func (session *governanceSession) closedSourceHandoff() (any, error) {
+func (session *governanceSession) closedSourceHandoff(withResolutionInputs bool) (any, error) {
 	state := session.productsSession
 	if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || state.Project == nil || state.ProductsDigest != "" {
 		return nil, fmt.Errorf("closed source handoff lacks an admitting owner")
@@ -62,6 +62,12 @@ func (session *governanceSession) closedSourceHandoff() (any, error) {
 		"rootEntries": append([]string{}, project.RootEntries...), "files": rows,
 		"compilerValid": project.compilerValid, "verbatimModuleSyntax": project.verbatim,
 		"rootMetadata": metadata,
+	}
+	if withResolutionInputs {
+		if session.policyLane != nil || state.SourceProducts != nil {
+			return nil, fmt.Errorf("closed input frame lacks exclusive admitting owner")
+		}
+		frame["resolutionInputs"] = session.closedSourceResolutionInputs()
 	}
 	bytes, err := json.Marshal(frame)
 	if err != nil {

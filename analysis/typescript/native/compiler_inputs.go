@@ -39,6 +39,7 @@ type compilerInputFS struct {
 	singleCapture bool
 	inconsistent  bool
 	metadataLossy bool
+	metadataPaths map[string]bool
 	shimvfs.FS
 	disk       shimvfs.FS
 	mu         sync.Mutex
@@ -91,7 +92,10 @@ func (fs *compilerInputFS) ReadFile(path string) (string, bool) {
 	return value.text, value.present
 }
 func (fs *compilerInputFS) readFile(path string) (string, bool) {
-	content, ok := fs.FS.ReadFile(path)
+	return fs.readFileFrom(path, fs.FS.ReadFile)
+}
+func (fs *compilerInputFS) readFileFrom(path string, read func(string) (string, bool)) (string, bool) {
+	content, ok := read(path)
 	if ok && fs.singleCapture && strings.EqualFold(filepath.Base(path), "package.json") {
 		fs.certifyJSON(path, content)
 	}

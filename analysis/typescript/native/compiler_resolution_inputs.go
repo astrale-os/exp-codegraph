@@ -9,8 +9,8 @@ import (
 	vfs "github.com/microsoft/typescript-go/shim/vfs"
 )
 
-// Experimental projection, not a registered protocol or a publication receipt.
-// The caller must retain this capture and use its original fresh seal. Export
+// Completed original-operation projection, never a publication receipt.
+// The caller retains this capture and uses its original fresh seal. Export
 // completed actual cells only; omission means unavailable, never absent.
 type compilerResolutionInputs struct {
 	Root                      string                    `json:"root"`
@@ -55,72 +55,8 @@ func (capture *governanceCapture) resolutionInputs(configPaths []string) (compil
 		if !utf8.ValidString(key.path) {
 			continue
 		} // This key cannot be represented faithfully; it stays uncovered.
-		row := compilerResolutionInput{Path: key.path, Fingerprint: fs.observed[key]}
-		switch key.kind {
-		case inputRead:
-			row.Operation = "read"
-			value := cell.value.(compilerCapturedValue[compilerRawRead]).value
-			if !value.present {
-				absent := false
-				row.Boolean = &absent
-				break
-			}
-			// Native UTF-16 decoding can lose lone units. Only already retained ORIGINAL
-			// byte cells can supply TS6's reader, including its BOM/invalid UTF8 behavior.
-			if filepath.Base(key.path) != "package.json" && !configuration[key.path] {
-				row.Unavailable = "Read is outside the resolution metadata projection."
-				break
-			}
-			raw, exists := capture.byteCells[key.path]
-			if !exists || raw.err != nil {
-				row.Unavailable = "Original byte observation is not retained."
-				break
-			}
-			encoded := base64.StdEncoding.EncodeToString(raw.bytes)
-			row.Base64 = &encoded
-		case inputFile:
-			row.Operation = "file"
-			value := cell.value.(compilerCapturedValue[bool]).value
-			if value {
-				// Go FileExists admits every non-directory; TS6 admits regular files only.
-				// Do not assume a special file is regular without an actual metadata cell.
-				metadata := fs.operations[compilerInputKey{key.path, inputMetadata}]
-				if metadata == nil || metadata.value == nil {
-					row.Unavailable = "Regular-file membership is not covered."
-					break
-				}
-				info := metadata.value.(compilerCapturedValue[vfs.FileInfo]).value
-				if info == nil {
-					row.Unavailable = "Conflicting file membership observations."
-					break
-				}
-				value = info.Mode().IsRegular()
-			}
-			row.Boolean = &value
-		case inputDirectory:
-			row.Operation = "directory"
-			value := cell.value.(compilerCapturedValue[bool]).value
-			row.Boolean = &value
-		case inputEnumeration:
-			row.Operation = "entries"
-			directories := cell.value.(compilerCapturedValue[vfs.Entries]).value.Directories
-			for _, name := range directories {
-				if !utf8.ValidString(name) {
-					row.Unavailable = "Directory spelling is not representable."
-					break
-				}
-			}
-			if row.Unavailable == "" {
-				row.Directories = append([]string{}, directories...)
-			}
-		case inputRealpath:
-			row.Operation = "realpath"
-			row.Realpath = cell.value.(compilerCapturedValue[string]).value
-			if !utf8.ValidString(row.Realpath) {
-				row.Realpath = ""
-				row.Unavailable = "Realpath spelling is not representable."
-			}
-		default:
+		row, supported := capture.resolutionInputLocked(key, cell, configuration)
+		if !supported {
 			continue
 		}
 		result.Rows = append(result.Rows, row)
@@ -132,4 +68,77 @@ func (capture *governanceCapture) resolutionInputs(configPaths []string) (compil
 		return result.Rows[i].Path < result.Rows[j].Path
 	})
 	return result, true
+}
+
+// Called only under fs.mu by the exclusive post-lane actor or snapshot owner.
+func (capture *governanceCapture) resolutionInputLocked(key compilerInputKey, cell *compilerCapturedOperation, configuration map[string]bool) (compilerResolutionInput, bool) {
+	fs := capture.compiler
+	row := compilerResolutionInput{Path: key.path, Fingerprint: fs.observed[key]}
+	switch key.kind {
+	case inputRead:
+		row.Operation = "read"
+		value := cell.value.(compilerCapturedValue[compilerRawRead]).value
+		if !value.present {
+			absent := false
+			row.Boolean = &absent
+			break
+		}
+		// Native UTF-16 decoding can lose lone units. Only already retained ORIGINAL
+		// byte cells can supply TS6's reader, including its BOM/invalid UTF8 behavior.
+		if filepath.Base(key.path) != "package.json" && !configuration[key.path] {
+			return compilerResolutionInput{}, false
+		}
+		raw, exists := capture.byteCells[key.path]
+		if !exists || raw.err != nil {
+			row.Unavailable = "Original byte observation is not retained."
+			break
+		}
+		encoded := base64.StdEncoding.EncodeToString(raw.bytes)
+		row.Base64 = &encoded
+	case inputFile:
+		row.Operation = "file"
+		value := cell.value.(compilerCapturedValue[bool]).value
+		if value {
+			// Go FileExists admits every non-directory; TS6 admits regular files only.
+			// Do not assume a special file is regular without an actual metadata cell.
+			metadata := fs.operations[compilerInputKey{key.path, inputMetadata}]
+			if metadata == nil || metadata.value == nil {
+				row.Unavailable = "Regular-file membership is not covered."
+				break
+			}
+			info := metadata.value.(compilerCapturedValue[vfs.FileInfo]).value
+			if info == nil || info.IsDir() {
+				row.Unavailable = "Conflicting file membership observations."
+				break
+			}
+			value = info.Mode().IsRegular()
+		}
+		row.Boolean = &value
+	case inputDirectory:
+		row.Operation = "directory"
+		value := cell.value.(compilerCapturedValue[bool]).value
+		row.Boolean = &value
+	case inputEnumeration:
+		row.Operation = "entries"
+		directories := cell.value.(compilerCapturedValue[vfs.Entries]).value.Directories
+		for _, name := range directories {
+			if !utf8.ValidString(name) {
+				row.Unavailable = "Directory spelling is not representable."
+				break
+			}
+		}
+		if row.Unavailable == "" {
+			row.Directories = append([]string{}, directories...)
+		}
+	case inputRealpath:
+		row.Operation = "realpath"
+		row.Realpath = cell.value.(compilerCapturedValue[string]).value
+		if !utf8.ValidString(row.Realpath) {
+			row.Realpath = ""
+			row.Unavailable = "Realpath spelling is not representable."
+		}
+	default:
+		return compilerResolutionInput{}, false
+	}
+	return row, true
 }

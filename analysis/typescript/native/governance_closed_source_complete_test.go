@@ -119,7 +119,7 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
 			}
 			var result any
 			if frontier == "inconsistent-capture" {
-				result, err = session.closedSourceHandoff()
+				result, err = session.closedSourceHandoff(false)
 			} else {
 				result, err = session.continueProducts(opened)
 			}

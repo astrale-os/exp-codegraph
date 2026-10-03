@@ -58,8 +58,7 @@ func TestCompilerResolutionProjectionKeepsActualBytesAndNegativeCells(t *testing
 	if rows["read:"+plain].Unavailable == "" {
 		t.Fatal("unretained raw bytes became known")
 	}
-	bodyRow := rows["read:"+body]
-	if bodyRow.Base64 != nil || bodyRow.Unavailable == "" {
+	if _, exported := rows["read:"+body]; exported {
 		t.Fatal("authored body bulk-transferred as metadata")
 	}
 	absent := rows["file:"+missing]

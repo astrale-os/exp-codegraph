@@ -28,7 +28,13 @@ func (fs authoredSourceFS) ReadFile(path string) (string, bool) {
 // Compiler loading and explicit source changes share the authored decoding
 // boundary. The returned string owns its immutable read buffer.
 func readAuthoredSourceFile(path string, fallback shimvfs.FS) (string, error) {
-	content, err := os.ReadFile(path)
+	return readAuthoredSourceFileFrom(path, fallback, os.ReadFile)
+}
+
+// The live actor may lend its original raw first-read cell. UTF16 decoding
+// remains the original separate decoder operation.
+func readAuthoredSourceFileFrom(path string, fallback shimvfs.FS, read func(string) ([]byte, error)) (string, error) {
+	content, err := read(path)
 	if err != nil {
 		return "", err
 	}
