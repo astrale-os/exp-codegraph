@@ -29,7 +29,7 @@ func TestCompilerResolutionProjectionKeepsActualBytesAndNegativeCells(t *testing
  fs.DirectoryExists(root)
  fs.GetAccessibleEntries(root)
  fs.Realpath(config)
- before, ok := capture.resolutionInputs()
+ before, ok := capture.resolutionInputs([]string{config})
  if !ok { t.Fatal("owned projection unavailable") }
  rows := map[string]compilerResolutionInput{}
  for _, row := range before.Rows {
@@ -41,7 +41,7 @@ func TestCompilerResolutionProjectionKeepsActualBytesAndNegativeCells(t *testing
  absent := rows["file:" + missing]
  if absent.Boolean == nil || *absent.Boolean { t.Fatal("actual negative lost") }
  if err := os.WriteFile(config, []byte("changed"), 0600); err != nil { t.Fatal(err) }
- after, ok := capture.resolutionInputs()
+ after, ok := capture.resolutionInputs([]string{config})
  if !ok || !reflect.DeepEqual(before, after) { t.Fatal("snapshot reread disk or changed first cells") }
  fs.mu.Lock()
  observation := compilerInputObservation{key: compilerInputKey{config, inputRead}, before: fs.observed[compilerInputKey{config, inputRead}]}
@@ -55,15 +55,15 @@ func TestCompilerResolutionProjectionDoesNotInventRegularMembership(t *testing.T
  if err := os.WriteFile(path, []byte("export {}"), 0600); err != nil { t.Fatal(err) }
  capture := &governanceCapture{root: root, compiler: governanceNewCompilerInputFS(newAuthoredCompilerDisk())}
  capture.compiler.FileExists(path)
- before, ok := capture.resolutionInputs()
+ before, ok := capture.resolutionInputs(nil)
  if !ok || len(before.Rows) != 1 || before.Rows[0].Unavailable == "" { t.Fatal("positive non-directory silently became regular") }
  capture.compiler.Stat(path)
- after, ok := capture.resolutionInputs()
+ after, ok := capture.resolutionInputs(nil)
  if !ok || len(after.Rows) != 1 || after.Rows[0].Boolean == nil || !*after.Rows[0].Boolean { t.Fatal("actual regular membership not admitted") }
  // Unfinished producers are never joined by doing an unselected first read.
  capture.compiler.mu.Lock()
  capture.compiler.operations[compilerInputKey{filepath.Join(root, "unopened.json"), inputRead}] = &compilerCapturedOperation{}
  capture.compiler.mu.Unlock()
- unfinished, ok := capture.resolutionInputs()
+ unfinished, ok := capture.resolutionInputs(nil)
  if !ok || !reflect.DeepEqual(after, unfinished) { t.Fatal("unfinished producer escaped") }
 }

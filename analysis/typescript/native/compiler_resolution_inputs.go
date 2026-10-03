@@ -2,6 +2,7 @@ package main
 
 import (
  "encoding/base64"
+ "path/filepath"
  "sort"
  "unicode/utf8"
 
@@ -27,10 +28,14 @@ type compilerResolutionInput struct {
  Unavailable string `json:"unavailable,omitempty"`
 }
 
-func (capture *governanceCapture) resolutionInputs() (compilerResolutionInputs, bool) {
+// configPaths must come from the original parsed configuration owner (root/extends).
+// This allowlist selects payloads only: it never supplies a fact or performs a read.
+func (capture *governanceCapture) resolutionInputs(configPaths []string) (compilerResolutionInputs, bool) {
  fs := capture.compiler
  if fs == nil || !fs.singleCapture || capture.probeInconsistent || !utf8.ValidString(capture.root) { return compilerResolutionInputs{}, false }
  if _, owned := fs.disk.(*authoredCompilerDisk); !owned { return compilerResolutionInputs{}, false }
+ configuration := map[string]bool{}
+ for _, path := range configPaths { configuration[path] = true }
  result := compilerResolutionInputs{Root: capture.root, UseCaseSensitiveFileNames: fs.UseCaseSensitiveFileNames(), Rows: []compilerResolutionInput{}}
  fs.mu.Lock()
  defer fs.mu.Unlock()
@@ -46,6 +51,7 @@ func (capture *governanceCapture) resolutionInputs() (compilerResolutionInputs, 
    if !value.present { absent := false; row.Boolean = &absent; break }
    // Native UTF-16 decoding can lose lone units. Only already retained ORIGINAL
    // byte cells can supply TS6's reader, including its BOM/invalid UTF8 behavior.
+   if filepath.Base(key.path) != "package.json" && !configuration[key.path] { row.Unavailable = "Read is outside the resolution metadata projection."; break }
    raw, exists := capture.byteCells[key.path]
    if !exists || raw.err != nil { row.Unavailable = "Original byte observation is not retained."; break }
    encoded := base64.StdEncoding.EncodeToString(raw.bytes)
