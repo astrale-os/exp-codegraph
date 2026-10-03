@@ -26,7 +26,7 @@ func TestGovernanceTypeLiteralFidelityKinds(t *testing.T) {
 		{"const value=tag`\\u{ZZ}`;", false},
 		{`/** @type {{"\uD800": number}} */ const value={};`, false},
 		{`/** @import {Value} from "\uD800" */ export {};`, false},
-		{`/** Documentation says \u0041. */ export {};`, false},
+		{`/** Documentation says \u0041. */ export {};`, true},
 		{`/** Ordinary documentation. */ const value="\\uD800";`, true},
 		{`/** @type {{"\uD800": number}} */`, false},
 	} {
@@ -99,5 +99,28 @@ func TestGovernanceTypeLiteralFidelityCacheAndRepair(t *testing.T) {
 	_, repaired := testTypeDemand(t, root, nil)
 	if !reflect.DeepEqual(first, repaired) {
 		t.Fatalf("repair did not recover original names: %#v", repaired)
+	}
+}
+
+func TestGovernanceTypeLiteralFidelityJSDocProseBoundary(t *testing.T) {
+	for _, test := range []struct {
+		name, text string
+		faithful   bool
+	}{
+		{"buffer-example", "/** Example:\n * ```js\n * const str = '\\u00bd + \\u00bc = \\u00be';\n * ```\n * @param string A value to calculate the length of.\n * @return Number of bytes.\n */\ndeclare function byteLength(value: string): number;", true},
+		{"prose-with-semantic-tag", `/** Documentation \uD800. @type {{plain: number}} */ const value={};`, true},
+		{"escaped-semantic-property", `/** @type {{"\uD800": number}} */ const value={};`, false},
+		{"escaped-semantic-import", `/** @import {Value} from "\uD800" */ export {};`, false},
+		{"escaped-link", `/** {@link \u0041} */ export {};`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: "/private/doc-fidelity.d.ts"}, test.text, core.ScriptKindTS)
+			if actual := governanceTypeLiteralFidelity(source); actual != test.faithful {
+				t.Fatalf("faithful=%v expected=%v source=%q", actual, test.faithful, test.text)
+			}
+			if again := governanceTypeLiteralFidelity(source); again != test.faithful {
+				t.Fatal("lazy JSDoc cache changed verdict", again)
+			}
+		})
 	}
 }

@@ -23,11 +23,12 @@ func governanceTypeLiteralFidelity(source *ast.SourceFile) bool {
 			return false
 		}
 		// JSDoc is outside ForEachChild; use the same raw ranges as the pinned
-		// lazy parser, without calling Node.JSDoc or changing its cache.
+		// lazy parser. Only original top-level documentation text may contain
+		// escapes; tags, links and unclassified ranges remain conservative.
 		if node.Flags&ast.NodeFlagsHasJSDoc != 0 {
 			for _, comment := range parser.GetJSDocCommentRanges(factory, nil, node, source.Text()) {
-				if strings.Contains(source.Text()[comment.Pos():comment.End()], `\u`) {
-					faithful = false // Even benign doc escapes decline conservatively.
+				if !governanceJSDocProseEscapes(source, node, comment.Pos(), comment.End()) {
+					faithful = false
 					return false
 				}
 			}
@@ -52,6 +53,46 @@ func governanceTypeLiteralFidelity(source *ast.SourceFile) bool {
 		return faithful
 	})
 	return faithful
+}
+
+// Use the pinned parser's own classification, not a second comment grammar.
+// This initializes its ordinary lazy JSDoc cache only when an escape exists.
+// Restrict acceptance to top-level prose: tag comments and link/name/type
+// subtrees deliberately remain outside this narrow documentary exception.
+func governanceJSDocProseEscapes(source *ast.SourceFile, host *ast.Node, start, end int) bool {
+	raw := source.Text()[start:end]
+	if !strings.Contains(raw, `\u`) {
+		return true
+	}
+	docs := host.JSDoc(source)
+	for offset := 0; offset < len(raw); {
+		next := strings.Index(raw[offset:], `\u`)
+		if next < 0 {
+			break
+		}
+		position := start + offset + next
+		classified := false
+		for _, doc := range docs {
+			if doc.Kind != ast.KindJSDoc || doc.Pos() > start || doc.End() < end {
+				continue
+			}
+			comment := doc.AsJSDoc().Comment
+			if comment == nil {
+				continue
+			}
+			for _, part := range comment.Nodes {
+				if part.Kind == ast.KindJSDocText && part.Pos() <= position && position+2 <= part.End() {
+					classified = true
+					break
+				}
+			}
+		}
+		if !classified {
+			return false
+		}
+		offset = position - start + 2
+	}
+	return true
 }
 
 func (owner *governanceTypeAuthority) literalFidelity() bool {
