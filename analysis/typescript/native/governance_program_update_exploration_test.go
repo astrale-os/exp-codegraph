@@ -244,7 +244,7 @@ func TestGenerationGuardedBodyProposalAndDependencyRejection(t *testing.T) {
 					t.Logf("roots equal=%v opts equal=%v", reflect.DeepEqual(next.typeOwner.parsed.FileNames(), retained.program.CommandLine().FileNames()), reflect.DeepEqual(next.typeOwner.parsed.CompilerOptions(), retained.program.Options()))
 					for _, r := range retained.receipts {
 						w := &governanceTypeReplayWorld{disk: next.capture.compiler.disk, reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}
-						w.prepare(&governanceTypeReceipt{reads: r.barrierReads, observations: r.barrierObservations})
+						w.preparePlan(r.expectationPlan())
 						for path, value := range r.barrierReads {
 							if path != old.FilesByPath["queries/independent.ts"].AbsolutePath && w.reads[path] != value {
 								t.Logf("read differs %s", path)

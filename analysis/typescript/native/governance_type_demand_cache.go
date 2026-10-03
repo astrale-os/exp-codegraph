@@ -49,16 +49,6 @@ type governanceTypeReplayWorld struct {
 
 // Uncached replay I/O is batched once per capture; no worker touches compiler
 // AST/checker state. Results are published only after every operation finishes.
-func (world *governanceTypeReplayWorld) prepare(receipt *governanceTypeReceipt) {
-	a := &governanceCompilerReadAssertions{barrierReads: receipt.reads, barrierObservations: receipt.observations}
-	p := a.expectationPlan()
-	for path := range receipt.sources {
-		if _, seen := receipt.reads[path]; !seen {
-			p.reads = append(p.reads, governanceCompilerExpectedRead{path: path})
-		}
-	}
-	world.preparePlan(p)
-}
 func (world *governanceTypeReplayWorld) preparePlan(plan *governanceCompilerExpectationPlan) {
 	paths := []string{}
 	keys := []compilerInputKey{}
@@ -96,11 +86,39 @@ func (world *governanceTypeReplayWorld) preparePlan(plan *governanceCompilerExpe
 	}
 }
 
+// One original program owns this plain immutable source/reference base. It
+// retains no compiler, AST, filesystem, project, or prior-generation pointer.
+type governanceTypeReceiptBase struct {
+	root    string
+	sources map[string]governanceTypeSource
+	forward map[string][]string
+}
 type governanceTypeReceipt struct {
-	root         string
-	sources      map[string]governanceTypeSource
-	observations map[compilerInputKey]string
-	reads        map[string]compilerRawRead
+	base     *governanceTypeReceiptBase
+	demanded string
+	prefix   compilerInputPrefix
+}
+
+func (receipt *governanceTypeReceipt) neededSources() map[string]bool {
+	needed := map[string]bool{receipt.demanded: true}
+	queue := []string{receipt.demanded}
+	for path, source := range receipt.base.sources {
+		if source.needed && !needed[path] {
+			needed[path] = true
+			queue = append(queue, path)
+		}
+	}
+	for len(queue) > 0 {
+		path := queue[0]
+		queue = queue[1:]
+		for _, target := range receipt.base.forward[path] {
+			if !needed[target] {
+				needed[target] = true
+				queue = append(queue, target)
+			}
+		}
+	}
+	return needed
 }
 
 func governanceOrdinaryTypeSource(source *ast.SourceFile) bool {
@@ -244,12 +262,10 @@ func (owner *governanceTypeAuthority) storeTypeDemand(operation string, file *so
 
 func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*governanceTypeReceipt, bool) {
 	program := owner.program.TSProgram
-	receipt := &governanceTypeReceipt{root: owner.project.Root, sources: map[string]governanceTypeSource{}, observations: map[compilerInputKey]string{}, reads: map[string]compilerRawRead{}}
 	demandSource := owner.program.SourceFile(demanded)
 	if demandSource == nil {
 		return nil, false
 	}
-	needed := map[string]bool{demandSource.FileName(): true}
 	if !owner.literalFidelity() {
 		return nil, false
 	}
@@ -271,33 +287,11 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 		}
 		owner.typeSourceForward = forward
 	}
-	for path, source := range owner.typeSourceBase {
-		receipt.sources[path] = source
-		if source.needed {
-			needed[path] = true
-		}
-	}
 	if _, mapped := owner.typeSourceBase[demandSource.FileName()]; !mapped {
 		return nil, false
 	}
-	forward := owner.typeSourceForward
-	queue := []string{}
-	for path := range needed {
-		queue = append(queue, path)
-	}
-	for len(queue) > 0 {
-		path := queue[0]
-		queue = queue[1:]
-		for _, target := range forward[path] {
-			if !needed[target] {
-				needed[target] = true
-				queue = append(queue, target)
-			}
-		}
-	}
-	for path, source := range receipt.sources {
-		source.needed = needed[path]
-		receipt.sources[path] = source
+	if owner.typeReceiptBase == nil {
+		owner.typeReceiptBase = &governanceTypeReceiptBase{owner.project.Root, owner.typeSourceBase, owner.typeSourceForward}
 	}
 	fs := owner.project.capture.compiler
 	fs.mu.Lock()
@@ -305,13 +299,10 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 	if fs.metadataLossy {
 		return nil, false
 	}
-	for key, value := range fs.observed {
-		receipt.observations[key] = value
-	}
-	for path, value := range fs.rawReads {
-		receipt.reads[path] = value
-	}
-	return receipt, true
+	return &governanceTypeReceipt{owner.typeReceiptBase, demandSource.FileName(), compilerInputPrefix{
+		reads:        fs.prefix.reads[:len(fs.prefix.reads):len(fs.prefix.reads)],
+		observations: fs.prefix.observations[:len(fs.prefix.observations):len(fs.prefix.observations)],
+	}}, true
 }
 
 // A hit proposes private proof obligations. Only authored bytes and compiler
@@ -319,7 +310,7 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 // here. Every remaining obligation is checked with uncached I/O at final seal.
 // Expected reads are NEVER inserted into the current compiler observation map.
 func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governanceCompilerReadAssertions, bool) {
-	if receipt.root != project.Root || project.capture.compiler == nil {
+	if receipt.base.root != project.Root || project.capture.compiler == nil {
 		return nil, false
 	}
 	fs := project.capture.compiler
@@ -338,7 +329,8 @@ func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governa
 	for _, captured := range project.Files {
 		actualReads[captured.AbsolutePath] = compilerRawRead{captured.Text, true}
 	}
-	for path, old := range receipt.sources {
+	needed := receipt.neededSources()
+	for path, old := range receipt.base.sources {
 		current, observed := actualReads[path]
 		if !observed {
 			current = compilerRawRead{old.text, true}
@@ -350,7 +342,7 @@ func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governa
 		if current.text == old.text {
 			continue
 		}
-		if old.needed || !old.ordinary {
+		if needed[path] || !old.ordinary {
 			return nil, false
 		}
 		kind := core.ScriptKindTS
@@ -363,7 +355,10 @@ func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governa
 		}
 		changed[path] = true
 	}
-	for path, old := range receipt.reads {
+	readPaths := make(map[string]bool, len(receipt.prefix.reads))
+	for _, row := range receipt.prefix.reads {
+		path, old := row.path, row.value
+		readPaths[path] = true
 		current, observed := actualReads[path]
 		if !observed {
 			if source, seen := replay.barrierReads[path]; seen {
@@ -377,9 +372,10 @@ func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governa
 		}
 		replay.barrierReads[path] = current
 	}
-	for key, old := range receipt.observations {
+	for _, row := range receipt.prefix.observations {
+		key, old := row.key, row.before
 		if key.kind == inputRead {
-			if _, seen := receipt.reads[key.path]; !seen {
+			if !readPaths[key.path] {
 				return nil, false
 			}
 			continue

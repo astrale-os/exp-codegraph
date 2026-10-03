@@ -31,6 +31,7 @@ type governanceTypeAuthority struct {
 	typeSourceBase     map[string]governanceTypeSource
 	typeSourceFaithful bool
 	typeSourceForward  map[string][]string
+	typeReceiptBase    *governanceTypeReceiptBase
 }
 
 func (owner *governanceTypeAuthority) configuration() {

@@ -33,6 +33,19 @@ type compilerRawRead struct {
 	present bool
 }
 
+type compilerRawInput struct {
+	path  string
+	value compilerRawRead
+}
+
+// First-value journal elements never change. Separate prefixes preserve the
+// original read's raw-before-observed publication, including an in-flight read.
+// A receipt retains only capped slice headers, never the mutable filesystem.
+type compilerInputPrefix struct {
+	reads        []compilerRawInput
+	observations []compilerInputObservation
+}
+
 type compilerInputFS struct {
 	// A decision capture retains its first observation. Legacy resident compiler
 	// sessions can continue replacing observations between explicit generations.
@@ -46,6 +59,7 @@ type compilerInputFS struct {
 	observed   map[compilerInputKey]string
 	operations map[compilerInputKey]*compilerCapturedOperation
 	rawReads   map[string]compilerRawRead
+	prefix     compilerInputPrefix
 }
 
 func newCompilerInputFS(fs, disk shimvfs.FS) *compilerInputFS {
@@ -64,6 +78,9 @@ func (fs *compilerInputFS) remember(path string, kind compilerInputKind, value s
 		return
 	}
 	fs.observed[key] = value
+	if fs.singleCapture {
+		fs.prefix.observations = append(fs.prefix.observations, compilerInputObservation{key: key, before: value})
+	}
 }
 func inputText(content string, ok bool) string {
 	if !ok {
@@ -99,19 +116,27 @@ func (fs *compilerInputFS) readFileFrom(path string, read func(string) (string, 
 	if ok && fs.singleCapture && strings.EqualFold(filepath.Base(path), "package.json") {
 		fs.certifyJSON(path, content)
 	}
+	fs.rememberRaw(path, compilerRawRead{content, ok})
+	fs.remember(path, inputRead, inputText(content, ok))
+	return content, ok
+}
+
+// Keep raw publication distinct from the following observed fingerprint. A
+// concurrent receipt can see this original intermediate prefix under fs.mu.
+func (fs *compilerInputFS) rememberRaw(path string, value compilerRawRead) {
 	fs.mu.Lock()
+	defer fs.mu.Unlock()
 	if fs.rawReads == nil {
 		fs.rawReads = map[string]compilerRawRead{}
 	}
-	value := compilerRawRead{content, ok}
 	if before, seen := fs.rawReads[path]; !seen || !fs.singleCapture {
 		fs.rawReads[path] = value
+		if fs.singleCapture {
+			fs.prefix.reads = append(fs.prefix.reads, compilerRawInput{path, value})
+		}
 	} else if before != value {
 		fs.inconsistent = true
 	}
-	fs.mu.Unlock()
-	fs.remember(path, inputRead, inputText(content, ok))
-	return content, ok
 }
 func (fs *compilerInputFS) FileExists(path string) bool {
 	return captureCompilerOperation(fs, compilerInputKey{path, inputFile}, func() bool {
