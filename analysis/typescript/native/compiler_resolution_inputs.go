@@ -29,7 +29,7 @@ type compilerResolutionInput struct {
 
 func (capture *governanceCapture) resolutionInputs() (compilerResolutionInputs, bool) {
  fs := capture.compiler
- if fs == nil || !fs.singleCapture || capture.probeInconsistent { return compilerResolutionInputs{}, false }
+ if fs == nil || !fs.singleCapture || capture.probeInconsistent || !utf8.ValidString(capture.root) { return compilerResolutionInputs{}, false }
  if _, owned := fs.disk.(*authoredCompilerDisk); !owned { return compilerResolutionInputs{}, false }
  result := compilerResolutionInputs{Root: capture.root, UseCaseSensitiveFileNames: fs.UseCaseSensitiveFileNames(), Rows: []compilerResolutionInput{}}
  fs.mu.Lock()
@@ -37,7 +37,7 @@ func (capture *governanceCapture) resolutionInputs() (compilerResolutionInputs, 
  if fs.inconsistent { return compilerResolutionInputs{}, false }
  for key, cell := range fs.operations {
   if cell.value == nil { continue } // Concurrent/unfinished producer has no exportable value.
-  if !utf8.ValidString(key.path) { return compilerResolutionInputs{}, false }
+  if !utf8.ValidString(key.path) { continue } // This key cannot be represented faithfully; it stays uncovered.
   row := compilerResolutionInput{Path: key.path, Fingerprint: fs.observed[key]}
   switch key.kind {
   case inputRead:
@@ -69,11 +69,15 @@ func (capture *governanceCapture) resolutionInputs() (compilerResolutionInputs, 
    row.Boolean = &value
   case inputEnumeration:
    row.Operation = "entries"
-   row.Directories = append([]string{}, cell.value.(compilerCapturedValue[vfs.Entries]).value.Directories...)
+   directories := cell.value.(compilerCapturedValue[vfs.Entries]).value.Directories
+   for _, name := range directories {
+    if !utf8.ValidString(name) { row.Unavailable = "Directory spelling is not representable."; break }
+   }
+   if row.Unavailable == "" { row.Directories = append([]string{}, directories...) }
   case inputRealpath:
    row.Operation = "realpath"
    row.Realpath = cell.value.(compilerCapturedValue[string]).value
-   if !utf8.ValidString(row.Realpath) { return compilerResolutionInputs{}, false }
+   if !utf8.ValidString(row.Realpath) { row.Realpath = ""; row.Unavailable = "Realpath spelling is not representable." }
   default:
    continue
   }
