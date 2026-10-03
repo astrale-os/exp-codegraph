@@ -21,6 +21,10 @@ func TestCompilerResolutionProjectionKeepsActualBytesAndNegativeCells(t *testing
  fs := capture.compiler
  fs.ReadFile(config)
  fs.ReadFile(plain) // No ORIGINAL byte cell: do not export its decoded text.
+ body := filepath.Join(root, "a.ts")
+ if err := os.WriteFile(body, []byte("export const a = 1"), 0600); err != nil { t.Fatal(err) }
+ if _, err := capture.read(body); err != nil { t.Fatal(err) }
+ fs.ReadFile(body)
  fs.FileExists(config)
  fs.Stat(config)
  missing := filepath.Join(root, "absent.json")
@@ -38,6 +42,8 @@ func TestCompilerResolutionProjectionKeepsActualBytesAndNegativeCells(t *testing
  read := rows["read:" + config]
  if read.Base64 == nil || *read.Base64 != base64.StdEncoding.EncodeToString(raw) { t.Fatalf("original bytes lost: %#v", read) }
  if rows["read:" + plain].Unavailable == "" { t.Fatal("unretained raw bytes became known") }
+ bodyRow := rows["read:" + body]
+ if bodyRow.Base64 != nil || bodyRow.Unavailable == "" { t.Fatal("authored body bulk-transferred as metadata") }
  absent := rows["file:" + missing]
  if absent.Boolean == nil || *absent.Boolean { t.Fatal("actual negative lost") }
  if err := os.WriteFile(config, []byte("changed"), 0600); err != nil { t.Fatal(err) }
