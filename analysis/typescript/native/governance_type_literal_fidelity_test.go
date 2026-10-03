@@ -111,6 +111,12 @@ func TestGovernanceTypeLiteralFidelityJSDocProseBoundary(t *testing.T) {
 		{"prose-with-semantic-tag", `/** Documentation \uD800. @type {{plain: number}} */ const value={};`, true},
 		{"escaped-semantic-property", `/** @type {{"\uD800": number}} */ const value={};`, false},
 		{"escaped-semantic-import", `/** @import {Value} from "\uD800" */ export {};`, false},
+		{"prose-before-link", `/** \u0041{@link Value} */ export {};`, true},
+		{"prose-after-link", `/** {@link Value}\u0041 */ export {};`, true},
+		{"adjacent-tag", `/** \u0041
+ * @type {{"\uD800": number}} */ const value={};`, false},
+		{"multiple-comments", `/** \u0041 */ /** \u0042 */ export {};`, true},
+		{"malformed-link", `/** {@link "\uD800" */ export {};`, false},
 		{"escaped-link", `/** {@link \u0041} */ export {};`, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

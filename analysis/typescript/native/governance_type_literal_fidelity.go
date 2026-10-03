@@ -64,30 +64,41 @@ func governanceJSDocProseEscapes(source *ast.SourceFile, host *ast.Node, start, 
 	if !strings.Contains(raw, `\u`) {
 		return true
 	}
-	docs := host.JSDoc(source)
+	var comment *ast.NodeList
+	for _, doc := range host.JSDoc(source) {
+		if doc == nil || doc.Kind != ast.KindJSDoc || doc.End() != end {
+			continue
+		}
+		if comment != nil || doc.Pos() > start || doc.AsJSDoc().Comment == nil {
+			return false
+		}
+		comment = doc.AsJSDoc().Comment
+	}
+	if comment == nil {
+		return false
+	}
+	previousEnd := start
+	for _, part := range comment.Nodes {
+		if part == nil || part.Pos() < previousEnd || part.Pos() > part.End() || part.End() > end {
+			return false
+		}
+		previousEnd = part.End()
+	}
+	cursor := 0
 	for offset := 0; offset < len(raw); {
 		next := strings.Index(raw[offset:], `\u`)
 		if next < 0 {
 			break
 		}
 		position := start + offset + next
-		classified := false
-		for _, doc := range docs {
-			if doc.Kind != ast.KindJSDoc || doc.Pos() > start || doc.End() < end {
-				continue
-			}
-			comment := doc.AsJSDoc().Comment
-			if comment == nil {
-				continue
-			}
-			for _, part := range comment.Nodes {
-				if part.Kind == ast.KindJSDocText && part.Pos() <= position && position+2 <= part.End() {
-					classified = true
-					break
-				}
-			}
+		for cursor < len(comment.Nodes) && comment.Nodes[cursor].End() <= position {
+			cursor++
 		}
-		if !classified {
+		if cursor == len(comment.Nodes) {
+			return false
+		}
+		part := comment.Nodes[cursor]
+		if part.Kind != ast.KindJSDocText || part.Pos() > position || position+2 > part.End() {
 			return false
 		}
 		offset = position - start + 2
