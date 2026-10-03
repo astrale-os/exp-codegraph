@@ -292,7 +292,12 @@ type governanceConfigHost struct {
 	fs   vfs.FS
 }
 
-func (h governanceConfigHost) FS() vfs.FS                  { return h.fs }
+func (h governanceConfigHost) FS() vfs.FS {
+	if fs, ok := h.fs.(*compilerInputFS); ok && fs.singleCapture {
+		return governanceJSONInputs{fs}
+	}
+	return h.fs
+}
 func (h governanceConfigHost) GetCurrentDirectory() string { return h.root }
 
 var governanceIgnored = map[string]bool{".astrale": true, ".dist": true, ".domain-studio": true, ".git": true, ".history": true, ".output": true, ".turbo": true, ".wrangler": true, "coverage": true, "dist": true, "dist-client": true, "node_modules": true}
@@ -427,8 +432,7 @@ func captureGovernedProjectAuthority(requestedRoot string, policy governancePoli
 		if len(errors) > 0 {
 			return nil, fmt.Errorf("Cannot parse Domain TypeScript configuration %s: %s", configPath, governanceDiagnosticText(errors[0]))
 		}
-		disk := newAuthoredCompilerDisk()
-		capture.compiler = governanceNewCompilerInputFS(disk)
+		capture.compilerInputs()
 		parsed, _ := options.GetParsedCommandLineOfConfigFile(configPath, nil, nil, governanceConfigHost{root, capture.compiler}, nil)
 		if parsed != nil {
 			project.compilerOptions = parsed.CompilerOptions()

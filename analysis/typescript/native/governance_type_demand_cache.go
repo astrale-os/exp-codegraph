@@ -135,6 +135,7 @@ func (owner *governanceTypeAuthority) demandKey(operation string, file *sourcepo
 	return governanceTypeDemandKey{owner.project.Root, operation, file.Path, scanner.GetTokenPosOfNode(node, file.Source, false), node.End()}
 }
 func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *sourcepolicy.File, node *ast.Node) (governanceTypeDemandValue, bool) {
+	if !owner.project.capture.metadataFidelity() { return governanceTypeDemandValue{}, false }
 	key := owner.demandKey(operation, file, node)
 	if entry, ok := owner.cells[key]; ok && entry.literalFaithful {
 		owner.project.stats.TypeCacheHits++
@@ -157,10 +158,7 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 	}
 	if !owner.validationSeen[entry.receipt] {
 		owner.validationSeen[entry.receipt] = true
-		if owner.project.capture.compiler == nil {
-			disk := newAuthoredCompilerDisk()
-			owner.project.capture.compiler = governanceNewCompilerInputFS(disk)
-		}
+		owner.project.capture.compilerInputs()
 		replay, valid := entry.receipt.replay(owner.project)
 		owner.validated[entry.receipt] = valid
 		if valid {
@@ -214,27 +212,22 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 	return entry.value, true
 }
 func (owner *governanceTypeAuthority) storeTypeDemand(operation string, file *sourcepolicy.File, node *ast.Node, value governanceTypeDemandValue) {
-	if !owner.literalFidelity() {
-		return
-	}
-	value.literalFaithful = true
-	key := owner.demandKey(operation, file, node)
-	if owner.cells == nil {
-		owner.cells = map[governanceTypeDemandKey]governanceTypeDemandValue{}
-	}
-	owner.cells[key] = value
-	cache := owner.project.typeDemandCache
-	if cache == nil || owner.program == nil || owner.project.capture.compiler.inconsistent {
-		return
-	}
-	receipt, ok := owner.captureTypeReceipt(owner.project.FilesByPath[file.Path].AbsolutePath)
-	if !ok {
-		return
-	}
-	if cache.entries == nil || len(cache.entries) > 256 {
-		cache.entries = map[governanceTypeDemandKey]governanceTypeDemandEntry{}
-	}
-	cache.entries[key] = governanceTypeDemandEntry{value, receipt}
+ if !owner.literalFidelity() { return }
+ key := owner.demandKey(operation, file, node)
+ cache := owner.project.typeDemandCache
+ var receipt *governanceTypeReceipt
+ if cache != nil && owner.program != nil && !owner.project.capture.compiler.inconsistent {
+  receipt, _ = owner.captureTypeReceipt(owner.project.FilesByPath[file.Path].AbsolutePath)
+ }
+ // Referenced-file closure may consume more real package metadata. Commit a
+ // successful cell only after that complete original prefix is faithful too.
+ if !owner.literalFidelity() { return }
+ value.literalFaithful = true // Program literals AND all consumed metadata.
+ if owner.cells == nil { owner.cells = map[governanceTypeDemandKey]governanceTypeDemandValue{} }
+ owner.cells[key] = value
+ if receipt == nil { return }
+ if cache.entries == nil || len(cache.entries) > 256 { cache.entries = map[governanceTypeDemandKey]governanceTypeDemandEntry{} }
+ cache.entries[key] = governanceTypeDemandEntry{value, receipt}
 }
 
 func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*governanceTypeReceipt, bool) {
@@ -297,6 +290,7 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 	fs := owner.project.capture.compiler
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
+	if fs.metadataLossy { return nil, false }
 	for key, value := range fs.observed {
 		receipt.observations[key] = value
 	}

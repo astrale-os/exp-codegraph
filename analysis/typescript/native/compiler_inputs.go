@@ -38,6 +38,7 @@ type compilerInputFS struct {
 	// sessions can continue replacing observations between explicit generations.
 	singleCapture bool
 	inconsistent  bool
+	metadataLossy bool
 	shimvfs.FS
 	disk       shimvfs.FS
 	mu         sync.Mutex
@@ -91,6 +92,9 @@ func (fs *compilerInputFS) ReadFile(path string) (string, bool) {
 }
 func (fs *compilerInputFS) readFile(path string) (string, bool) {
 	content, ok := fs.FS.ReadFile(path)
+	if ok && fs.singleCapture && strings.EqualFold(filepath.Base(path), "package.json") {
+		fs.certifyJSON(path, content)
+	}
 	fs.mu.Lock()
 	if fs.rawReads == nil {
 		fs.rawReads = map[string]compilerRawRead{}

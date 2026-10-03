@@ -20,10 +20,7 @@ func (project *governedProject) resolver(packageOnly bool) *governanceResolver {
 	if held := project.resolvers[packageOnly]; held != nil {
 		return held
 	}
-	if project.capture.compiler == nil {
-		disk := newAuthoredCompilerDisk()
-		project.capture.compiler = governanceNewCompilerInputFS(disk)
-	}
+	project.capture.compilerInputs()
 	options := *project.compilerOptions
 	if packageOnly {
 		options.Paths = nil

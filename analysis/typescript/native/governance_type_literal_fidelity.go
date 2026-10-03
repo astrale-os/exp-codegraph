@@ -55,6 +55,7 @@ func governanceTypeLiteralFidelity(source *ast.SourceFile) bool {
 }
 
 func (owner *governanceTypeAuthority) literalFidelity() bool {
+	if !owner.project.capture.metadataFidelity() { return false }
 	if owner.program == nil {
 		return true // No checker-derived value exists in the unavailable-program path.
 	}

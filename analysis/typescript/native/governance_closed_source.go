@@ -29,7 +29,7 @@ type governanceClosedSourceResolution struct {
 
 // The main actor must receive the original typed owner before any operation.
 // Pending never reads the lane's Program, parser cache or IO-only actor seed.
-func (session *governanceSession) observeClosedSource(request governanceClosedSourceRequest) (governanceClosedSourceAnswer, error) {
+func (session *governanceSession) observeClosedSource(request governanceClosedSourceRequest) (answer governanceClosedSourceAnswer, err error) {
 	state := session.productsSession
 	if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || state.Token != request.Token {
 		return governanceClosedSourceAnswer{}, fmt.Errorf("closed source attempt is retired")
@@ -52,7 +52,12 @@ func (session *governanceSession) observeClosedSource(request governanceClosedSo
 	if !specifier.ValidUnicode() {
 		return governanceClosedSourceAnswer{Status: "unavailable", Reason: "Captured module specifier UTF16/OS-path authority unavailable."}, nil
 	}
-	answer := governanceClosedSourceAnswer{Status: "known"}
+	answer = governanceClosedSourceAnswer{Status: "known"}
+	defer func() {
+		if err == nil && answer.Status == "known" && !project.capture.metadataFidelity() {
+			answer = governanceClosedSourceAnswer{Status: "unavailable", Reason: "Captured compiler JSON code-unit authority unavailable."}
+		}
+	}()
 	switch request.Operation {
 	case "resolve":
 		result := project.resolveImport(file, specifier.WTF8(), request.PackageOnly)

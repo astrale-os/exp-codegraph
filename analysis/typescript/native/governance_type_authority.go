@@ -40,16 +40,13 @@ func (owner *governanceTypeAuthority) configuration() {
 	owner.configured = true
 	owner.roots = map[string]bool{}
 	project := owner.project
-	if project.capture.compiler == nil {
-		disk := newAuthoredCompilerDisk()
-		project.capture.compiler = governanceNewCompilerInputFS(disk)
-	}
+	project.capture.compilerInputs()
 	fs := project.capture.compiler
 	root := project.Root
 	for {
 		path := filepath.Join(root, "tsconfig.json")
 		if fs.FileExists(path) {
-			text, ok := fs.ReadFile(path)
+			text, ok := (governanceJSONInputs{fs}).ReadFile(path)
 			if !ok {
 				return
 			}
@@ -133,7 +130,10 @@ func governanceLiteralPropertyNames(expression *ast.Node) ([]string, bool) {
 	}
 	return out, true
 }
-func (owner *governanceTypeAuthority) closed(file *sourcepolicy.File, expression *ast.Node) sourcepolicy.NamesObservation {
+func (owner *governanceTypeAuthority) closed(file *sourcepolicy.File, expression *ast.Node) (observed sourcepolicy.NamesObservation) {
+	defer func() {
+		if observed.Known && !owner.project.capture.metadataFidelity() { observed = sourcepolicy.NamesObservation{Known: false} }
+	}()
 	owner.project.stats.LiteralCells++
 	names, ok := governanceLiteralPropertyNames(expression)
 	if !ok {
@@ -279,6 +279,9 @@ func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression 
 	started := time.Now()
 	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
+	defer func() {
+		if observed.Known && !owner.project.capture.metadataFidelity() { observed = sourcepolicy.NamesObservation{Known: false} }
+	}()
 	if names, ok := governanceEmptyConditionalNames(expression); ok {
 		owner.configuration()
 		owner.project.stats.LiteralCells++
@@ -326,6 +329,9 @@ func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, ex
 	started := time.Now()
 	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
+	defer func() {
+		if observed.Known && !owner.project.capture.metadataFidelity() { observed = sourcepolicy.KindObservation{Known: false} }
+	}()
 	if value, ok := owner.lookupTypeDemand("collection-brand-kind", file, expression); ok {
 		return value.kind
 	}
