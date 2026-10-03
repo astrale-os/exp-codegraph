@@ -10,7 +10,7 @@ import (
 
 func TestGovernanceTypeLiteralFidelityKinds(t *testing.T) {
 	for _, test := range []struct {
-		source string
+		source   string
 		faithful bool
 	}{
 		{`const value='\uFFFD';`, true},
@@ -50,7 +50,11 @@ func TestGovernanceTypeLiteralFidelityFreshOwnedUniverse(t *testing.T) {
 			root := typeDemandFixture(t)
 			governanceWrite(t, root, test.path, test.text)
 			project, file, expression := typeDemandTestProject(t, root, nil)
-			t.Cleanup(func() { if project.typeRelease != nil { project.typeRelease() } })
+			t.Cleanup(func() {
+				if project.typeRelease != nil {
+					project.typeRelease()
+				}
+			})
 			if value := project.typeOwner.names(file, expression); value.Known || len(project.typeOwner.cells) != 0 {
 				t.Fatalf("unsafe fresh names published: %#v", value)
 			}

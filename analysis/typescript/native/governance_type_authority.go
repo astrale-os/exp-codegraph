@@ -18,19 +18,19 @@ import (
 )
 
 type governanceTypeAuthority struct {
-	project           *governedProject
-	configured        bool
-	parsed            *options.ParsedCommandLine
-	roots             map[string]bool
-	program           *driver.Program
-	generationBroker  *governanceGenerationBroker
-	opened            bool
-	cells             map[governanceTypeDemandKey]governanceTypeDemandValue
-	validated         map[*governanceTypeReceipt]bool
-	validationSeen    map[*governanceTypeReceipt]bool
-	typeSourceBase    map[string]governanceTypeSource
+	project            *governedProject
+	configured         bool
+	parsed             *options.ParsedCommandLine
+	roots              map[string]bool
+	program            *driver.Program
+	generationBroker   *governanceGenerationBroker
+	opened             bool
+	cells              map[governanceTypeDemandKey]governanceTypeDemandValue
+	validated          map[*governanceTypeReceipt]bool
+	validationSeen     map[*governanceTypeReceipt]bool
+	typeSourceBase     map[string]governanceTypeSource
 	typeSourceFaithful bool
-	typeSourceForward map[string][]string
+	typeSourceForward  map[string][]string
 }
 
 func (owner *governanceTypeAuthority) configuration() {

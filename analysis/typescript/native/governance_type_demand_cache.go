@@ -21,8 +21,8 @@ type governanceTypeDemandKey struct {
 	start, end            int
 }
 type governanceTypeDemandValue struct {
-	names sourcepolicy.NamesObservation
-	kind  sourcepolicy.KindObservation
+	names           sourcepolicy.NamesObservation
+	kind            sourcepolicy.KindObservation
 	literalFaithful bool
 }
 type governanceTypeDemandEntry struct {
