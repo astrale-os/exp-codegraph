@@ -142,3 +142,42 @@ func TestGovernanceTypeLiteralFidelityCapturedBufferComment(t *testing.T) {
 		t.Fatal("original JSDoc cache changed verdict")
 	}
 }
+
+// Original same-capture process.d.ts SHA256 bceb58df66ab8fb00170df20cd813978c5ab84be1d285710c4eb005d8e9d8efb, raw [98005,99230).
+func TestGovernanceTypeLiteralFidelityCapturedProcessParameters(t *testing.T) {
+	text := "declare namespace NodeJS { interface ProcessEnv { [key: string]: string | undefined; } interface Process {\n/**\n                 * Replaces the current process with a new process.\n                 *\n                 * This is achieved by using the `execve` POSIX function and therefore no memory or other\n                 * resources from the current process are preserved, except for the standard input,\n                 * standard output and standard error file descriptor.\n                 *\n                 * All other resources are discarded by the system when the processes are swapped, without triggering\n                 * any exit or close events and without running any cleanup handler.\n                 *\n                 * This function will never return, unless an error occurred.\n                 *\n                 * This function is not available on Windows or IBM i.\n                 * @since v22.15.0\n                 * @experimental\n                 * @param file The name or path of the executable file to run.\n                 * @param args List of string arguments. No argument can contain a null-byte (`\\u0000`).\n                 * @param env Environment key-value pairs.\n                 * No key or value can contain a null-byte (`\\u0000`).\n                 * **Default:** `process.env`.\n                 */\nexecve?(file: string, args?: readonly string[], env?: ProcessEnv): never;\n} }"
+	source := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: "/private/captured-process.d.ts"}, text, core.ScriptKindTS)
+	if !governanceTypeLiteralFidelity(source) {
+		t.Fatal("original captured parameter documentation rejected")
+	}
+	if !governanceTypeLiteralFidelity(source) {
+		t.Fatal("cached original parameter documentation changed verdict")
+	}
+}
+
+func TestGovernanceTypeLiteralFidelityStrictParameterBoundaries(t *testing.T) {
+	for _, test := range []struct {
+		name, text string
+		faithful   bool
+	}{
+		{"untyped-description", "/** @param args Null byte \\u0000 is forbidden. */ declare function f(args: string): void;", true},
+		{"typed-description", "/** @param {string} args Null byte \\u0000. */ declare function f(args: string): void;", false},
+		{"optional-description", "/** @param [args] Null byte \\u0000. */ declare function f(args: string): void;", false},
+		{"escaped-default", "/** @param [args=\"\\uD800\"] Value. */ declare function f(args: string): void;", false},
+		{"malformed-default", "/** @param [args=\"\\uD800\" Value. */ declare function f(args: string): void;", false},
+		{"escaped-name", "/** @param \\u0061rgs Value. */ declare function f(args: string): void;", false},
+		{"semantic-type", "/** @param {{\"\\uD800\": number}} args Value. */ declare function f(args: string): void;", false},
+		{"parameter-link", "/** @param args {@link \\uD800} */ declare function f(args: string): void;", false},
+		{"unknown-tag", "/** @example \\u0000 */ export {};", false},
+		{"malformed-postfix-name", "/** @param args[\"\\uD800\"] Value. */ declare function f(args: string): void;", false},
+		{"jsx-in-code-prose", "/** `@jsx R\\u0065act.createElement ` */ export {};", false},
+		{"inline-jsx-prose", "/** prose \\u0041 @jsx \\uD800 */ export {};", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			source := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: "/private/parameter.d.ts"}, test.text, core.ScriptKindTS)
+			if got := governanceTypeLiteralFidelity(source); got != test.faithful {
+				t.Fatalf("faithful=%v expected=%v text=%q", got, test.faithful, test.text)
+			}
+		})
+	}
+}

@@ -16,6 +16,15 @@ func governanceTypeLiteralFidelity(source *ast.SourceFile) bool {
 	if source == nil || len(source.Diagnostics()) != 0 || !utf8.ValidString(source.Text()) {
 		return false
 	}
+	// Original compiler pragma arguments may overlap JSDoc prose.
+	for _, pragma := range source.Pragmas {
+		for _, argument := range pragma.Args {
+			if argument.Pos() < 0 || argument.End() < argument.Pos() || argument.End() > len(source.Text()) || strings.Contains(source.Text()[argument.Pos():argument.End()], `\u`) {
+				return false
+			}
+		}
+	}
+
 	faithful := true
 	factory := ast.NewNodeFactory(ast.NodeFactoryHooks{})
 	walk(source.AsNode(), func(node *ast.Node) bool {
@@ -24,7 +33,7 @@ func governanceTypeLiteralFidelity(source *ast.SourceFile) bool {
 		}
 		// JSDoc is outside ForEachChild; use the same raw ranges as the pinned
 		// lazy parser. Only original top-level documentation text may contain
-		// escapes; tags, links and unclassified ranges remain conservative.
+		// escapes; only strict parameter descriptions add eligible tag text.
 		if node.Flags&ast.NodeFlagsHasJSDoc != 0 {
 			for _, comment := range parser.GetJSDocCommentRanges(factory, nil, node, source.Text()) {
 				if !governanceJSDocProseEscapes(source, node, comment.Pos(), comment.End()) {
@@ -57,48 +66,95 @@ func governanceTypeLiteralFidelity(source *ast.SourceFile) bool {
 
 // Use the pinned parser's own classification, not a second comment grammar.
 // This initializes its ordinary lazy JSDoc cache only when an escape exists.
-// Restrict acceptance to top-level prose: tag comments and link/name/type
-// subtrees deliberately remain outside this narrow documentary exception.
+// Only top-level prose and untyped, unbracketed parameter descriptions qualify.
+// Names, types, defaults, links and every other tag stay outside the exception.
 func governanceJSDocProseEscapes(source *ast.SourceFile, host *ast.Node, start, end int) bool {
 	raw := source.Text()[start:end]
 	if !strings.Contains(raw, `\u`) {
 		return true
 	}
-	var comment *ast.NodeList
+	jsdocErrors := ast.NodeFlagsThisNodeHasError | ast.NodeFlagsThisNodeOrAnySubNodesHasError
+	var selected *ast.Node
 	for _, doc := range host.JSDoc(source) {
 		if doc == nil || doc.Kind != ast.KindJSDoc || doc.End() != end {
 			continue
 		}
-		if comment != nil || doc.Pos() > start || doc.AsJSDoc().Comment == nil {
+		if selected != nil || doc.Flags&jsdocErrors != 0 || doc.Pos() > start || doc.AsJSDoc().Comment == nil {
 			return false
 		}
-		comment = doc.AsJSDoc().Comment
+		selected = doc
 	}
-	if comment == nil {
+	if selected == nil {
 		return false
 	}
+	var tags []*ast.Node
+	if selected.AsJSDoc().Tags != nil {
+		tags = selected.AsJSDoc().Tags.Nodes
+	}
 	previousEnd := start
-	for _, part := range comment.Nodes {
-		if part == nil || part.Pos() < previousEnd || part.Pos() > part.End() || part.End() > end {
+	for _, tag := range tags {
+		if tag == nil || tag.Flags&jsdocErrors != 0 || tag.Pos() < previousEnd || tag.Pos() > tag.End() || tag.End() > end {
 			return false
 		}
-		previousEnd = part.End()
+		previousEnd = tag.End()
 	}
-	cursor := 0
+	// Defaults are parsed and discarded by the pinned parser: only unbracketed,
+	// untyped genuine parameter names can provide documentary comment ranges.
+	partsAt := func(group int) (*ast.NodeList, int, int) {
+		if group < 0 {
+			upper := end
+			if len(tags) > 0 {
+				upper = tags[0].Pos()
+			}
+			return selected.AsJSDoc().Comment, start, upper
+		}
+		tag := tags[group]
+		if tag.Kind != ast.KindJSDocParameterTag {
+			return nil, 0, 0
+		}
+		parameter := tag.AsJSDocParameterOrPropertyTag()
+		name := tag.Name()
+		if parameter.IsBracketed || parameter.TypeExpression != nil || name == nil || name.Kind != ast.KindIdentifier || name.Text() == "" || name.Flags&jsdocErrors != 0 {
+			return nil, 0, 0
+		}
+		return parameter.Comment, name.End(), tag.End()
+	}
+	for group := -1; group < len(tags); group++ {
+		parts, lower, upper := partsAt(group)
+		if parts == nil {
+			continue
+		}
+		previousEnd := lower
+		for _, part := range parts.Nodes {
+			if part == nil || part.Flags&jsdocErrors != 0 || part.Pos() < previousEnd || part.Pos() > part.End() || part.End() > upper {
+				return false
+			}
+			previousEnd = part.End()
+		}
+	}
+	group, cursor := -1, 0
 	for offset := 0; offset < len(raw); {
 		next := strings.Index(raw[offset:], `\u`)
 		if next < 0 {
 			break
 		}
 		position := start + offset + next
-		for cursor < len(comment.Nodes) && comment.Nodes[cursor].End() <= position {
-			cursor++
+		var part *ast.Node
+		for group < len(tags) {
+			parts, _, _ := partsAt(group)
+			if parts != nil {
+				for cursor < len(parts.Nodes) && parts.Nodes[cursor].End() <= position {
+					cursor++
+				}
+				if cursor < len(parts.Nodes) {
+					part = parts.Nodes[cursor]
+					break
+				}
+			}
+			group++
+			cursor = 0
 		}
-		if cursor == len(comment.Nodes) {
-			return false
-		}
-		part := comment.Nodes[cursor]
-		if part.Kind != ast.KindJSDocText || part.Pos() > position || position+2 > part.End() {
+		if part == nil || part.Kind != ast.KindJSDocText || part.Pos() > position || position+2 > part.End() {
 			return false
 		}
 		offset = position - start + 2
