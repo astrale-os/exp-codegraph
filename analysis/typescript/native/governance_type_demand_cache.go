@@ -23,6 +23,7 @@ type governanceTypeDemandKey struct {
 type governanceTypeDemandValue struct {
 	names sourcepolicy.NamesObservation
 	kind  sourcepolicy.KindObservation
+	literalFaithful bool
 }
 type governanceTypeDemandEntry struct {
 	value   governanceTypeDemandValue
@@ -135,7 +136,7 @@ func (owner *governanceTypeAuthority) demandKey(operation string, file *sourcepo
 }
 func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *sourcepolicy.File, node *ast.Node) (governanceTypeDemandValue, bool) {
 	key := owner.demandKey(operation, file, node)
-	if entry, ok := owner.cells[key]; ok {
+	if entry, ok := owner.cells[key]; ok && entry.literalFaithful {
 		owner.project.stats.TypeCacheHits++
 		return entry, true
 	}
@@ -144,7 +145,7 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 		return governanceTypeDemandValue{}, false
 	}
 	entry, ok := cache.entries[key]
-	if !ok {
+	if !ok || !entry.value.literalFaithful || entry.receipt == nil {
 		owner.project.stats.TypeCacheMisses++
 		return governanceTypeDemandValue{}, false
 	}
@@ -213,6 +214,10 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 	return entry.value, true
 }
 func (owner *governanceTypeAuthority) storeTypeDemand(operation string, file *sourcepolicy.File, node *ast.Node, value governanceTypeDemandValue) {
+	if !owner.literalFidelity() {
+		return
+	}
+	value.literalFaithful = true
 	key := owner.demandKey(operation, file, node)
 	if owner.cells == nil {
 		owner.cells = map[governanceTypeDemandKey]governanceTypeDemandValue{}
@@ -240,14 +245,14 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 		return nil, false
 	}
 	needed := map[string]bool{demandSource.FileName(): true}
-	if owner.typeSourceBase == nil {
+	if !owner.literalFidelity() {
+		return nil, false
+	}
+	if owner.typeSourceForward == nil {
 		physical := map[string]string{}
-		base := map[string]governanceTypeSource{}
 		forward := map[string][]string{}
 		for _, source := range program.SourceFiles() {
-			path := source.FileName()
-			physical[string(source.Path())] = path
-			base[path] = governanceTypeSource{text: source.Text(), references: governanceTypeReferenceSyntax(source), options: source.ParseOptions(), ordinary: governanceOrdinaryTypeSource(source), needed: compiler.FileAffectsGlobalScope(source) || len(source.ModuleAugmentations) > 0 || sourceHasAmbientModule(source)}
+			physical[string(source.Path())] = source.FileName()
 		}
 		for _, source := range program.SourceFiles() {
 			path := source.FileName()
@@ -259,7 +264,6 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 				forward[path] = append(forward[path], target)
 			}
 		}
-		owner.typeSourceBase = base
 		owner.typeSourceForward = forward
 	}
 	for path, source := range owner.typeSourceBase {
@@ -346,7 +350,7 @@ func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governa
 			kind = core.ScriptKindTSX
 		}
 		source := parser.ParseSourceFile(old.options, current.text, kind)
-		if !governanceOrdinaryTypeSource(source) || governanceTypeReferenceSyntax(source) != old.references {
+		if !governanceOrdinaryTypeSource(source) || governanceTypeReferenceSyntax(source) != old.references || !governanceTypeLiteralFidelity(source) {
 			return nil, false
 		}
 		changed[path] = true

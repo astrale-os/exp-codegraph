@@ -29,6 +29,7 @@ type governanceTypeAuthority struct {
 	validated         map[*governanceTypeReceipt]bool
 	validationSeen    map[*governanceTypeReceipt]bool
 	typeSourceBase    map[string]governanceTypeSource
+	typeSourceFaithful bool
 	typeSourceForward map[string][]string
 }
 
@@ -289,6 +290,9 @@ func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression 
 		return value.names
 	}
 	defer func() {
+		if observed.Known && !owner.literalFidelity() {
+			observed = sourcepolicy.NamesObservation{Known: false}
+		}
 		if observed.Known {
 			owner.storeTypeDemand("property-names", file, expression, governanceTypeDemandValue{names: observed})
 		}
@@ -326,6 +330,9 @@ func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, ex
 		return value.kind
 	}
 	defer func() {
+		if observed.Known && !owner.literalFidelity() {
+			observed = sourcepolicy.KindObservation{Known: false}
+		}
 		if observed.Known {
 			owner.storeTypeDemand("collection-brand-kind", file, expression, governanceTypeDemandValue{kind: observed})
 		}

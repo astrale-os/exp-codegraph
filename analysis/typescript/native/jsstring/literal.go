@@ -20,7 +20,7 @@ import (
 // units in its cooked result. No independent ECMAScript escape interpreter runs.
 // Neither the source nor the AST is mutated. Ordinary literals use AST.Text.
 func FromLiteral(source *ast.SourceFile, node *ast.Node) (String, error) {
-	if source == nil || node == nil || (node.Kind != ast.KindStringLiteral && node.Kind != ast.KindNoSubstitutionTemplateLiteral) {
+	if source == nil || node == nil || (node.Kind != ast.KindStringLiteral && !templateSegment(node.Kind)) {
 		return String{}, errors.New("JavaScript string requires an owned literal and source")
 	}
 	if node.Parent != nil && node.Parent.Kind == ast.KindJsxAttribute {
@@ -153,8 +153,12 @@ func FromLiteral(source *ast.SourceFile, node *ast.Node) (String, error) {
 	ownedScanner := scanner.NewScanner()
 	ownedScanner.SetText(shield.String())
 	kind := ownedScanner.Scan()
-	if node.Kind == ast.KindNoSubstitutionTemplateLiteral {
-		tagged := node.Parent != nil && node.Parent.Kind == ast.KindTaggedTemplateExpression
+	if templateSegment(node.Kind) {
+		parent := node.Parent
+		for parent != nil && (parent.Kind == ast.KindTemplateSpan || parent.Kind == ast.KindTemplateExpression) {
+			parent = parent.Parent
+		}
+		tagged := parent != nil && parent.Kind == ast.KindTaggedTemplateExpression
 		kind = ownedScanner.ReScanTemplateToken(tagged)
 	}
 	if kind != node.Kind {
@@ -198,4 +202,8 @@ func hex(ch byte) int {
 // A detached/synthetic literal has no authority and returns an error.
 func FromNode(node *ast.Node) (String, error) {
 	return FromLiteral(ast.GetSourceFileOfNode(node), node)
+}
+
+func templateSegment(kind ast.Kind) bool {
+	return kind == ast.KindNoSubstitutionTemplateLiteral || kind == ast.KindTemplateHead || kind == ast.KindTemplateMiddle || kind == ast.KindTemplateTail
 }
