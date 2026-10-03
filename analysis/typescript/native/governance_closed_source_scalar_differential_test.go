@@ -91,13 +91,18 @@ func originalScalar(t *testing.T, project *governedProject, input scalarDifferen
 	return answer
 }
 
-func scalarNameUnits(names []jsstring.JSONText) [][]uint16 {
+func scalarNameUnits(t *testing.T, names []jsstring.JSONText) [][]uint16 {
+	t.Helper()
 	if names == nil {
 		return nil
 	}
 	units := [][]uint16{}
 	for _, name := range names {
-		units = append(units, jsstring.FromCompilerText(string(name)).Units())
+		value, err := jsstring.FromCompilerText(string(name))
+		if err != nil {
+			t.Fatalf("invalid original compiler property-name encoding: %v", err)
+		}
+		units = append(units, value.Units())
 	}
 	return units
 }
@@ -186,7 +191,7 @@ func TestClosedSourceScalarDifferential(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				results = append(results, map[string]any{"request": request, "direct": direct, "actual": actual, "directNameUnits": scalarNameUnits(direct.Names), "actualNameUnits": scalarNameUnits(actual.Names)})
+				results = append(results, map[string]any{"request": request, "direct": direct, "actual": actual, "directNameUnits": scalarNameUnits(t, direct.Names), "actualNameUnits": scalarNameUnits(t, actual.Names)})
 				same := direct.Status == actual.Status
 				switch request.Operation {
 				case "closed", "names":
