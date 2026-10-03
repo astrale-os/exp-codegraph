@@ -3,10 +3,8 @@ package main
 import (
 	"astrale-typespec-v2-native-analysis/jsstring"
 	"encoding/json"
-	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
-	"strings"
 	"time"
 )
 
@@ -76,126 +74,29 @@ func governanceViolation(rule string, file *governedFile, node *ast.Node, messag
 	}
 	return e
 }
-func governanceStaticEvidence(file *governedFile) []governanceEvidence {
-	out := []governanceEvidence{}
-	emit := func(node *ast.Node, message string) {
-		out = append(out, governanceViolation("IMP-STATIC", file, node, message))
+
+// These semantic evaluators now belong to the SDK closed-source owner. Their
+// revisions remain registered; an unavailable native evaluator is never a pass.
+func governanceSDKOnlyFamily(rule string) bool {
+	switch rule {
+	case "FNC-INT-TYPES", "FNC-STEP-IDS", "FNC-NO-NEST", "FNC-ONE-IMPL", "MIG-EXACT-REVS", "MIG-DEDICATED-CTX", "PRV-XDOM-TYPED", "PRV-XDOM-REQ", "PRV-NO-DOMAIN", "VIW-SCHEMA-DECL", "VIW-NO-COMPOSE", "SCH-ONE-DECL", "SCH-ICON-REQUIRED", "SCH-ICON-NEUTRAL", "SCH-EXACT-TYPES", "SCH-DECL-ONLY", "SCH-STATE-RELATION", "SCH-STATE-PURE", "SCH-STATE-SOURCE", "MUT-PLAN-REQ", "MUT-LOCAL-ALIAS", "MUT-STATE-INITIAL", "MUT-STATE-ATOMIC", "MUT-CANON", "MUT-FRAGMENTS", "MUT-PURE", "ROOT-COMPOSE", "ROOT-FACADE", "DOM-PUBLIC-DEPS", "FNC-XDOM-DECLARED", "FNC-XDOM-REQ", "DEP-ALLOWLIST", "IMP-ALIAS-CFG", "QLT-TYPED-COORD", "QLT-CANON-VALUES", "NODE-INHERITED", "RUL-SYNC", "RUL-PURE", "INT-PURE", "UI-NO-DOMAIN", "UTL-PUBLIC-DEPS", "MOD-REQUIRED", "MOD-GOVERNED", "TST-NO-PROD-IMP", "IMP-STATIC", "IMP-SDK-BOUNDARY":
+		return true
 	}
-	var visit func(*ast.Node)
-	visit = func(node *ast.Node) {
-		switch node.Kind {
-		case ast.KindImportEqualsDeclaration:
-			emit(node, "Production dependency uses import-equals instead of analyzable ESM.")
-		case ast.KindImportType:
-			arg := node.AsImportTypeNode().Argument
-			if arg == nil || arg.Kind != ast.KindLiteralType || !governanceLiteral(arg.AsLiteralTypeNode().Literal) {
-				emit(node, "Production dependency uses a nonliteral dynamic import.")
-			}
-		case ast.KindCallExpression:
-			c := node.AsCallExpression()
-			if c.Expression.Kind == ast.KindImportKeyword {
-				if c.Arguments == nil || len(c.Arguments.Nodes) != 1 || !governanceLiteral(c.Arguments.Nodes[0]) {
-					emit(node, "Production dependency uses a nonliteral dynamic import.")
-				}
-			} else if c.Expression.Kind == ast.KindIdentifier && c.Expression.Text() == "require" && !governanceLocallyOwned(c.Expression, false) && !governanceLocallyOwned(c.Expression, true) {
-				emit(node, "Production dependency uses require instead of analyzable ESM.")
-			}
-		}
-		node.ForEachChild(func(child *ast.Node) bool { visit(child); return false })
-	}
-	visit(file.Source.AsNode())
-	return out
+	return false
 }
+
 func governanceEvaluate(project *governedProject, rule string) (governanceOutcome, bool) {
+	if governanceSDKOnlyFamily(rule) {
+		return governanceOutcome{}, false
+	}
 	started := time.Now()
 	defer func() { project.stats.phase("rule-dispatch-inclusive", started) }()
 	project.stats.RuleEvaluations++
 	if out, ok := governanceCombinedFamily(project, rule); ok {
 		return out, true
 	}
-	if rule == "ROOT-COMPOSE" {
-		return governanceRootCompose(project), true
-	}
-	if rule == "ROOT-FACADE" {
-		return governanceRootFacade(project), true
-	}
-	if rule == "DOM-PUBLIC-DEPS" {
-		return governancePublicDependencies(project), true
-	}
-	if rule == "FNC-XDOM-DECLARED" || rule == "FNC-XDOM-REQ" {
-		return governanceFunctionDependencies(project, rule), true
-	}
-	if rule == "DEP-ALLOWLIST" {
-		return governanceDependencyAllowlist(project), true
-	}
-	if rule == "IMP-ALIAS-CFG" {
-		return governanceAliasConfiguration(project), true
-	}
-	if rule == "QLT-TYPED-COORD" || rule == "QLT-CANON-VALUES" || rule == "NODE-INHERITED" {
-		return governanceGlobalSyntax(project, rule), true
-	}
 	if rule == "QLT-DEF-IDS" {
 		return governanceDefinitionIDs(project), true
 	}
-	revision, ok := governanceRevisions[rule]
-	if !ok {
-		return governanceOutcome{}, false
-	}
-	out := governanceOutcome{Rule: rule, Revision: revision, Status: "pass", Findings: []governanceEvidence{}}
-	if rule == "MOD-REQUIRED" {
-		out.SubjectCount = 1
-		for _, layer := range project.Policy.Layers {
-			if layer.Required && !containsString(project.RootEntries, strings.TrimSuffix(layer.SourcePath, "/")) {
-				out.Findings = append(out.Findings, governanceViolation(rule, nil, nil, fmt.Sprintf("Required layer %s is missing at %s.", layer.ID, layer.SourcePath)))
-			}
-		}
-		for _, root := range project.Policy.RootFiles {
-			if root.Required && !containsString(project.RootEntries, root.SourcePath) {
-				out.Findings = append(out.Findings, governanceViolation(rule, nil, nil, fmt.Sprintf("Required root file %s is missing.", root.SourcePath)))
-			}
-		}
-	} else {
-		for _, file := range project.Files {
-			if file.Role != "production" {
-				continue
-			}
-			out.SubjectCount++
-			switch rule {
-			case "MOD-GOVERNED":
-				governed := file.Layer != ""
-				for _, root := range project.Policy.RootFiles {
-					governed = governed || root.SourcePath == file.Path
-				}
-				if governed {
-					continue
-				}
-				message := fmt.Sprintf("Production source %s is outside every declared layer and governed root. Move Domain source into a declared layer; exclude a directory that is not Domain source, such as mockups, with an \"ignore\" glob in astrale.lint.json.", file.Path)
-				var anchor *ast.Node
-				if file.Source.Statements != nil && len(file.Source.Statements.Nodes) > 0 {
-					anchor = file.Source.Statements.Nodes[0]
-				}
-				out.Findings = append(out.Findings, governanceViolation(rule, file, anchor, message))
-			case "TST-NO-PROD-IMP":
-				for _, imp := range file.Imports {
-					target := project.resolveProjectImport(file, imp.Specifier)
-					if target != nil && target.Role != "production" {
-						out.Findings = append(out.Findings, governanceViolation(rule, file, imp.Node, fmt.Sprintf("Production source %s imports test artifact %s.", file.Path, target.Path)))
-					}
-				}
-			case "IMP-STATIC":
-				out.Findings = append(out.Findings, governanceStaticEvidence(file)...)
-			case "IMP-SDK-BOUNDARY":
-				for _, imp := range file.Imports {
-					s := imp.Specifier
-					if s == "@astrale-os/kernel-core" || strings.HasPrefix(s, "@astrale-os/kernel-core/") || s == "@astrale-os/kernel-dsl" || strings.HasPrefix(s, "@astrale-os/kernel-dsl/") {
-						out.Findings = append(out.Findings, governanceViolation(rule, file, imp.Node, fmt.Sprintf("Domain source imports %s directly; use the matching @astrale-os/sdk semantic subpath.", s)))
-					}
-				}
-			}
-		}
-	}
-	if len(out.Findings) > 0 {
-		out.Status = "fail"
-	}
-	return out, true
+	return governanceOutcome{}, false
 }

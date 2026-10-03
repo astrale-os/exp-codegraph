@@ -22,33 +22,6 @@ func governanceWrite(t *testing.T, root, path, text string) {
 		t.Fatal(err)
 	}
 }
-func TestGovernanceRequireLexicalOwnership(t *testing.T) {
-	tests := []struct {
-		name, text string
-		count      int
-	}{
-		{"global", `require('x')`, 1}, {"parameter", `function f(require){require('x')}`, 0}, {"destructured", `function f({x:require}){require('x')}`, 0}, {"omitted-array", `function f([,require]){require('x')}`, 0},
-		{"later-declaration", `function f(){require('x');const require=1}`, 0}, {"named-expression", `const x=function require(){require('x')}`, 0}, {"named-method", `class X {require(){require('x')}}`, 0}, {"catch", `try{}catch({require}){require('x')}`, 0},
-		{"loop", `for(const require of xs) require('x')`, 0}, {"module-scope", `namespace X {const require=1;require('x')}`, 0}, {"module-name", `namespace require {} require('x')`, 0},
-		{"default-import", `import require from 'x';require('x')`, 0}, {"namespace-import", `import * as require from 'x';require('x')`, 0}, {"named-import", `import {x as require} from 'x';require('x')`, 0},
-		{"import-equals-not-owner", `import require = require('x');require('x')`, 2}, {"type-not-owner", `type require = string;require('x')`, 1}, {"other-block", `{const require=1};require('x')`, 1},
-		{"property", `x.require('x')`, 0}, {"parenthesized", `(require)('x')`, 0}, {"unrelated", `function f({require:x}){require('x')}`, 1},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := t.TempDir()
-			governanceWrite(t, root, "mutations/source.ts", test.text)
-			project, err := captureGovernedProject(root, governanceTestPolicy())
-			if err != nil {
-				t.Fatal(err)
-			}
-			out, ok := governanceEvaluate(project, "IMP-STATIC")
-			if !ok || len(out.Findings) != test.count {
-				t.Fatalf("expected%d got%v", test.count, out.Findings)
-			}
-		})
-	}
-}
 func TestGovernanceFinalBarrierRejectsNewNegativeConfig(t *testing.T) {
 	root := t.TempDir()
 	governanceWrite(t, root, "mutations/source.ts", "require('x')")
@@ -111,9 +84,22 @@ func TestGovernanceCapturesAllGovernedOutsideProgramAndCoordinates(t *testing.T)
 	if len(project.Files) != 1 || !strings.HasPrefix(project.Files[0].Text, "\ufeff") {
 		t.Fatal("governed membership or BOM lost")
 	}
-	out, _ := governanceEvaluate(project, "IMP-STATIC")
-	if len(out.Findings) != 1 || out.Findings[0].Location.Line != 2 || out.Findings[0].Location.Column != 10 || out.Findings[0].Location.Offset != 16 {
-		t.Fatalf("wrong coordinates%v", out.Findings)
+	var imported *ast.Node
+	walk(project.Files[0].Source.AsNode(), func(node *ast.Node) bool {
+		if node.Kind == ast.KindImportType {
+			if imported != nil {
+				t.Fatal("unexpected second parser-owned import type")
+			}
+			imported = node
+		}
+		return true
+	})
+	if imported == nil {
+		t.Fatal("missing parser-owned import type")
+	}
+	location := governanceLocation(project.Files[0], imported)
+	if location.Line != 2 || location.Column != 10 || location.Offset != 16 {
+		t.Fatalf("wrong coordinates%v", location)
 	}
 	if project.Files[0].Source.AsNode().Kind != ast.KindSourceFile {
 		t.Fatal("missing parsed source")
@@ -167,42 +153,6 @@ func TestGovernanceResolverContextsAndImportModeConflictWithoutProgram(t *testin
 	}
 	if before == "" {
 		t.Fatal("missing input certificate")
-	}
-}
-
-func TestGovernanceClosedSchemaBoundaryPreservesUnknownAndMutation(t *testing.T) {
-	root := t.TempDir()
-	policy := governanceTestPolicy()
-	policy.Layers = append(policy.Layers, governanceLayer{ID: "rules", SourcePath: "rules/"})
-	governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"moduleResolution":"NodeNext","module":"NodeNext","verbatimModuleSyntax":true}}`)
-	governanceWrite(t, root, "rules/index.ts", `import {data} from '../schema/data.js';import {opaque} from '../schema/opaque.js';import {effect} from '../schema/effect.js';`)
-	governanceWrite(t, root, "schema/data.ts", `import {stateMachine,type StateOf} from '@astrale-os/sdk/state';export const data=stateMachine({initial:'a',transitions:{a:{}}});`)
-	governanceWrite(t, root, "schema/opaque.ts", `export const opaque=unknown;`)
-	governanceWrite(t, root, "schema/effect.ts", `export const effect=execute();`)
-	project, err := captureGovernedProject(root, policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, ok := governanceEvaluate(project, "DEP-ALLOWLIST")
-	if !ok || len(out.Findings) != 2 || out.Findings[0].Kind != "ambiguity" || out.Findings[1].Kind != "violation" {
-		t.Fatalf("closed data must erase only proved initialization: %+v", out)
-	}
-}
-func TestGovernanceRemoteRequirementUsesExactDeclaredAlias(t *testing.T) {
-	root := t.TempDir()
-	policy := governanceTestPolicy()
-	policy.Layers = append(policy.Layers, governanceLayer{ID: "functions", SourcePath: "functions/"})
-	policy.RootFiles = append(policy.RootFiles, governanceRoot{ID: "application", SourcePath: "application.ts", Role: "composition"})
-	governanceWrite(t, root, "schema/index.ts", `import {defineSchema} from '@astrale-os/sdk/schema';import foreign from '@astrale-domains/foreign';export const schema=defineSchema('s',{dependencies:{remote:foreign}});`)
-	governanceWrite(t, root, "functions/invoke.ts", `import {defineAction} from '@astrale-os/sdk';defineAction({},({dependencies})=>{dependencies.remote.caller.invoke(x=>x.functions.go);dependencies.remote.caller.invoke(x=>x.functions.other);dependencies.remote.invoke(x=>x.functions.go)});`)
-	governanceWrite(t, root, "application.ts", `import {defineApplication,requirements} from '@astrale-os/sdk/application';import {schema} from '@astrale-os/sdk/schema';import foreign from '@astrale-domains/foreign';const remote=schema.resolve(foreign);defineApplication({requirements:requirements({functions:[remote.functions.go]})});`)
-	project, err := captureGovernedProject(root, policy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	out, ok := governanceEvaluate(project, "FNC-XDOM-REQ")
-	if !ok || len(out.Findings) != 1 || out.Findings[0].Kind != "violation" || !strings.Contains(out.Findings[0].Evidence, "functions.other") {
-		t.Fatalf("exact requirements must admit only one selector: %+v", out)
 	}
 }
 

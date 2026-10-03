@@ -68,15 +68,21 @@ func TestGovernanceParseCatalogSuccessfulReplacement(t *testing.T) {
 			if len(held) != 2 || held["mutations/a.ts"] != heldA || heldA.Source.Text() != `require('a');` || heldB.Source.Text() != `require('b');` {
 				t.Fatal("retiring session catalog mutated an independently held source catalog")
 			}
-			before, _ := governanceEvaluate(first, "IMP-STATIC")
+			locations := func(project *governedProject) []*decisionLocation {
+				rows := []*decisionLocation{}
+				for _, file := range project.Files {
+					rows = append(rows, governanceLocation(file, file.Source.Statements.Nodes[0]))
+				}
+				return rows
+			}
+			before := locations(first)
 			fresh, err := captureGovernedProject(root, governanceTestPolicy())
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, _ := governanceEvaluate(renamed, "IMP-STATIC")
-			want, _ := governanceEvaluate(fresh, "IMP-STATIC")
-			if len(before.Findings) != 2 || !reflect.DeepEqual(got, want) || len(got.Findings) != 1 {
-				t.Fatal("catalog replacement changed actual parsed rule outcomes")
+			got, want := locations(renamed), locations(fresh)
+			if len(before) != 2 || !reflect.DeepEqual(got, want) || len(got) != 1 {
+				t.Fatal("catalog replacement changed actual parser-owned public locations")
 			}
 		})
 	}

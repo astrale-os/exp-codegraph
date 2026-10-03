@@ -50,7 +50,6 @@ func governanceSharedProject(project *governedProject) *sourcepolicy.Project {
 	}
 	out.Authoring = func(file *sourcepolicy.File) *authoredsource.File { return owners[file].authoring() }
 	governanceInstallTypeAuthority(project, out)
-	project.sharedFileOwners = owners
 	project.sharedProject = out
 	return out
 }

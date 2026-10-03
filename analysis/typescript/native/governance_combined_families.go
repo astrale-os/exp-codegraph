@@ -3,7 +3,6 @@ package main
 import (
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	"fmt"
-	ast "github.com/microsoft/typescript-go/shim/ast"
 	"strings"
 	"time"
 )
@@ -14,72 +13,10 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 	group := ""
 	scope := ""
 	var evaluate func(*sourcepolicy.Project) sourcepolicy.Result
-	if _, ok := sourcepolicy.SchemaRevisions[rule]; ok {
-		group = "schema"
-		scope = "schema"
-		evaluate = sourcepolicy.EvaluateSchema
-	} else if rule == "SCH-STATE-SOURCE" {
-		group = "schema-state"
-		scope = "schema"
-		evaluate = sourcepolicy.EvaluateSchemaState
-	} else if _, ok := sourcepolicy.StateRevisions[rule]; ok {
-		group = "states"
-		scope = "schema"
-		evaluate = sourcepolicy.EvaluateStates
-	} else if _, ok := sourcepolicy.QueryMutationRevisions[rule]; ok {
-		if strings.HasPrefix(rule, "QRY-") {
-			group = "queries"
-			scope = "queries"
-			evaluate = sourcepolicy.EvaluateQuerySource
-		} else {
-			group = "mutations"
-			scope = "mutations"
-			evaluate = sourcepolicy.EvaluateMutationSource
-		}
-	} else if _, ok := sourcepolicy.FamilyRevisions[rule]; ok {
-		switch {
-		case rule == "FNC-INT-TYPES" || rule == "FNC-STEP-IDS" || rule == "FNC-NO-NEST":
-			group = "workflows"
-			scope = "functions"
-			evaluate = sourcepolicy.EvaluateWorkflows
-		case rule == "FNC-ONE-IMPL":
-			group = "actions"
-			scope = "functions"
-			evaluate = sourcepolicy.EvaluateActions
-		case strings.HasPrefix(rule, "PRV-"):
-			group = "providers"
-			scope = "providers"
-			evaluate = sourcepolicy.EvaluateProviders
-		case strings.HasPrefix(rule, "MIG-"):
-			group = "migrations"
-			scope = "migrations"
-			evaluate = sourcepolicy.EvaluateMigrations
-		case strings.HasPrefix(rule, "VIW-"):
-			group = "views"
-			scope = "ui"
-			evaluate = sourcepolicy.EvaluateViews
-		}
-	}
-	// Revisions also contains registered query/mutation rules. Preserve the
-	// original combined-family priority before the old basic fallback.
-	if evaluate == nil {
-		if _, ok := sourcepolicy.Revisions[rule]; ok {
-			group = "basic"
-			switch rule {
-			case "RUL-SYNC", "RUL-PURE":
-				scope = "rules"
-			case "INT-PURE":
-				scope = "integrations"
-			case "UI-NO-DOMAIN":
-				scope = "ui"
-			case "UTL-PUBLIC-DEPS":
-				scope = "utils"
-			}
-			evaluate = func(shared *sourcepolicy.Project) sourcepolicy.Result {
-				return sourcepolicy.Evaluate(shared.Files, sourcepolicy.Authority{Resolve: shared.Resolve,
-					LocallyBound: func(identifier *ast.Node) bool { return governanceLocallyOwned(identifier, true) }})
-			}
-		}
+	if _, ok := sourcepolicy.QueryMutationRevisions[rule]; ok && strings.HasPrefix(rule, "QRY-") {
+		group = "queries"
+		scope = "queries"
+		evaluate = sourcepolicy.EvaluateQuerySource
 	}
 	if evaluate == nil {
 		return governanceOutcome{}, false
@@ -106,9 +43,6 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 		state.RulePending = true
 	}
 	revision := governanceRevisions[rule]
-	if group == "basic" {
-		revision = sourcepolicy.Revisions[rule]
-	}
 	out := governanceOutcome{Rule: rule, Revision: revision, Status: "pass", Findings: []governanceEvidence{}}
 	for _, file := range project.Files {
 		if file.Role == "production" && file.Layer == scope {
@@ -120,16 +54,12 @@ func governanceCombinedFamily(project *governedProject, rule string) (governance
 			continue
 		}
 		var file *governedFile
-		if group == "basic" {
-			file = project.sharedFileOwners[item.File]
-		} else if item.File != nil {
+		if item.File != nil {
 			file = project.FilesByPath[item.File.Path]
 		}
 		e := governanceViolation(rule, file, item.Node, item.Evidence)
 		e.Kind = item.Kind
-		if group != "basic" {
-			e.AmbiguityReason = item.AmbiguityReason
-		}
+		e.AmbiguityReason = item.AmbiguityReason
 		out.Findings = append(out.Findings, e)
 		if e.Kind == "violation" {
 			out.Status = "fail"

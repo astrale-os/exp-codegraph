@@ -132,6 +132,7 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 	for _, file := range project.Files {
 		product.Files = append(product.Files, governanceFileSummary{file.Path, file.Role, file.Layer, file.Submodule})
 	}
+	sourceOwnerRequired := false
 	for _, rule := range params.RuleRevisions {
 		revision, ok := governanceRevisions[rule.ID]
 		if !ok {
@@ -142,6 +143,12 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 			product.Residual = append(product.Residual, "Native rule revision differs: "+rule.ID)
 			continue
 		}
+		// Default prepare is an unsupported partial adapter, not a Source49 owner.
+		// Keep revision diagnostics in request order before reporting that boundary.
+		if rule.ID != "QRY-CANON" && rule.ID != "QRY-SINGLE" && rule.ID != "QLT-DEF-IDS" {
+			sourceOwnerRequired = true
+			continue
+		}
 		out, _ := governanceEvaluate(project, rule.ID)
 		product.Outcomes = append(product.Outcomes, out)
 	}
@@ -149,6 +156,9 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 		product.Observations = append(product.Observations, row)
 	}
 	product.Residual = append(product.Residual, project.familyResidual...)
+	if sourceOwnerRequired {
+		product.Residual = append(product.Residual, "Native source-family evaluation requires the SDK source-policy owner.")
+	}
 	product.InputCertificate = project.capture.certificate()
 	product.Residual = append(product.Residual, "Canonical full policy compilation and whole LintResult assembly/suppression are not qualified.")
 	product.PhaseCounters = project.stats

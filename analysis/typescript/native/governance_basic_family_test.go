@@ -1,13 +1,11 @@
 package main
 
 import (
-	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	"encoding/json"
 	"fmt"
 	vfs "github.com/microsoft/typescript-go/shim/vfs"
 	"os"
 	"reflect"
-	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -83,15 +81,66 @@ func basicFamilySamePrefix(t *testing.T, old, new *governedProject, a, b *basicF
 		old.capture.compiler.inconsistent != new.capture.compiler.inconsistent {
 		t.Fatal("actual captured presence/content/metadata prefix differs")
 	}
-	if !reflect.DeepEqual(old.familyResidual, new.familyResidual) {
-		t.Fatalf("residual order differs: %#v / %#v", old.familyResidual, new.familyResidual)
-	}
 	if new.typeOwner != nil && (new.typeOwner.program != nil || new.typeOwner.opened) {
 		t.Fatal("basic family opened typed authority")
 	}
 }
 
-func TestGovernanceBasicFamilyAllRuleOrdersOriginalPrefix(t *testing.T) {
+// Semantic decisions live in the SDK original-verifier transfer tests. These
+// controls exercise only the original captured compiler/import scalar owner.
+func basicFamilyScalarPrefix(project *governedProject, rule string) []string {
+	layer := ""
+	switch rule {
+	case "RUL-PURE":
+		layer = "rules"
+	case "INT-PURE":
+		layer = "integrations"
+	case "UI-NO-DOMAIN":
+		layer = "ui"
+	case "UTL-PUBLIC-DEPS":
+		layer = "utils"
+	}
+	rows := []string{}
+	if layer == "" {
+		return rows
+	}
+	for _, file := range project.Files {
+		if file.Role != "production" || file.Layer != layer {
+			continue
+		}
+		for _, imp := range file.Imports {
+			target := project.resolveProjectImport(file, imp.Specifier)
+			path := "<absent>"
+			if target != nil {
+				path = target.Path
+			}
+			rows = append(rows, file.Path+"/"+imp.Specifier+"="+path)
+		}
+	}
+	return rows
+}
+
+// Publication tickets are private to each capture; semantic equality is canonical.
+func basicFamilySameCertificates(t *testing.T, old, current *governedProject) {
+	t.Helper()
+	if old.capture.canonicalCertificate() != current.capture.canonicalCertificate() {
+		t.Fatal("current canonical captured certificate differs")
+	}
+	left, right := old.capture.certificate(), current.capture.certificate()
+	if left == "" || right == "" || left == right {
+		t.Fatal("independent capture publication owners collapsed")
+	}
+	if left != old.capture.certificate() || right != current.capture.certificate() {
+		t.Fatal("unchanged capture publication ticket advanced")
+	}
+}
+func basicFamilyFreshSeal(t *testing.T, project *governedProject) {
+	t.Helper()
+	if same, err := project.capture.Verify(); err != nil || !same {
+		t.Fatalf("fresh captured seal failed: %v %v", same, err)
+	}
+}
+func TestGovernanceBasicCaptureAllScalarOrdersAndPhysicalPrefix(t *testing.T) {
 	root := t.TempDir()
 	governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext"},"include":["**/*.ts"]}`)
 	governanceWrite(t, root, "rules/source.ts", `import './missing'; export async function rule(){ await Promise.resolve(1);fetch('x'); } Promise[member]();`)
@@ -107,31 +156,19 @@ func TestGovernanceBasicFamilyAllRuleOrdersOriginalPrefix(t *testing.T) {
 			count++
 			t.Run(strings.Join(prefix, "/"), func(t *testing.T) {
 				old, a := basicFamilyCapture(t, root)
-				new, b := basicFamilyCapture(t, root)
-				findings := 0
+				current, b := basicFamilyCapture(t, root)
 				for _, rule := range append(append([]string{}, prefix...), prefix...) {
-					want := governanceSourceFamilyOriginal(old, rule)
-					got, known := governanceEvaluate(new, rule)
-					if !known || !reflect.DeepEqual(want, got) {
-						t.Fatalf("%s differs\nold=%#v\nnew=%#v", rule, want, got)
+					if !reflect.DeepEqual(basicFamilyScalarPrefix(old, rule), basicFamilyScalarPrefix(current, rule)) {
+						t.Fatal("captured scalar result order changed", rule)
 					}
-					findings += len(got.Findings)
-					basicFamilySamePrefix(t, old, new, a, b)
+					basicFamilySamePrefix(t, old, current, a, b)
+					basicFamilySameCertificates(t, old, current)
 				}
-				if findings == 0 || len(a.Reads) == 0 {
-					t.Fatal("fixture did not reach rule evidence and actual resolver operations")
+				if len(a.Reads) == 0 {
+					t.Fatal("fixture never reached actual resolver I/O")
 				}
-				if new.stats.FamilyEvaluations != 1 || len(new.familyProducts) != 1 {
-					t.Fatalf("expected one actual basic product: %#v", new.stats)
-				}
-				if old.stats.RuleEvaluations != 0 || new.stats.RuleEvaluations != 10 {
-					t.Fatal("rule dispatch accounting changed")
-				}
-				for _, project := range []*governedProject{old, new} {
-					if same, err := project.capture.Verify(); err != nil || !same {
-						t.Fatalf("fresh original seal failed: %v %v", same, err)
-					}
-				}
+				basicFamilyFreshSeal(t, old)
+				basicFamilyFreshSeal(t, current)
 			})
 			return
 		}
@@ -146,8 +183,7 @@ func TestGovernanceBasicFamilyAllRuleOrdersOriginalPrefix(t *testing.T) {
 		t.Fatal(count)
 	}
 }
-
-func TestGovernanceBasicFamilyEmptyLocalAndIgnoredOriginal(t *testing.T) {
+func TestGovernanceBasicCaptureEmptyLocalIgnoredAndInvalidCompiler(t *testing.T) {
 	cases := []struct {
 		Name, Path, Text string
 		InvalidConfig    bool
@@ -168,90 +204,83 @@ func TestGovernanceBasicFamilyEmptyLocalAndIgnoredOriginal(t *testing.T) {
 				governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"moduleResolution":"not-a-resolution"}}`)
 			}
 			old, a := basicFamilyCapture(t, root)
-			new, b := basicFamilyCapture(t, root)
+			current, b := basicFamilyCapture(t, root)
 			for _, rule := range basicFamilyRules {
-				want := governanceSourceFamilyOriginal(old, rule)
-				got, ok := governanceEvaluate(new, rule)
-				if !ok || !reflect.DeepEqual(want, got) {
-					t.Fatalf("%s: old=%#v new=%#v", rule, want, got)
+				if !reflect.DeepEqual(basicFamilyScalarPrefix(old, rule), basicFamilyScalarPrefix(current, rule)) {
+					t.Fatal(rule)
 				}
-				basicFamilySamePrefix(t, old, new, a, b)
+				basicFamilySamePrefix(t, old, current, a, b)
 			}
-			if new.stats.FamilyEvaluations != 1 {
-				t.Fatal("basic product recomputed")
+			if old.compilerValid == test.InvalidConfig || current.compilerValid == test.InvalidConfig {
+				t.Fatal("original compiler validity changed")
 			}
+			basicFamilySameCertificates(t, old, current)
+			if len(old.Files) != len(current.Files) {
+				t.Fatal("capture membership differs")
+			}
+			basicFamilyFreshSeal(t, old)
+			basicFamilyFreshSeal(t, current)
 		})
 	}
 }
-
-func TestGovernanceBasicFamilyPreservesPointerOwnerAndOldOutcomeProjection(t *testing.T) {
+func TestGovernanceBasicCaptureKeepsIndependentSourceOwnersAndCoordinates(t *testing.T) {
 	root := t.TempDir()
 	governanceWrite(t, root, "rules/a.ts", "Promise[key]();")
 	governanceWrite(t, root, "rules/b.ts", "\n\nfetch('x');")
 	old, _ := basicFamilyCapture(t, root)
-	new, _ := basicFamilyCapture(t, root)
-	// A deliberately malformed private project retains two distinct source owners
-	// at one path. The actual capture cannot produce it; no path-map substitution
-	// may silently change the original pointer-owned location projection.
-	for _, project := range []*governedProject{old, new} {
-		project.Files[0].Path = project.Files[1].Path
-		project.FilesByPath = map[string]*governedFile{project.Files[1].Path: project.Files[1]}
+	current, _ := basicFamilyCapture(t, root)
+	if len(old.Files) != 2 || len(current.Files) != 2 {
+		t.Fatal("missing owned source")
 	}
-	for _, rule := range basicFamilyRules {
-		want := governanceSourceFamilyOriginal(old, rule)
-		got, _ := governanceEvaluate(new, rule)
-		if !reflect.DeepEqual(want, got) {
-			t.Fatalf("pointer source owner collapsed for %s", rule)
+	shared := governanceSharedProject(current)
+	for i, file := range current.Files {
+		if file == old.Files[i] || file.Source == old.Files[i].Source || shared.Files[i].Source != file.Source || shared.Files[i].Path != file.Path {
+			t.Fatal("captured source owner collapsed")
+		}
+		location := governanceLocation(file, file.Source.Statements.Nodes[0])
+		if location.Path != file.Path || location.Offset != i*2 || location.Line != 1+i*2 {
+			t.Fatalf("current original location differs: %#v", location)
 		}
 	}
-	shared := governanceSharedProject(new)
-	// Preserve original basic projection's deliberate omission of reason, even
-	// if a future evaluator adds it. Combined families keep their own semantics.
-	result := sourcepolicy.Result{Evidence: []sourcepolicy.Evidence{{Rule: "RUL-SYNC", Kind: "ambiguity", Evidence: "future", AmbiguityReason: "unsupported-syntax", File: shared.Files[0], Node: shared.Files[0].Source.AsNode()}}, Residual: []sourcepolicy.Residual{{Rule: "RUL-SYNC", Reason: "first"}, {Rule: "RUL-SYNC", Reason: "second"}}}
-	new.familyProducts["basic"] = result
-	got, _ := governanceEvaluate(new, "RUL-SYNC")
-	if got.Status != "residual" || len(got.Findings) != 1 || got.Findings[0].AmbiguityReason != "" || !reflect.DeepEqual(new.familyResidual, []string{"RUL-SYNC: first", "RUL-SYNC: second"}) {
-		t.Fatalf("old basic projection contract changed: %#v", got)
-	}
-	got.Findings[0].Evidence = "consumer mutation"
-	got.Findings[0].Location.Path = "consumer mutation"
-	again, _ := governanceEvaluate(new, "RUL-SYNC")
-	if again.Findings[0].Evidence != "future" || again.Findings[0].Location.Path == "consumer mutation" {
-		t.Fatal("consumer mutated retained family product")
-	}
+	basicFamilyFreshSeal(t, old)
+	basicFamilyFreshSeal(t, current)
 }
-
-func TestGovernanceBasicFamilyNegativeReadFreshCaptureAndMembership(t *testing.T) {
+func TestGovernanceBasicCaptureNegativePresenceHiddenEditsAndFreshMembership(t *testing.T) {
 	root := t.TempDir()
-	governanceWrite(t, root, "utils/source.ts", `import './missing';`)
+	governanceWrite(t, root, "package.json", `{"type":"module"}`)
+	governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"module":"NodeNext","moduleResolution":"NodeNext"},"include":["**/*.ts"]}`)
+	governanceWrite(t, root, "utils/source.ts", `import './missing.js';`)
 	old, a := basicFamilyCapture(t, root)
-	new, b := basicFamilyCapture(t, root)
+	current, b := basicFamilyCapture(t, root)
 	for _, rule := range basicFamilyRules {
-		want := governanceSourceFamilyOriginal(old, rule)
-		got, _ := governanceEvaluate(new, rule)
-		if !reflect.DeepEqual(want, got) {
+		if !reflect.DeepEqual(basicFamilyScalarPrefix(old, rule), basicFamilyScalarPrefix(current, rule)) {
 			t.Fatal(rule)
 		}
 	}
-	basicFamilySamePrefix(t, old, new, a, b)
+	basicFamilySamePrefix(t, old, current, a, b)
+	if len(a.Reads) == 0 {
+		t.Fatal("negative scalar did not reach original compiler I/O")
+	}
 	governanceWrite(t, root, "utils/missing.ts", "export const newlyPresent=1;")
-	for _, project := range []*governedProject{old, new} {
+	for _, project := range []*governedProject{old, current} {
 		if same, err := project.capture.Verify(); err != nil || same {
-			t.Fatalf("negative membership survived: %v %v", same, err)
+			t.Fatalf("negative presence survived: %v %v", same, err)
 		}
 	}
-	// Every new capture owns a new product, even when source bytes are unchanged.
 	fresh, _ := basicFamilyCapture(t, root)
-	want, _ := basicFamilyCapture(t, root)
-	for _, rule := range basicFamilyRules {
-		expected := governanceSourceFamilyOriginal(want, rule)
-		got, _ := governanceEvaluate(fresh, rule)
-		if !reflect.DeepEqual(expected, got) {
-			t.Fatal(rule)
-		}
+	if len(fresh.Files) != 2 {
+		t.Fatal("fresh membership did not admit new source")
 	}
-	if fresh.stats.FamilyEvaluations != 1 || fresh.sharedProject == new.sharedProject {
-		t.Fatal("cross-capture product escaped")
+	if got := basicFamilyScalarPrefix(fresh, "UTL-PUBLIC-DEPS"); !reflect.DeepEqual(got, []string{"utils/source.ts/./missing.js=utils/missing.ts"}) {
+		t.Fatal("fresh compiler scalar did not resolve newly present source", got)
+	}
+	basicFamilyFreshSeal(t, fresh)
+	if _, err := fresh.capture.optional(root+"/.gitignore", 128*1024); err != nil {
+		t.Fatal(err)
+	}
+	governanceWrite(t, root, ".gitignore", "new hidden state\n")
+	if same, err := fresh.capture.Verify(); err != nil || same {
+		t.Fatalf("late hidden change survived: %v %v", same, err)
 	}
 	for _, path := range []string{"utils/source.ts", "utils/missing.ts"} {
 		if err := os.Remove(root + "/" + path); err != nil {
@@ -259,25 +288,15 @@ func TestGovernanceBasicFamilyNegativeReadFreshCaptureAndMembership(t *testing.T
 		}
 	}
 	dropped, _ := basicFamilyCapture(t, root)
-	dropOracle, _ := basicFamilyCapture(t, root)
-	for _, rule := range basicFamilyRules {
-		expected := governanceSourceFamilyOriginal(dropOracle, rule)
-		got, _ := governanceEvaluate(dropped, rule)
-		if !reflect.DeepEqual(expected, got) || got.SubjectCount != 0 || len(got.Findings) != 0 {
-			t.Fatal("empty membership retained old subjects")
-		}
+	if len(dropped.Files) != 0 || len(basicFamilyScalarPrefix(dropped, "UTL-PUBLIC-DEPS")) != 0 {
+		t.Fatal("empty membership retained old subjects")
 	}
+	basicFamilyFreshSeal(t, dropped)
 }
-
-func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *testing.T) {
+func TestGovernanceBasicCaptureRetainsRealIntrinsicResumeDigestGenerationAndSeal(t *testing.T) {
 	root := t.TempDir()
 	governanceWrite(t, root, "rules/source.ts", `Promise[key]();fetch('x');`)
 	project, _ := basicFamilyCapture(t, root)
-	original, _ := basicFamilyCapture(t, root)
-	expected := map[string]governanceOutcome{}
-	for _, rule := range basicFamilyRules {
-		expected[rule] = governanceSourceFamilyOriginal(original, rule)
-	}
 	state := &governanceProductsSession{Project: project, Token: "basic-resume", Generation: "1", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false}`)}, Answers: map[string]governanceIntrinsicAnswer{}}
 	project.sourceProofState = state
 	ids := []string{}
@@ -293,13 +312,7 @@ func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *te
 		state.Contracts = append(state.Contracts, governanceImplementationContract{RuleID: rule, RuleRevision: governanceRevisions[rule], Implementation: governanceImplementation{implementation, "1"}})
 		project.Disabled[rule] = "protocol fixture does not own source verdicts"
 	}
-	// Retained Go family is a direct private oracle, not the new SDK source producer.
-	for _, rule := range basicFamilyRules {
-		actual, known := governanceEvaluate(project, rule)
-		if !known || !reflect.DeepEqual(actual, expected[rule]) {
-			t.Fatalf("%s direct original findings/revision differ: %#v", rule, actual)
-		}
-	}
+	certificate := project.capture.certificate()
 	state.ActiveFamily = "workflows"
 	state.require(governanceIntrinsic{ID: "unrelated-step", Kind: "accept-step-id"})
 	state.ActiveFamily = ""
@@ -308,8 +321,8 @@ func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.(map[string]any)["status"] != "intrinsics" || project.stats.FamilyEvaluations != 1 || len(state.FamilyMissing["basic"]) != 0 {
-		t.Fatal("basic family borrowed unrelated canonical authority")
+	if first.(map[string]any)["status"] != "intrinsics" {
+		t.Fatalf("missing real original intrinsic wave: %#v", first)
 	}
 	accepted := true
 	raw, _ := json.Marshal(map[string]any{"token": state.Token, "kind": "intrinsics", "answers": []governanceIntrinsicAnswer{{ID: "unrelated-step", Kind: "accept-step-id", Accepted: &accepted}}})
@@ -325,105 +338,105 @@ func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *te
 	if err := json.Unmarshal([]byte(response["productsJSON"].(string)), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if len(envelope.Products) != 0 || state.SourceProducts != nil || project.stats.FamilyEvaluations != 1 {
-		t.Fatal("disabled source protocol fabricated verdicts or repeated the retained Go family")
+	if len(envelope.Products) != 0 || state.SourceProducts != nil {
+		t.Fatal("disabled source fabricated verdicts")
 	}
-	// All original rule outcomes (including every finding/location/reason/revision)
-	// remain exact after the unrelated canonical resume; no SDK parity is inferred.
-	for _, rule := range basicFamilyRules {
-		actual, known := governanceEvaluate(project, rule)
-		if !known || !reflect.DeepEqual(actual, expected[rule]) {
-			t.Fatalf("%s direct cached findings/revision differ: %#v", rule, actual)
+	if state.ProductsDigest == "" || state.Generation != "1" || state.Token != "basic-resume" || project.capture.certificate() != certificate {
+		t.Fatal("resume changed original digest/generation/capture")
+	}
+	basicFamilyFreshSeal(t, project)
+}
+func TestGovernanceBasicCaptureRetainsAll52RevisionsAndRuntimeDispatch(t *testing.T) {
+	expected := map[string]string{
+		"DEP-ALLOWLIST":      "9c89a0fa0f648026b2f2c8befbbfa4c4714496f91a644a1faa9aeb8c9a3e2903",
+		"DOM-PUBLIC-DEPS":    "32b41eefe565343a4c5d18ef2c22c428912c71771bfda4b6da52d3c1f62bbbf5",
+		"FNC-INT-TYPES":      "d7f9733e3724ff3c449203551012b7c37bf7af7d2e0bc5b2642308822601a119",
+		"FNC-NO-NEST":        "f2d818d1da69830c9ccaf183c5eb0310c795ab5da1a67871952aef1c2ef7600c",
+		"FNC-ONE-IMPL":       "98a614772dec03f5a5c669d0b0efcca8d811a2ed6de91347c38c6bd06fe2a84e",
+		"FNC-STEP-IDS":       "4bae952733b6f6f85e0380e68f8a8a7318e92dbe1405e57777fb64b36859baa1",
+		"FNC-XDOM-DECLARED":  "269e22202a0fbec5ec4afc3579ca504eed457f44046b99e64a38d08634294909",
+		"FNC-XDOM-REQ":       "a646c9931bb8b5a011a2cf7431f362fcb0e63be49dfc4c1bc0eba77a8aca8fdb",
+		"IMP-ALIAS-CFG":      "c28fb835daba008c01fdf0f6555817a358da85d5a697775c029e8a051c28f0ab",
+		"IMP-SDK-BOUNDARY":   "6e00f5e402015af4dbd7ddcd289d0b55a5cd2c145856056c0cb43a2035ebcf4a",
+		"IMP-STATIC":         "41f0234cf5774884aaa5b3c4d23deb79e7bc524e964b60ec9d5bd4539d11ec9c",
+		"INT-PURE":           "6eddaa070e097a15d194b09ebfeb8d21251c6682879e54a200efb91007742555",
+		"MIG-DEDICATED-CTX":  "be6389211e5ac1c0a2805a45dbc394aace48167f462947edc1db47cb4d34bf1e",
+		"MIG-EXACT-REVS":     "2353d23e19e0afa948b8c8c15b906a2e1427622cea441001d7e28c6fea81c860",
+		"MOD-GOVERNED":       "2fbff878449c8554ae5f9936166c927f7030c79c4a466086b671060cebabda13",
+		"MOD-REQUIRED":       "7792b445dee5c0b0184e3bc00e4bfeba2c5f25db921f9d825a5adfe0c9aba48f",
+		"MUT-CANON":          "238b94e9c936fc7c8cd2e1b1d5b61e59f32069ff9974dc366de6633717f38756",
+		"MUT-FRAGMENTS":      "6102ea4dbe2e461ef38b98afcfbe28639f4f472ee6a83e44ce6aad7de3c3c7ef",
+		"MUT-LOCAL-ALIAS":    "9c2a55b932a3f63428701b0d613c4f8c8015a2444bd42f922bdc4921850c37cb",
+		"MUT-PLAN-REQ":       "9201a4e5799f62cc8df37d281d1f02516132632e33b4a82187c399780bdfe340",
+		"MUT-PURE":           "0101d7edd7d34e69338aaec7129a14df40d3395b6a58b40265ccb5448e739170",
+		"MUT-STATE-ATOMIC":   "c734069c35bab09f47b4fcd6b3f207fccceb69a9da4f1fb1c50d9fd2711bf6dd",
+		"MUT-STATE-INITIAL":  "d88f178994e9ad56d14f50ad5ffdff398413e42a690985c5ddc669c0f293d9bb",
+		"NODE-INHERITED":     "0687b60d058bceb2c9833c6279c0e41543ea0e4d3b4a086ee95e8cb9c2275ef4",
+		"PRV-NO-DOMAIN":      "5905f9e8fdd2130de52b41e2bbd920ada1ad9c04a71a04e79c98b1333c318e1b",
+		"PRV-XDOM-REQ":       "065816fda57910e917670ed657cf45b1ad3bfdc8fba6362f48123221725e20a0",
+		"PRV-XDOM-TYPED":     "a520d2276cd10135dc189bb248875406c8286c1a74d4cc39f8ec4d5a96510a49",
+		"QLT-CANON-VALUES":   "2e236d7a521c771be8eace5689d10a52ae390f5d1071add401d749679d22b023",
+		"QLT-DEF-IDS":        "0c51a2194d039facdb5833a288b4ec2eadea94bbd0afb02bd1065994592c6c07",
+		"QLT-TYPED-COORD":    "4e0b929414b7526cd4cf2e755a9664eaf03845d79e650abcae7b1e2f4f4b67ce",
+		"QRY-CANON":          "17dc62dc0413f93c9d9cfd4787ee729caf187eeffe83e38f8036c1cece1b3639",
+		"QRY-COLL-FANOUT":    "50279cef3618d44cc1c3212a0d72213eca26a78c540f7a2998df244c38fc54ca",
+		"QRY-COMPOSE-STABLE": "7e028a5408a958e7e5bd6ccf04a9262c33be1152c2248896ef3cf038c125ff1e",
+		"QRY-COMPOSE-TYPED":  "4ab1566f88e42f6105ef99038f78fb03e2f95c6836458425aecfdecfc6ff3720",
+		"QRY-SINGLE":         "a0b90940e0e980f1536b8bfd4288ba3b07689ddf4bf0e72a0ad4f39a83d01f84",
+		"ROOT-COMPOSE":       "e4fed1eea4ff1ffdf57082a474cdcf7c0c83bb88268e189662594c8bdcadb47a",
+		"ROOT-FACADE":        "df8b0fbb009121f498b3bbf2fca2eeb42da3b0c8c4aea89995e09b7e24efb486",
+		"RUL-PURE":           "34957b915d98bd69f459a9865dba400d0c10f76be15502d55175bbd71de416c4",
+		"RUL-SYNC":           "b319f50b900aa00880a19cccc0ec850fe86d6b317ffcb8dc578e7d6fac1c0548",
+		"SCH-DECL-ONLY":      "3243da10715f3fbb500444cc562195ae10eb61dad84646ab8ef1d1a73b94c99a",
+		"SCH-EXACT-TYPES":    "952b22e447d155ca168ac900eede803085cf6326ae73df3c588f6dc8caa3f116",
+		"SCH-ICON-NEUTRAL":   "061939249964440ceba92dcb86f166553d56cc0196dff15785616423963d4d5b",
+		"SCH-ICON-REQUIRED":  "f4055b93066289f9b7d9cfceb5ef236420f88311a357ea11161b6fda0922ab9f",
+		"SCH-ONE-DECL":       "efaecd2e6978d1ec6d61559536246505c746b53f5968caf2560e811a970f2d04",
+		"SCH-STATE-PURE":     "8bc69ef2aea37f568d34953c81cad55b1a91ab021e5d6e9b98c6aee3db6f4dd5",
+		"SCH-STATE-RELATION": "5dd255417705fa49bda9c79a65032408e2817616c03e8d761ed8c6d089a733d3",
+		"SCH-STATE-SOURCE":   "153bb37fbc7ddcf164dea299d6874251b6b2aeffa707e809044c5390f25b3fe6",
+		"TST-NO-PROD-IMP":    "3862d665297486d32b225626f39a1cd8344b3f3bf93a2883e19dc4c94412574a",
+		"UI-NO-DOMAIN":       "042a25c0aaa76576e6c9b4f9f4f1cc9b08fe5860b9d77a3e5cc64be0f121214c",
+		"UTL-PUBLIC-DEPS":    "b64df16bd3b7d9a03142f4f651a29b4785ae64ab7d0ff8a5868a8fb82df9dc1a",
+		"VIW-NO-COMPOSE":     "7c1ec262addbd460059e345ab388bf3dcff429618e5d3b1f618a7b0ae4b12d80",
+		"VIW-SCHEMA-DECL":    "524ca0956e1ca5ecfd0010f2973075ef9844eb3b4ccf1771d1b784508292f906",
+	}
+	if len(expected) != 52 || !reflect.DeepEqual(governanceRevisions, expected) {
+		t.Fatal("original52 revision metadata changed")
+	}
+	project, recorder := basicFamilyCapture(t, t.TempDir())
+	for _, rule := range []string{"FNC-INT-TYPES", "FNC-STEP-IDS", "FNC-NO-NEST", "FNC-ONE-IMPL", "MIG-EXACT-REVS", "MIG-DEDICATED-CTX", "PRV-XDOM-TYPED", "PRV-XDOM-REQ", "PRV-NO-DOMAIN", "VIW-SCHEMA-DECL", "VIW-NO-COMPOSE"} {
+		if _, known := governanceEvaluate(project, rule); known {
+			t.Fatal("retired source evaluator fabricated verdict", rule)
 		}
 	}
-	if state.ProductsDigest == "" {
-		t.Fatal("no actual completed product digest")
+	if len(recorder.Reads) != 0 {
+		t.Fatal("retired source evaluator opened compiler authority")
 	}
-	if valid, err := project.capture.Verify(); err != nil || !valid {
-		t.Fatalf("actual resumed seal=%v %v", valid, err)
-	}
-	if state.Generation != "1" {
-		t.Fatal("resume changed current capture generation")
-	}
-}
-
-func TestGovernanceBasicFamilyPreservesEveryRegisteredRuleDispatch(t *testing.T) {
-	// Revisions is deliberately NOT a basic-only catalog: query_mutation.init
-	// adds entries. This test runs the actual original dispatcher rather than
-	// deriving expected rule routing from the candidate's catalog tests.
-	if _, present := sourcepolicy.Revisions["QRY-CANON"]; !present {
-		t.Fatal("missing actual merged revision registration")
-	}
-	ids := []string{}
-	for rule := range governanceRevisions {
-		ids = append(ids, rule)
-	}
-	sort.Strings(ids)
+	basicFamilyFreshSeal(t, project)
 	for _, populated := range []bool{false, true} {
 		for _, reverse := range []bool{false, true} {
 			t.Run(fmt.Sprintf("populated=%v/reverse=%v", populated, reverse), func(t *testing.T) {
 				root := t.TempDir()
 				if populated {
-					for _, layer := range []string{"schema", "mutations", "rules", "integrations", "ui", "utils", "providers", "queries", "functions", "migrations"} {
-						governanceWrite(t, root, layer+"/source.ts", `export const value=1;`)
-					}
-				}
-				if populated {
-					// Existing SDK source-rule regression inputs, rules.test.ts
-					// QRY-CANON and MUT-CANON: no invented typed authority.
-					governanceWrite(t, root, "queries/source.ts", "import { defineQuery } from '@astrale-os/sdk'\nexport const q = defineQuery<any>()(() => ({ id: 'q', build: () => ({ raw: true }) }))\n")
-					governanceWrite(t, root, "mutations/source.ts", "import { defineMutation } from '@astrale-os/sdk'\ndefineMutation<any>()(() => ({ id: 'm', build: () => ({ raw: true }) }))\n")
+					governanceWrite(t, root, "queries/source.ts", `import { defineQuery } from '@astrale-os/sdk'; export const q=defineQuery<any>()(()=>({id:'q',build:()=>({raw:true})}));`)
 				}
 				old, a := basicFamilyCapture(t, root)
-				new, b := basicFamilyCapture(t, root)
-				queryEvidence, mutationEvidence := false, false
-				order := append([]string{}, ids...)
+				current, b := basicFamilyCapture(t, root)
+				order := []string{"QRY-CANON", "QRY-SINGLE", "QLT-DEF-IDS"}
 				if reverse {
-					slices.Reverse(order)
+					order = []string{"QLT-DEF-IDS", "QRY-SINGLE", "QRY-CANON"}
 				}
 				for _, rule := range order {
-					want, wantKnown := governanceEvaluateOriginal(old, rule)
-					got, gotKnown := governanceEvaluate(new, rule)
-					if rule == "QRY-CANON" {
-						queryEvidence = len(want.Findings) > 0 || want.Status == "residual"
+					left, leftKnown := governanceEvaluate(old, rule)
+					right, rightKnown := governanceEvaluate(current, rule)
+					if !leftKnown || leftKnown != rightKnown || !reflect.DeepEqual(left, right) {
+						t.Fatal("original runtime/definition dispatch changed", rule)
 					}
-					if rule == "MUT-CANON" {
-						mutationEvidence = len(want.Findings) > 0 || want.Status == "residual"
-					}
-					if wantKnown != gotKnown || !reflect.DeepEqual(want, got) {
-						t.Fatalf("original registered dispatcher differs for %s: %#v / %#v", rule, want, got)
-					}
-					basicFamilySamePrefix(t, old, new, a, b)
-					for group := range old.familyProducts {
-						if _, present := new.familyProducts[group]; !present {
-							t.Fatalf("original family %s lost after %s", group, rule)
-						}
-					}
-					for group := range new.familyProducts {
-						if group != "basic" {
-							if _, present := old.familyProducts[group]; !present {
-								t.Fatalf("family %s admitted before its original dispatcher after %s", group, rule)
-							}
-						}
-					}
+					basicFamilySamePrefix(t, old, current, a, b)
 				}
-				if populated && (!queryEvidence || !mutationEvidence) {
-					t.Fatal("original query/mutation semantic fixtures did not produce evidence")
-				}
-				if _, present := new.familyProducts["queries"]; !present {
-					t.Fatal("registered query family intercepted")
-				}
-				if _, present := new.familyProducts["mutations"]; !present {
-					t.Fatal("registered mutation family intercepted")
-				}
-				if new.stats.FamilyEvaluations != old.stats.FamilyEvaluations+1 {
-					t.Fatalf("expected only added basic product count, original=%d new=%d", old.stats.FamilyEvaluations, new.stats.FamilyEvaluations)
-				}
-				for _, project := range []*governedProject{old, new} {
-					if same, err := project.capture.Verify(); err != nil || !same {
-						t.Fatalf("registered-dispatch final seal=%v %v", same, err)
-					}
-				}
+				basicFamilyFreshSeal(t, old)
+				basicFamilyFreshSeal(t, current)
 			})
 		}
 	}
