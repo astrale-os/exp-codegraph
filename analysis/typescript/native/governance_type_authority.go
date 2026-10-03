@@ -132,7 +132,9 @@ func governanceLiteralPropertyNames(expression *ast.Node) ([]string, bool) {
 }
 func (owner *governanceTypeAuthority) closed(file *sourcepolicy.File, expression *ast.Node) (observed sourcepolicy.NamesObservation) {
 	defer func() {
-		if observed.Known && !owner.project.capture.metadataFidelity() { observed = sourcepolicy.NamesObservation{Known: false} }
+		if observed.Known && !owner.project.capture.metadataFidelity() {
+			observed = sourcepolicy.NamesObservation{Known: false}
+		}
 	}()
 	owner.project.stats.LiteralCells++
 	names, ok := governanceLiteralPropertyNames(expression)
@@ -280,7 +282,9 @@ func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression 
 	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
 	defer func() {
-		if observed.Known && !owner.project.capture.metadataFidelity() { observed = sourcepolicy.NamesObservation{Known: false} }
+		if observed.Known && !owner.project.capture.metadataFidelity() {
+			observed = sourcepolicy.NamesObservation{Known: false}
+		}
 	}()
 	if names, ok := governanceEmptyConditionalNames(expression); ok {
 		owner.configuration()
@@ -330,7 +334,9 @@ func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, ex
 	defer func() { owner.project.stats.phase("type-cell-inclusive", started) }()
 	owner.project.stats.TypeCells++
 	defer func() {
-		if observed.Known && !owner.project.capture.metadataFidelity() { observed = sourcepolicy.KindObservation{Known: false} }
+		if observed.Known && !owner.project.capture.metadataFidelity() {
+			observed = sourcepolicy.KindObservation{Known: false}
+		}
 	}()
 	if value, ok := owner.lookupTypeDemand("collection-brand-kind", file, expression); ok {
 		return value.kind
