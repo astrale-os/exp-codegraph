@@ -7,24 +7,6 @@ import (
 	ast "github.com/microsoft/typescript-go/shim/ast"
 )
 
-// Developer authority probe. Complete remains false until exact legacy call
-// discovery/error inventory and final report products are qualified together.
-func governanceProbeRuntime(project *governedProject) any {
-	governanceSharedProject(project)
-	identity := governanceBuildRuntimeIdentity(project)
-	if !identity.Complete {
-		return map[string]any{"complete": false, "reason": identity.Reason}
-	}
-	authority := governanceNewRuntimeAuthority(identity)
-	context := authority.DemandContext(observabledecision.Limits{})
-	runtimeProducts := observabledecision.ObserveRuntime(context)
-	return governanceProjectRuntimeProducts(project, identity, runtimeProducts)
-}
-
-func governanceProjectRuntimeProducts(project *governedProject, identity *governanceRuntimeIdentity, runtimeProducts observabledecision.RuntimeProducts) any {
-	return governanceProjectRuntimeProductsExceptReady(project, identity, runtimeProducts, nil)
-}
-
 func governanceProjectRuntimeProductsExceptReady(project *governedProject, identity *governanceRuntimeIdentity, runtimeProducts observabledecision.RuntimeProducts, ready map[string]governanceOutcome) any {
 	queries := runtimeProducts.Queries
 	definitions := runtimeProducts.Definitions

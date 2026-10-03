@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+type decisionLocation struct {
+	Path   string `json:"path"`
+	Line   int    `json:"line"`
+	Column int    `json:"column"`
+	Offset int    `json:"offset"`
+	Length int    `json:"length"`
+}
 type governanceEvidence struct {
 	Rule            string            `json:"rule"`
 	Kind            string            `json:"kind"`

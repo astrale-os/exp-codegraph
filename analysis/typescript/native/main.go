@@ -26,10 +26,6 @@ func run(arguments []string) int {
 	switch arguments[0] {
 	case "decision-serve":
 		return runDecisionServe(arguments[1:])
-	case "governance-check":
-		return runGovernanceCheck()
-	case "decision-pilot":
-		return runDecisionPilot()
 	case "version", "-v", "--version":
 		fmt.Fprintf(os.Stdout, "astrale-typespec-v2-analysis %s protocol=%d\n", producerVersion, protocolVersion)
 		return 0

@@ -25,7 +25,6 @@ type governancePrepare struct {
 	Changed          []string             `json:"changed,omitempty"`
 }
 type governanceProduct struct {
-	Runtime          any                           `json:"runtime,omitempty"`
 	Requirements     []governanceIntrinsic         `json:"requirements,omitempty"`
 	Complete         bool                          `json:"complete"`
 	Root             string                        `json:"root"`
@@ -36,28 +35,6 @@ type governanceProduct struct {
 	Residual         []string                      `json:"residual"`
 	Observations     []governanceObservation       `json:"observations"`
 	PhaseCounters    governancePhaseCounters       `json:"phaseCounters"`
-	Resolutions      []governanceResolutionSummary `json:"resolutions,omitempty"`
-	Imports          []governanceImportSummary     `json:"imports,omitempty"`
-	Authored         []governanceAuthoredSummary   `json:"authored,omitempty"`
-}
-type governanceImportSummary struct {
-	Path      string                     `json:"path"`
-	Specifier string                     `json:"specifier"`
-	TypeOnly  bool                       `json:"typeOnly"`
-	Dynamic   bool                       `json:"dynamic"`
-	Namespace string                     `json:"namespace,omitempty"`
-	Bindings  []governanceBindingSummary `json:"bindings"`
-	Location  *decisionLocation          `json:"location"`
-}
-type governanceBindingSummary struct {
-	Imported string `json:"imported"`
-	Local    string `json:"local"`
-}
-type governanceResolutionSummary struct {
-	Path           string `json:"path"`
-	Specifier      string `json:"specifier"`
-	CompilerTarget string `json:"compilerTarget"`
-	PackageTarget  string `json:"packageTarget"`
 }
 type governanceFileSummary struct {
 	Path      string `json:"path"`
@@ -207,58 +184,6 @@ func (session *governanceSession) seal(token, reportDigest string) (map[string]a
 		return map[string]any{"status": "retry"}, nil
 	}
 	return map[string]any{"status": "committed", "token": token, "reportDigest": reportDigest, "generation": candidate.generation, "inputCertificate": candidate.inputCertificate}, nil
-}
-func runGovernanceCheck() int {
-	var params governancePrepare
-	if err := json.NewDecoder(os.Stdin).Decode(&params); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	session := governanceSession{}
-	project, product, err := session.prepareSource(params)
-	if err != nil {
-		json.NewEncoder(os.Stdout).Encode(map[string]any{"error": map[string]string{"code": "LINTER_PROJECT_INVALID", "message": err.Error()}})
-		return 0
-	}
-	if project != nil {
-		var runtimeOptions struct {
-			DebugRuntime bool `json:"debugRuntime"`
-		}
-		if len(params.Options) > 0 {
-			json.Unmarshal(params.Options, &runtimeOptions)
-		}
-		if runtimeOptions.DebugRuntime {
-			product.Runtime = governanceProbeRuntime(project)
-			product.InputCertificate = project.capture.certificate()
-			product.PhaseCounters = project.stats
-			if project.sourceProofState != nil {
-				product.Requirements = project.sourceProofState.Requirements
-			}
-		}
-		product.Authored = governanceProbeAuthoring(project, params.Options)
-		for _, file := range project.Files {
-			for _, imp := range file.Imports {
-				importRow := governanceImportSummary{Path: file.Path, Specifier: imp.Specifier, TypeOnly: imp.TypeOnly, Dynamic: imp.Dynamic, Namespace: imp.Namespace, Bindings: []governanceBindingSummary{}, Location: governanceLocation(file, imp.Node)}
-				for _, binding := range imp.Bindings {
-					importRow.Bindings = append(importRow.Bindings, governanceBindingSummary{binding.Imported, binding.Local})
-				}
-				product.Imports = append(product.Imports, importRow)
-				compiler := project.resolveImport(file, imp.Specifier, false)
-				packaged := project.resolveImport(file, imp.Specifier, true)
-				row := governanceResolutionSummary{Path: file.Path, Specifier: imp.Specifier}
-				if compiler.IsResolved() {
-					row.CompilerTarget = compiler.ResolvedFileName
-				}
-				if packaged.IsResolved() {
-					row.PackageTarget = packaged.ResolvedFileName
-				}
-				product.Resolutions = append(product.Resolutions, row)
-			}
-		}
-		product.InputCertificate = project.capture.certificate()
-	}
-	json.NewEncoder(os.Stdout).Encode(product)
-	return 0
 }
 func runDecisionServe(arguments []string) int {
 	root := ""
