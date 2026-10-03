@@ -46,6 +46,24 @@ func governanceLaneFixture(t *testing.T, runtimeRules ...bool) (*governanceSessi
 	return session, out
 }
 
+
+// A native protocol fixture acknowledges the ACTUAL returned frame identity.
+// It supplies no Source49 verdicts and does not claim SDK parser/rule equivalence.
+func governanceAcknowledgeCapturedSourceFixture(t *testing.T, session *governanceSession, response any) map[string]any {
+ t.Helper()
+ frame, ok := response.(map[string]any)
+ if !ok || frame["status"] != "source" { t.Fatalf("expected captured source frame: %#v", response) }
+ raw, err := json.Marshal(map[string]any{"kind":"source-open", "token":frame["token"],
+  "generation":frame["generation"], "sourceSnapshotDigest":frame["sourceSnapshotDigest"]})
+ if err != nil { t.Fatal(err) }
+ opened, err := session.continueProducts(raw)
+ if err != nil { t.Fatal(err) }
+ if state := session.productsSession; state != nil && state.SourceProducts != nil {
+  t.Fatal("source-open fixture manufactured source decisions")
+ }
+ return opened.(map[string]any)
+}
+
 func TestPolicyLaneJoinOwnsIndependentActualCapturesAndWholeBarrier(t *testing.T) {
 	session, early := governanceLaneFixture(t)
 	defer session.discardProducts()
@@ -68,7 +86,7 @@ func TestPolicyLaneJoinOwnsIndependentActualCapturesAndWholeBarrier(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := response.(map[string]any)
+	out := governanceAcknowledgeCapturedSourceFixture(t, session, response)
 	state := session.productsSession
 	if out["status"] != "products" || session.policyLane != nil || state == nil || len(state.JoinedCaptures) != 1 || state.JoinedCaptures[0] != genericOwner || state.Project.capture == genericOwner {
 		t.Fatalf("separate actual owners not joined: %#v", out)
@@ -194,6 +212,7 @@ func TestPolicyLaneActualCompilerOwnerRemainsPrivateDuringGenericProbes(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	response = governanceAcknowledgeCapturedSourceFixture(t, session, response)
 	state := session.productsSession
 	if response.(map[string]any)["status"] != "generic" || state.Project.typeOwner == nil || state.Project.typeOwner.program == nil || state.Project.capture == genericOwner || len(state.Project.capture.probeObservations) != len(policyBase) {
 		t.Fatalf("actual compiler authority leaked into generic actor: %#v", response)

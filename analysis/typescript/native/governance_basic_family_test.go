@@ -291,8 +291,13 @@ func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *te
 			implementation = "astrale.sdk.codegraph"
 		}
 		state.Contracts = append(state.Contracts, governanceImplementationContract{RuleID: rule, RuleRevision: governanceRevisions[rule], Implementation: governanceImplementation{implementation, "1"}})
-		if !slices.Contains(basicFamilyRules, rule) {
-			project.Disabled[rule] = "fixture"
+		project.Disabled[rule] = "protocol fixture does not own source verdicts"
+	}
+	// Retained Go family is a direct private oracle, not the new SDK source producer.
+	for _, rule := range basicFamilyRules {
+		actual, known := governanceEvaluate(project, rule)
+		if !known || !reflect.DeepEqual(actual, expected[rule]) {
+			t.Fatalf("%s direct original findings/revision differ: %#v", rule, actual)
 		}
 	}
 	state.ActiveFamily = "workflows"
@@ -320,23 +325,15 @@ func TestGovernanceBasicFamilyActualIntrinsicResumeKeepsIndependentProduct(t *te
 	if err := json.Unmarshal([]byte(response["productsJSON"].(string)), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if len(envelope.Products) != 5 || project.stats.FamilyEvaluations != 1 {
-		t.Fatal("basic ready products were lost or repeated on unrelated resume")
+	if len(envelope.Products) != 0 || state.SourceProducts != nil || project.stats.FamilyEvaluations != 1 {
+		t.Fatal("disabled source protocol fabricated verdicts or repeated the retained Go family")
 	}
-	for _, product := range envelope.Products {
-		want := expected[product.RuleID]
-		if product.RuleRevision != want.Revision || product.Decision.Status != want.Status || len(product.Decision.Findings) != len(want.Findings) {
-			t.Fatalf("%s projection differs", product.RuleID)
-		}
-		for i, finding := range product.Decision.Findings {
-			original := want.Findings[i]
-			kind := "indeterminate"
-			if original.Kind == "violation" {
-				kind = "fail"
-			}
-			if finding.Kind != kind || string(finding.Evidence) != original.Evidence || !reflect.DeepEqual(finding.Location, original.Location) || finding.AmbiguityReason != original.AmbiguityReason {
-				t.Fatalf("%s finding differs", product.RuleID)
-			}
+	// All original rule outcomes (including every finding/location/reason/revision)
+	// remain exact after the unrelated canonical resume; no SDK parity is inferred.
+	for _, rule := range basicFamilyRules {
+		actual, known := governanceEvaluate(project, rule)
+		if !known || !reflect.DeepEqual(actual, expected[rule]) {
+			t.Fatalf("%s direct cached findings/revision differ: %#v", rule, actual)
 		}
 	}
 	if state.ProductsDigest == "" {

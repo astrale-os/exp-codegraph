@@ -77,9 +77,9 @@ func TestPolicyLaneOwnedOriginalJournalRetainsIndependentFreshGuards(t *testing.
 		t.Fatal("fixture must use actual nonempty membership and empty original diagnostics")
 	}
 	raw, _ = json.Marshal(map[string]any{"token": early["token"], "kind": "generic", "engine": engine, "inputCertificate": closed["inputCertificate"], "generic": governanceGenericProduct{Status: "complete", Files: len(membership.Paths), Diagnostics: lint.Output.Diagnostics}})
-	if _, err := session.continueGeneric(raw); err != nil {
-		t.Fatal(err)
-	}
+	response, err := session.continueGeneric(raw)
+	if err != nil { t.Fatal(err) }
+	governanceAcknowledgeCapturedSourceFixture(t, session, response)
 	state := session.productsSession
 	if state == nil || state.Project.typeOwner == nil || state.Project.typeOwner.program == nil || state.Project.capture == genericCapture || len(state.JoinedCaptures) != 1 || state.JoinedCaptures[0] != genericCapture {
 		t.Fatal("joining lost the real compiler or original Rust journal owner")

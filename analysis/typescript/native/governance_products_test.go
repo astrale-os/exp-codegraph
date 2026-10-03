@@ -41,7 +41,7 @@ func TestGovernanceProductsDoNotCertifySubsetOrCGReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := response.(map[string]any)
+	out := governanceAcknowledgeCapturedSourceFixture(t, &session, response)
 	if out["status"] != "partial" {
 		t.Fatalf("subset cannot be full=%#v", out)
 	}
