@@ -25,16 +25,16 @@ type governancePrepare struct {
 	Changed          []string             `json:"changed,omitempty"`
 }
 type governanceProduct struct {
-	Requirements     []governanceIntrinsic         `json:"requirements,omitempty"`
-	Complete         bool                          `json:"complete"`
-	Root             string                        `json:"root"`
-	GovernanceDigest string                        `json:"governanceDigest"`
-	InputCertificate string                        `json:"inputCertificate"`
-	Files            []governanceFileSummary       `json:"files"`
-	Outcomes         []governanceOutcome           `json:"outcomes"`
-	Residual         []string                      `json:"residual"`
-	Observations     []governanceObservation       `json:"observations"`
-	PhaseCounters    governancePhaseCounters       `json:"phaseCounters"`
+	Requirements     []governanceIntrinsic   `json:"requirements,omitempty"`
+	Complete         bool                    `json:"complete"`
+	Root             string                  `json:"root"`
+	GovernanceDigest string                  `json:"governanceDigest"`
+	InputCertificate string                  `json:"inputCertificate"`
+	Files            []governanceFileSummary `json:"files"`
+	Outcomes         []governanceOutcome     `json:"outcomes"`
+	Residual         []string                `json:"residual"`
+	Observations     []governanceObservation `json:"observations"`
+	PhaseCounters    governancePhaseCounters `json:"phaseCounters"`
 }
 type governanceFileSummary struct {
 	Path      string `json:"path"`
