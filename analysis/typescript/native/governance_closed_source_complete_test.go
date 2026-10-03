@@ -29,7 +29,7 @@ func TestClosedSourceCompletionRejectsOriginalInvalidSpans(t *testing.T) {
       if err != nil { t.Fatal(err) }
       project.Disabled = map[string]string{}
       state := &governanceProductsSession{Project: project, Token: "owned-source", Generation: "1",
-        Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false}`)}}
+        Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
       for id, revision := range governanceRevisions {
         identity := "astrale.sdk.typescript-source"
         if id == "QRY-CANON" || id == "QRY-SINGLE" || id == "QLT-DEF-IDS" { identity = "astrale.sdk.codegraph" }
@@ -77,7 +77,7 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
       if err != nil { t.Fatal(err) }
       project.Disabled = map[string]string{}
       state := &governanceProductsSession{Project:project,Token:"semantic-first",Generation:"1",
-        Prepare:governancePrepare{Options:json.RawMessage(`{"generic":false}`)}}
+        Prepare:governancePrepare{Options:json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
       for id, revision := range governanceRevisions {
         identity := "astrale.sdk.typescript-source"
         if id=="QRY-CANON" || id=="QRY-SINGLE" || id=="QLT-DEF-IDS" { identity="astrale.sdk.codegraph" }
@@ -85,7 +85,7 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
           Implementation:governanceImplementation{identity,"1"}})
         if id!="IMP-STATIC" && id!="QLT-DEF-IDS" { project.Disabled[id]="order fixture" }
       }
-      if frontier=="invalid-budget" { state.Prepare.Options=json.RawMessage(`{"generic":false,"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`) }
+      if frontier=="invalid-budget" { state.Prepare.Options=json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1,"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`) }
       if frontier=="inconsistent-capture" { project.capture.probeInconsistent=true }
       if frontier=="pending-leaf" { state.require(governanceIntrinsic{ID:"original-pending",Kind:"accept-step-id"}) }
       session:=governanceSession{productsSession:state}
@@ -109,5 +109,69 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
         if session.productsSession!=nil || !strings.Contains(strings.Join(out["residual"].([]string),"\n"),"Captured generic I/O observations changed") { t.Fatal("changed capture reached source evaluation") }
       } else if len(state.RuntimeReady)!=3 { t.Fatal("source handoff preceded complete original runtime decisions") }
     })
+  }
+}
+
+// Old callers never receive a phase they cannot consume. These are protocol
+// fixtures; only the three original runtime decisions are semantically owned.
+func TestClosedSourceCapabilityPreservesOlderProductsAndFallback(t *testing.T) {
+  for _, sample := range []struct { raw string; offered bool } {
+    {`{"sourcePolicyOwnerRevision":1}`,true}, {`{}`,false},
+    {`{"sourcePolicyOwnerRevision":null}`,false}, {`{"sourcePolicyOwnerRevision":"1"}`,false},
+    {`{"sourcePolicyOwnerRevision":1.0}`,false}, {`{"sourcePolicyOwnerRevision":2}`,false},
+  } { if governanceClosedSourceOffered(json.RawMessage(sample.raw))!=sample.offered { t.Fatalf("offer admission differs: %s",sample.raw) } }
+  for _, offer := range []string{`{"generic":false}`, `{"generic":false,"sourcePolicyOwnerRevision":2}`} {
+    for _, mode := range []string{"selected-source", "runtime-only", "invalid-budget"} {
+      t.Run(offer+"/"+mode, func(t *testing.T) {
+        root := t.TempDir()
+        governanceWrite(t, root, "mutations/source.ts", "export const value=1;")
+        governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"target":"ES2022"},"include":["mutations/**/*.ts"]}`)
+        options := json.RawMessage(offer)
+        if mode=="invalid-budget" { options=json.RawMessage(strings.TrimSuffix(offer,"}")+`,"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`) }
+        session := governanceSession{productsSession:&governanceProductsSession{Prepare:governancePrepare{Root:root,Options:options}}}
+        defer session.discardProducts()
+        configuration,err:=session.captureConfiguration(root)
+        if err!=nil { t.Fatal(err) }
+        contracts:=[]governanceImplementationContract{}
+        disabled:=[]governanceDisabledRule{}
+        for id,revision:=range governanceRevisions {
+          identity:="astrale.sdk.typescript-source"
+          runtime:=id=="QRY-CANON" || id=="QRY-SINGLE" || id=="QLT-DEF-IDS"
+          if runtime { identity="astrale.sdk.codegraph" }
+          contracts=append(contracts,governanceImplementationContract{RuleID:id,RuleRevision:revision,Implementation:governanceImplementation{identity,"1"}})
+          if !runtime && (mode=="runtime-only" || id!="IMP-STATIC") { disabled=append(disabled,governanceDisabledRule{id,"protocol fixture"}) }
+        }
+        raw,err:=json.Marshal(map[string]any{"token":configuration["token"],"kind":"policy",
+          "policy":governanceCompiledPolicy{Source:governanceTestPolicy(),Digest:"canonical",Disabled:disabled},"implementationContracts":contracts})
+        if err!=nil { t.Fatal(err) }
+        result,err:=session.continueProducts(raw)
+        if mode=="invalid-budget" {
+          var original *governanceSemanticBudgetError
+          if !errors.As(err,&original) || original.name!="maximumSteps" { t.Fatalf("original semantic failure masked: %#v %v",result,err) }
+          return
+        }
+        if err!=nil { t.Fatal(err) }
+        out:=result.(map[string]any)
+        if mode=="selected-source" {
+          if out["status"]!="partial" || session.productsSession!=nil || !strings.Contains(strings.Join(out["residual"].([]string),"\n"),"owner capability unavailable") { t.Fatalf("older caller received unsupported source phase: %#v",out) }
+          return
+        }
+        state:=session.productsSession
+        var envelope struct { Products []governanceRuleProduct `json:"products"` }
+        if out["status"]!="products" { t.Fatalf("disabled Source49 changed old products: %#v",out) }
+        if err:=json.Unmarshal([]byte(out["productsJSON"].(string)),&envelope);err!=nil { t.Fatal(err) }
+        if len(envelope.Products)!=3 || state.SourceProducts!=nil { t.Fatalf("invented source products: %#v",envelope) }
+        for _,row:=range envelope.Products { if row.Implementation.ID!="astrale.sdk.codegraph" || row.Decision.Status!="pass" { t.Fatalf("original runtime product changed: %#v",row) } }
+        // Re-open only the fixture's finalization cell to challenge the offer
+        // guard with otherwise owned, correctly identified source operations.
+        state.ProductsDigest=""
+        for _,kind:=range []string{"source-open","source-observe","source-complete"} {
+          operation,_:=json.Marshal(map[string]any{"kind":kind,"token":state.Token,
+            "generation":state.Generation,"sourceSnapshotDigest":state.Project.GovernanceDigest,"decisions":[]any{},
+            "request":governanceClosedSourceRequest{Token:state.Token,SourceSnapshotDigest:state.Project.GovernanceDigest,Path:"mutations/source.ts",Operation:"package-mapping"}})
+          if _,err:=session.continueProducts(operation);err==nil || !strings.Contains(err.Error(),"ownership was not offered") || session.productsSession!=state || state.SourceProducts!=nil || state.ProductsDigest!="" { t.Fatalf("unoffered operation admitted: %s error=%v",kind,err) }
+        }
+      })
+    }
   }
 }

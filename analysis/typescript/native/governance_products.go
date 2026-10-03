@@ -155,6 +155,12 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 	if params.Kind == "generic-engine" || params.Kind == "generic" || params.Kind == "generic-retire" {
 		return session.continueGeneric(raw)
 	}
+  if params.Kind == "source-open" || params.Kind == "source-observe" || params.Kind == "source-complete" {
+    state := session.productsSession
+    if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) {
+      return nil, fmt.Errorf("closed source ownership was not offered")
+    }
+  }
 	if params.Kind == "source-observe" {
     var input struct { Request governanceClosedSourceRequest `json:"request"` }
     if err := json.Unmarshal(raw, &input); err != nil { return nil, err }
@@ -196,7 +202,8 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 		state.Answers = map[string]governanceIntrinsicAnswer{}
 		state.installLeaves(params.LeafAuthority.NeutralClassIconSVG)
 		if session.proposeSealedDecisions(state) { return session.evaluateProducts() }
-		return session.closedSourceHandoff()
+		if governanceClosedSourceOffered(state.Prepare.Options) { return session.closedSourceHandoff() }
+		return session.evaluateProducts()
 	case "intrinsics":
 		if state.Project == nil || state.Token != params.Token || state.ProductsDigest != "" {
 			return map[string]any{"status": "retry"}, nil
@@ -418,7 +425,11 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	}
 	// Runtime validation, pending leaves and capture failures precede source rules.
 	// No partial source decisions enter the final envelope.
-	if sourceRequired { return session.closedSourceHandoff() }
+  if sourceRequired {
+    if governanceClosedSourceOffered(state.Prepare.Options) { return session.closedSourceHandoff() }
+    session.discardProducts()
+    return map[string]any{"status":"partial", "residual":[]string{"Captured Source49 owner capability unavailable."}}, nil
+  }
 	if genericEnabled && state.GenericProduct == nil {
 		state.GenericSuspended = true
 		return state.genericSuspension(), nil

@@ -8,11 +8,20 @@ import (
   "astrale-typespec-v2-native-analysis/jsstring"
 )
 
+// An offered private owner extends the original products protocol. Unknown offers
+// are unsupported, not malformed user options; older callers retain fallback.
+func governanceClosedSourceOffered(raw json.RawMessage) bool {
+  var options struct { Revision json.RawMessage `json:"sourcePolicyOwnerRevision"` }
+  var revision int
+  return json.Unmarshal(raw, &options) == nil &&
+    json.Unmarshal(options.Revision, &revision) == nil && revision == 1
+}
+
 // This is an experimental private suspension, never a partially admitted report.
 // It precedes ProductsDigest. The existing lane transfers the same owner back.
 func (session *governanceSession) closedSourceHandoff() (any, error) {
   state := session.productsSession
-  if state == nil || state.Project == nil || state.ProductsDigest != "" {
+  if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || state.Project == nil || state.ProductsDigest != "" {
     return nil, fmt.Errorf("closed source handoff lacks an admitting owner")
   }
   project := state.Project

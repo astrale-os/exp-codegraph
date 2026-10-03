@@ -31,7 +31,7 @@ type governanceClosedSourceResolution struct {
 // Pending never reads the lane's Program, parser cache or IO-only actor seed.
 func (session *governanceSession) observeClosedSource(request governanceClosedSourceRequest) (governanceClosedSourceAnswer, error) {
   state := session.productsSession
-  if state == nil || state.Token != request.Token {
+  if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || state.Token != request.Token {
     return governanceClosedSourceAnswer{}, fmt.Errorf("closed source attempt is retired")
   }
   if session.policyLane != nil {
