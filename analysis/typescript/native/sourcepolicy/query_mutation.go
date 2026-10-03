@@ -28,14 +28,6 @@ func init() {
 	}
 }
 
-// All fields are supplied by the single captured native authority. Missing
-// runtime/type/state authority is a migration residual, not a public ambiguity.
-type QueryMutationInput struct {
-	Runtime             *runtime.DemandContext
-	CallIdentity        func(*File, *ast.Node) (string, bool)
-	CollectionKind      func(*File, *ast.Node) (string, bool)
-	ClosedPropertyNames func(*File, *ast.Node) (map[string]bool, bool)
-}
 type qmWriter struct {
 	out     Result
 	project *Project
@@ -77,24 +69,6 @@ func qmGenerator(node *ast.Node) bool {
 	}
 	return false
 }
-func qmOwn(fn *ast.Node, callback func(*ast.Node)) {
-	if fn == nil || fn.Body() == nil {
-		return
-	}
-	body := fn.Body()
-	var walk func(*ast.Node)
-	walk = func(n *ast.Node) {
-		if n == nil {
-			return
-		}
-		callback(n)
-		if n != body && ast.IsFunctionLike(n) {
-			return
-		}
-		n.ForEachChild(func(child *ast.Node) bool { walk(child); return false })
-	}
-	walk(body)
-}
 func qmChain(n *ast.Node) []string {
 	n = authored.Unwrap(n)
 	if n == nil {
@@ -108,34 +82,6 @@ func qmChain(n *ast.Node) []string {
 		head := qmChain(p.Expression)
 		if head != nil {
 			return append(head, p.Name().Text())
-		}
-	}
-	return nil
-}
-func qmNamedProperties(object *ast.Node, name string) []*ast.Node {
-	out := []*ast.Node{}
-	if object == nil || object.Kind != ast.KindObjectLiteralExpression {
-		return out
-	}
-	for _, p := range object.AsObjectLiteralExpression().Properties.Nodes {
-		n := p.Name()
-		if n != nil && (n.Kind == ast.KindIdentifier || n.Kind == ast.KindStringLiteral) && n.Text() == name {
-			out = append(out, p)
-		}
-	}
-	return out
-}
-func qmCallback(property *ast.Node) *ast.Node {
-	if property == nil {
-		return nil
-	}
-	if property.Kind == ast.KindMethodDeclaration {
-		return property
-	}
-	if property.Kind == ast.KindPropertyAssignment {
-		value := authored.Unwrap(property.AsPropertyAssignment().Initializer)
-		if qmFunction(value) {
-			return value
 		}
 	}
 	return nil
@@ -190,158 +136,6 @@ type qmObservation struct {
 	build, project, request qmEpistemic
 }
 
-func qmKnown(count int) qmEpistemic                { return qmEpistemic{state: "known", count: count} }
-func qmUncertain(state, reason string) qmEpistemic { return qmEpistemic{state: state, reason: reason} }
-func (w *qmWriter) sourceObservations() []qmObservation {
-	out := []qmObservation{}
-	for _, file := range w.project.Files {
-		if file.Role != "production" || file.Layer != "queries" {
-			continue
-		}
-		a := w.project.Authored(file)
-		authored.Walk(file.Source.AsNode(), func(node *ast.Node) {
-			if node.Kind != ast.KindCallExpression {
-				return
-			}
-			factory := authored.Unwrap(node.AsCallExpression().Expression)
-			if factory == nil || factory.Kind != ast.KindCallExpression {
-				return
-			}
-			origin := a.ResolveImportedSymbol(factory.AsCallExpression().Expression)
-			if (origin.Kind != "resolved" && origin.Kind != "ambiguous") || (origin.Name != "defineQuery" && origin.Name != "defineCollectionQuery") || (origin.Kind == "resolved" && !authored.Contains([]string{"@astrale-os/sdk", "@astrale-os/sdk/query"}, origin.Module)) {
-				return
-			}
-			o := qmObservation{file: file, node: node, subject: fmt.Sprintf("%s#%d", file.Path, qmStart(file, node)), identity: "known"}
-			if origin.Kind == "ambiguous" {
-				o.identity = "ambiguous"
-				o.request = qmUncertain("ambiguous", "definition resolves through a local facade whose ultimate public constructor origin is unknown")
-				o.build = o.request
-				o.project = o.request
-				out = append(out, o)
-				return
-			}
-			if origin.Name == "defineCollectionQuery" {
-				o.request = qmKnown(1)
-				o.build = qmKnown(1)
-				o.project = qmKnown(0)
-				out = append(out, o)
-				return
-			}
-			projector := authored.Unwrap(authored.Argument(node, 0))
-			var object *ast.Node
-			if qmFunction(projector) {
-				returns := authored.ReturnedExpressions(projector)
-				if len(returns) == 1 && returns[0].Kind == ast.KindObjectLiteralExpression {
-					object = returns[0]
-				}
-			}
-			if object == nil {
-				o.request = qmUncertain("unknown", "definition input is not a static object literal")
-				o.build = o.request
-				o.project = o.request
-				out = append(out, o)
-				return
-			}
-			builds := qmNamedProperties(object, "build")
-			projects := qmNamedProperties(object, "project")
-			var build *ast.Node
-			if len(builds) > 0 {
-				build = qmCallback(builds[0])
-			}
-			o.build = qmKnown(len(builds))
-			if len(builds) == 1 && build == nil {
-				o.build = qmUncertain("unknown", "build callback is forwarded through an opaque authored value")
-			}
-			o.project = qmKnown(len(projects))
-			if build == nil {
-				if len(builds) > 0 {
-					o.request = qmUncertain("unknown", "build callback origin is not statically visible")
-				} else {
-					o.request = qmKnown(0)
-				}
-			} else {
-				returns := authored.ReturnedExpressions(build)
-				if len(returns) != 1 {
-					o.request = qmUncertain("ambiguous", fmt.Sprintf("build exposes %d statically visible return values", len(returns)))
-				} else {
-					roots := qmCanonicalRoots(a, build, returns[0])
-					o.request = qmKnown(roots)
-					returned := returns[0]
-					if roots == 0 && returned.Kind == ast.KindCallExpression && authored.Unwrap(returned.AsCallExpression().Expression).Kind == ast.KindIdentifier {
-						o.request = qmUncertain("unknown", "build delegates to a helper whose QueryAST origin is not visible")
-					}
-				}
-			}
-			out = append(out, o)
-		})
-	}
-	return out
-}
-func qmCanonicalRoots(a *authored.File, build, returned *ast.Node) int {
-	canonical := func(node *ast.Node) bool {
-		if node == nil || node.Kind != ast.KindCallExpression {
-			return false
-		}
-		expression := authored.Unwrap(node.AsCallExpression().Expression)
-		if expression.Kind != ast.KindPropertyAccessExpression {
-			return false
-		}
-		receiver := expression.AsPropertyAccessExpression().Expression
-		if receiver.Kind != ast.KindIdentifier {
-			return false
-		}
-		origin := a.ResolveImportedSymbol(receiver)
-		return origin.Kind == "resolved" && origin.Name == "Query" && authored.Contains([]string{"@astrale-os/sdk/query", "@astrale-os/kernel-core", "@astrale-os/kernel-core/graph/query"}, origin.Module)
-	}
-	declarations := map[string]*ast.Node{}
-	if build.Body() != nil && build.Body().Kind == ast.KindBlock {
-		for _, statement := range build.Body().AsBlock().Statements.Nodes {
-			if statement.Kind != ast.KindVariableStatement {
-				continue
-			}
-			d := statement.AsVariableStatement().DeclarationList.AsVariableDeclarationList()
-			if d.Flags&ast.NodeFlagsConst == 0 {
-				continue
-			}
-			for _, v := range d.Declarations.Nodes {
-				if v.Name().Kind == ast.KindIdentifier && v.AsVariableDeclaration().Initializer != nil {
-					declarations[v.Name().Text()] = v
-				}
-			}
-		}
-	}
-	seen := map[*ast.Node]bool{}
-	var count func(*ast.Node) int
-	count = func(node *ast.Node) int {
-		total := 0
-		authored.Walk(node, func(n *ast.Node) {
-			if canonical(n) {
-				ancestor := false
-				for p := n.Parent; p != nil && !ast.IsFunctionLike(p); p = p.Parent {
-					if canonical(p) {
-						ancestor = true
-						break
-					}
-				}
-				if !ancestor {
-					total++
-				}
-			}
-		})
-		authored.Walk(node, func(n *ast.Node) {
-			if n.Kind != ast.KindIdentifier {
-				return
-			}
-			d := declarations[n.Text()]
-			if d != nil && !seen[d] {
-				seen[d] = true
-				total += count(d.AsVariableDeclaration().Initializer)
-			}
-		})
-		return total
-	}
-	return count(returned)
-}
 func (w *qmWriter) decideQueries(rule string, observations []qmObservation) {
 	for _, o := range observations {
 		if o.identity != "known" {
@@ -398,24 +192,16 @@ func (w *qmWriter) decideQueries(rule string, observations []qmObservation) {
 	}
 }
 
-// EvaluateQuerySource uses the authored-origin policy, deliberately independent
-// of runtime callee provenance. Unsupported families remain migration residuals.
+// EvaluateQuerySource retains legacy fanout observations for partial prepares.
+// Their compiler receipts and residuals remain owned by the current native session.
 func EvaluateQuerySource(project *Project) Result {
 	w := qmWriter{project: project}
-	observations := w.sourceObservations()
-	w.decideQueries("QRY-CANON", observations)
-	w.decideQueries("QRY-SINGLE", observations)
 	for _, file := range project.Files {
 		if file.Role != "production" || file.Layer != "queries" {
 			continue
 		}
-		for _, item := range []struct{ name, label string }{{"defineCollectionQuery", "Collection Query"}, {"defineQuery", "Query"}, {"defineCompositeQuery", "Composite Query"}} {
-			w.projector("QRY-CANON", file, item.name, item.label)
-		}
 		for _, definition := range project.Authored(file).Definitions("defineCompositeQuery", "", nil, 0) {
-			w.composeStable(file, definition)
 			w.collectionFanout(file, definition)
-			w.composeTyped(file, definition)
 		}
 	}
 	return w.out

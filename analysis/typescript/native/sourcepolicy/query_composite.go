@@ -159,38 +159,3 @@ func (b *qmComposeBuilder) method(expression *ast.Node) string {
 }
 
 var qmStableID = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$`)
-
-func (w *qmWriter) composeStable(file *File, d authored.Definition) {
-	const rule = "QRY-COMPOSE-STABLE"
-	if w.origin(rule, "Composite Query definition", file, d) {
-		return
-	}
-	compose := authored.Callback(d.Object, "compose")
-	if compose == nil {
-		return
-	}
-	builder := qmCompose(compose)
-	if builder == nil {
-		w.ambiguity(rule, file, compose, "Composite Query builder bindings are not statically identifiable.")
-		return
-	}
-	ids := map[string]bool{}
-	qmOwn(compose, func(node *ast.Node) {
-		if node.Kind != ast.KindCallExpression || builder.method(node.AsCallExpression().Expression) != "query" {
-			return
-		}
-		argument := authored.Argument(node, 0)
-		id, known := qmText(argument)
-		anchor := argument
-		if anchor == nil {
-			anchor = node
-		}
-		if !known || !qmStableID.MatchString(id) {
-			w.violation(rule, file, anchor, "Composite Query leaf ID is not a stable semantic literal.")
-		} else if ids[id] {
-			w.violation(rule, file, argument, "Composite Query duplicates leaf ID "+id+".")
-		} else {
-			ids[id] = true
-		}
-	})
-}
