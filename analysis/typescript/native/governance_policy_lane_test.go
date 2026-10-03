@@ -46,22 +46,27 @@ func governanceLaneFixture(t *testing.T, runtimeRules ...bool) (*governanceSessi
 	return session, out
 }
 
-
 // A native protocol fixture acknowledges the ACTUAL returned frame identity.
 // It supplies no Source49 verdicts and does not claim SDK parser/rule equivalence.
 func governanceAcknowledgeCapturedSourceFixture(t *testing.T, session *governanceSession, response any) map[string]any {
- t.Helper()
- frame, ok := response.(map[string]any)
- if !ok || frame["status"] != "source" { t.Fatalf("expected captured source frame: %#v", response) }
- raw, err := json.Marshal(map[string]any{"kind":"source-open", "token":frame["token"],
-  "generation":frame["generation"], "sourceSnapshotDigest":frame["sourceSnapshotDigest"]})
- if err != nil { t.Fatal(err) }
- opened, err := session.continueProducts(raw)
- if err != nil { t.Fatal(err) }
- if state := session.productsSession; state != nil && state.SourceProducts != nil {
-  t.Fatal("source-open fixture manufactured source decisions")
- }
- return opened.(map[string]any)
+	t.Helper()
+	frame, ok := response.(map[string]any)
+	if !ok || frame["status"] != "source" {
+		t.Fatalf("expected captured source frame: %#v", response)
+	}
+	raw, err := json.Marshal(map[string]any{"kind": "source-open", "token": frame["token"],
+		"generation": frame["generation"], "sourceSnapshotDigest": frame["sourceSnapshotDigest"]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := session.continueProducts(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state := session.productsSession; state != nil && state.SourceProducts != nil {
+		t.Fatal("source-open fixture manufactured source decisions")
+	}
+	return opened.(map[string]any)
 }
 
 func TestPolicyLaneJoinOwnsIndependentActualCapturesAndWholeBarrier(t *testing.T) {

@@ -78,7 +78,9 @@ func TestPolicyLaneOwnedOriginalJournalRetainsIndependentFreshGuards(t *testing.
 	}
 	raw, _ = json.Marshal(map[string]any{"token": early["token"], "kind": "generic", "engine": engine, "inputCertificate": closed["inputCertificate"], "generic": governanceGenericProduct{Status: "complete", Files: len(membership.Paths), Diagnostics: lint.Output.Diagnostics}})
 	response, err := session.continueGeneric(raw)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	governanceAcknowledgeCapturedSourceFixture(t, session, response)
 	state := session.productsSession
 	if state == nil || state.Project.typeOwner == nil || state.Project.typeOwner.program == nil || state.Project.capture == genericCapture || len(state.JoinedCaptures) != 1 || state.JoinedCaptures[0] != genericCapture {
