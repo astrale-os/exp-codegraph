@@ -158,6 +158,9 @@ func (session *governanceSession) joinPolicyLane(generic *governanceProductsSess
 	state.GenericEngine = generic.GenericEngine
 	state.GenericProduct = generic.GenericProduct
 	state.JoinedCaptures = append(state.JoinedCaptures, generic.Project.capture)
+	if result, ok := joined.result.(map[string]any); ok && result["status"] == "source" {
+		return joined.result, nil
+	}
 	// Native outcomes/intrinsics are still private. Products are assembled only
 	// after both producers finish, with all independent closures in final seal.
 	if len(state.Requirements) != 0 {

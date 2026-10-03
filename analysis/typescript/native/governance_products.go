@@ -49,6 +49,7 @@ type governanceProductsSession struct {
 	RuntimeGraph           *observabledecision.RuntimeDecisionGraph
 	RuntimeIdentity        *governanceRuntimeIdentity
 	RuntimeReady           map[string]governanceOutcome
+	SourceProducts         []governanceRuleProduct
 	RuleReady              map[string]governanceOutcome
 	GenericEngine          *governanceGenericEngine
 	GenericProduct         *governanceGenericProduct
@@ -154,6 +155,22 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 	if params.Kind == "generic-engine" || params.Kind == "generic" || params.Kind == "generic-retire" {
 		return session.continueGeneric(raw)
 	}
+	if params.Kind == "source-observe" {
+    var input struct { Request governanceClosedSourceRequest `json:"request"` }
+    if err := json.Unmarshal(raw, &input); err != nil { return nil, err }
+    if input.Request.Token != params.Token { return nil, fmt.Errorf("source observation token differs") }
+    return session.observeClosedSource(input.Request)
+  }
+  if params.Kind == "source-complete" { return session.completeClosedSource(raw) }
+  if params.Kind == "source-open" {
+    var input struct { Token, Generation, SourceSnapshotDigest string }
+    if err := json.Unmarshal(raw, &input); err != nil { return nil, err }
+    state := session.productsSession
+    if state == nil || session.policyLane != nil || state.Project == nil || state.Token != input.Token ||
+      state.Generation != input.Generation || state.Project.GovernanceDigest != input.SourceSnapshotDigest ||
+      state.ProductsDigest != "" || state.SourceProducts != nil { return nil, fmt.Errorf("opened source does not own its admitting phase") }
+    return session.evaluateProducts()
+  }
 	state := session.productsSession
 	if state == nil {
 		return map[string]any{"status": "retry"}, nil
@@ -178,7 +195,8 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 		state.Contracts = params.ImplementationContracts
 		state.Answers = map[string]governanceIntrinsicAnswer{}
 		state.installLeaves(params.LeafAuthority.NeutralClassIconSVG)
-		session.proposeSealedDecisions(state)
+		if session.proposeSealedDecisions(state) { return session.evaluateProducts() }
+		return session.closedSourceHandoff()
 	case "intrinsics":
 		if state.Project == nil || state.Token != params.Token || state.ProductsDigest != "" {
 			return map[string]any{"status": "retry"}, nil
@@ -317,6 +335,7 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	genericEnabled := options.Generic == nil || *options.Generic
 	runtimeOutcomes := map[string]governanceOutcome{}
 	runtimeEvaluated := false
+	sourceRequired := false
 	if len(state.Contracts) != len(governanceRevisions) {
 		residual = append(residual, "Canonical whole implementation contract inventory unavailable.")
 	}
@@ -366,18 +385,14 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 				continue
 			}
 		} else {
-			if state.RuleReady == nil {
-				state.RuleReady = map[string]governanceOutcome{}
-			}
-			if ready, ok := state.RuleReady[contract.RuleID]; ok {
-				out = ready
-			} else {
-				state.RulePending = false
-				out, _ = governanceEvaluate(project, contract.RuleID)
-				if out.Status != "residual" && !state.RulePending {
-					state.RuleReady[contract.RuleID] = out
-				}
-			}
+      if state.SourceProducts == nil { sourceRequired = true; continue }
+      var ready *governanceRuleProduct
+      for i := range state.SourceProducts {
+        if state.SourceProducts[i].RuleID == contract.RuleID { ready = &state.SourceProducts[i]; break }
+      }
+      if ready == nil { residual = append(residual, "Closed Source49 observation unavailable: "+contract.RuleID); continue }
+      products = append(products, *ready)
+      continue
 		}
 		if out.Status == "residual" {
 			residual = append(residual, "Native selected rule observation is incomplete: "+contract.RuleID)
@@ -401,6 +416,9 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		session.discardProducts()
 		return map[string]any{"status": "partial", "residual": residual}, nil
 	}
+	// Runtime validation, pending leaves and capture failures precede source rules.
+	// No partial source decisions enter the final envelope.
+	if sourceRequired { return session.closedSourceHandoff() }
 	if genericEnabled && state.GenericProduct == nil {
 		state.GenericSuspended = true
 		return state.genericSuspension(), nil

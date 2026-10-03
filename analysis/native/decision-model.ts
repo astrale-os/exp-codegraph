@@ -115,6 +115,9 @@ export type NativeDecisionIntrinsicRequirement =
   | Readonly<{ id: string; kind: "accept-step-id"; units: readonly number[] }>
   | Readonly<{ id: string; kind: "locale-sort"; values: readonly (readonly number[])[] }>;
 export type NativeDecisionContinuation =
+  | Readonly<{ token: string; kind: "source-observe"; request: unknown }>
+  | Readonly<{ token: string; kind: "source-open"; generation: string; sourceSnapshotDigest: string }>
+  | Readonly<{ token: string; kind: "source-complete"; generation: string; sourceSnapshotDigest: string; decisions: readonly unknown[] }>
   | Readonly<{
       token: string;
       kind: "policy";

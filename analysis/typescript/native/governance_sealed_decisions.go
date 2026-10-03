@@ -13,6 +13,7 @@ type governanceSealedDecisions struct {
 	contracts string
 	neutral   string
 	sources   string
+	source    []governanceRuleProduct
 	rules     map[string]governanceOutcome
 	runtime   map[string]governanceOutcome
 	leaves    []byte
@@ -67,7 +68,7 @@ func governanceExpectedCapture(source *governanceCapture) *governanceCapture {
 func (session *governanceSession) retainSealedDecisions(state *governanceProductsSession) {
 	// Only completed cells are eligible. Missing canonical leaves and public
 	// ambiguity are different: an authoritative ambiguity is a complete value.
-	if len(state.Requirements) != 0 || len(state.RuleReady) == 0 || len(state.RuntimeReady) != 3 {
+	if len(state.Requirements) != 0 || len(state.SourceProducts) == 0 || len(state.RuntimeReady) != 3 {
 		return
 	}
 	rules := governanceOwnedOutcomes(state.RuleReady)
@@ -76,7 +77,7 @@ func (session *governanceSession) retainSealedDecisions(state *governanceProduct
 		prepare:   governanceDecisionPrepareKey(state.Prepare),
 		policy:    string(stableJSON(state.Project.Policy)) + string(stableJSON(state.Project.Disabled)) + state.Project.policyDigest,
 		contracts: string(stableJSON(state.Contracts)), neutral: state.NeutralLeaf,
-		sources: governanceDecisionSources(state.Project), rules: rules, runtime: runtime,
+		sources: governanceDecisionSources(state.Project), source: governanceOwnedSourceProducts(state.SourceProducts), rules: rules, runtime: runtime,
 		expected: governanceExpectedCapture(state.Project.capture),
 	}
 	session.sealedDecisions.leaves, _ = json.Marshal(state.LeafInputs)
@@ -101,9 +102,11 @@ func (session *governanceSession) proposeSealedDecisions(state *governanceProduc
 		}
 	}
 	rules, runtime := governanceOwnedOutcomes(sealed.rules), governanceOwnedOutcomes(sealed.runtime)
+	state.SourceProducts = governanceOwnedSourceProducts(sealed.source)
 	state.RuleReady, state.RuntimeReady, state.ReplayExpected = rules, runtime, sealed.expected
 	var leaves map[string]governanceIntrinsic
 	if json.Unmarshal(sealed.leaves, &leaves) != nil || json.Unmarshal(sealed.answers, &state.ReplayAnswers) != nil {
+		state.SourceProducts = nil
 		state.RuleReady, state.RuntimeReady, state.ReplayExpected = nil, nil, nil
 		return false
 	}
@@ -152,6 +155,7 @@ func (session *governanceSession) observeSealedLeaf(state *governanceProductsSes
 	if before, ok := state.ReplayAnswers[answer.ID]; ok && stableJSON(before) == stableJSON(answer) {
 		return
 	}
+	state.SourceProducts = nil
 	state.RuleReady, state.RuntimeReady = nil, nil
 	state.ReplayExpected = nil
 	session.sealedDecisions = nil
