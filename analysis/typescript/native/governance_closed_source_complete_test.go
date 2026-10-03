@@ -121,13 +121,18 @@ func TestClosedSourceCapabilityPreservesOlderProductsAndFallback(t *testing.T) {
     {`{"sourcePolicyOwnerRevision":1.0}`,false}, {`{"sourcePolicyOwnerRevision":2}`,false},
   } { if governanceClosedSourceOffered(json.RawMessage(sample.raw))!=sample.offered { t.Fatalf("offer admission differs: %s",sample.raw) } }
   for _, offer := range []string{`{"generic":false}`, `{"generic":false,"sourcePolicyOwnerRevision":2}`} {
-    for _, mode := range []string{"selected-source", "runtime-only", "invalid-budget"} {
+    modes:=[]string{"selected-source", "runtime-only", "invalid-budget"}
+    if offer==`{"generic":false}` { modes=append(modes,"selected-source-default-generic","invalid-budget-default-generic") }
+    for _, mode := range modes {
       t.Run(offer+"/"+mode, func(t *testing.T) {
         root := t.TempDir()
         governanceWrite(t, root, "mutations/source.ts", "export const value=1;")
         governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"target":"ES2022"},"include":["mutations/**/*.ts"]}`)
+        scenario:=strings.TrimSuffix(mode,"-default-generic")
+        defaultGeneric:=scenario!=mode
         options := json.RawMessage(offer)
-        if mode=="invalid-budget" { options=json.RawMessage(strings.TrimSuffix(offer,"}")+`,"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`) }
+        if defaultGeneric { options=json.RawMessage(`{"generic":true}`) }
+        if scenario=="invalid-budget" { options=json.RawMessage(strings.TrimSuffix(string(options),"}")+`,"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`) }
         session := governanceSession{productsSession:&governanceProductsSession{Prepare:governancePrepare{Root:root,Options:options}}}
         defer session.discardProducts()
         configuration,err:=session.captureConfiguration(root)
@@ -139,20 +144,27 @@ func TestClosedSourceCapabilityPreservesOlderProductsAndFallback(t *testing.T) {
           runtime:=id=="QRY-CANON" || id=="QRY-SINGLE" || id=="QLT-DEF-IDS"
           if runtime { identity="astrale.sdk.codegraph" }
           contracts=append(contracts,governanceImplementationContract{RuleID:id,RuleRevision:revision,Implementation:governanceImplementation{identity,"1"}})
-          if !runtime && (mode=="runtime-only" || id!="IMP-STATIC") { disabled=append(disabled,governanceDisabledRule{id,"protocol fixture"}) }
+          if !runtime && (scenario=="runtime-only" || id!="IMP-STATIC") { disabled=append(disabled,governanceDisabledRule{id,"protocol fixture"}) }
         }
         raw,err:=json.Marshal(map[string]any{"token":configuration["token"],"kind":"policy",
           "policy":governanceCompiledPolicy{Source:governanceTestPolicy(),Digest:"canonical",Disabled:disabled},"implementationContracts":contracts})
         if err!=nil { t.Fatal(err) }
         result,err:=session.continueProducts(raw)
-        if mode=="invalid-budget" {
+        if defaultGeneric && err==nil {
+          early:=result.(map[string]any)
+          if early["status"]!="generic" || session.policyLane==nil { t.Fatalf("original default lane was bypassed: %#v",early) }
+          retired,_:=json.Marshal(map[string]any{"kind":"generic-retire","token":early["token"]})
+          result,err=session.continueProducts(retired)
+          if session.policyLane!=nil { t.Fatal("original generic-retire did not drain its policy owner") }
+        }
+        if scenario=="invalid-budget" {
           var original *governanceSemanticBudgetError
           if !errors.As(err,&original) || original.name!="maximumSteps" { t.Fatalf("original semantic failure masked: %#v %v",result,err) }
           return
         }
         if err!=nil { t.Fatal(err) }
         out:=result.(map[string]any)
-        if mode=="selected-source" {
+        if scenario=="selected-source" {
           if out["status"]!="partial" || session.productsSession!=nil || !strings.Contains(strings.Join(out["residual"].([]string),"\n"),"owner capability unavailable") { t.Fatalf("older caller received unsupported source phase: %#v",out) }
           return
         }
