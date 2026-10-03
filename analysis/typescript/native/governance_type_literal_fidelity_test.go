@@ -124,3 +124,15 @@ func TestGovernanceTypeLiteralFidelityJSDocProseBoundary(t *testing.T) {
 		})
 	}
 }
+
+// Exact same-capture buffer.d.ts bytes SHA256 6a0cd27e5dc2cfbe039e731cf879d12b0e2dded06d1b1dedad07f7712de0d7f4, raw [12225,14161).
+func TestGovernanceTypeLiteralFidelityCapturedBufferComment(t *testing.T) {
+	text := "/**\n             * Returns the byte length of a string when encoded using `encoding`.\n             * This is not the same as [`String.prototype.length`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/length), which does not account\n             * for the encoding that is used to convert the string into bytes.\n             *\n             * For `'base64'`, `'base64url'`, and `'hex'`, this function assumes valid input.\n             * For strings that contain non-base64/hex-encoded data (e.g. whitespace), the\n             * return value might be greater than the length of a `Buffer` created from the\n             * string.\n             *\n             * ```js\n             * import { Buffer } from 'node:buffer';\n             *\n             * const str = '\\u00bd + \\u00bc = \\u00be';\n             *\n             * console.log(`${str}: ${str.length} characters, ` +\n             *             `${Buffer.byteLength(str, 'utf8')} bytes`);\n             * // Prints: ½ + ¼ = ¾: 9 characters, 12 bytes\n             * ```\n             *\n             * When `string` is a\n             * `Buffer`/[`DataView`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/DataView)/[`TypedArray`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/-\n             * Reference/Global_Objects/TypedArray)/[`ArrayBuffer`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/ArrayBuffer)/[`SharedArrayBuffer`](https://develop-\n             * er.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/SharedArrayBuffer), the byte length as reported by `.byteLength`is returned.\n             * @since v0.1.90\n             * @param string A value to calculate the length of.\n             * @param [encoding='utf8'] If `string` is a string, this is its encoding.\n             * @return The number of bytes contained within `string`.\n             */\ndeclare function byteLength(value: string, encoding?: string): number;"
+	source := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: "/private/captured-buffer.d.ts"}, text, core.ScriptKindTS)
+	if !governanceTypeLiteralFidelity(source) {
+		t.Fatal("original captured documentation rejected")
+	}
+	if !governanceTypeLiteralFidelity(source) {
+		t.Fatal("original JSDoc cache changed verdict")
+	}
+}
