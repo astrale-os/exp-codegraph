@@ -32,7 +32,12 @@ func captureCompilerOperation[T any](fs *compilerInputFS, key compilerInputKey, 
 		fs.operations[key] = cell
 	}
 	fs.mu.Unlock()
-	cell.once.Do(func() { cell.value = compilerCapturedValue[T]{read()} })
+	cell.once.Do(func() {
+		value := read()
+		fs.mu.Lock()
+		cell.value = compilerCapturedValue[T]{value}
+		fs.mu.Unlock()
+	})
 	return cell.value.(compilerCapturedValue[T]).value
 }
 
