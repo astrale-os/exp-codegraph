@@ -20,6 +20,7 @@ func TestClosedSourceCompletionRejectsOriginalInvalidSpans(t *testing.T) {
     {"overflow-sum", "x", "index.ts", 1, maximum, false},
     {"oversized-length", "x", "index.ts", 0, maximum, false},
     {"foreign-file", "x", "foreign.ts", 0, 1, false},
+    {"owned-comment-surrogate-pair", "//\U0001F600\nexport {}", "index.ts", 2, 2, true},
   } {
     t.Run(sample.name, func(t *testing.T) {
       root := t.TempDir()
@@ -57,7 +58,7 @@ func TestClosedSourceCompletionRejectsOriginalInvalidSpans(t *testing.T) {
       }
       if err != nil { t.Fatal(err) }
       if result.(map[string]any)["status"] != "products" || state.ProductsDigest == "" {
-        t.Fatalf("original empty anchor did not finalize: %#v", result)
+        t.Fatalf("owned valid UTF16 span did not finalize: %#v", result)
       }
       if project.typeOwner != nil && project.typeOwner.program != nil {
         t.Fatal("pure source completion opened a semantic Program")
