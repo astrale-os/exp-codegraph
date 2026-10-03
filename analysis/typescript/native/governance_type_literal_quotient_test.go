@@ -94,3 +94,51 @@ func TestGovernanceEmptyConditionalNamesRejectsOtherShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestGovernanceEmptyConditionalNamesTransitiveAdmission(t *testing.T) {
+	for _, test := range []struct{ name, entry string }{
+		{"imported non-root", "import './mutations/sample.js';"},
+		{"excluded source", "export {};"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"noLib":true},"include":["entry.ts"]}`)
+			governanceWrite(t, root, "entry.ts", test.entry)
+			governanceWrite(t, root, "mutations/sample.ts", `export const patch=true?{}:{status:"active"};`)
+			project, err := captureGovernedProject(root, governanceTestPolicy())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if project.typeRelease != nil {
+					project.typeRelease()
+				}
+			})
+			file := governanceSharedProject(project).FilesByPath["mutations/sample.ts"]
+			var expression *ast.Node
+			walkFile(file.Source, func(node *ast.Node) bool {
+				if node.Kind == ast.KindConditionalExpression {
+					expression = node
+				}
+				return true
+			})
+			observed := project.typeOwner.names(file, expression)
+			_, typ, known := project.typeOwner.expression(file, expression)
+			original := sourcepolicy.NamesObservation{Known: known}
+			if typ != nil {
+				if names, ok := project.typeOwner.propertyNames(typ); ok {
+					original.Names = names
+				}
+			}
+			if test.name == "imported non-root" && (!original.Known || !reflect.DeepEqual(original.Names, []string{"status"})) {
+				t.Fatalf("original imported checker proof missing: %#v", original)
+			}
+			if test.name == "excluded source" && (!original.Known || original.Names != nil) {
+				t.Fatalf("original excluded source proof changed: %#v", original)
+			}
+			if !reflect.DeepEqual(observed, original) {
+				t.Fatalf("names=%#v original checker=%#v", observed, original)
+			}
+		})
+	}
+}

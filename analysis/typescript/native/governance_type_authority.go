@@ -284,7 +284,6 @@ func (owner *governanceTypeAuthority) names(file *sourcepolicy.File, expression 
 		if owner.roots[owner.project.FilesByPath[file.Path].AbsolutePath] {
 			return sourcepolicy.NamesObservation{Known: true, Names: names}
 		}
-		return sourcepolicy.NamesObservation{Known: true}
 	}
 	if value, ok := owner.lookupTypeDemand("property-names", file, expression); ok {
 		return value.names
