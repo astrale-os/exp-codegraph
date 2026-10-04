@@ -212,7 +212,7 @@ export declare class Client {
     expect(after.api?.sourceRevision).not.toBe(before.api?.sourceRevision)
   })
 
-  it('admits large hierarchical APIs while retaining the declaration-byte ceiling', async () => {
+  it('admits deeply linked hierarchical API declarations', async () => {
     const fragments = Object.fromEntries(
       Array.from({ length: 160 }, (_, index) => [
         `fragment-${index}.d.ts`,
@@ -228,6 +228,58 @@ export declare class Client {
     expect(result.ok).toBe(true)
     expect(result.diagnostics).toEqual([])
     expect(result.api?.sources).toHaveLength(161)
+  })
+
+  it.each([193, 512])('admits all %i declaration sources without counting cycles or diamonds twice', async (count) => {
+    const current = await largeDeclarationFixture(count)
+    const result = await compileApi({ mainFile: current.api, projectRoot: current.root })
+
+    expect(result.ok).toBe(true)
+    expect(result.diagnostics).toEqual([])
+    expect(result.api?.sources.map(({ file }) => file).sort()).toEqual([
+      '.spec/api.d.ts',
+      ...Array.from({ length: count - 1 }, (_, index) => `.spec/fragment-${index}.d.ts`),
+    ].sort())
+    expect(result.api?.surface.declarations.some(({ name }) => name === 'Root')).toBe(true)
+
+    if (count === 193) {
+      const requests = [current.api, join(dirname(current.api), 'fragment-0.d.ts')].map((mainFile) => ({
+        mainFile,
+        projectRoot: current.root,
+        declarationModel: false,
+        declarationNavigation: false,
+      }))
+      const singles = await Promise.all(requests.map((request) => compileApi(request)))
+      for (const single of singles) {
+        expect(single.ok).toBe(true)
+        expect(single.diagnostics).toEqual([])
+        expect(single.dependencies).toHaveLength(count)
+      }
+      expect(await compileApis(requests)).toEqual(singles)
+      expect(await compileApisIsolated(requests)).toEqual(singles)
+    }
+  })
+
+  it('rejects the 513th unique declaration source with a structured API diagnostic', async () => {
+    const current = await largeDeclarationFixture(513)
+    expect(await compileApi({ mainFile: current.api, projectRoot: current.root })).toEqual({
+      ok: false,
+      diagnostics: [{
+        source: 'api', code: 'API_COMPILE_FAILED', severity: 'error',
+        message: 'API exceeds 512 declaration sources.',
+      }],
+    })
+  })
+
+  it('retains the 8 MiB declaration-byte ceiling even for a single source', async () => {
+    const current = await declarationFixture(`/*${'x'.repeat(8 * 1024 * 1024)}*/\nexport interface Root {}\n`)
+    expect(await compileApi({ mainFile: current.api, projectRoot: current.root })).toEqual({
+      ok: false,
+      diagnostics: [{
+        source: 'api', code: 'API_COMPILE_FAILED', severity: 'error',
+        message: 'API sources exceed 8388608 bytes.',
+      }],
+    })
   })
 
   it('keeps semantic issue ranges relative to the analyzed project rather than process cwd', async () => {
@@ -1344,6 +1396,23 @@ export type Unsafe = (value: string) => string
     expect(unsafe.diagnostics[0]?.code).toBe('JSON_SCHEMA_GENERATION_FAILED')
   })
 })
+
+async function largeDeclarationFixture(count: number): Promise<{ root: string; api: string }> {
+  // Both roots reach the whole closure. The final edge cycles back to the API;
+  // its direct edge to fragment 1 also forms a diamond with fragment 0's edge.
+  // Shallow interface shapes keep this a source-admission test, not a stress
+  // test of deeply recursive type expansion.
+  const fragments = Object.fromEntries(
+    Array.from({ length: count - 1 }, (_, index) => [
+      `fragment-${index}.d.ts`,
+      `import '${index < count - 2 ? `./fragment-${index + 1}.js` : './api.js'}'\nexport interface Fragment${index} { readonly value: string }\n`,
+    ]),
+  )
+  return declarationFixture(
+    `import './fragment-0.js'\nimport './fragment-1.js'\nexport interface Root { readonly value: string }\n`,
+    fragments,
+  )
+}
 
 async function declarationFixture(
   source: string,
