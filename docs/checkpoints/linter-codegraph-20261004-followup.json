@@ -1,0 +1,402 @@
+{
+  "schema": "astrale.sdk-codegraph.checkpoint-followup/v1",
+  "date": "2026-10-04",
+  "qualifiedProductionCheckpoints": {
+    "sdk": "202d3b0a53fcf0a87cdbf3f8bb2dbae9685826c6",
+    "codegraph": "304f23b9870dcfe32691426831ebdb0e1c7c189e"
+  },
+  "initialBaselines": {
+    "sdk": "cad2f224ddcb4ff5137231584fc25208d28611fc",
+    "codegraph": "f35484f143ca31ad6f2b4c4a9d93a4fffbbd890a"
+  },
+  "productionSourceChangesThisFollowup": 0,
+  "operationsPilot": {
+    "order": [
+      "initial",
+      "current",
+      "current",
+      "initial"
+    ],
+    "samplesPerSide": 2,
+    "results": [
+      {
+        "phase": "cold",
+        "metric": "processToFirstCompleteReportMs",
+        "samplesMs": {
+          "initial": [
+            28350.707041,
+            33455.974375
+          ],
+          "current": [
+            1989.205333,
+            1711.352542
+          ]
+        },
+        "medianRatioInitialOverCurrent": 16.70199021438085
+      },
+      {
+        "phase": "noop",
+        "metric": "residentApiWallMs",
+        "samplesMs": {
+          "initial": [
+            281.1474580000031,
+            351.34045799999876
+          ],
+          "current": [
+            300.92087500000025,
+            505.32045800000014
+          ]
+        },
+        "medianRatioInitialOverCurrent": 0.7844895692044624
+      },
+      {
+        "phase": "id-duplicate",
+        "metric": "residentApiWallMs",
+        "samplesMs": {
+          "initial": [
+            2812.9347500000003,
+            2795.4687080000003
+          ],
+          "current": [
+            610.5092500000001,
+            889.6841250000002
+          ]
+        },
+        "medianRatioInitialOverCurrent": 3.738453689678505
+      },
+      {
+        "phase": "id-duplicate:repair",
+        "metric": "residentApiWallMs",
+        "samplesMs": {
+          "initial": [
+            2787.160125000002,
+            3768.7801249999975
+          ],
+          "current": [
+            630.6595829999997,
+            992.6645410000001
+          ]
+        },
+        "medianRatioInitialOverCurrent": 4.0385898004433285
+      },
+      {
+        "phase": "body-counterexample",
+        "metric": "residentApiWallMs",
+        "samplesMs": {
+          "initial": [
+            3594.8300420000014,
+            5318.769
+          ],
+          "current": [
+            612.622625,
+            944.0477080000001
+          ]
+        },
+        "medianRatioInitialOverCurrent": 5.726067268733644
+      },
+      {
+        "phase": "body-counterexample:repair",
+        "metric": "residentApiWallMs",
+        "samplesMs": {
+          "initial": [
+            3573.133999999998,
+            3849.4787910000014
+          ],
+          "current": [
+            818.5479159999995,
+            749.5392919999995
+          ]
+        },
+        "medianRatioInitialOverCurrent": 4.733545910668512
+      }
+    ],
+    "artifactsBeforeAfterEqual": true,
+    "eachCompleteReportMatchedOwnFunctionalOracle": true,
+    "restorationVerified": true,
+    "crossVersionEntireReportEqual": false,
+    "crossVersionDifference": [
+      "policyDigest"
+    ],
+    "policyDigestNormalized": false,
+    "backgroundProcessesStopped": false,
+    "limits": [
+      "Single Operations domain; two samples per side only",
+      "fseventsd already busy; not uncontended acceptance",
+      "Same project provider world, no full dependency installation qualification",
+      "No RSS measurement in this campaign"
+    ],
+    "performanceAcceptance": false,
+    "all12Acceptance": false,
+    "goalAcceptance": false
+  },
+  "independentAudit": {
+    "wholeReportsMatchedOwnVersionOracles": 24,
+    "privateSourceRepairsRestored": 8,
+    "capturedArtifactFilesShaUnchangedAfterCleanup": 3071,
+    "nativeArtifacts": [
+      {
+        "name": "initial",
+        "sha256": "225d560a67fb784e386f5f2a0a7b5811fbdc09276f6af5dc34b39a91629cc519",
+        "bytes": 27880082
+      },
+      {
+        "name": "current",
+        "sha256": "082d06c0004e99bc9f9f02fa4287bc287f4a098ae6ce35d177fe774c66b769a3",
+        "bytes": 30017666
+      }
+    ]
+  },
+  "density": {
+    "completePublications": 8,
+    "wholeCurrentReportsUnchangedExceptRootDuration": 8,
+    "freshStatKindCellsPerPublication": 11997,
+    "distinctPathsPerPublication": 11515,
+    "parentsPerPublication": 1910,
+    "perfectOneCallPerParentStatFamilyOnlyCeiling": 6.281151832460733,
+    "integratedBulkPrototypeAdopted": false,
+    "latencyOrSyscallInference": false
+  },
+  "lean": {
+    "sourceSha256": "056d3882f0527d3ccda7c593c41b0260bae9f222bc44bebc9263db16741e9b0e",
+    "compiler": "Lean (version 4.34.0, arm64-apple-darwin24.6.0, commit 293d5d0c0c3f3dded4688b3ccd6a33939ac5102b, Release)",
+    "compilerSha256": "1b370cfcbf44e80d1b004ab1b1ab9a4c73951f9f7c242140bcff9bc577576554",
+    "exitCode": 0,
+    "noEscapeTokens": true,
+    "printedTheorems": 8,
+    "printedAllWithoutAxioms": true,
+    "scope": "Explicit finite observation/refinement model only; no Go, OS or watcher correctness/performance theorem"
+  },
+  "cleanup": {
+    "additionalRegisteredPerfWorktreesRemoved": 16,
+    "totalRegisteredPerfWorktreesRemovedIncludingPreviousPass": 24,
+    "additionalUnregisteredTreesArchivedAndRemoved": 2,
+    "sourceArchivesVerified": 18,
+    "gitBundlesFreshRestoreVerified": 2,
+    "allOldRegisteredPerfWorktreesAbsent": true,
+    "sourceBytesModesLinksComplete": true,
+    "stagedUnstagedPatchesAndIndicesPreserved": true,
+    "originalSdk37StatusRowsAndBytesModesLinksUnchanged": true,
+    "other44DeployV4SdkWorktreePathsPreserved": true,
+    "remainingSdkWorktrees": 46,
+    "remainingCodegraphWorktrees": 2,
+    "pairedHostPreexistingBrokenBinLinksRepaired": 2,
+    "additionalMeasuredStorage": {
+      "method": "du -sk; allocated directory size, not APFS physical free-space guarantee",
+      "beforeKiB": 150016064,
+      "afterKiB": 147757872,
+      "netReductionKiB": 2258192,
+      "netReductionGiB": 2.1535797119140625
+    },
+    "localArchivesDirectory": "astrale/.worktrees/linter-consolidation-20261004/archives/20261004-final",
+    "archives": [
+      {
+        "source": "sdk",
+        "archive": "sdk--sdk.tar.gz",
+        "sha256": "b9d3edc74d4b32326dbe980e5efc2c401e52db0bd375059ce4a0384406d0b301",
+        "bytes": 2504478,
+        "files": 2366,
+        "entries": 2924,
+        "head": "dcb569103ce8dc3d9fe6ec4687de365c381e0b65",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/sdk/00"
+      },
+      {
+        "source": "sdk/.worktrees/native-full-compose-20261001",
+        "archive": "sdk--sdk--.worktrees--native-full-compose-20261001.tar.gz",
+        "sha256": "da0bc5b4bf9c568f2c02e0b4d7629561182dc3ad25189981ca5566402ee7b3d2",
+        "bytes": 2604019,
+        "files": 2417,
+        "entries": 2978,
+        "head": "5bb9fbe927d31fc69d7e46b31b411146d4d6f87b",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/sdk/01"
+      },
+      {
+        "source": "sdk/.worktrees/native-full-compose-20261001/.worktrees/generic-observation-20261001",
+        "archive": "sdk--sdk--.worktrees--native-full-compose-20261001--.worktrees--generic-observation-20261001.tar.gz",
+        "sha256": "a73313b51efcf327ae6262ff1e0153b23e5d9f7cccea2be099369241b8fe9246",
+        "bytes": 3182426,
+        "files": 3282,
+        "entries": 3950,
+        "head": "d95fa0bce3b8c97dbc1acc8e53f469d3e7ea83c1",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/sdk/02"
+      },
+      {
+        "source": "sdk/.worktrees/native-full-compose-20261001/.worktrees/generic-observation-20261001/.worktrees/generic-owned-producer-20261001",
+        "archive": "sdk--sdk--.worktrees--native-full-compose-20261001--.worktrees--generic-observation-20261001--.worktrees--generic-owned-producer-20261001.tar.gz",
+        "sha256": "1600a8e836e44bf064f1b78ee4f55b13a443e1922c8cda84e1d60a7032e87e4a",
+        "bytes": 150647269,
+        "files": 9026,
+        "entries": 10740,
+        "head": "64e5c5066a12062c20ef2f1e571012bd9d5cd963",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/sdk/03"
+      },
+      {
+        "source": "sdk/.worktrees/native-full-compose-20261001/.worktrees/generic-observation-20261001/.worktrees/generic-owned-producer-20261001/.worktrees/generic-owned-batch-20261001",
+        "archive": "sdk--sdk--.worktrees--native-full-compose-20261001--.worktrees--generic-observation-20261001--.worktrees--generic-owned-producer-20261001--.worktrees--generic-owned-batch-20261001.tar.gz",
+        "sha256": "0031e9bafb46263d779053925a739b2017415e4318249ed9f0bc687d764bf0c5",
+        "bytes": 745368016,
+        "files": 30062,
+        "entries": 34683,
+        "head": "64e5c5066a12062c20ef2f1e571012bd9d5cd963",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/sdk/04"
+      },
+      {
+        "source": "sdk/.worktrees/source65-admitted-source-owner-D-20261004",
+        "archive": "sdk--sdk--.worktrees--source65-admitted-source-owner-D-20261004.tar.gz",
+        "sha256": "2bbf07202d86c43f9f2cf651229b60fb68e5e452059ca71894f96254016feaaa",
+        "bytes": 2227679,
+        "files": 1583,
+        "entries": 2042,
+        "head": "076c2211c884b1a429b53365159e9b52b9f651cd",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/sdk/05"
+      },
+      {
+        "source": "sdk/.worktrees/source83-workflow-kernel-B-20261004",
+        "archive": "sdk--sdk--.worktrees--source83-workflow-kernel-B-20261004.tar.gz",
+        "sha256": "fd182afd4100c9f976365bd3813a8100bf28db34a43685631852fdf2890cf5ca",
+        "bytes": 2238442,
+        "files": 1588,
+        "entries": 2047,
+        "head": "076c2211c884b1a429b53365159e9b52b9f651cd",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/sdk/06"
+      },
+      {
+        "source": ".worktrees/single-input-owner-C-20261002/codegraph",
+        "archive": "codegraph--.worktrees--single-input-owner-C-20261002--codegraph.tar.gz",
+        "sha256": "93d7063424ffbf9f4dc7f781ebfa8a7bb4bc403309b9c24815089193b5504040",
+        "bytes": 54425954,
+        "files": 1907,
+        "entries": 2220,
+        "head": "3f378b44b833b89ff660226f17db149eee759c1a",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/00"
+      },
+      {
+        "source": "codegraph",
+        "archive": "codegraph--codegraph.tar.gz",
+        "sha256": "acae6062cca20b92c350df616d90e1653f368909fdbad664055d70312a239799",
+        "bytes": 53909157,
+        "files": 1689,
+        "entries": 1987,
+        "head": "f2615e3acf549789ed0c059c2251b0f9e78eb312",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/01"
+      },
+      {
+        "source": "codegraph/.worktrees/generation-public-compose-20261001",
+        "archive": "codegraph--codegraph--.worktrees--generation-public-compose-20261001.tar.gz",
+        "sha256": "2382d937cebfbed34d4f53a130a7a2827db0580da411903bb68090e4a1da7660",
+        "bytes": 54289896,
+        "files": 1850,
+        "entries": 2164,
+        "head": "2e897310a1c507f1ab32de4dad948e84b19f70bc",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/02"
+      },
+      {
+        "source": "codegraph/.worktrees/generation-public-compose-20261001/.worktrees/pipeline-lanes-20261001",
+        "archive": "codegraph--codegraph--.worktrees--generation-public-compose-20261001--.worktrees--pipeline-lanes-20261001.tar.gz",
+        "sha256": "75f8985e4ae342401cf45a9c91bfdde731e630f6861549d7c1eada31d49d7a90",
+        "bytes": 199179010,
+        "files": 5089,
+        "entries": 5801,
+        "head": "2e897310a1c507f1ab32de4dad948e84b19f70bc",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/03"
+      },
+      {
+        "source": "codegraph/.worktrees/generation-public-compose-20261001/.worktrees/pipeline-lanes-20261001/.worktrees/cache-owner-lanes-v2-20261001",
+        "archive": "codegraph--codegraph--.worktrees--generation-public-compose-20261001--.worktrees--pipeline-lanes-20261001--.worktrees--cache-owner-lanes-v2-20261001.tar.gz",
+        "sha256": "578620d3e8f63a4ce07bd0b5e4e2194d9ff30be10a5c6174b7e57347564feb46",
+        "bytes": 197683875,
+        "files": 7762,
+        "entries": 9145,
+        "head": "2e897310a1c507f1ab32de4dad948e84b19f70bc",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/04"
+      },
+      {
+        "source": "codegraph/.worktrees/source65-admitted-source-owner-B-20261004",
+        "archive": "codegraph--codegraph--.worktrees--source65-admitted-source-owner-B-20261004.tar.gz",
+        "sha256": "6db172ac6984a85070acfc7ec99b2b640adfe3c05145295ba2c3982aedf7eb48",
+        "bytes": 54377002,
+        "files": 1896,
+        "entries": 2206,
+        "head": "97f7b12249db6dbcad1c7e612ce83618dcb87934",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/05"
+      },
+      {
+        "source": "codegraph/.worktrees/source72-allocation-ownership-root-20261004",
+        "archive": "codegraph--codegraph--.worktrees--source72-allocation-ownership-root-20261004.tar.gz",
+        "sha256": "e5a9790415c53f77a356692bbce5f0b677a3aa598ed9961132c402e8e962bb65",
+        "bytes": 54378782,
+        "files": 1900,
+        "entries": 2210,
+        "head": "97f7b12249db6dbcad1c7e612ce83618dcb87934",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/06"
+      },
+      {
+        "source": "codegraph/.worktrees/source73-program-syntax-owner-root-20261004",
+        "archive": "codegraph--codegraph--.worktrees--source73-program-syntax-owner-root-20261004.tar.gz",
+        "sha256": "ad1743b7ffc7fb236ea0d999bbc58fa56d8d2b909ea8e288815fa635f4390910",
+        "bytes": 54387291,
+        "files": 1902,
+        "entries": 2212,
+        "head": "97f7b12249db6dbcad1c7e612ce83618dcb87934",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/07"
+      },
+      {
+        "source": "codegraph/.worktrees/source83-workflow-facts-C-20261004",
+        "archive": "codegraph--codegraph--.worktrees--source83-workflow-facts-C-20261004.tar.gz",
+        "sha256": "100d3b3a92e36efb5267a3eb004bdcbd9e89160b471a4320e03d481f5f4be47a",
+        "bytes": 54390079,
+        "files": 1904,
+        "entries": 2214,
+        "head": "97f7b12249db6dbcad1c7e612ce83618dcb87934",
+        "localArchiveRef": "refs/archive/linter-perf-20261004/codegraph/08"
+      },
+      {
+        "source": "sdk/.worktrees/schema-index",
+        "archive": "unregistered--schema-index.tar.gz",
+        "sha256": "0aed9e433c97f35e8d984f7a130ef45591feeae6acdd2a3da61a904543b1d25c",
+        "bytes": 2082818,
+        "files": 1550,
+        "entries": 2006
+      },
+      {
+        "source": "codegraph/.worktrees/member-declaration-head-owner-20261002",
+        "archive": "unregistered--member-declaration-head.tar.gz",
+        "sha256": "0c86fdee003f35e411cddf9ec872d8a9fcb71f48fd5812894376bbb9838954db",
+        "bytes": 383,
+        "files": 0,
+        "entries": 3
+      }
+    ],
+    "gitBundles": [
+      {
+        "repo": "sdk",
+        "file": "sdk-all-refs.bundle",
+        "sha256": "009a2421ee362ab4b20508bee69e8465ff845d18ae194721fae7abb1c4633878",
+        "bytes": 8714112,
+        "allRecordedHeadsExistInFreshBare": true
+      },
+      {
+        "repo": "codegraph",
+        "file": "codegraph-all-refs.bundle",
+        "sha256": "83acad413b8f5dc2c6f3432c0fe80174b927de908864a6823a9eb70f2b9c1a26",
+        "bytes": 70478424,
+        "allRecordedHeadsExistInFreshBare": true
+      }
+    ]
+  },
+  "ledger": {
+    "hypotheses": 181,
+    "events": 662,
+    "snapshotSha256": "63b083f467cf73697ed15ae35340acb5173ca5c755faadc2c8068f5ef4e0e6e7",
+    "originalObjectiveAndBaselinesUnchanged": true
+  },
+  "openGates": {
+    "fullSdkSuite": "1749 pass,1 directory-membership watcher failure; isolated repeats unstable",
+    "coldWarm10xAllProjects": false,
+    "rssQualified": false,
+    "all12Qualified": false,
+    "publicConsumerInstallAndReleaseQualified": false,
+    "netProductionLOCDelta": 24282,
+    "netMinus10000ProductionLOCAchieved": false,
+    "permanentFdLeakFixProven": false
+  }
+}
