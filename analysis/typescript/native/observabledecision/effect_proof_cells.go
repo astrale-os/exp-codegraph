@@ -36,7 +36,16 @@ func (core *NativeEffectCore) Proof(kind, symbol, localOwner string) NativeEffec
 // its entire lifetime; it cannot cross capture release or continuation mutation.
 // The ordinary constructor retains support for dynamic exploratory authorities.
 func NewCapturedNativeEffectCore(files []CapturedFile, authority NativeEffectAuthority) *NativeEffectCore {
-	core := NewNativeEffectCore(files, authority)
+	return NewCapturedNativeEffectCoreWithSyntax(files, authority, NewSourceSyntaxOwner())
+}
+
+// NewCapturedNativeEffectCoreWithSyntax borrows only immutable parser indexes;
+// every semantic authority and proof cell still belongs to this fresh capture.
+func NewCapturedNativeEffectCoreWithSyntax(files []CapturedFile, authority NativeEffectAuthority, syntax *SourceSyntaxOwner) *NativeEffectCore {
+	if syntax == nil {
+		syntax = NewSourceSyntaxOwner()
+	}
+	core := newNativeEffectCore(files, authority, syntax)
 	core.immutableProofOwner = true
 	core.authority.MembershipReads = append([]SemanticRead(nil), authority.MembershipReads...)
 	return core

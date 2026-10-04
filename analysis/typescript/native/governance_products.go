@@ -49,6 +49,7 @@ type governanceProductsSession struct {
 	RuntimeGraph           *observabledecision.RuntimeDecisionGraph
 	RuntimeIdentity        *governanceRuntimeIdentity
 	RuntimeReady           map[string]governanceOutcome
+	sourceBody             *governanceSourceBodyOwner
 	SourceProducts         []governanceRuleProduct
 	RuleReady              map[string]governanceOutcome
 	GenericEngine          *governanceGenericEngine
@@ -181,11 +182,8 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 		if err := json.Unmarshal(raw, &input); err != nil {
 			return nil, err
 		}
-		state := session.productsSession
-		if state == nil || session.policyLane != nil || state.Project == nil || state.Token != input.Token ||
-			state.Generation != input.Generation || state.Project.GovernanceDigest != input.SourceSnapshotDigest ||
-			state.ProductsDigest != "" || state.SourceProducts != nil {
-			return nil, fmt.Errorf("opened source does not own its admitting phase")
+		if err := session.openClosedSource(input.Token, input.Generation, input.SourceSnapshotDigest); err != nil {
+			return nil, err
 		}
 		return session.evaluateProducts()
 	}

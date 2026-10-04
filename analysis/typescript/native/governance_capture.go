@@ -80,6 +80,7 @@ type governedProject struct {
 	typeRelease        func()
 	typeOwner          *governanceTypeAuthority
 	typeDemandCache    *governanceTypeDemandCache
+	runtimeSyntax      *governanceRuntimeSyntaxOwner
 	programGeneration  *governanceProgramGeneration
 	borrowedGeneration *governanceProgramGeneration
 }
@@ -108,6 +109,7 @@ type governanceCapture struct {
 	probeInconsistent         bool
 	compilerAssertions        []*governanceCompilerReadAssertions
 	typeCacheLeases           []*governanceTypeCacheLease
+	typeReplayComparisons     map[governanceTypeReplayKey]*governanceTypeReplayComparison
 
 	observations map[string]governanceObservation
 	compiler     *compilerInputFS
@@ -235,8 +237,8 @@ func (c *governanceCapture) canonicalCertificate() string {
 		rows = append(rows, row)
 	}
 	if c.compiler != nil {
-		for key, value := range c.compiler.observed {
-			rows = append(rows, governanceObservation{key.path, fmt.Sprintf("compiler:%d", key.kind), value})
+		for _, row := range c.compiler.publicationObservationsLocked() {
+			rows = append(rows, governanceObservation{row.key.path, fmt.Sprintf("compiler:%d", row.key.kind), row.before})
 		}
 	}
 	for _, receipt := range c.compilerAssertions {
@@ -263,27 +265,6 @@ func (c *governanceCapture) canonicalCertificate() string {
 // atomic transaction or immunity to an edit after the barrier has returned.
 func (c *governanceCapture) Verify() (bool, error) {
 	return governanceVerifyPublication([]*governanceCapture{c})
-}
-
-func (c *governanceCapture) verifyWithin(reads *governanceBarrierReads) (bool, error) {
-	if c.ownedGenericArtifact != nil && !c.ownedGenericArtifact.verify() {
-		return false, nil
-	}
-	var replay *governanceTypeReplayWorld
-	if len(c.compilerAssertions)+len(c.typeCacheLeases) > 0 {
-		replay = reads.compilerReplay(c.compiler.disk)
-	}
-	for _, receipt := range c.compilerAssertions {
-		if !receipt.verifyBarrierWorld(replay) {
-			return false, nil
-		}
-	}
-	for _, lease := range c.typeCacheLeases {
-		if !lease.verifyBarrierWorld(replay) {
-			return false, nil
-		}
-	}
-	return c.verifyCapturedOperations(reads), nil
 }
 
 type governanceConfigHost struct {

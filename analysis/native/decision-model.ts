@@ -37,7 +37,7 @@ export interface NativeDecisionPrepareRequest {
   readonly ruleRevisions: readonly { readonly id: string; readonly revision: string }[];
   readonly options: {
     /** Offered private SDK source owner; absence preserves older products/fallback. */
-    readonly sourcePolicyOwnerRevision?: 1;
+    readonly sourcePolicyOwnerRevision?: 2;
     readonly requiredRuleIds?: readonly string[];
     readonly generic?: boolean;
     readonly fix?: boolean;

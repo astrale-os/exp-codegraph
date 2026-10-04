@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestWriteTransactionResponseFragmentsOneOversizedShard(t *testing.T) {
+func TestWriteRecordResponseFragmentsOneOversizedShard(t *testing.T) {
 	transaction := &factTransaction{
 		ProtocolVersion: protocolVersion,
 		Next: analysisGeneration{
@@ -36,9 +36,10 @@ func TestWriteTransactionResponseFragmentsOneOversizedShard(t *testing.T) {
 		}},
 		Deletes: []string{},
 	}
+	transaction.Upserts[0].Facts[0].semanticBytes = recordFixtureFact(transaction.Upserts[0].Facts[0].Payload).semanticBytes
 	const maximumFrameBytes = 1024
 	var output bytes.Buffer
-	if err := writeTransactionResponse(&output, 7, transaction, maximumFrameBytes, maximumFrameBytes, 32*1024, nil); err != nil {
+	if err := writeRecordPayloadResponse(&output, 7, "transaction", transaction, maximumFrameBytes, maximumFrameBytes, recordLimits{MaximumRecordBytes: 32 * 1024, MaximumDecodedShardBytes: 32 * 1024, MaximumTransactionBytes: 32 * 1024, MaximumPhysicalTransactionBytes: 32 * 1024}, nil); err != nil {
 		t.Fatal(err)
 	}
 	lines := bytes.Split(bytes.TrimSuffix(output.Bytes(), []byte{'\n'}), []byte{'\n'})
@@ -56,24 +57,31 @@ func TestWriteTransactionResponseFragmentsOneOversizedShard(t *testing.T) {
 			t.Fatalf("frame %d has %d bytes", index, len(line))
 		}
 		var frame struct {
-			Kind     string `json:"kind"`
-			Sequence int    `json:"sequence"`
-			Data     string `json:"data"`
-			Bytes    int    `json:"bytes"`
-			Chunks   int    `json:"chunks"`
-			SHA256   string `json:"sha256"`
+			ID              int    `json:"id"`
+			ProtocolVersion int    `json:"protocolVersion"`
+			Encoding        string `json:"encoding"`
+			PayloadKind     string `json:"payloadKind"`
+			Kind            string `json:"kind"`
+			Sequence        int    `json:"sequence"`
+			Data            string `json:"data"`
+			Bytes           int    `json:"bytes"`
+			Chunks          int    `json:"chunks"`
+			SHA256          string `json:"sha256"`
 		}
 		if err := json.Unmarshal(line, &frame); err != nil {
 			t.Fatal(err)
 		}
+		if frame.ID != 7 || frame.ProtocolVersion != protocolVersion {
+			t.Fatalf("frame %d has id=%d protocol=%d", index, frame.ID, frame.ProtocolVersion)
+		}
 		switch index {
 		case 0:
-			if frame.Kind != "transaction-start" {
+			if frame.Kind != "transaction-start" || frame.Encoding != transactionRecordEncoding || frame.PayloadKind != "transaction" {
 				t.Fatalf("first frame kind is %q", frame.Kind)
 			}
 			announced.Bytes, announced.Chunks, announced.SHA256 = frame.Bytes, frame.Chunks, frame.SHA256
 		case len(lines) - 1:
-			if frame.Kind != "transaction-end" {
+			if frame.Kind != "transaction-end" || frame.PayloadKind != "transaction" {
 				t.Fatalf("last frame kind is %q", frame.Kind)
 			}
 			if frame.Bytes != announced.Bytes || frame.Chunks != announced.Chunks || frame.SHA256 != announced.SHA256 {
@@ -97,19 +105,22 @@ func TestWriteTransactionResponseFragmentsOneOversizedShard(t *testing.T) {
 	if hex.EncodeToString(digest[:]) != announced.SHA256 {
 		t.Fatal("assembled digest differs from announced digest")
 	}
-	expected, err := json.Marshal(transaction)
+	const header = `["header",{"protocolVersion":1,"next":{"id":"generation:test","sequence":1,"universe":"project-universe:test","producer":{"id":"producer:test","name":"fixture","version":"1","protocolVersion":1},"sourceManifest":"source-manifest:test","capabilities":["fixture"]}},[0,1,0]]`
+	shard, err := json.Marshal([]any{"upsert", transaction.Upserts[0]})
 	if err != nil {
 		t.Fatal(err)
 	}
+	expected := append([]byte(header+"\n"), shard...)
+	expected = append(expected, '\n')
 	if !bytes.Equal(assembled, expected) {
-		t.Fatal("assembled transaction differs from source transaction")
+		t.Fatal("assembled records differ from the complete expected header and shard")
 	}
 }
 
-func TestWriteTransactionResponseRejectsAssembledLimit(t *testing.T) {
-	transaction := &factTransaction{ProtocolVersion: protocolVersion, Deletes: []string{strings.Repeat("x", 2048)}}
+func TestWriteRecordDeltaResponseRejectsAssembledLimit(t *testing.T) {
+	transaction := &factTransaction{ProtocolVersion: protocolVersion, Base: "generation:base", Deletes: []string{strings.Repeat("x", 2048)}}
 	var output bytes.Buffer
-	err := writeTransactionResponse(&output, 1, transaction, 1024, 1024, 1024, nil)
+	err := writeRecordPayloadResponse(&output, 1, "delta", transaction, 1024, 1024, recordLimits{MaximumRecordBytes: 4096, MaximumDecodedShardBytes: 4096, MaximumPhysicalTransactionBytes: 1024}, nil)
 	if err == nil || !strings.Contains(err.Error(), "transaction exceeds configured limit") {
 		t.Fatalf("expected transaction limit error, received %v", err)
 	}

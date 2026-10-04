@@ -24,13 +24,14 @@ type governanceOwnedArtifactLease struct {
 	ownerPath     string
 	ownerInfo     os.FileInfo
 	expected      []byte
+	verifyBuf     []byte
 	once          sync.Once
 	mu            sync.Mutex
 	closed        bool
 }
 
 func (l *governanceOwnedArtifactLease) close() {
-	l.once.Do(func() { l.mu.Lock(); defer l.mu.Unlock(); l.closed = true; l.file.Close() })
+	l.once.Do(func() { l.mu.Lock(); defer l.mu.Unlock(); l.closed = true; l.verifyBuf = nil; l.file.Close() })
 }
 func (l *governanceOwnedArtifactLease) verify() bool {
 	l.mu.Lock()
@@ -46,7 +47,10 @@ func (l *governanceOwnedArtifactLease) verify() bool {
 	if err != nil || !directory.IsDir() || directory.Mode().Perm() != 0500 || !os.SameFile(directory, l.directoryInfo) {
 		return false
 	}
-	raw := make([]byte, len(l.expected))
+	if len(l.verifyBuf) != len(l.expected) {
+		l.verifyBuf = make([]byte, len(l.expected))
+	}
+	raw := l.verifyBuf
 	n, err := l.file.ReadAt(raw, 0)
 	if n != len(raw) || (err != nil && err != io.EOF) || !bytes.Equal(raw, l.expected) {
 		return false

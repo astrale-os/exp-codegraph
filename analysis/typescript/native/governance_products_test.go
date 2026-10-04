@@ -27,7 +27,7 @@ func TestGovernanceProductCommentsStartBOMAndScannerLexing(t *testing.T) {
 func TestGovernanceProductsDoNotCertifySubsetOrCGReplacement(t *testing.T) {
 	root := t.TempDir()
 	governanceWrite(t, root, "mutations/source.ts", "require('x')")
-	session := governanceSession{productsSession: &governanceProductsSession{Prepare: governancePrepare{Root: root, Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}}
+	session := governanceSession{productsSession: &governanceProductsSession{Prepare: governancePrepare{Root: root, Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":2}`)}}}
 	configuration, err := session.captureConfiguration(root)
 	if err != nil {
 		t.Fatal(err)

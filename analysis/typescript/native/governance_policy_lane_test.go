@@ -17,7 +17,7 @@ func governanceLaneFixture(t *testing.T, runtimeRules ...bool) (*governanceSessi
 	if len(runtimeRules) != 0 && runtimeRules[0] {
 		governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"target":"ES2022"},"include":["mutations/**/*.ts"]}`)
 	}
-	session := &governanceSession{root: root, parseCache: map[string]*governedFile{}, productsSession: &governanceProductsSession{Prepare: governancePrepare{Root: root, Options: json.RawMessage(`{"sourcePolicyOwnerRevision":1}`)}}}
+	session := &governanceSession{root: root, parseCache: map[string]*governedFile{}, productsSession: &governanceProductsSession{Prepare: governancePrepare{Root: root, Options: json.RawMessage(`{"sourcePolicyOwnerRevision":2}`)}}}
 	config, err := session.captureConfiguration(root)
 	if err != nil {
 		t.Fatal(err)

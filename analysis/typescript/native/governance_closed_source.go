@@ -39,18 +39,21 @@ func (session *governanceSession) observeClosedSource(request governanceClosedSo
 		return session.observeClosedSourceInput(request)
 	}
 	state := session.productsSession
-	if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || state.Token != request.Token {
+	if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || state.Token != request.Token || state.Generation != request.Generation {
 		return governanceClosedSourceAnswer{}, fmt.Errorf("closed source attempt is retired")
 	}
 	if session.policyLane != nil {
 		return governanceClosedSourceAnswer{Status: "pending"}, nil
 	}
-	if state.Project == nil || state.ProductsDigest != "" {
+	if state.Project == nil || state.ProductsDigest != "" || state.SourceProducts != nil {
 		return governanceClosedSourceAnswer{}, fmt.Errorf("closed source owner is not admitting observations")
 	}
 	project := state.Project
 	if project.GovernanceDigest != request.SourceSnapshotDigest {
 		return governanceClosedSourceAnswer{}, fmt.Errorf("closed source snapshot differs")
+	}
+	if !state.sourceBody.matches(state) || !state.sourceBody.opened || !state.sourceBody.projected {
+		return governanceClosedSourceAnswer{}, fmt.Errorf("closed source observation lacks an admitted projection")
 	}
 	file := project.FilesByPath[request.Path]
 	if file == nil {

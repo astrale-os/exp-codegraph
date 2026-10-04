@@ -1,16 +1,11 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
-	"time"
 )
-
-const transactionFrameEncoding = "base64-json"
 
 type transactionStartFrame struct {
 	ID              int    `json:"id"`
@@ -39,103 +34,6 @@ type transactionEndFrame struct {
 	Bytes           int    `json:"bytes"`
 	Chunks          int    `json:"chunks"`
 	SHA256          string `json:"sha256"`
-}
-
-func writeTransactionResponse(
-	output io.Writer,
-	id int,
-	transaction *factTransaction,
-	maximumFrameBytes int,
-	transactionChunkFrameBytes int,
-	maximumTransactionBytes int,
-	telemetry *nativeTelemetry,
-) error {
-	return writePayloadResponse(
-		output, id, "transaction", transaction,
-		maximumFrameBytes, transactionChunkFrameBytes, maximumTransactionBytes, telemetry,
-	)
-}
-
-func writePayloadResponse(
-	output io.Writer,
-	id int,
-	payloadKind string,
-	payload any,
-	maximumFrameBytes int,
-	transactionChunkFrameBytes int,
-	maximumTransactionBytes int,
-	telemetry *nativeTelemetry,
-) error {
-	started := time.Now()
-	serialized, err := json.Marshal(payload)
-	if err != nil {
-		return fmt.Errorf("encode native transaction: %w", err)
-	}
-	if len(serialized) > maximumTransactionBytes {
-		return fmt.Errorf(
-			"native transaction exceeds configured limit: bytes=%d limit=%d",
-			len(serialized),
-			maximumTransactionBytes,
-		)
-	}
-	direct := response{ID: id, ProtocolVersion: protocolVersion, Kind: payloadKind}
-	if payloadKind == "transaction" {
-		direct.Transaction = payload.(*factTransaction)
-	} else {
-		direct.Delta = payload.(*factDelta)
-	}
-	encodedDirect, err := json.Marshal(direct)
-	if err != nil {
-		return fmt.Errorf("encode native transaction response: %w", err)
-	}
-	counted := &countingWriter{target: output}
-	if len(encodedDirect) <= maximumFrameBytes {
-		err := writeEncodedFrame(counted, encodedDirect, maximumFrameBytes)
-		telemetry.record(id, "transport.serialize-and-write", started, map[string]any{
-			"transactionBytes": len(serialized), "directResponseBytes": len(encodedDirect),
-			"wireBytes": counted.bytes, "chunks": 1, "chunked": false,
-		})
-		return err
-	}
-
-	chunkBytes, err := maximumRawChunkBytes(id, len(serialized), transactionChunkFrameBytes)
-	if err != nil {
-		return err
-	}
-	chunks := (len(serialized) + chunkBytes - 1) / chunkBytes
-	digestBytes := sha256.Sum256(serialized)
-	digest := hex.EncodeToString(digestBytes[:])
-	start := transactionStartFrame{
-		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-start",
-		PayloadKind: payloadKind,
-		Encoding:    transactionFrameEncoding, Bytes: len(serialized), Chunks: chunks, SHA256: digest,
-	}
-	if err := writeFrame(counted, start, transactionChunkFrameBytes); err != nil {
-		return err
-	}
-	for sequence, offset := 0, 0; offset < len(serialized); sequence, offset = sequence+1, offset+chunkBytes {
-		end := offset + chunkBytes
-		if end > len(serialized) {
-			end = len(serialized)
-		}
-		frame := transactionChunkFrame{
-			ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-chunk",
-			Sequence: sequence, Data: base64.StdEncoding.EncodeToString(serialized[offset:end]),
-		}
-		if err := writeFrame(counted, frame, transactionChunkFrameBytes); err != nil {
-			return err
-		}
-	}
-	err = writeFrame(counted, transactionEndFrame{
-		ID: id, ProtocolVersion: protocolVersion, Kind: "transaction-end",
-		PayloadKind: payloadKind,
-		Bytes:       len(serialized), Chunks: chunks, SHA256: digest,
-	}, transactionChunkFrameBytes)
-	telemetry.record(id, "transport.serialize-and-write", started, map[string]any{
-		"transactionBytes": len(serialized), "directResponseBytes": len(encodedDirect),
-		"wireBytes": counted.bytes, "chunks": chunks, "chunked": true,
-	})
-	return err
 }
 
 type countingWriter struct {

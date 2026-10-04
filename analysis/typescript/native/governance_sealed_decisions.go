@@ -52,8 +52,8 @@ func governanceExpectedCapture(source *governanceCapture) *governanceCapture {
 	if source.compiler != nil {
 		source.compiler.mu.Lock()
 		expected.compiler = &compilerInputFS{disk: source.compiler.disk, observed: map[compilerInputKey]string{}, inconsistent: source.compiler.inconsistent}
-		for key, value := range source.compiler.observed {
-			expected.compiler.observed[key] = value
+		for _, row := range source.compiler.publicationObservationsLocked() {
+			expected.compiler.observed[row.key] = row.before
 		}
 		actualRaw := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
 		for path, value := range source.compiler.rawReads {

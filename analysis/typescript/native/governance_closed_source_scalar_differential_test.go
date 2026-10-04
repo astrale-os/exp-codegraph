@@ -171,7 +171,7 @@ func TestClosedSourceScalarDifferential(t *testing.T) {
 					original.typeRelease = nil
 				}
 			}()
-			state := &governanceProductsSession{Project: current, Token: "scalar-" + sample.ID, Generation: "1", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
+			state := &governanceProductsSession{Project: current, Token: "scalar-" + sample.ID, Generation: "1", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":2}`)}}
 			session := governanceSession{productsSession: state}
 			defer session.discardProducts()
 			frame, err := session.closedSourceHandoff(false)
@@ -181,10 +181,12 @@ func TestClosedSourceScalarDifferential(t *testing.T) {
 			if frame.(map[string]any)["status"] != "source" {
 				t.Fatalf("actual handoff unavailable: %#v", frame)
 			}
+			governanceSourceObservationFixture(t, &session)
 			results := []map[string]any{}
 			for _, probe := range sample.Requests {
 				direct := originalScalar(t, original, probe)
 				request := probe.Request
+				request.Generation = state.Generation
 				request.Token = state.Token
 				request.SourceSnapshotDigest = current.GovernanceDigest
 				actual, err := session.observeClosedSource(request)

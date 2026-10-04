@@ -187,7 +187,7 @@ func (owner *governanceRuntimeAuthority) GlobalValue(path string, node *ast.Node
 					case ast.KindBindingElement, ast.KindParameter:
 						return observabledecision.GlobalValueObservation{Known: true, Reads: []observabledecision.SemanticRead{read}}
 					case ast.KindVariableDeclaration:
-						if owner.Admitted[declaration] != "" {
+						if owner.admission(declaration) != "" {
 							return observabledecision.GlobalValueObservation{Known: true, Target: declaration, TargetPath: targetPath, Reads: []observabledecision.SemanticRead{read}}
 						}
 					case ast.KindFunctionDeclaration:
@@ -212,7 +212,7 @@ func (owner *governanceRuntimeAuthority) ExpressionAdmitted(path string, node *a
 	if !known {
 		return false, false
 	}
-	return owner.Admitted[matched] != "", true
+	return owner.admission(matched) != "", true
 }
 
 func (owner *governanceRuntimeAuthority) ReferenceAvailable(path string, node *ast.Node) (bool, bool) {

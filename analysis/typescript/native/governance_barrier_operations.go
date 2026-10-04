@@ -31,17 +31,9 @@ func governanceCompileCapturedOperations(c *governanceCapture) *governanceCaptur
 	}
 	if c.compiler != nil {
 		p.disk, _ = c.compiler.disk.(*authoredCompilerDisk)
-		for key, before := range c.compiler.observed {
-			p.inputs = append(p.inputs, compilerInputObservation{key, before})
-		}
+		p.inputs = c.compiler.publicationObservationsLocked()
 	}
 	return p
-}
-func (c *governanceCapture) verifyCapturedOperations(reads *governanceBarrierReads) bool {
-	if c.probeInconsistent || c.compiler != nil && c.compiler.inconsistent {
-		return false
-	}
-	return governanceCompileCapturedOperations(c).verify(c, reads)
 }
 func (p *governanceCapturedOperationPlan) verify(c *governanceCapture, reads *governanceBarrierReads) bool {
 	probes, ordinary, inputs, disk := p.probes, p.ordinary, p.inputs, p.disk

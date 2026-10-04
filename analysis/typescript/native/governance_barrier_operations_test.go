@@ -147,10 +147,14 @@ func TestGovernanceBarrierCurrentAndExpectedGuardsOwnOneFreshProbe(t *testing.T)
 	}
 	expected := governanceExpectedCapture(current)
 	world := &governanceBarrierReads{}
-	if valid, _ := current.verifyWithin(world); !valid {
+	currentPlan := governanceCompilePublication([]*governanceCapture{current})
+	if !currentPlan.consistent { t.Fatal("current capture has contradictory publication guards") }
+	if valid, err := currentPlan.verify(world); !valid || err != nil {
 		t.Fatal("fresh current original probe was rejected")
 	}
-	if valid, _ := expected.verifyWithin(world); !valid {
+	expectedPlan := governanceCompilePublication([]*governanceCapture{expected})
+	if !expectedPlan.consistent { t.Fatal("expected capture has contradictory publication guards") }
+	if valid, err := expectedPlan.verify(world); !valid || err != nil {
 		t.Fatal("same original probe lost a distinct expected guard")
 	}
 	if err := os.WriteFile(path, []byte("after!"), 0600); err != nil {
@@ -160,7 +164,9 @@ func TestGovernanceBarrierCurrentAndExpectedGuardsOwnOneFreshProbe(t *testing.T)
 	for _, kind := range []string{"read-bytes", "content-digest"} {
 		changed.probe(governanceProbeRequest{Kind: kind, Path: path})
 	}
-	if valid, _ := changed.verifyWithin(world); valid {
+	changedPlan := governanceCompilePublication([]*governanceCapture{changed})
+	if !changedPlan.consistent { t.Fatal("changed capture has contradictory publication guards") }
+	if valid, err := changedPlan.verify(world); valid || err != nil {
 		t.Fatal("contradictory expected fingerprints initialized the actual operation cell")
 	}
 	if valid, _ := changed.Verify(); !valid {

@@ -30,6 +30,7 @@ type governanceProgramGeneration struct {
 	program  *compiler.Program
 	broker   *governanceGenerationBroker
 	receipts []*governanceCompilerReadAssertions
+	syntax   *governanceRuntimeSyntaxOwner
 }
 
 func governanceGenerationReceiptCopy(before *governanceCompilerReadAssertions) *governanceCompilerReadAssertions {
@@ -82,7 +83,7 @@ func governanceRetainProgramGeneration(project *governedProject, broker *governa
 	for _, source := range snapshot.GetSourceFiles() {
 		receipt.barrierReads[source.FileName()] = compilerRawRead{source.Text(), true}
 	}
-	result := &governanceProgramGeneration{project.Root, snapshot, broker, []*governanceCompilerReadAssertions{receipt}}
+	result := &governanceProgramGeneration{root: project.Root, program: snapshot, broker: broker, receipts: []*governanceCompilerReadAssertions{receipt}, syntax: project.runtimeSyntax.retain(snapshot.GetSourceFiles())}
 	for _, pending := range project.capture.compilerAssertions {
 		result.receipts = append(result.receipts, pending.immutableSnapshot())
 	}
@@ -154,10 +155,13 @@ func (generation *governanceProgramGeneration) propose(project *governedProject)
 	// Borrow once. Any resolver-cache writes made by this proposal acquire CURRENT
 	// receipts. Abandonment cannot reuse them under the predecessor receipt vector.
 	generation.program = nil
+	syntax := generation.syntax
+	generation.syntax = nil
 	updated, reused := prior.UpdateProgram(changed.Path(), generation.broker, nil)
 	if !reused {
 		return nil, false
 	} // callers rebuild from CURRENT parsed configuration
+	project.runtimeSyntax = syntax.retain(updated.GetSourceFiles())
 	project.capture.compilerAssertions = append(project.capture.compilerAssertions, pending...)
 	return updated, true
 }
@@ -179,6 +183,8 @@ func (generation *governanceProgramGeneration) verifyProposal(project *governedP
 		generation.program = nil
 		generation.broker = nil
 		generation.receipts = nil
+		generation.syntax = nil
+		project.runtimeSyntax = nil
 	}
 	return valid, err
 }
@@ -193,6 +199,7 @@ func (session *governanceSession) retireProgramProposal(project *governedProject
 	if project.typeDemandCache != nil {
 		*project.typeDemandCache = governanceTypeDemandCache{}
 	}
+	project.runtimeSyntax = nil
 	project.borrowedGeneration = nil
 	session.programGeneration = nil
 }

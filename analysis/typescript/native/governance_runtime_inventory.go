@@ -58,12 +58,12 @@ func (owner *governanceRuntimeAuthority) Calls(paths []string) observabledecisio
 		source := owner.Identity.OwnedProgramFiles[path]
 		owner.ensureAdmissions(path)
 		coordinates := indexSourceCoordinates(source.Text())
-		walk(source.AsNode(), func(node *ast.Node) bool {
-			if owner.Admitted[node] == "call" {
+		for _, node := range owner.Syntax.source(source).callNodes(source) {
+			if owner.admission(node) == "call" {
 				id, ok := owner.Identity.nativeCallIdentity(path, node)
 				if !ok {
 					out.Known = false
-					return true
+					continue
 				}
 				start := scanner.SkipTrivia(source.Text(), node.Pos())
 				callee := node.AsCallExpression().Expression
@@ -81,15 +81,11 @@ func (owner *governanceRuntimeAuthority) Calls(paths []string) observabledecisio
 				}
 				out.Sites = append(out.Sites, observabledecision.CapturedCall{Path: path, SubjectID: id, Node: node, Callee: callee, Start: coordinates.utf16(start), End: coordinates.utf16(node.End())})
 			}
-			return true
-		})
+		}
 		bodies := []*ast.Node{source.AsNode()}
-		walkFile(source, func(node *ast.Node) bool {
-			if owner.FunctionBodies[node] {
-				bodies = append(bodies, node.Body())
-			}
-			return true
-		})
+		for _, node := range owner.Syntax.source(source).functions {
+			bodies = append(bodies, node.Body())
+		}
 		for _, body := range bodies {
 			completion := buildControlFlowCompletion(source, body)
 			for _, raw := range completion.Reasons {

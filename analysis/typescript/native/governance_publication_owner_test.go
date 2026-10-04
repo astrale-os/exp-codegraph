@@ -28,10 +28,10 @@ func TestPublicationCompilerOperationsShareOneFreshOwner(t *testing.T) {
 		capture.compilerAssertions = []*governanceCompilerReadAssertions{assertions}
 	}
 	world := &governanceBarrierReads{}
-	for _, capture := range captures {
-		if valid, err := capture.verifyWithin(world); !valid || err != nil {
-			t.Fatalf("original guard failed %v %v", valid, err)
-		}
+	plan := governanceCompilePublication(captures)
+	if !plan.consistent { t.Fatal("coherent captures have contradictory publication guards") }
+	if valid, err := plan.verify(world); !valid || err != nil {
+		t.Fatalf("original guard failed %v %v", valid, err)
 	}
 	if len(world.compilerWorld.cells) != 6 {
 		t.Fatalf("fresh compiler operations=%d, expected six", len(world.compilerWorld.cells))
@@ -144,7 +144,7 @@ func TestPublicationContradictionRejectsBeforeAnyFilesystemCall(t *testing.T) {
 	raw1, raw2 := publicationCapture(), publicationCapture()
 	raw1.compilerAssertions = []*governanceCompilerReadAssertions{{barrierReads: map[string]compilerRawRead{path: {"before", true}}}}
 	raw2.compilerAssertions = []*governanceCompilerReadAssertions{{barrierReads: map[string]compilerRawRead{path: {"different", true}}}}
-	if governancePublicationConsistent([]*governanceCapture{raw1, raw2}) {
+	if governanceCompilePublication([]*governanceCapture{raw1, raw2}).consistent {
 		t.Fatal("contradictory original raw results accepted")
 	}
 }

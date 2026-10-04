@@ -103,16 +103,17 @@ func TestGovernanceJSONFidelityFiveScalarAdmission(t *testing.T) {
 	root := typeDemandFixture(t)
 	governanceWrite(t, root, "package.json", `{"type":"module","imports":{"#\uFFFD":{"default":"./schema/value.ts"},"#\uD800":"./schema/lone.ts"}}`)
 	project, file, expression := typeDemandTestProject(t, root, &governanceTypeDemandCache{})
-	state := &governanceProductsSession{Project: project, Token: "json-five", Generation: "1", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
+	state := &governanceProductsSession{Project: project, Token: "json-five", Generation: "1", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":2}`)}}
 	session := governanceSession{productsSession: state}
 	defer session.discardProducts()
+	governanceSourceObservationFixture(t, &session)
 	captured := project.FilesByPath[file.Path]
 	value, err := jsstring.FromCompilerText("#\uFFFD")
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, operation := range []string{"names", "closed", "collection", "resolve", "package-mapping"} {
-		request := governanceClosedSourceRequest{Token: state.Token, SourceSnapshotDigest: project.GovernanceDigest, Path: file.Path, Operation: operation, Start: captured.coordinates.utf16(scanner.GetTokenPosOfNode(expression, file.Source, false)), End: captured.coordinates.utf16(expression.End()), SpecifierUnits: value.Units()}
+		request := governanceClosedSourceRequest{Token: state.Token, Generation: state.Generation, SourceSnapshotDigest: project.GovernanceDigest, Path: file.Path, Operation: operation, Start: captured.coordinates.utf16(scanner.GetTokenPosOfNode(expression, file.Source, false)), End: captured.coordinates.utf16(expression.End()), SpecifierUnits: value.Units()}
 		actual, err := session.observeClosedSource(request)
 		if err != nil {
 			t.Fatal(err)

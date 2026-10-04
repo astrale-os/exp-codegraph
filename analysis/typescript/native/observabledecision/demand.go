@@ -6,7 +6,6 @@ package observabledecision
 import (
 	js "astrale-typespec-v2-native-analysis/jsstring"
 	coordinates "astrale-typespec-v2-native-analysis/sourcecoordinates"
-	"crypto/sha256"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -57,6 +56,7 @@ type EffectSummary struct {
 }
 type Limits struct{ MaximumDepth, MaximumSteps, MaximumAlternatives int }
 type DemandContext struct {
+	Syntax               *SourceSyntaxOwner
 	ConstructorDiscovery func(string, *ast.Node, Limits) ConstructorExclusion
 	// CallShape observes target ownership and rest slots only. Parameter-symbol
 	// rows remain exclusively owned by the full effect Call authority.
@@ -192,71 +192,21 @@ func newDemandObserver(context DemandContext) *demandObserver {
 			}
 			f.Source = parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: filepath.ToSlash(filepath.Clean(f.AbsolutePath))}, f.Text, scriptKind)
 		}
-		h := sha256.Sum256([]byte(f.Text))
-		m := &demandModule{file: f, digest: fmt.Sprintf("%x", h), bindings: map[string]demandBinding{}}
-		o.modules[f.Path] = m
+		var syntax *demandModule
+		if context.Syntax != nil && f.Source.Text() == f.Text {
+			syntax = context.Syntax.module(f.Source)
+		} else {
+			syntax = syntaxModule(f.Source)
+		}
+		m := &demandModule{file: f, digest: syntax.digest, bindings: syntax.bindings, candidates: syntax.candidates, reason: syntax.reason}
 		if f.Source.Text() != f.Text {
-			m.reason = "captured AST/text mismatch"
-		}
-		if len(f.Source.Diagnostics()) != 0 {
-			m.reason = "source syntax diagnostics"
-		}
-		put := func(name string, b demandBinding) {
-			if _, ok := m.bindings[name]; ok {
-				m.reason = "duplicate module binding"
-			}
-			m.bindings[name] = b
-		}
-		for _, n := range f.Source.Statements.Nodes {
-			switch n.Kind {
-			case ast.KindImportDeclaration:
-				d := n.AsImportDeclaration()
-				if d.ImportClause == nil {
-					continue
-				}
-				c := d.ImportClause.AsImportClause()
-				if c.PhaseModifier == ast.KindTypeKeyword {
-					continue
-				}
-				if c.Name() != nil {
-					put(c.Name().Text(), demandBinding{specifier: d.ModuleSpecifier.Text(), export: "default"})
-				}
-				if c.NamedBindings != nil {
-					switch c.NamedBindings.Kind {
-					case ast.KindNamespaceImport:
-						put(c.NamedBindings.Name().Text(), demandBinding{specifier: d.ModuleSpecifier.Text(), export: "*", namespace: true})
-					case ast.KindNamedImports:
-						for _, el := range c.NamedBindings.AsNamedImports().Elements.Nodes {
-							v := el.AsImportSpecifier()
-							if v.IsTypeOnly {
-								continue
-							}
-							name := el.Name().Text()
-							export := name
-							if v.PropertyName != nil {
-								export = v.PropertyName.Text()
-							}
-							put(name, demandBinding{specifier: d.ModuleSpecifier.Text(), export: export})
-						}
-					}
-				}
-			case ast.KindVariableStatement:
-				d := n.AsVariableStatement().DeclarationList.AsVariableDeclarationList()
-				for _, v := range d.Declarations.Nodes {
-					if v.Name().Kind != ast.KindIdentifier {
-						continue
-					}
-					put(v.Name().Text(), demandBinding{node: v.AsVariableDeclaration().Initializer, exported: n.ModifierFlags()&ast.ModifierFlagsExport != 0, mutable: d.Flags&ast.NodeFlagsConst == 0})
-					if v.AsVariableDeclaration().Initializer != nil {
-						m.candidates = append(m.candidates, v.AsVariableDeclaration().Initializer)
-					}
-				}
-			case ast.KindFunctionDeclaration:
-				if n.Name() != nil {
-					put(n.Name().Text(), demandBinding{node: n, exported: n.ModifierFlags()&ast.ModifierFlagsExport != 0})
-				}
+			// Preserve the original diagnostic override order for malformed captures.
+			m.digest = fmt.Sprintf("%x", shaText(f.Text))
+			if m.reason == "" {
+				m.reason = "captured AST/text mismatch"
 			}
 		}
+		o.modules[f.Path] = m
 	}
 	return o
 }

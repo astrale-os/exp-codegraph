@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	shimvfs "github.com/microsoft/typescript-go/shim/vfs"
 )
 
 func liveInputSession(t *testing.T, setup func(string)) (*governanceSession, string) {
@@ -23,13 +25,14 @@ func liveInputSession(t *testing.T, setup func(string)) (*governanceSession, str
 		t.Fatal(err)
 	}
 	project.capture.compilerInputs()
-	state := &governanceProductsSession{Project: project, Token: "live-input", Generation: "current", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
+	state := &governanceProductsSession{Project: project, Token: "live-input", Generation: "current", Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":2}`)}}
 	session := &governanceSession{productsSession: state}
 	t.Cleanup(session.discardProducts)
 	return session, root
 }
 func liveInputRequest(t *testing.T, session *governanceSession, operation, path string) governanceClosedSourceRequest {
 	t.Helper()
+	governanceSourceObservationFixture(t, session)
 	operand, err := jsstring.FromCompilerText(path)
 	if err != nil {
 		t.Fatal(err)
@@ -154,8 +157,18 @@ func TestClosedSourceLiveInputActualStatNegativeAndSymlinkUnion(t *testing.T) {
 	alias := filepath.Join(root, "node_modules", "linked")
 	path := filepath.Join(alias, "package.json")
 	file := liveInputObserve(t, session, "file", path)
-	if file.Status != "known" || file.Row.Boolean == nil || !*file.Row.Boolean || capture.compiler.observed[compilerInputKey{path, inputMetadata}] == "" {
+	physical := capture.compiler.operations[compilerInputKey{path, inputMetadata}]
+	if file.Status != "known" || file.Row.Boolean == nil || !*file.Row.Boolean || physical == nil || physical.value == nil {
 		t.Fatal("regular membership lacked actual Stat")
+	}
+	guarded := false
+	for _, row := range capture.compiler.publicationObservationsLocked() {
+		if row.key == (compilerInputKey{path, inputMetadata}) && row.before == inputStat(physical.value.(compilerCapturedValue[shimvfs.FileInfo]).value) {
+			guarded = true
+		}
+	}
+	if !guarded {
+		t.Fatal("regular membership lost full physical publication guard")
 	}
 	casePath := filepath.Join(alias, "PACKAGE.JSON")
 	spelling := liveInputObserve(t, session, "file", casePath)
@@ -256,6 +269,7 @@ func TestClosedSourceLiveInputFrameIdentityAndUnavailableRoot(t *testing.T) {
 	if _, exists := first.(map[string]any)["resolutionInputs"]; exists {
 		t.Fatal("initial parser frame gained a compiler input owner")
 	}
+	governanceSourceObservationFixture(t, session)
 	second, err := session.closedSourceHandoff(true)
 	if err != nil {
 		t.Fatal(err)

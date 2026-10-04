@@ -367,6 +367,7 @@ func TestGenerationIntegratedHiddenEditSealRetriesFresh(t *testing.T) {
 	governanceWrite(t, root, "node_modules/owned-fixture/value.ts", `export const subject={before:1};`)
 	session := &governanceSession{}
 	first, before := generationSessionCell(t, session, root)
+	syntaxRuntimeOwner(t, first).ensureAllAdmissions()
 	if !reflect.DeepEqual(before, []string{"before"}) || generationSessionSeal(t, session, first, "first") != "committed" {
 		t.Fatal(before)
 	}
@@ -376,7 +377,8 @@ func TestGenerationIntegratedHiddenEditSealRetriesFresh(t *testing.T) {
 	if private.borrowedGeneration == nil || !reflect.DeepEqual(stale, []string{"before"}) {
 		t.Fatal("expected speculative old metadata", stale)
 	}
-	if generationSessionSeal(t, session, private, "stale") != "retry" || session.programGeneration != nil {
+	syntaxRuntimeOwner(t, private).ensureAllAdmissions()
+	if generationSessionSeal(t, session, private, "stale") != "retry" || session.programGeneration != nil || private.runtimeSyntax != nil {
 		t.Fatal("stale metadata survived seal")
 	}
 	current, after := generationSessionCell(t, session, root)

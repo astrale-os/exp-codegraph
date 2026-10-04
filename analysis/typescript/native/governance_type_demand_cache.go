@@ -4,8 +4,6 @@ import (
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	compiler "github.com/microsoft/typescript-go/shim/compiler"
-	core "github.com/microsoft/typescript-go/shim/core"
-	parser "github.com/microsoft/typescript-go/shim/parser"
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
 	vfs "github.com/microsoft/typescript-go/shim/vfs"
 	"strings"
@@ -179,45 +177,11 @@ func (owner *governanceTypeAuthority) lookupTypeDemand(operation string, file *s
 	if !owner.validationSeen[entry.receipt] {
 		owner.validationSeen[entry.receipt] = true
 		owner.project.capture.compilerInputs()
-		replay, valid := entry.receipt.replay(owner.project)
+		replay, comparison, valid := entry.receipt.replayForCache(owner.project, cache)
 		owner.validated[entry.receipt] = valid
 		if valid {
-			lease := newGovernanceTypeCacheLease(cache, key, replay)
-			capture := owner.project.capture
-			// Pending compiler-capsule receipts have no type-cache owner. Keep
-			// those immutable assertions distinct from current cache invalidation.
-			var target *governanceTypeCacheLease
-			for _, candidate := range capture.typeCacheLeases {
-				if candidate.cache == cache && candidate.cacheKeys != nil {
-					target = candidate
-					break
-				}
-			}
-			if target == nil {
-				capture.typeCacheLeases = append(capture.typeCacheLeases, lease)
-			} else {
-				target.cacheKeys[key] = true
-				for path, value := range replay.barrierReads {
-					if before, seen := target.barrierReads[path]; seen && before != value {
-						capture.probeInconsistent = true
-					}
-					if before, seen := target.barrierReads[path]; !seen || before != value {
-						target.certificateRows = nil
-						target.snapshot = nil
-					}
-					target.barrierReads[path] = value
-				}
-				for key, value := range replay.barrierObservations {
-					if before, seen := target.barrierObservations[key]; seen && before != value {
-						capture.probeInconsistent = true
-					}
-					if before, seen := target.barrierObservations[key]; !seen || before != value {
-						target.certificateRows = nil
-						target.snapshot = nil
-					}
-					target.barrierObservations[key] = value
-				}
-			}
+			owner.project.capture.acceptTypeReplay(cache, key, replay)
+			comparison.accept(entry.receipt.prefix)
 		}
 	}
 	if !owner.validated[entry.receipt] {
@@ -300,99 +264,17 @@ func (owner *governanceTypeAuthority) captureTypeReceipt(demanded string) (*gove
 		return nil, false
 	}
 	return &governanceTypeReceipt{owner.typeReceiptBase, demandSource.FileName(), compilerInputPrefix{
+		origin:       fs.prefix.origin,
 		reads:        fs.prefix.reads[:len(fs.prefix.reads):len(fs.prefix.reads)],
 		observations: fs.prefix.observations[:len(fs.prefix.observations):len(fs.prefix.observations)],
 	}}, true
 }
 
-// A hit proposes private proof obligations. Only authored bytes and compiler
-// operations actually observed in this capture can discharge an obligation
-// here. Every remaining obligation is checked with uncached I/O at final seal.
-// Expected reads are NEVER inserted into the current compiler observation map.
+// Scalar callers use the same comparison algorithm without a persistent owner.
+// Cache replay shares only capture-owned comparisons of immutable provenance.
 func (receipt *governanceTypeReceipt) replay(project *governedProject) (*governanceCompilerReadAssertions, bool) {
-	if receipt.base.root != project.Root || project.capture.compiler == nil {
-		return nil, false
-	}
-	fs := project.capture.compiler
-	replay := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
-	changed := map[string]bool{}
-	actualReads := map[string]compilerRawRead{}
-	actualObservations := map[compilerInputKey]string{}
-	fs.mu.Lock()
-	for path, value := range fs.rawReads {
-		actualReads[path] = value
-	}
-	for key, value := range fs.observed {
-		actualObservations[key] = value
-	}
-	fs.mu.Unlock()
-	for _, captured := range project.Files {
-		actualReads[captured.AbsolutePath] = compilerRawRead{captured.Text, true}
-	}
-	needed := receipt.neededSources()
-	for path, old := range receipt.base.sources {
-		current, observed := actualReads[path]
-		if !observed {
-			current = compilerRawRead{old.text, true}
-		}
-		if !current.present {
-			return nil, false
-		}
-		replay.barrierReads[path] = current
-		if current.text == old.text {
-			continue
-		}
-		if needed[path] || !old.ordinary {
-			return nil, false
-		}
-		kind := core.ScriptKindTS
-		if strings.HasSuffix(strings.ToLower(path), ".tsx") {
-			kind = core.ScriptKindTSX
-		}
-		source := parser.ParseSourceFile(old.options, current.text, kind)
-		if !governanceOrdinaryTypeSource(source) || governanceTypeReferenceSyntax(source) != old.references || !governanceTypeLiteralFidelity(source) {
-			return nil, false
-		}
-		changed[path] = true
-	}
-	readPaths := make(map[string]bool, len(receipt.prefix.reads))
-	for _, row := range receipt.prefix.reads {
-		path, old := row.path, row.value
-		readPaths[path] = true
-		current, observed := actualReads[path]
-		if !observed {
-			if source, seen := replay.barrierReads[path]; seen {
-				current = source
-			} else {
-				current = old
-			}
-		}
-		if current != old && !changed[path] {
-			return nil, false
-		}
-		replay.barrierReads[path] = current
-	}
-	for _, row := range receipt.prefix.observations {
-		key, old := row.key, row.before
-		if key.kind == inputRead {
-			if !readPaths[key.path] {
-				return nil, false
-			}
-			continue
-		}
-		current, observed := actualObservations[key]
-		if !observed {
-			current = old
-		}
-		if key.kind == inputMetadata && changed[key.path] {
-			// Actual metadata for one admitted body/ID edit supersedes its old stat.
-			// This is a current observation, not a guessed/deferred answer.
-			current = observeCompilerInput(fs.disk, key)
-			fs.remember(key.path, key.kind, current)
-		} else if current != old {
-			return nil, false
-		}
-		replay.barrierObservations[key] = current
-	}
-	return replay, true
+	comparison := newGovernanceTypeReplayComparison(receipt.base, project)
+	if comparison == nil { return nil, false }
+	comparison.extend(receipt.prefix)
+	return comparison.prepare(receipt, project)
 }

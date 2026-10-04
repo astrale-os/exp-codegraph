@@ -30,7 +30,8 @@ func (session *governanceSession) completeClosedSource(raw json.RawMessage) (any
 	state := session.productsSession
 	if state == nil || !governanceClosedSourceOffered(state.Prepare.Options) || session.policyLane != nil || state.Project == nil ||
 		state.Token != input.Token || state.Generation != input.Generation || state.Project.GovernanceDigest != input.SourceSnapshotDigest ||
-		state.ProductsDigest != "" || state.SourceProducts != nil {
+		state.ProductsDigest != "" || state.SourceProducts != nil ||
+		!state.sourceBody.matches(state) || !state.sourceBody.opened || !state.sourceBody.projected {
 		return nil, fmt.Errorf("closed source completion does not own the admitting phase")
 	}
 	contracts := []governanceImplementationContract{}

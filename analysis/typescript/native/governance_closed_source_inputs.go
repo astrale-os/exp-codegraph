@@ -116,6 +116,9 @@ func (session *governanceSession) observeClosedSourceInput(request governanceClo
 	if project.GovernanceDigest != request.SourceSnapshotDigest || project.FilesByPath[request.Path] == nil {
 		return governanceClosedSourceAnswer{}, fmt.Errorf("closed input caller does not own captured source")
 	}
+	if !state.sourceBody.matches(state) || !state.sourceBody.opened || !state.sourceBody.projected {
+		return governanceClosedSourceAnswer{}, fmt.Errorf("closed input observation lacks an admitted projection")
+	}
 	unavailable := func(reason string) (governanceClosedSourceAnswer, error) {
 		answer.Status, answer.Reason = "unavailable", reason
 		return answer, nil
@@ -170,7 +173,7 @@ func (session *governanceSession) observeClosedSourceInput(request governanceClo
 		}
 	case inputFile:
 		if fs.FileExists(path) {
-			fs.Stat(path)
+			fs.regularity(path)
 		}
 	case inputDirectory:
 		fs.DirectoryExists(path)

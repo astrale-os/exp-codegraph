@@ -42,8 +42,15 @@ func (fs *compilerInputFS) observe(inputs []compilerInputObservation) []string {
 	result := make([]string, len(inputs))
 	disk, owned := fs.disk.(*authoredCompilerDisk)
 	if !owned {
+		// Keep custom observers sequential. Both projections of Stat still
+		// consume one fresh physical cell within this observation attempt.
+		actual := &governanceTypeReplayWorld{disk: fs.disk}
 		for index, observation := range inputs {
-			result[index] = observeCompilerInput(fs.disk, observation.key)
+			if observation.key.kind == inputRegularity || observation.key.kind == inputMetadata {
+				result[index] = actual.observeActual(observation.key)
+			} else {
+				result[index] = observeCompilerInput(fs.disk, observation.key)
+			}
 		}
 		return result
 	}
@@ -93,6 +100,8 @@ func observeCompilerInput(fs shimvfs.FS, key compilerInputKey) string {
 		return fs.Realpath(key.path)
 	case inputMetadata:
 		return inputStat(fs.Stat(key.path))
+	case inputRegularity:
+		return inputRegularityValue(fs.Stat(key.path))
 	}
 	return ""
 }

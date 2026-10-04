@@ -31,7 +31,7 @@ func TestClosedSourceCompletionRejectsOriginalInvalidSpans(t *testing.T) {
 			}
 			project.Disabled = map[string]string{}
 			state := &governanceProductsSession{Project: project, Token: "owned-source", Generation: "1",
-				Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
+				Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":2}`)}}
 			for id, revision := range governanceRevisions {
 				identity := "astrale.sdk.typescript-source"
 				if id == "QRY-CANON" || id == "QRY-SINGLE" || id == "QLT-DEF-IDS" {
@@ -45,6 +45,7 @@ func TestClosedSourceCompletionRejectsOriginalInvalidSpans(t *testing.T) {
 			}
 			session := governanceSession{productsSession: state}
 			defer session.discardProducts()
+			governanceSourceObservationFixture(t, &session)
 			payload, err := json.Marshal(map[string]any{
 				"token": state.Token, "generation": state.Generation, "kind": "source-complete", "sourceSnapshotDigest": project.GovernanceDigest,
 				"decisions": []any{map[string]any{"id": "IMP-ALIAS-CFG", "decision": map[string]any{
@@ -89,7 +90,7 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
 			}
 			project.Disabled = map[string]string{}
 			state := &governanceProductsSession{Project: project, Token: "semantic-first", Generation: "1",
-				Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1}`)}}
+				Prepare: governancePrepare{Options: json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":2}`)}}
 			for id, revision := range governanceRevisions {
 				identity := "astrale.sdk.typescript-source"
 				if id == "QRY-CANON" || id == "QRY-SINGLE" || id == "QLT-DEF-IDS" {
@@ -102,7 +103,7 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
 				}
 			}
 			if frontier == "invalid-budget" {
-				state.Prepare.Options = json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":1,"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`)
+				state.Prepare.Options = json.RawMessage(`{"generic":false,"sourcePolicyOwnerRevision":2,"budgetValidation":{"kind":"invalid","field":"maximumSteps","reason":"positive-integer"}}`)
 			}
 			if frontier == "inconsistent-capture" {
 				project.capture.probeInconsistent = true
@@ -121,6 +122,10 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
 			if frontier == "inconsistent-capture" {
 				result, err = session.closedSourceHandoff(false)
 			} else {
+				first, initialErr := session.closedSourceHandoff(false)
+				if initialErr != nil || first.(map[string]any)["status"] != "source" {
+					t.Fatalf("first body admission failed: %#v %v", first, initialErr)
+				}
 				result, err = session.continueProducts(opened)
 			}
 			if state.SourceProducts != nil || state.ProductsDigest != "" {
@@ -137,7 +142,7 @@ func TestClosedSourceHandoffFollowsOriginalSemanticAndCaptureObligations(t *test
 				t.Fatal(err)
 			}
 			out := result.(map[string]any)
-			expected := map[string]string{"inconsistent-capture": "partial", "pending-leaf": "intrinsics", "ready": "source"}[frontier]
+			expected := map[string]string{"inconsistent-capture": "partial", "pending-leaf": "intrinsics", "ready": "source-projection"}[frontier]
 			if out["status"] != expected {
 				t.Fatalf("original frontier %s bypassed: %#v", frontier, out)
 			}
@@ -159,15 +164,15 @@ func TestClosedSourceCapabilityPreservesOlderProductsAndFallback(t *testing.T) {
 		raw     string
 		offered bool
 	}{
-		{`{"sourcePolicyOwnerRevision":1}`, true}, {`{}`, false},
-		{`{"sourcePolicyOwnerRevision":null}`, false}, {`{"sourcePolicyOwnerRevision":"1"}`, false},
-		{`{"sourcePolicyOwnerRevision":1.0}`, false}, {`{"sourcePolicyOwnerRevision":2}`, false},
+		{`{"sourcePolicyOwnerRevision":2}`, true}, {`{}`, false},
+		{`{"sourcePolicyOwnerRevision":null}`, false}, {`{"sourcePolicyOwnerRevision":"2"}`, false},
+		{`{"sourcePolicyOwnerRevision":2.0}`, false}, {`{"sourcePolicyOwnerRevision":1}`, false}, {`{"sourcePolicyOwnerRevision":3}`, false},
 	} {
 		if governanceClosedSourceOffered(json.RawMessage(sample.raw)) != sample.offered {
 			t.Fatalf("offer admission differs: %s", sample.raw)
 		}
 	}
-	for _, offer := range []string{`{"generic":false}`, `{"generic":false,"sourcePolicyOwnerRevision":2}`} {
+	for _, offer := range []string{`{"generic":false}`, `{"generic":false,"sourcePolicyOwnerRevision":1}`} {
 		modes := []string{"selected-source", "runtime-only", "invalid-budget"}
 		if offer == `{"generic":false}` {
 			modes = append(modes, "selected-source-default-generic", "invalid-budget-default-generic")

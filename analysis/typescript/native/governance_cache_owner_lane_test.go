@@ -177,7 +177,8 @@ func TestHeapCacheOwnerLateLeaseRetirementDoesNotInvalidateOtherOwner(t *testing
 	lease := newGovernanceTypeCacheLease(heap, key, &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{key.path: {"before", true}}, barrierObservations: map[compilerInputKey]string{}})
 	// A fresh original disk failure contradicts the positive assertion and retires
 	// only the one heap named by the retained lease, including after transfers.
-	if lease.verifyBarrierWorld(&governanceTypeReplayWorld{disk: newAuthoredCompilerDisk(), reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}}) || len(heap.entries) != 0 || len(other.entries) != 1 {
+	capture := &governanceCapture{compiler: governanceNewCompilerInputFS(newAuthoredCompilerDisk()), typeCacheLeases: []*governanceTypeCacheLease{lease}}
+	if valid, err := governanceVerifyPublication([]*governanceCapture{capture}); valid || err != nil || len(heap.entries) != 0 || len(other.entries) != 1 {
 		t.Fatal("retirement crossed cache-owner identity")
 	}
 }

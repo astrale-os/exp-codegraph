@@ -72,6 +72,9 @@ type NativeEffectCore struct {
 // filesystem, creates a Program, resolves signatures eagerly, builds BodyIR,
 // or assumes that the governed set is the compiler's complete effect universe.
 func NewNativeEffectCore(files []CapturedFile, authority NativeEffectAuthority) *NativeEffectCore {
+	return newNativeEffectCore(files, authority, NewSourceSyntaxOwner())
+}
+func newNativeEffectCore(files []CapturedFile, authority NativeEffectAuthority, syntax *SourceSyntaxOwner) *NativeEffectCore {
 	core := &NativeEffectCore{authority: authority, sources: map[string]CapturedFile{}, symbols: map[*ast.Node]NativeEffectSymbol{}, calls: map[*ast.Node]NativeEffectCall{}}
 	for _, file := range files {
 		if file.Source == nil || file.Source.Text() != file.Text {
@@ -79,37 +82,10 @@ func NewNativeEffectCore(files []CapturedFile, authority NativeEffectAuthority) 
 			continue
 		}
 		core.sources[file.Path] = file
-		var walk func(*ast.Node)
-		walk = func(node *ast.Node) {
-			switch node.Kind {
-			case ast.KindVariableDeclaration:
-				declaration := node.AsVariableDeclaration()
-				if declaration.Initializer != nil && declaration.Name().Kind == ast.KindIdentifier {
-					if root := effectRoot(declaration.Initializer); root != nil {
-						core.candidates = append(core.candidates, effectCandidate{file: file, node: node, root: root, name: declaration.Name(), kind: "alias"})
-					}
-				}
-			case ast.KindBinaryExpression:
-				binary := node.AsBinaryExpression()
-				if binary.OperatorToken.Kind >= ast.KindFirstAssignment && binary.OperatorToken.Kind <= ast.KindLastAssignment {
-					if root := effectRoot(binary.Left); root != nil {
-						core.candidates = append(core.candidates, effectCandidate{file: file, node: node, root: root, kind: "mutation"})
-					}
-				}
-			case ast.KindDeleteExpression:
-				if root := effectRoot(node.AsDeleteExpression().Expression); root != nil {
-					core.candidates = append(core.candidates, effectCandidate{file: file, node: node, root: root, kind: "delete"})
-				}
-			case ast.KindCallExpression:
-				for _, argument := range node.AsCallExpression().Arguments.Nodes {
-					if root := effectRoot(argument); root != nil {
-						core.candidates = append(core.candidates, effectCandidate{file: file, node: node, root: root, kind: "call"})
-					}
-				}
-			}
-			node.ForEachChild(func(child *ast.Node) bool { walk(child); return false })
+		for _, candidate := range syntax.effectCandidates(file.Source) {
+			candidate.file = file
+			core.candidates = append(core.candidates, candidate)
 		}
-		walk(file.Source.AsNode())
 	}
 	return core
 }

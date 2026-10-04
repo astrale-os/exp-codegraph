@@ -52,7 +52,11 @@ func (o *demandObserver) functionStructureOwner(path string, function *ast.Node)
 		o.structuresMu.Lock()
 		structure = o.structures[function]
 		if structure == nil {
-			structure = &demandFunctionStructure{}
+			if o.context.Syntax != nil {
+				structure = o.context.Syntax.function(o.modules[path].file.Source, function)
+			} else {
+				structure = &demandFunctionStructure{}
+			}
 			o.structures[function] = structure
 		}
 		o.structuresMu.Unlock()

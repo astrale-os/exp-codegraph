@@ -2,6 +2,8 @@ package main
 
 import (
 	"sync"
+
+	shimvfs "github.com/microsoft/typescript-go/shim/vfs"
 )
 
 // These cells contain only fresh original results. Expected obligations cannot
@@ -65,6 +67,16 @@ func (world *governanceTypeReplayWorld) observeActual(key compilerInputKey) stri
 			value := world.disk.Stat(key.path)
 			cell.physical = value
 			cell.observation = inputStat(value)
+		case inputRegularity:
+			metadata := compilerInputKey{key.path, inputMetadata}
+			world.observeActual(metadata)
+			// The metadata cell may contain an actual nil Stat result.
+			var value shimvfs.FileInfo
+			if physical := world.actualCell(metadata).physical; physical != nil {
+				value = physical.(shimvfs.FileInfo)
+			}
+			cell.physical = value
+			cell.observation = inputRegularityValue(value)
 		}
 	})
 	return cell.observation
@@ -87,9 +99,6 @@ type governancePublicationExpected struct {
 // Reject them before any fresh I/O; retire affected mutable leases, never alter
 // immutable expected receipts. The ordered original verification below keeps
 // artifact/error/lease provenance. No proposal becomes an actual observation.
-func governancePublicationConsistent(captures []*governanceCapture) bool {
-	return governanceCompilePublication(captures).consistent
-}
 
 func governanceVerifyPublication(captures []*governanceCapture) (bool, error) {
 	valid, err, _ := governanceVerifyPublicationOwner(captures)
@@ -106,7 +115,9 @@ func governanceVerifyPublicationOwner(captures []*governanceCapture) (bool, erro
 	return valid, err, world
 }
 
-// Diagnostic counts name ORIGINAL adapter invocations, not OS syscalls. An
+// Diagnostic counts name original operation cells, not OS syscalls. Metadata
+// counts actual Stat calls; regularity counts a derived view of that SAME cell.
+// Adding those two counters would overcount physical Stat invocations. An
 // enumeration may internally follow symlinks; a UTF16 read performs its own
 // separate decoder operation. Those operations are not removed by this table.
 func (world *governanceBarrierReads) compilerOperationCounts() map[string]int {
@@ -116,7 +127,7 @@ func (world *governanceBarrierReads) compilerOperationCounts() map[string]int {
 	}
 	world.compilerWorld.mu.Lock()
 	defer world.compilerWorld.mu.Unlock()
-	names := []string{"authored-raw-read", "file-exists", "directory-exists", "accessible-entries", "realpath", "metadata"}
+	names := []string{"authored-raw-read", "file-exists", "directory-exists", "accessible-entries", "realpath", "metadata", "regularity"}
 	for key := range world.compilerWorld.cells {
 		if int(key.kind) < len(names) {
 			counts[names[key.kind]]++

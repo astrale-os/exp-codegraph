@@ -788,10 +788,14 @@ func walk(node *shimast.Node, visit func(*shimast.Node) bool) {
 	if node == nil || !visit(node) {
 		return
 	}
-	node.ForEachChild(func(child *shimast.Node) bool {
-		walk(child, visit)
+	var children func(*shimast.Node) bool
+	children = func(child *shimast.Node) bool {
+		if child != nil && visit(child) {
+			child.ForEachChild(children)
+		}
 		return false
-	})
+	}
+	node.ForEachChild(children)
 }
 
 func nodeText(file *shimast.SourceFile, node *shimast.Node) string {

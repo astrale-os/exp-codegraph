@@ -22,6 +22,7 @@ const (
 	inputEnumeration
 	inputRealpath
 	inputMetadata
+	inputRegularity
 )
 
 type compilerInputKey struct {
@@ -41,7 +42,12 @@ type compilerRawInput struct {
 // First-value journal elements never change. Separate prefixes preserve the
 // original read's raw-before-observed publication, including an in-flight read.
 // A receipt retains only capped slice headers, never the mutable filesystem.
+// Identity proves a common first-value journal without retaining its FS.
+// Nonzero size prevents distinct empty journals from sharing a Go address.
+type compilerInputJournal struct { marker byte }
+
 type compilerInputPrefix struct {
+	origin       *compilerInputJournal
 	reads        []compilerRawInput
 	observations []compilerInputObservation
 }
@@ -63,7 +69,7 @@ type compilerInputFS struct {
 }
 
 func newCompilerInputFS(fs, disk shimvfs.FS) *compilerInputFS {
-	return &compilerInputFS{FS: fs, disk: disk, observed: map[compilerInputKey]string{}, rawReads: map[string]compilerRawRead{}}
+	return &compilerInputFS{FS: fs, disk: disk, observed: map[compilerInputKey]string{}, rawReads: map[string]compilerRawRead{}, prefix: compilerInputPrefix{origin: &compilerInputJournal{}}}
 }
 func (fs *compilerInputFS) remember(path string, kind compilerInputKind, value string) {
 	fs.mu.Lock()
@@ -167,12 +173,36 @@ func (fs *compilerInputFS) Realpath(path string) string {
 		return value
 	})
 }
-func (fs *compilerInputFS) Stat(path string) shimvfs.FileInfo {
+// Both consumers join the same physical Stat cell. Only a general Stat caller
+// consumes its full tuple; SDK regular membership consumes its exact projection.
+func (fs *compilerInputFS) stat(path string) shimvfs.FileInfo {
 	return captureCompilerOperation(fs, compilerInputKey{path, inputMetadata}, func() shimvfs.FileInfo {
-		value := fs.FS.Stat(path)
-		fs.remember(path, inputMetadata, inputStat(value))
+		return fs.FS.Stat(path)
+	})
+}
+func (fs *compilerInputFS) Stat(path string) shimvfs.FileInfo {
+	value := fs.stat(path)
+	fs.remember(path, inputMetadata, inputStat(value))
+	return value
+}
+func (fs *compilerInputFS) regularity(path string) string {
+	return captureCompilerOperation(fs, compilerInputKey{path, inputRegularity}, func() string {
+		value := inputRegularityValue(fs.stat(path))
+		fs.remember(path, inputRegularity, value)
 		return value
 	})
+}
+func inputRegularityValue(value shimvfs.FileInfo) string {
+	if value == nil {
+		return "absent"
+	}
+	if value.IsDir() {
+		return "directory"
+	}
+	if value.Mode().IsRegular() {
+		return "regular"
+	}
+	return "other"
 }
 func inputStat(value shimvfs.FileInfo) string {
 	if value == nil {
@@ -181,6 +211,25 @@ func inputStat(value shimvfs.FileInfo) string {
 	// Preserve all compiler-visible membership, size and timestamp metadata.
 	// Content reads additionally compare bytes, including same-stat edits.
 	return fmt.Sprintf("%s:%d:%d", value.Mode(), value.Size(), value.ModTime().UnixNano())
+}
+
+// Publication and retained expected captures own the full completed physical
+// facts. Semantic receipt prefixes continue to use only observed consumption.
+// The caller holds mu or owns the completed capture exclusively.
+func (fs *compilerInputFS) publicationObservationsLocked() []compilerInputObservation {
+	rows := make([]compilerInputObservation, 0, len(fs.observed))
+	for key, before := range fs.observed {
+		rows = append(rows, compilerInputObservation{key, before})
+	}
+	for key, cell := range fs.operations {
+		if key.kind == inputMetadata && cell.value != nil {
+			if _, observed := fs.observed[key]; !observed {
+				value := cell.value.(compilerCapturedValue[shimvfs.FileInfo]).value
+				rows = append(rows, compilerInputObservation{key, inputStat(value)})
+			}
+		}
+	}
+	return rows
 }
 func (fs *compilerInputFS) WalkDir(root string, fn shimvfs.WalkDirFunc) error {
 	fs.DirectoryExists(root)

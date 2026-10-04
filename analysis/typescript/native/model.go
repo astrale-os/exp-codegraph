@@ -42,23 +42,13 @@ type sourceChange struct {
 }
 
 type response struct {
-	ID              int              `json:"id"`
-	ProtocolVersion int              `json:"protocolVersion"`
-	Kind            string           `json:"kind"`
-	Transaction     *factTransaction `json:"transaction,omitempty"`
-	Delta           *factDelta       `json:"delta,omitempty"`
-	Generation      string           `json:"generation,omitempty"`
-	Code            string           `json:"code,omitempty"`
-	Message         string           `json:"message,omitempty"`
-	Retryable       bool             `json:"retryable,omitempty"`
-}
-
-type factDelta struct {
-	ProtocolVersion int                `json:"protocolVersion"`
-	Base            string             `json:"base"`
-	Next            analysisGeneration `json:"next"`
-	Upserts         []factShard        `json:"upserts"`
-	Deletes         []string           `json:"deletes"`
+	ID              int    `json:"id"`
+	ProtocolVersion int    `json:"protocolVersion"`
+	Kind            string `json:"kind"`
+	Generation      string `json:"generation,omitempty"`
+	Code            string `json:"code,omitempty"`
+	Message         string `json:"message,omitempty"`
+	Retryable       bool   `json:"retryable,omitempty"`
 }
 
 type producerIdentity struct {

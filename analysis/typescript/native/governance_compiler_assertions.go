@@ -1,6 +1,5 @@
 package main
 
-import vfs "github.com/microsoft/typescript-go/shim/vfs"
 import "fmt"
 
 // Plain expected compiler assertions cannot hold cache keys or invalidate a
@@ -21,12 +20,6 @@ func (assertions *governanceCompilerReadAssertions) clone() *governanceCompilerR
 		out.barrierObservations[key] = value
 	}
 	return out
-}
-func (assertions *governanceCompilerReadAssertions) verifyBarrier(disk vfs.FS) bool {
-	return assertions.verifyBarrierWorld(&governanceTypeReplayWorld{disk: disk, reads: map[string]compilerRawRead{}, observations: map[compilerInputKey]string{}})
-}
-func (assertions *governanceCompilerReadAssertions) verifyBarrierWorld(world *governanceTypeReplayWorld) bool {
-	return assertions.expectationPlan().verify(world)
 }
 func compilerAssertionCertificateRows(reads map[string]compilerRawRead, observations map[compilerInputKey]string) []governanceObservation {
 	rows := make([]governanceObservation, 0, len(reads)+len(observations))
@@ -64,24 +57,46 @@ func newGovernanceTypeCacheLease(owner *governanceTypeDemandCache, key governanc
 	copy := assertions.clone()
 	return &governanceTypeCacheLease{cache: owner, cacheKeys: map[governanceTypeDemandKey]bool{key: true}, barrierReads: copy.barrierReads, barrierObservations: copy.barrierObservations}
 }
+
+// Replay additions are privately owned and transferred exactly once. Find the
+// current owner before merging; never clone a whole map only to discard it.
+func (capture *governanceCapture) acceptTypeReplay(cache *governanceTypeDemandCache, key governanceTypeDemandKey, additions *governanceCompilerReadAssertions) {
+	var target *governanceTypeCacheLease
+	for _, candidate := range capture.typeCacheLeases {
+		if candidate.cache == cache && candidate.cacheKeys != nil {
+			target = candidate
+			break
+		}
+	}
+	if target == nil {
+		capture.typeCacheLeases = append(capture.typeCacheLeases, &governanceTypeCacheLease{cache: cache, cacheKeys: map[governanceTypeDemandKey]bool{key: true}, barrierReads: additions.barrierReads, barrierObservations: additions.barrierObservations})
+		return
+	}
+	target.cacheKeys[key] = true
+	for path, value := range additions.barrierReads {
+		if before, seen := target.barrierReads[path]; !seen || before != value {
+			if seen {
+				capture.probeInconsistent = true
+			}
+			target.certificateRows, target.snapshot = nil, nil
+		}
+		target.barrierReads[path] = value
+	}
+	for input, value := range additions.barrierObservations {
+		if before, seen := target.barrierObservations[input]; !seen || before != value {
+			if seen {
+				capture.probeInconsistent = true
+			}
+			target.certificateRows, target.snapshot = nil, nil
+		}
+		target.barrierObservations[input] = value
+	}
+}
 func (lease *governanceTypeCacheLease) assertions() *governanceCompilerReadAssertions {
 	if lease.snapshot == nil {
 		lease.snapshot = (&governanceCompilerReadAssertions{barrierReads: lease.barrierReads, barrierObservations: lease.barrierObservations}).immutableSnapshot()
 	}
 	return lease.snapshot
-}
-func (lease *governanceTypeCacheLease) verifyBarrierWorld(world *governanceTypeReplayWorld) bool {
-	if lease.cache == nil || lease.cacheKeys == nil {
-		return false
-	}
-	assertions := governanceCompilerReadAssertions{barrierReads: lease.barrierReads, barrierObservations: lease.barrierObservations}
-	if assertions.verifyBarrierWorld(world) {
-		return true
-	}
-	for key := range lease.cacheKeys {
-		delete(lease.cache.entries, key)
-	}
-	return false
 }
 func (lease *governanceTypeCacheLease) certificateObservations() []governanceObservation {
 	if lease.certificateRows == nil {

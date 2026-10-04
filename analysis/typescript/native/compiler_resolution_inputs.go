@@ -107,11 +107,12 @@ func (capture *governanceCapture) resolutionInputLocked(key compilerInputKey, ce
 				break
 			}
 			info := metadata.value.(compilerCapturedValue[vfs.FileInfo]).value
-			if info == nil || info.IsDir() {
+			regularity := inputRegularityValue(info)
+			if regularity == "absent" || regularity == "directory" {
 				row.Unavailable = "Conflicting file membership observations."
 				break
 			}
-			value = info.Mode().IsRegular()
+			value = regularity == "regular"
 		}
 		row.Boolean = &value
 	case inputDirectory:

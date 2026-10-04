@@ -59,8 +59,9 @@ export const query=defineCompositeQuery()(D=>({compose(plan){return plan.combine
 		}
 		current = project
 	}
-	state := &governanceProductsSession{Project: current, Token: "current", Prepare: governancePrepare{Options: json.RawMessage(`{"sourcePolicyOwnerRevision":1}`)}}
+	state := &governanceProductsSession{Project: current, Token: "current", Prepare: governancePrepare{Options: json.RawMessage(`{"sourcePolicyOwnerRevision":2}`)}}
 	session.productsSession = state
+	governanceSourceObservationFixture(t, session)
 	keys := []governanceTypeDemandKey{}
 	for key := range session.typeDemandCache.entries {
 		keys = append(keys, key)
@@ -68,7 +69,7 @@ export const query=defineCompositeQuery()(D=>({compose(plan){return plan.combine
 	sort.Slice(keys, func(i, j int) bool { return keys[i].start < keys[j].start })
 	for _, key := range keys {
 		file := current.FilesByPath[key.path]
-		answer, err := session.observeClosedSource(governanceClosedSourceRequest{Token: state.Token, SourceSnapshotDigest: current.GovernanceDigest, Path: key.path, Operation: "collection", Start: file.coordinates.utf16(key.start), End: file.coordinates.utf16(key.end)})
+		answer, err := session.observeClosedSource(governanceClosedSourceRequest{Token: state.Token, Generation: state.Generation, SourceSnapshotDigest: current.GovernanceDigest, Path: key.path, Operation: "collection", Start: file.coordinates.utf16(key.start), End: file.coordinates.utf16(key.end)})
 		if err != nil || answer.Status != "known" || answer.Kind == nil || *answer.Kind != "node" {
 			t.Fatal("products continuation lost actual branded kind", answer, err)
 		}

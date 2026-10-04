@@ -14,6 +14,7 @@ import (
 // This owner exposes narrow native compiler observations. It reuses the legacy
 // thin AST admission algorithm, never allocates BodyIR or a generic fact store.
 type governanceRuntimeAuthority struct {
+	Syntax                    *governanceRuntimeSyntaxOwner
 	ParameterReferenceClosure map[governanceParameterReferenceKey]bool
 	ParameterReferenceSources map[*ast.SourceFile]bool
 	AdmissionsReady           map[string]bool
@@ -34,8 +35,13 @@ type governanceRuntimeAuthority struct {
 func governanceNewRuntimeAuthority(identity *governanceRuntimeIdentity) *governanceRuntimeAuthority {
 	out := &governanceRuntimeAuthority{Identity: identity, AdmissionsReady: map[string]bool{}, ScopedProofs: map[*ast.Node]observabledecision.EffectSummary{}, FunctionOwners: map[string][]*ast.Node{}, ByPath: map[string]observabledecision.CapturedFile{}, Admitted: map[*ast.Node]string{}, FunctionBodies: map[*ast.Node]bool{}, Symbols: map[*ast.Symbol]string{}, NodeLookup: map[string]map[string]*ast.Node{}}
 	if !identity.Complete {
+		out.Syntax = governanceNewRuntimeSyntaxOwner()
 		return out
 	}
+	if identity.Project.runtimeSyntax == nil {
+		identity.Project.runtimeSyntax = governanceNewRuntimeSyntaxOwner().retain(identity.TypeOwner.program.TSProgram.GetSourceFiles())
+	}
+	out.Syntax = identity.Project.runtimeSyntax
 	paths := []string{}
 	for path := range identity.OwnedProgramFiles {
 		paths = append(paths, path)
@@ -84,37 +90,20 @@ func (owner *governanceRuntimeAuthority) ensureAdmissions(path string) {
 	}
 	owner.AdmissionsReady[path] = true
 	owner.AdmissionsFiles++
-	// Runtime observations use the actual owned Program AST directly. A second
-	// full node-coordinate index is created only for an authored AST bridge.
-	admit := func(body *ast.Node) {
-		thin := &thinBody{kinds: map[*ast.Node]string{}}
-		thin.walk(body)
-		for node, kind := range thin.kinds {
-			owner.Admitted[node] = kind
-		}
-	}
-	if !source.IsDeclarationFile && source.Text() != "" {
-		admit(source.AsNode())
-	}
-	walkFile(source, func(node *ast.Node) bool {
-		if ast.IsFunctionLike(node) && node.Body() != nil {
-			owner.FunctionBodies[node] = true
-			if node.Kind == ast.KindArrowFunction && node.Body().Kind != ast.KindBlock {
-				owner.Admitted[node.Body()] = "expression"
+	// Structure can survive an exact current SourceFile pointer. Every symbol and
+	// function uniqueness relation is rebound against this capture's checker.
+	for _, node := range owner.Syntax.source(source).functions {
+		owner.FunctionBodies[node] = true
+		for _, parameter := range node.Parameters() {
+			param := parameter.AsNode()
+			check := owner.Identity.TypeOwner.program.Checker
+			if check.GetSymbolAtLocation(param.Name()) != nil || check.GetSymbolAtLocation(param) != nil {
+				owner.Admitted[param] = "definition"
 			}
-			for _, parameter := range node.Parameters() {
-				param := parameter.AsNode()
-				check := owner.Identity.TypeOwner.program.Checker
-				if check.GetSymbolAtLocation(param.Name()) != nil || check.GetSymbolAtLocation(param) != nil {
-					owner.Admitted[param] = "definition"
-				}
-			}
-			key := owner.functionKey(node)
-			owner.FunctionOwners[key] = append(owner.FunctionOwners[key], node)
-			admit(node.Body())
 		}
-		return true
-	})
+		key := owner.functionKey(node)
+		owner.FunctionOwners[key] = append(owner.FunctionOwners[key], node)
+	}
 }
 func (owner *governanceRuntimeAuthority) ensureNodeAdmissions(node *ast.Node) {
 	if node == nil {
@@ -234,7 +223,7 @@ func (owner *governanceRuntimeAuthority) CandidateAdmitted(file observabledecisi
 	if !known {
 		return false, false
 	}
-	admission := owner.Admitted[matched]
+	admission := owner.admission(matched)
 	switch kind {
 	case "alias":
 		return matched.Kind == ast.KindVariableDeclaration && admission != "", true
@@ -459,8 +448,8 @@ func (owner *governanceRuntimeAuthority) scopedEffectsWithReaders(request observ
 	return out
 }
 func (owner *governanceRuntimeAuthority) DemandContext(limits observabledecision.Limits) observabledecision.DemandContext {
-	core := observabledecision.NewCapturedNativeEffectCore(owner.Files, owner.EffectAuthority())
-	context := observabledecision.DemandContext{ConstructorDiscovery: owner.constructorDiscovery(core), Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets(), CallShape: owner.DemandCallShapes()}
+	core := observabledecision.NewCapturedNativeEffectCoreWithSyntax(owner.Files, owner.EffectAuthority(), owner.Syntax.values)
+	context := observabledecision.DemandContext{Syntax: owner.Syntax.values, ConstructorDiscovery: owner.constructorDiscovery(core), Files: owner.Files, Resolve: owner.Resolve, Effect: core.DemandEffects(owner.ScopedEffects), Limits: limits, Calls: owner.Calls, DefinitionSubjects: owner.DefinitionSubjects, GlobalValue: owner.GlobalValue, ExpressionAdmitted: owner.ExpressionAdmitted, ReferenceAvailable: owner.ReferenceAvailable, CallTarget: core.DemandCallTargets(), CallShape: owner.DemandCallShapes()}
 	context.CompilerLibraryReceiver = func(path string, call *ast.Node, reader *observabledecision.NativeValueReader) observabledecision.LibraryReceiverObservation {
 		file, ok := owner.ByPath[path]
 		if !ok {
