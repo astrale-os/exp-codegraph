@@ -32,6 +32,28 @@ async function fixture() {
 }
 
 describe("native decision FIFO capture ownership", () => {
+  it("retries product-less seals without consuming a pending products capture", async () => {
+    const { root, session, configuration, prepare } = await fixture();
+    const request = { token: configuration.token, reportDigest: "a".repeat(64) };
+    const requirements = [{ id: "root", kind: "directory" as const, path: root }];
+    const probe = { token: configuration.token, requirements };
+    const before = await session.captureProbes!(probe);
+    expect(await session.seal(request)).toEqual({ status: "retry" });
+    expect(await session.seal(request)).toEqual({ status: "retry" });
+    expect(await session.captureProbes!(probe)).toEqual(before);
+    expect(await session.seal({ ...request, productsDigest: "b".repeat(64) })).toEqual({ status: "retry" });
+    expect(await session.captureProbes!(probe)).toEqual(before);
+    const next = await prepare();
+    expect(next.status).toBe("configuration");
+    expect(await session.seal(request)).toEqual({ status: "retry" });
+    const current = { token: next.token, reportDigest: "a".repeat(64) };
+    const currentProbe = { token: next.token, requirements };
+    const after = await session.captureProbes!(currentProbe);
+    expect(await session.seal(current)).toEqual({ status: "retry" });
+    expect(await session.seal(current)).toEqual({ status: "retry" });
+    expect(await session.captureProbes!(currentProbe)).toEqual(after);
+  });
+
   it("admits parallel canonical package reads on one actual native capture", async () => {
     const { packages, session, configuration } = await fixture();
     const results = await Promise.all(packages.map(({ directory }) => session.captureProbes!({ token: configuration.token, requirements: [
