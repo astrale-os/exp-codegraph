@@ -27,7 +27,7 @@ export interface DeclarationSourceEvidence {
   readonly rootReferences: readonly string[]
 }
 
-const MAX_API_SOURCES = 192
+const MAX_API_SOURCES = 512
 const MAX_API_SOURCE_BYTES = 8 * 1024 * 1024
 
 /** Immutable operation-owned declaration source corpus shared by every entrypoint traversal. */

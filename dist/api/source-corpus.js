@@ -5,7 +5,7 @@ import { operationSourceText } from '../source/operation-snapshot.js';
 import { workspacePackageCoordinate } from '../typescript/package-coordinate.js';
 import { typeScriptSourceHasAmbientEffects } from '../typescript/compiler-universe.optimization.js';
 import { collectExternalReferences, isExternalSpecifier, } from './external.js';
-const MAX_API_SOURCES = 192;
+const MAX_API_SOURCES = 512;
 const MAX_API_SOURCE_BYTES = 8 * 1024 * 1024;
 /** Immutable operation-owned declaration source corpus shared by every entrypoint traversal. */
 export function createDeclarationSourceCorpus(projectRoot, options, host) {
