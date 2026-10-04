@@ -174,21 +174,6 @@ func governanceGenerationRelative(root, path string) string {
 	return filepath.ToSlash(relative)
 }
 
-// The public products owner must perform this retirement when its final original
-// old/current conjunction rejects a speculative proposal. This probe method uses
-// the SAME existing uncached capture barrier, not an alternative publication test.
-func (generation *governanceProgramGeneration) verifyProposal(project *governedProject) (bool, error) {
-	valid, err := project.capture.Verify()
-	if err != nil || !valid {
-		generation.program = nil
-		generation.broker = nil
-		generation.receipts = nil
-		generation.syntax = nil
-		project.runtimeSyntax = nil
-	}
-	return valid, err
-}
-
 // A type cell computed from speculative old metadata is also private. If this
 // draft is rejected or abandoned, its descendants must not survive as ready
 // cross-generation type cells. Successful seal clears borrowedGeneration first.
