@@ -1,7 +1,7 @@
-import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../../protocol/index.ts';
-import type { NativeAnalysisArtifact, NativeAnalysisReleaseManifest, NativeAnalysisTarget } from './model.ts';
-export declare const NATIVE_RELEASE_FORMAT: 'astrale.codegraph.native-release';
-export declare const NATIVE_ARTIFACT_FORMAT: 'astrale.codegraph.native-artifact';
+import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from "../../protocol/model.ts";
+import type { NativeAnalysisArtifact, NativeAnalysisReleaseManifest, NativeAnalysisTarget } from "./model.ts";
+export declare const NATIVE_RELEASE_FORMAT: "astrale.codegraph.native-release";
+export declare const NATIVE_ARTIFACT_FORMAT: "astrale.codegraph.native-artifact";
 export declare const NATIVE_ARTIFACT_PACKAGES: Readonly<Record<NativeAnalysisTarget, string>>;
 export interface NativeArtifactPackageManifest {
     readonly format: typeof NATIVE_ARTIFACT_FORMAT;

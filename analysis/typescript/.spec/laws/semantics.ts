@@ -123,3 +123,13 @@ export const TYPESCRIPT_ATOMIC_PUBLICATION = defineLaw({
     },
   ],
 })
+
+export const TYPESCRIPT_COMPILER_INPUT_DISCOVERY = defineLaw({
+  id: 'TYPESCRIPT-COMPILER-INPUT-DISCOVERY',
+  statement:
+    'Opt-in discovery compares the resident compiler-owned input observations against uncached filesystem state, including source and configuration bytes, package resolution, directory membership and failed lookups. Explicit hints compose with discovery. Unchanged inputs retain the generation; changed inputs reconcile to fresh compiler semantics before publication, including after pending replay or recovery, while prior pinned readers remain exact.',
+  tests: [
+    { file: '../../__tests__/typescript-discovery.test.ts', id: 'TYPESCRIPT-COMPILER-INPUT-DISCOVERY' },
+    { file: '../../__tests__/typescript-discovery.test.ts', id: 'TYPESCRIPT-DISCOVERY-REPLAY' },
+  ],
+})

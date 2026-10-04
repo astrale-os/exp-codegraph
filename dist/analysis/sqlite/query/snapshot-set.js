@@ -35,4 +35,3 @@ export class SQLiteSnapshotSet {
         await this.#release();
     }
 }
-//# sourceMappingURL=snapshot-set.js.map

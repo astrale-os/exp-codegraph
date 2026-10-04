@@ -257,4 +257,3 @@ function packedModule(snapshot) {
 function sameEntries(left, right) {
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
-//# sourceMappingURL=representation.js.map

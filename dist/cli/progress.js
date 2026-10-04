@@ -156,4 +156,3 @@ function formatElapsed(milliseconds) {
     const minutes = Math.floor(seconds / 60);
     return `${minutes}m ${String(seconds % 60).padStart(2, '0')}s`;
 }
-//# sourceMappingURL=progress.js.map

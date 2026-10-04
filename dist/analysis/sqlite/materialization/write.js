@@ -101,4 +101,3 @@ function writeShard(database, storeNamespace, shard, preparedPayloads) {
         });
     }
 }
-//# sourceMappingURL=write.js.map

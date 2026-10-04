@@ -180,6 +180,7 @@ export interface TypeScriptAnalysisService {
   refresh(options?: {
     readonly changed?: readonly string[]
     readonly changes?: readonly NativeSourceChange[]
+    readonly discover?: boolean
     readonly invalidate?: boolean
     readonly signal?: AbortSignal
   }): Promise<TypeScriptRefreshResult>

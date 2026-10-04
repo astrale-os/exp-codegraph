@@ -196,4 +196,3 @@ function workspaceSource(root, file) {
 function normalize(path) {
     return sep === '/' ? path : path.split(sep).join('/');
 }
-//# sourceMappingURL=watch.js.map

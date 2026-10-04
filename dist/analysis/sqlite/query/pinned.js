@@ -323,4 +323,3 @@ function validatePageLimit(limit) {
         throw new RangeError('Fact page limit must be an integer from 1 through 10000.');
     }
 }
-//# sourceMappingURL=pinned.js.map

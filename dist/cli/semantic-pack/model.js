@@ -117,4 +117,3 @@ function isCatalogQualification(value) {
         typeof qualification.source === 'string' &&
         Array.isArray(qualification.diagnostics));
 }
-//# sourceMappingURL=model.js.map

@@ -781,4 +781,3 @@ function stableJson(value) {
 function hash(value) {
     return createHash('sha256').update(value).digest('hex');
 }
-//# sourceMappingURL=project.js.map

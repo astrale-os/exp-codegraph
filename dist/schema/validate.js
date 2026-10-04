@@ -87,4 +87,3 @@ function diagnosticKeyword(keyword) {
 function escapePointer(value) {
     return value.replaceAll('~', '~0').replaceAll('/', '~1');
 }
-//# sourceMappingURL=validate.js.map

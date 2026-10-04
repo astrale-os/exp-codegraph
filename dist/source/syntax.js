@@ -132,4 +132,3 @@ function escapeHtml(value) {
         .replaceAll('>', '&gt;')
         .replaceAll('"', '&quot;');
 }
-//# sourceMappingURL=syntax.js.map

@@ -56,4 +56,3 @@ async function compileBatch(options, isolation, retry = false) {
 function positiveInteger(value, fallback) {
     return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-//# sourceMappingURL=isolate.js.map

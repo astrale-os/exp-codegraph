@@ -1,0 +1,65 @@
+{
+  "provenance": {
+    "nativeCommit": "f2381372fefb67b281506291b6c13187ada39e8f",
+    "binarySha256": "250c1f807b2e8074772b2e78b672201f8d53c2c7d3a869ed05d7b6fe296f21c3",
+    "platform": { "os": "darwin", "architecture": "arm64" },
+    "universeSeed": "projection-oracle-v1",
+    "fixture": "writeBodyDemandFixture",
+    "format": "SHA256 of canonical JSON; complete current manifest and upsert shards including current generation metadata",
+    "performanceEvidence": false
+  },
+  "cases": {
+    "empty": {
+      "generation": "generation:d5b5223b0f09fdcb41108c119f32aeb5bc680ec018fd40af869937c233f8af66",
+      "manifest": "a87e26c88b086baad77b0ae9a7d4152cc384846d845cfcbb0f6300ca11ec502c",
+      "upserts": "edd15f3143fdea13c7b08724cd94f1835ab8b4cf2ddf609371f45b3c8dfde74f",
+      "certificate": "47d8dfc7a045fabc58f3948c0d54ad27170fc6842aba50540ab17af80afeb2e5"
+    },
+    "roots": {
+      "generation": "generation:3df2cfba247b32ac94ab8097a90c057661715b4a0ba8ef8db4eb2d178057e307",
+      "manifest": "012798c5fe3306009bea853d4ecc9905dfeeedcf184bce5f404152fe6ab15fc1",
+      "upserts": "92d5bae29d3f810ed45fcce0ab886de3af71a6bcb7a3350e61e607dceac59b17",
+      "certificate": "ff221ef0f9e0c5382045d47e00b59e857bcdb6bbdb32a0343d4587c0d558b08d"
+    },
+    "expand": {
+      "generation": "generation:e16e6ca60cb2c55615d9c6e4eafe00ebe1f3f85d9037c62d353050773cf228d4",
+      "manifest": "8a880f200d3b9b1f0864587f53fa1756e638873a3e547074cd68395e90444d1a",
+      "upserts": "07b67a2d2847a8d999788b3e25a793d2083a359915c8eb6734274213a3f4697f",
+      "certificate": "990dc8ea32e3b65c7236f6ba711d1a41169ef05857fb239c0dd43377bde61050"
+    },
+    "shrink": {
+      "generation": "generation:3df2cfba247b32ac94ab8097a90c057661715b4a0ba8ef8db4eb2d178057e307",
+      "manifest": "012798c5fe3306009bea853d4ecc9905dfeeedcf184bce5f404152fe6ab15fc1",
+      "upserts": "7f6b28605086085313dec86894d89725b273c0aece2f98440937c0a507b2a291",
+      "certificate": "ff221ef0f9e0c5382045d47e00b59e857bcdb6bbdb32a0343d4587c0d558b08d"
+    },
+    "reexpand": {
+      "generation": "generation:0e2e073bfd2ae6f21a350bd6383bf97a9cb82f4b295e7c60c196db06e7ece875",
+      "manifest": "7d1ed1fe115366607a79a6cf1840ae3bd5638086785aa695f502b5bf5d870603",
+      "upserts": "6c3410bfc609ab6ae0534868cd838fc87fdf3a26ea6e0b4b209cf0d2bc2611f3",
+      "certificate": "1fd91d1c5adea98d34d2778d7a5eb988cb60755eba09c3cc30b38f4bee2ee4c2"
+    },
+    "conservative": {
+      "generation": "generation:3a1b4a98f78f58b85c0870d3bd8cd8f93b3c2648c1fdf4d4ba873f8b7d837d55",
+      "manifest": "fc2d7492b25d08fd283cda2fb5240999803a9b19ca2cef6ce3a7c043e6bf7b33",
+      "upserts": "3f30278798285bcb421b20f1df3162039b18f805410474f7b6d65ec8a553ba5c",
+      "certificate": "2d0fe2339846fe6a6183dbc8976aeb81be4b582866e52f0aeb288175a9335727"
+    },
+    "packed-roots": {
+      "generation": "generation:3df2cfba247b32ac94ab8097a90c057661715b4a0ba8ef8db4eb2d178057e307",
+      "manifest": "012798c5fe3306009bea853d4ecc9905dfeeedcf184bce5f404152fe6ab15fc1",
+      "upserts": "4b7062b2342b25327cf906619e3038bab10785c7f745895be8ec0daf673e67c6",
+      "certificate": "ff221ef0f9e0c5382045d47e00b59e857bcdb6bbdb32a0343d4587c0d558b08d"
+    },
+    "full": {
+      "generation": "generation:7ca81321a13794b7548ecb683f60fceb5f9e4f21c29431fb57df8b7ade43f1de",
+      "manifest": "6f0f52f90b356eca989c108a6e2869c694473a0393955f3a52615a1f3e110186",
+      "upserts": "f74a8b587065d9f5b5592f3c8f121bb5f97d92fc7f6b4fc1c6928d0febfeca99"
+    },
+    "packed-full": {
+      "generation": "generation:7ca81321a13794b7548ecb683f60fceb5f9e4f21c29431fb57df8b7ade43f1de",
+      "manifest": "6f0f52f90b356eca989c108a6e2869c694473a0393955f3a52615a1f3e110186",
+      "upserts": "6833d227bdd0f1d8796d402ebfe311d10068d3a23f297ce39279e6f34c5b6064"
+    }
+  }
+}

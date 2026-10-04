@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"math/big"
 	"sort"
@@ -983,26 +982,6 @@ func nodeDescendsFrom(node, owner *shimast.Node) bool {
 	return false
 }
 
-func constituentTypeNodes(checker *shimchecker.Checker, types []*shimchecker.Type, nodes []*shimast.Node) []*shimast.Node {
-	candidates := make([]*shimchecker.Type, len(nodes))
-	for index, node := range nodes {
-		candidates[index] = checker.GetTypeFromTypeNode(node)
-	}
-	claimed := map[int]bool{}
-	result := make([]*shimast.Node, len(types))
-	for index, item := range types {
-		for candidateIndex, candidate := range candidates {
-			if claimed[candidateIndex] || candidate != item {
-				continue
-			}
-			claimed[candidateIndex] = true
-			result[index] = nodes[candidateIndex]
-			break
-		}
-	}
-	return result
-}
-
 func tupleElementLocation(checker *shimchecker.Checker, item *shimchecker.Type, node *shimast.Node) *shimast.Node {
 	if node == nil {
 		return nil
@@ -1551,11 +1530,4 @@ func attachDeclarationToIssues(issues []any, identity string) []any {
 		output = append(output, copy)
 	}
 	return output
-}
-
-func semanticJSON(value any) any {
-	raw, _ := json.Marshal(value)
-	var result any
-	_ = json.Unmarshal(raw, &result)
-	return result
 }

@@ -5,4 +5,3 @@ export { MODULE_LAYOUT_PROFILE_ID, createModuleLayoutConformanceProfile, } from 
 export { MODULE_SCHEMA_PROFILE_ID, createModuleSchemaConformanceProfile, } from './module/schema.js';
 export { MODULE_TEST_EVIDENCE_PROFILE_ID, createModuleTestEvidenceConformanceProfile, } from './module/test-evidence.js';
 export { SPECIFICATION_VALIDITY_PROFILE_ID, createSpecificationValidityConformanceProfile, } from './specification/profile.js';
-//# sourceMappingURL=index.js.map

@@ -574,4 +574,3 @@ class OverlayMap {
         return this.entries();
     }
 }
-//# sourceMappingURL=catalog-snapshot.js.map

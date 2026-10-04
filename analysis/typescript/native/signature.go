@@ -11,6 +11,7 @@ import (
 // sensitive to compiler union/cache ordering, so it must not enter fact hashes.
 func (x *extractor) signatureIdentity(signature *shimchecker.Signature) string {
 	declaration := signature.Declaration()
+	x.observeProjectionNode(declaration)
 	if declaration == nil {
 		return ""
 	}

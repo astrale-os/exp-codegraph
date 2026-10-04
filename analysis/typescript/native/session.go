@@ -15,6 +15,7 @@ import (
 )
 
 type generationState struct {
+	bodyDemand         *bodyDemandRecipe
 	callableReads      callableReadIndex
 	generation         analysisGeneration
 	manifest           []factShardReference
@@ -27,6 +28,8 @@ type generationState struct {
 }
 
 type refreshSelection struct {
+	demandReuse        *demandSourceReuse
+	bodyDemand         *bodyDemandRecipe
 	callableReads      map[string][]callableRead
 	full               bool
 	files              []string
@@ -50,6 +53,7 @@ type analyzer struct {
 	maximumSemanticPayloadBytes int
 	maximumDecodedShardBytes    int
 	session                     *compilerSession
+	demandCache                 *bodyDemandCache
 	// Only the acknowledged base and its unpublished candidate belong to this
 	// process. Historical snapshots and reader leases belong to the client store.
 	acknowledged generationState
@@ -96,6 +100,7 @@ func newAnalyzer(root, config, universe string, capabilities []string, modules [
 }
 
 func (a *analyzer) close() error {
+	a.demandCache = nil
 	a.acknowledged = generationState{}
 	a.pending = nil
 	a.pendingFull = false
@@ -107,12 +112,38 @@ func (a *analyzer) close() error {
 	return err
 }
 
-func (a *analyzer) refresh(input request) (transaction *factTransaction, unchanged string, err error) {
+func (a *analyzer) refresh(input request) (*factTransaction, string, error) {
+	for attempt := 0; attempt < 3; attempt++ {
+		transaction, unchanged, err := a.refreshOnce(input)
+		if failure, ok := err.(nativeError); !ok || failure.code != "INPUT_CHANGED" {
+			return transaction, unchanged, err
+		}
+		input.Invalidate = true
+	}
+	return nil, "", protocolError("INPUT_CHANGED", "Compiler inputs kept changing during refresh; retry when the project settles.")
+}
+
+func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unchanged string, err error) {
 	started := time.Now()
 	changes, err := admittedSourceChanges(input)
 	if err != nil {
 		return nil, "", err
 	}
+	var demand *bodyDemandRecipe
+	if a.projection.bodyDemand {
+		demand, err = admitBodyDemand(input.BodyDemand)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	if a.projection.bodyDemand && demand == nil {
+		if a.pending != nil {
+			demand = a.pending.state.bodyDemand
+		} else {
+			demand = a.acknowledged.bodyDemand
+		}
+	}
+	demandChanged := stableJSON(demand) != stableJSON(a.acknowledged.bodyDemand)
 	var before runtime.MemStats
 	if a.telemetry != nil {
 		runtime.ReadMemStats(&before)
@@ -133,19 +164,34 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		a.telemetry.record(input.ID, "refresh.total", started, metrics)
 	}()
 	if a.pending != nil {
-		if input.Base != a.acknowledged.generation.ID || input.Invalidate || len(changes) != 0 {
+		if input.Base != a.acknowledged.generation.ID || input.Invalidate || len(changes) != 0 || stableJSON(demand) != stableJSON(a.pending.state.bodyDemand) {
 			return nil, "", protocolError("COMMIT_PENDING", "A native generation is awaiting application-store acknowledgement.")
 		}
 		return a.pending.transaction, "", nil
+	}
+	// Discovery runs only after pending publication has been replayed/acknowledged.
+	// Explicit hints and compiler-owned observations share the same apply path.
+	if input.Discover && a.session != nil {
+		discovered, rebuild := a.session.discover()
+		input.Invalidate = input.Invalidate || rebuild
+		known := map[string]bool{}
+		for _, change := range changes {
+			known[change.Path] = true
+		}
+		for _, path := range discovered {
+			if !known[path] {
+				changes = append(changes, sourceChange{Path: path, Kind: "unknown"})
+			}
+		}
 	}
 	adopting := a.acknowledged.generation.ID == "" && input.Base != ""
 	if input.Base != a.acknowledged.generation.ID && !adopting {
 		return nil, "", protocolError("BASE_STALE", "The requested base is not the resident analyzer's current private generation.")
 	}
-	// Callers own change discovery. Once a resident base exists, an empty
-	// change set is a true no-op and must not re-walk or re-extract the complete
+	// Without opt-in discovery, callers own source change tracking. After
+	// optional compiler-input discovery, an empty change set is a true no-op and must not re-walk or re-extract the complete
 	// compiler universe merely to rediscover the same content-addressed shards.
-	if input.Base != "" && !adopting && !input.Invalidate && len(changes) == 0 && !a.pendingFull {
+	if input.Base != "" && !adopting && !input.Invalidate && len(changes) == 0 && !a.pendingFull && !demandChanged {
 		return nil, input.Base, nil
 	}
 	compilerAdvanced := false
@@ -178,9 +224,22 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 			mode = "resident-skip"
 		}
 		a.telemetry.record(input.ID, "compiler.update", updateStarted, map[string]any{"mode": mode})
-		if !compilerAdvanced && input.Base != "" {
+		if !compilerAdvanced && input.Base != "" && !adopting && !demandChanged {
 			return nil, input.Base, nil
 		}
+	}
+
+	if compilerAdvanced {
+		a.demandCache = nil
+		if selection.demandReuse != nil && demand != nil && demand.Owners != nil {
+			a.demandCache = newSparseDemandCache(selection.demandReuse)
+		}
+	}
+	selection.bodyDemand = demand
+	if a.projection.bodyDemand && (compilerAdvanced || demandChanged) {
+		// The complete effect authority and selected closure move together under
+		// one captured Program; omitted owners cannot retain stale global effects.
+		selection.full = true
 	}
 
 	universeStarted := time.Now()
@@ -191,6 +250,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 	rollover := nextUniverse != a.universe
 	if rollover {
+		a.demandCache = nil
 		// A universe boundary is not an incremental source delta. The first
 		// generation in the new lineage is a complete transaction with no base;
 		// the caller may rebase that complete snapshot when an identical portable
@@ -198,7 +258,11 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		selection.full = true
 	}
 	baseID := input.Base
-	if rollover {
+	if rollover || adopting {
+		// A fresh analyzer can recompute the caller's base identity, but it
+		// does not own that base's shard membership. A different candidate must
+		// be complete and base-less so the application store can safely rebase
+		// it, including retiring shards absent from the fresh compiler universe.
 		baseID = ""
 	}
 	base := generationState{}
@@ -224,6 +288,12 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 	}
 	if a.telemetry != nil {
 		recordFactBytes(a.telemetry, input.ID, shards)
+	}
+	if input.Discover {
+		if changed, rebuild := a.session.discover(); len(changed) != 0 || rebuild {
+			a.pendingFull = true
+			return nil, "", protocolError("INPUT_CHANGED", "Compiler inputs changed during refresh.")
+		}
 	}
 
 	materializationStarted := time.Now()
@@ -289,6 +359,11 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		if hasBase && base.digests[shard.Key] == shard.Digest {
 			continue
 		}
+		// Projection caches own sealed fact metadata. Re-emitting a retired
+		// shard must not rename facts in an earlier published transaction.
+		if shard.Facts != nil {
+			shard.Facts = append([]fact{}, shard.Facts...)
+		}
 		for index := range shard.Facts {
 			shard.Facts[index].Generation = generationID
 		}
@@ -328,6 +403,7 @@ func (a *analyzer) refresh(input request) (transaction *factTransaction, unchang
 		readUpdates[file] = reads
 	}
 	state := generationState{
+		bodyDemand:    demand,
 		callableReads: mergeCallableReads(readBase, readUpdates),
 		generation:    generation, manifest: manifest, digests: digests,
 		sources: sourceRecordMap(sources), sourceShards: mergeSourceShardOwnership(base, sources, shards, selection.full),
@@ -395,8 +471,32 @@ func (a *analyzer) extract(
 	maximumProjectionBytes int,
 	requestID int,
 ) ([]factShard, []sourceRecord, map[string]bool, map[string][]callableRead, error) {
+	plan := a.projection
+	plan.demand = selection.bodyDemand
+	if plan.bodyDemand {
+		if a.demandCache == nil {
+			a.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
+		}
+		plan.demandCache = a.demandCache
+		if a.demandCache.ready && !plan.bodies {
+			shards, sources, reads, err := a.demandCache.project(plan, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+			if _, fallback := err.(sparseDemandFallback); !fallback {
+				return shards, sources, nil, reads, err
+			}
+			a.telemetry.record(requestID, "projection.incremental-fallback", time.Now(), map[string]any{"reason": err.Error()})
+			a.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
+			plan.demandCache = a.demandCache
+			selection.full = true
+		}
+	}
 	if selection.full {
-		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, a.projection, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		shards, sources, reads, err := extractProgram(a.root, universe, a.session.Program(), a.modules, plan, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		if _, fallback := err.(sparseDemandFallback); fallback {
+			a.telemetry.record(requestID, "projection.incremental-fallback", time.Now(), map[string]any{"reason": err.Error()})
+			a.demandCache = &bodyDemandCache{fullBodies: map[string]factShard{}}
+			plan.demandCache = a.demandCache
+			shards, sources, reads, err = extractProgram(a.root, universe, a.session.Program(), a.modules, plan, a.payloadCodecs, maximumProjectionBytes, a.maximumDecodedShardBytes, a.telemetry, requestID)
+		}
 		return shards, sources, nil, reads, err
 	}
 	selected := make(map[string]bool, len(selection.files))
@@ -405,7 +505,7 @@ func (a *analyzer) extract(
 	}
 	x, files, sources := prepareExtractor(
 		a.root, universe, a.session.Program(), a.modules,
-		a.projection,
+		plan,
 		a.payloadCodecs,
 		maximumProjectionBytes, a.maximumDecodedShardBytes,
 		base.sources, selected, a.telemetry, requestID,
@@ -793,6 +893,7 @@ func (a *analyzer) rebuild() error {
 		return fmt.Errorf("TypeScript driver returned no resident program")
 	}
 	previous := a.session
+	a.demandCache = nil
 	a.session = next
 	return previous.Close()
 }
@@ -805,6 +906,7 @@ func admitCapabilities(requested []string) ([]string, error) {
 	for _, capability := range supportedCapabilities {
 		supported[capability] = true
 	}
+	supported[bodyDemandNamespace] = true
 	for _, capability := range requested {
 		if !supported[capability] {
 			return nil, protocolError("CAPABILITY_UNSUPPORTED", fmt.Sprintf("Native capability %q is unsupported.", capability))

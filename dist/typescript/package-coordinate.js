@@ -87,4 +87,3 @@ function contains(root, target) {
 function portable(path) {
     return sep === '/' ? path : path.split(sep).join('/');
 }
-//# sourceMappingURL=package-coordinate.js.map

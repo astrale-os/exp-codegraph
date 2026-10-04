@@ -60,4 +60,3 @@ function typescriptLibrary(parts) {
 function portable(path) {
     return sep === '/' ? path : path.split(sep).join('/');
 }
-//# sourceMappingURL=source.js.map

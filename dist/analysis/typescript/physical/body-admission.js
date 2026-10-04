@@ -351,4 +351,3 @@ function writeReferences(writer, indices, values) {
     }
     writer.part(']');
 }
-//# sourceMappingURL=body-admission.js.map

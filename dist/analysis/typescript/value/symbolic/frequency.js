@@ -44,4 +44,3 @@ function hashKey(key) {
     hash = Math.imul(hash, 0x85ebca6b);
     return (hash ^ (hash >>> 13)) >>> 0;
 }
-//# sourceMappingURL=frequency.js.map

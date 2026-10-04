@@ -70,4 +70,3 @@ function failure(code, message) {
         diagnostics: [{ source: 'json-schema', code, severity: 'error', message }],
     };
 }
-//# sourceMappingURL=emit.js.map

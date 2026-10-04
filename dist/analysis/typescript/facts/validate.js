@@ -1,4 +1,5 @@
 import { validateFunctionBodyIR } from '../body/index.js';
+import { isBodyDemandPath as logicalPath } from '../../protocol/body-demand.js';
 export function validateTypeScriptFactPayload(kind, value, schemaVersion = 1) {
     const diagnostics = [];
     if (!record(value))
@@ -44,6 +45,9 @@ export function validateTypeScriptFactPayload(kind, value, schemaVersion = 1) {
         case 'body':
             validateBody(value, diagnostics);
             break;
+        case 'body-demand':
+            validateBodyDemand(value, diagnostics);
+            break;
         case 'module':
             validateModule(value, diagnostics, schemaVersion);
             break;
@@ -65,6 +69,121 @@ function validateBody(value, diagnostics) {
     }
     if (!completeness(value.completeness))
         diagnostics.push('completeness:invalid');
+}
+function validateBodyDemand(value, diagnostics) {
+    if (value.observed !== undefined && value.observed !== true)
+        diagnostics.push('observed:invalid');
+    const paths = Array.isArray(value.paths) ? value.paths : [];
+    const requested = new Set(paths);
+    if (!strings(value.paths) || paths.some((path) => !logicalPath(path))) {
+        diagnostics.push('paths:invalid');
+    }
+    if (requested.size !== paths.length)
+        diagnostics.push('paths:duplicate');
+    if (!completeness(value.completeness))
+        diagnostics.push('completeness:invalid');
+    const owners = new Map();
+    const unmaterializedPaths = new Set();
+    if (!Array.isArray(value.owners))
+        diagnostics.push('owners:invalid-array');
+    else
+        for (const owner of value.owners) {
+            if (!record(owner) || !string(owner.owner) ||
+                (owner.scope !== 'module' && owner.scope !== 'function') || !span(owner.span) ||
+                !logicalPath(owner.path) || typeof owner.materialized !== 'boolean' ||
+                !optionalStringValue(owner.fact)) {
+                diagnostics.push('owners:invalid');
+                continue;
+            }
+            if (owner.header !== undefined) {
+                const header = owner.header;
+                if (!record(header) || !string(header.owner) || !span(header.span) ||
+                    !strings(header.parameters) || new Set(header.parameters).size !== header.parameters.length ||
+                    !['sync', 'async', 'generator', 'async-generator'].includes(String(header.execution))) {
+                    diagnostics.push('owners:header-invalid');
+                }
+                else {
+                    if (owner.scope !== 'function')
+                        diagnostics.push('owners:header-scope');
+                    if (header.owner !== owner.owner || header.span.source !== owner.span.source ||
+                        header.span.revision !== owner.span.revision || header.span.start !== owner.span.start ||
+                        header.span.end !== owner.span.end)
+                        diagnostics.push('owners:header-owner-span');
+                    if (!record(value.completeness) || value.completeness.kind !== 'complete') {
+                        diagnostics.push('owners:header-incomplete-certificate');
+                    }
+                }
+            }
+            if (owners.has(owner.owner))
+                diagnostics.push('owners:duplicate');
+            if (owner.fact !== undefined && !owner.materialized)
+                diagnostics.push('owners:unmaterialized-fact');
+            owners.set(owner.owner, owner);
+            if (!owner.materialized)
+                unmaterializedPaths.add(owner.path);
+        }
+    const witnesses = new Map();
+    const kinds = new Set(['statement', 'expression', 'declaration', 'assignment', 'definition',
+        'use', 'call', 'return', 'throw', 'branch', 'external-escape']);
+    if (!Array.isArray(value.witnesses))
+        diagnostics.push('witnesses:invalid-array');
+    else
+        for (const witness of value.witnesses) {
+            if (!record(witness) || !string(witness.id) || !string(witness.owner) ||
+                !span(witness.span) || !string(witness.syntax) || !kinds.has(String(witness.kind)) ||
+                !optionalStringValue(witness.symbol)) {
+                diagnostics.push('witnesses:invalid');
+                continue;
+            }
+            if (witnesses.has(witness.id))
+                diagnostics.push('witnesses:duplicate');
+            witnesses.set(witness.id, witness);
+            const owner = owners.get(witness.owner);
+            if (!owner)
+                diagnostics.push('witnesses:owner-absent');
+            else if (span(owner.span) && (witness.span.source !== owner.span.source || witness.span.revision !== owner.span.revision ||
+                witness.span.start < owner.span.start || witness.span.end > owner.span.end))
+                diagnostics.push('witnesses:owner-span-mismatch');
+        }
+    for (const key of ['initializers', 'mutations', 'escapes', 'aliases']) {
+        const effects = value[key];
+        if (!Array.isArray(effects)) {
+            diagnostics.push(`${key}:invalid-array`);
+            continue;
+        }
+        for (const effect of effects) {
+            if (!record(effect) || !string(effect.symbol) || !string(effect.occurrence) ||
+                !string(effect.owner) || (key === 'aliases' && !string(effect.from))) {
+                diagnostics.push(`${key}:invalid`);
+                continue;
+            }
+            const witness = witnesses.get(effect.occurrence);
+            if (!witness)
+                diagnostics.push(`${key}:witness-absent`);
+            else if (witness.owner !== effect.owner)
+                diagnostics.push(`${key}:owner-mismatch`);
+        }
+    }
+    const coverage = new Set();
+    if (!Array.isArray(value.coverage))
+        diagnostics.push('coverage:invalid-array');
+    else
+        for (const item of value.coverage) {
+            if (!record(item) || !logicalPath(item.path) || !completeness(item.completeness)) {
+                diagnostics.push('coverage:invalid');
+                continue;
+            }
+            if (coverage.has(item.path))
+                diagnostics.push('coverage:duplicate');
+            coverage.add(item.path);
+            if (!requested.has(item.path))
+                diagnostics.push('coverage:path-unrequested');
+            if (item.completeness.kind === 'complete' && unmaterializedPaths.has(item.path)) {
+                diagnostics.push('coverage:unmaterialized-owner');
+            }
+        }
+    if (paths.some((path) => !coverage.has(path)))
+        diagnostics.push('coverage:path-absent');
 }
 function validateModule(value, diagnostics, schemaVersion) {
     if (!record(value.target))
@@ -235,4 +354,3 @@ function strings(value) {
 function optionalStringValue(value) {
     return value === undefined || string(value);
 }
-//# sourceMappingURL=validate.js.map

@@ -41,4 +41,3 @@ function addValues(clauses, parameters, column, values) {
 function placeholders(count) {
     return Array.from({ length: count }, () => '?').join(', ');
 }
-//# sourceMappingURL=filter.js.map

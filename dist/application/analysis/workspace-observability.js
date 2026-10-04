@@ -21,4 +21,3 @@ function emit(telemetry, project, status, started, error) {
         metrics: { status, project, ...(error ? { error } : {}) },
     });
 }
-//# sourceMappingURL=workspace-observability.js.map

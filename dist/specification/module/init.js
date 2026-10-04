@@ -48,4 +48,3 @@ function isExists(error) {
         'code' in error &&
         error.code === 'EEXIST');
 }
-//# sourceMappingURL=init.js.map

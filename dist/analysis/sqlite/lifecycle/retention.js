@@ -25,4 +25,3 @@ export function collectSQLiteGenerations(database, storeNamespace, universe, max
     }
     deleteOrphanedShards(database, storeNamespace);
 }
-//# sourceMappingURL=retention.js.map

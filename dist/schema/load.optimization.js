@@ -8,4 +8,3 @@ export function schemaMetadataIssue(schema) {
         return;
     return ajv.errorsText(ajv.errors, { separator: '; ' });
 }
-//# sourceMappingURL=load.optimization.js.map

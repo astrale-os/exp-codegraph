@@ -68,4 +68,3 @@ export function validateFactTransaction(transaction, current) {
 function isSortedUnique(values) {
     return values.every((value, index) => index === 0 || value.localeCompare(values[index - 1]) > 0);
 }
-//# sourceMappingURL=model.js.map

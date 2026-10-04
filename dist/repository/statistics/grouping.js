@@ -46,4 +46,3 @@ function owns(root, path) {
 function depth(root) {
     return root === '.' ? 0 : root.split('/').length;
 }
-//# sourceMappingURL=grouping.js.map

@@ -9,4 +9,3 @@ export class VerificationAdapterError extends Error {
         this.code = code;
     }
 }
-//# sourceMappingURL=qualification.js.map

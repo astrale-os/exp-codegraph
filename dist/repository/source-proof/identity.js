@@ -41,4 +41,3 @@ function immutable(value) {
         immutable(entry);
     return Object.freeze(value);
 }
-//# sourceMappingURL=identity.js.map

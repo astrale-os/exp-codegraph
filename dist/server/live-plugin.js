@@ -723,4 +723,3 @@ function applicationAdapterManifest(snapshot) {
         },
     };
 }
-//# sourceMappingURL=live-plugin.js.map

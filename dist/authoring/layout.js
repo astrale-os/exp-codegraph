@@ -2,4 +2,3 @@
 export function defineLayout(definition) {
     return definition;
 }
-//# sourceMappingURL=layout.js.map

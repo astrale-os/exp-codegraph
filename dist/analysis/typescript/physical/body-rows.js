@@ -76,4 +76,3 @@ function array(value, path) {
         throw new TypeError(`Packed ${path} must be an array.`);
     return value;
 }
-//# sourceMappingURL=body-rows.js.map

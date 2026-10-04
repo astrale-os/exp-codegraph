@@ -3,7 +3,8 @@ import { isAbsolute, relative } from 'node:path'
 
 import { NATIVE_ANALYSIS_PROTOCOL_VERSION } from '../protocol/index.ts'
 import type { NativeAnalysisSession } from '../protocol/index.ts'
-import type { NativeSourceChange } from '../protocol/index.ts'
+import type { NativeSourceChange, NativeBodyDemand } from '../protocol/index.ts'
+import { captureBodyDemand } from '../protocol/body-demand.ts'
 import type { ProjectUniverseId, SourceId } from '../identity/index.ts'
 import { deriveAnalysisId, portablePath } from '../identity/index.ts'
 import { dispatchAnalysisTelemetry } from '../profiling/dispatch.ts'
@@ -50,10 +51,67 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
   }
 
   async refresh(
+    input: {
+      readonly changed?: readonly string[]
+      readonly changes?: readonly NativeSourceChange[]
+      /** Discover changes to compiler-owned inputs, including failed resolutions. */
+      readonly discover?: boolean
+      readonly invalidate?: boolean
+      readonly bodyDemand?: NativeBodyDemand
+      readonly signal?: AbortSignal
+    } = {},
+  ): Promise<TypeScriptRefreshResult> {
+    const options = { ...input,
+      ...(input.changed ? { changed: [...input.changed] } : {}),
+      ...(input.changes ? { changes: input.changes.map((change) => ({ ...change })) } : {}),
+      ...(input.bodyDemand ? { bodyDemand: captureBodyDemand(input.bodyDemand) } : {}),
+    }
+    const started = performance.now()
+    let result = await this.refreshOnce(options)
+    if (!options.discover) return result
+    const changedSources = new Set(result.changedSources)
+    const invalidatedPasses = new Set(result.invalidatedPasses)
+    const changedModules = new Set(result.changedModules ?? [])
+    let scopeUnknown = result.changedModules === undefined
+    let transaction = result.transaction
+    let moduleRouting = result.moduleRouting
+    for (let attempt = 0; result.transaction; attempt++) {
+      if (attempt >= 3) {
+        throw new Error('Compiler inputs kept changing during discovery refresh.')
+      }
+      // A replayed candidate must be acknowledged before the native owner can
+      // reconcile filesystem changes. Never return that intermediate snapshot.
+      result = await this.refreshOnce({ discover: true, signal: options.signal,
+        ...(options.bodyDemand ? { bodyDemand: options.bodyDemand } : {}),
+      })
+      transaction = result.transaction ?? transaction
+      moduleRouting = result.moduleRouting ?? moduleRouting
+      for (const source of result.changedSources) changedSources.add(source)
+      for (const pass of result.invalidatedPasses) invalidatedPasses.add(pass)
+      scopeUnknown ||= result.changedModules === undefined
+      for (const module of result.changedModules ?? []) changedModules.add(module)
+    }
+    return {
+      ...result,
+      ...(transaction ? { transaction } : {}),
+      ...(moduleRouting ? { moduleRouting } : {}),
+      changedSources: [...changedSources].sort(),
+      invalidatedPasses: [...invalidatedPasses].sort(),
+      ...(scopeUnknown
+        ? { changedModules: undefined }
+        : { changedModules: [...changedModules].sort() }),
+      durationMs: performance.now() - started,
+    }
+  }
+
+  private async refreshOnce(
     options: {
       readonly changed?: readonly string[]
       readonly changes?: readonly NativeSourceChange[]
+      /** Discover changes to compiler-owned inputs, including failed resolutions. */
+      readonly discover?: boolean
       readonly invalidate?: boolean
+      readonly bodyDemand?: NativeBodyDemand
       readonly signal?: AbortSignal
     } = {},
   ): Promise<TypeScriptRefreshResult> {
@@ -75,7 +133,9 @@ class ResidentTypeScriptAnalysisService implements TypeScriptAnalysisService {
         ...(current ? { baseSequence: current.sequence } : {}),
         ...(options.changed ? { changed: [...options.changed].sort() } : {}),
         ...(options.changes ? { changes: orderedNativeSourceChanges(options.changes) } : {}),
+        ...(options.discover !== undefined ? { discover: options.discover } : {}),
         ...(options.invalidate !== undefined ? { invalidate: options.invalidate } : {}),
+        ...(options.bodyDemand ? { bodyDemand: captureBodyDemand(options.bodyDemand) } : {}),
       },
       { signal: options.signal },
     )

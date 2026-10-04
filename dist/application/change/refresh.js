@@ -164,4 +164,3 @@ function portable(path) {
 function sortedUnique(values) {
     return [...new Set(values)].sort((left, right) => left.localeCompare(right));
 }
-//# sourceMappingURL=refresh.js.map

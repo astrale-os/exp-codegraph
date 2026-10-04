@@ -81,4 +81,3 @@ function isTestEvidence(value) {
         Array.isArray(value.states) &&
         Array.isArray(value.diagnostics));
 }
-//# sourceMappingURL=test-evidence.js.map

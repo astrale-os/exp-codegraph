@@ -47,4 +47,3 @@ export function parseApiCompilerWorkerResourceReport(input) {
     }
     return value.peakResidentBytes;
 }
-//# sourceMappingURL=isolation-work.optimization.js.map

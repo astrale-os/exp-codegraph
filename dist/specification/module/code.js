@@ -90,4 +90,3 @@ function validCodePath(value) {
     const firstConcrete = segments.findIndex((segment) => segment !== '..');
     return firstConcrete >= 0 && segments.slice(firstConcrete).every((segment) => segment !== '..');
 }
-//# sourceMappingURL=code.js.map

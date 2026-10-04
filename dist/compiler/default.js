@@ -17,4 +17,3 @@ export const specificationApiCompiler = {
         return isolatedApiCompiler.compile({ ...options, semantics: 'specification-v2' });
     },
 };
-//# sourceMappingURL=default.js.map

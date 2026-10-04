@@ -139,4 +139,3 @@ function reportCompleteness(inventory, files) {
 function comparePaths(left, right) {
     return left.localeCompare(right);
 }
-//# sourceMappingURL=incremental.js.map

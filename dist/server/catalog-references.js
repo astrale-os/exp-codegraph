@@ -179,4 +179,3 @@ function referencesIn(value, candidates) {
 function reference(from, text, candidate) {
     return { from, to: from + text.length, text, target: candidate.target };
 }
-//# sourceMappingURL=catalog-references.js.map

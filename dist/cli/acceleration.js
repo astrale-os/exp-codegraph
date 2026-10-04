@@ -20,4 +20,3 @@ export function createCliAccelerationEvent(operation, outcome, code, started, er
         ...(error === undefined ? {} : { error: cliAccelerationError(error) }),
     };
 }
-//# sourceMappingURL=acceleration.js.map

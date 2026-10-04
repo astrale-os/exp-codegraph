@@ -5,7 +5,8 @@ import type { AnalysisGeneration } from '../../generation/index.ts'
 import type { FactTransaction } from '../../generation/index.ts'
 import type { FactShardKey, ProjectUniverseId, SourceId } from '../../identity/index.ts'
 import type { AnalysisQuery, AnalysisStore } from '../../query/index.ts'
-import type { NativeAnalysisSessionFactory, NativeProjectDescriptor } from '../../protocol/index.ts'
+import type { NativeAnalysisSessionFactory, NativeProjectDescriptor, NativeBodyDemand } from '../../protocol/index.ts'
+import { captureBodyDemand } from '../../protocol/body-demand.ts'
 import { resolvePackagedNativeAnalysis } from '../distribution/index.ts'
 import { createTypeScriptAnalysisService } from '../service.ts'
 import { createTypeScriptFactReader } from '../facts/index.ts'
@@ -46,6 +47,7 @@ class ResidentProject implements TypeScriptProject {
   #tail: Promise<void> = Promise.resolve()
   #closed = false
   #closing: Promise<void> | undefined
+  #bodyDemand: NativeBodyDemand | undefined
   readonly #readers = new Set<TypeScriptProjectSnapshot>()
   readonly #lifetime = new AbortController()
   readonly #descriptor: NativeProjectDescriptor
@@ -102,10 +104,15 @@ class ResidentProject implements TypeScriptProject {
       signal: options.signal ? AbortSignal.any([options.signal, this.#lifetime.signal]) : this.#lifetime.signal,
       ...(options.changed ? { changed: [...options.changed] } : {}),
       ...(options.changes ? { changes: options.changes.map((change) => ({ ...change })) } : {}),
+      ...(options.bodyDemand ? { bodyDemand: captureBodyDemand(options.bodyDemand) } : {}),
     }
     return this.enqueue(async () => {
       request.signal?.throwIfAborted()
       try {
+        // The project owns selection intent across a disposable native process.
+        // Resolve omission inside the queue so a later request cannot alter an earlier one.
+        if (request.bodyDemand) this.#bodyDemand = request.bodyDemand
+        else if (this.#bodyDemand) request.bodyDemand = this.#bodyDemand
         this.#service ??= await createTypeScriptAnalysisService({
           project: this.#descriptor,
           sessions: { open: (project) => this.#sessions.open(project, { signal: request.signal }) },

@@ -37,4 +37,3 @@ function checkerCache(checker, root) {
     byRoot.set(root, created);
     return created;
 }
-//# sourceMappingURL=metadata.optimization.js.map

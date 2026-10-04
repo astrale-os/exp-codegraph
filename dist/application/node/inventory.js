@@ -365,4 +365,3 @@ function signalOptions(request) {
 function isRecord(value) {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
-//# sourceMappingURL=inventory.js.map

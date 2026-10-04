@@ -1,0 +1,1598 @@
+{
+  "files": [
+    {
+      "path": "functions/steps/steps.ts",
+      "layer": "functions",
+      "submodule": "steps",
+      "role": "production",
+      "text": "﻿//😀 coordinates\r\nimport {defineWorkflow} from '@astrale-os/sdk/workflow';\ninterface HandClients {}\ninterface WrongIntegrations {}\nexport const work=defineWorkflow<any>()({id:'w'},async({step})=>{step.run('dup',()=>step.run('nested',()=>1));step.run('dup',()=>2);step.run('',()=>3);step.run(' x ',()=>4);step.run(dynamic,()=>5);step.run('missing');step.run('opaque',4);step.run('unknown',remote);});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/workflow",
+          "typeOnly": false,
+          "offset": 19,
+          "length": 56
+        }
+      ]
+    },
+    {
+      "path": "functions/closures/closures.ts",
+      "layer": "functions",
+      "submodule": "closures",
+      "role": "production",
+      "text": "import {defineWorkflow} from '@astrale-os/sdk';const work=defineWorkflow<any>()({id:'w'},async(ctx)=>{function closed(){ctx.step.run('inner',()=>1)};ctx.step.run('outer',()=>closed());});function delegated(s){s.run('inside',()=>1)};const other=defineWorkflow<any>()({id:'x'},async({step:owned})=>{owned.run('outside',()=>delegated(owned));});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 47
+        }
+      ]
+    },
+    {
+      "path": "functions/aliases/aliases.ts",
+      "layer": "functions",
+      "submodule": "aliases",
+      "role": "production",
+      "text": "import {defineWorkflow} from '@astrale-os/sdk/workflow'; const work=defineWorkflow<any>()({id:'a'},async({step})=>{ step.run('a',helper); step.run('b',()=>recursive(step)); }); function helper(){outside.run('not-step',()=>1)} function recursive(step){ recursive(step); step.run('inner',()=>1) } const nonFunction=defineWorkflow<any>()({},opaque);const absentRoots=defineWorkflow<any>()({},()=>{});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/workflow",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 56
+        }
+      ]
+    },
+    {
+      "path": "functions/facade/facade.ts",
+      "layer": "functions",
+      "submodule": "facade",
+      "role": "production",
+      "text": "import {defineWorkflow} from '../index.js'; export const work=defineWorkflow<any>()({},async({step})=>step.run('x',()=>1));\n",
+      "imports": [
+        {
+          "specifier": "../index.js",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 43
+        }
+      ]
+    },
+    {
+      "path": "functions/shadow/shadow.ts",
+      "layer": "functions",
+      "submodule": "shadow",
+      "role": "production",
+      "text": "import {defineWorkflow} from '@astrale-os/sdk/workflow';function shadow(defineWorkflow){defineWorkflow()({},async({step})=>step.run('x',()=>1));}const alias=defineWorkflow;alias()({},async({step})=>step.run('x',()=>1));\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/workflow",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 56
+        }
+      ]
+    },
+    {
+      "path": "functions/unicode/unicode.ts",
+      "layer": "functions",
+      "submodule": "unicode",
+      "role": "production",
+      "text": "import {defineWorkflow} from '@astrale-os/sdk/workflow';const work=defineWorkflow<any>()({},async({step})=>{ step.run('🌱',()=>1);step.run('\\uFEFFx',()=>1);step.run('\\u0085x',()=>1);step.run('🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱',()=>1); });\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/workflow",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 56
+        }
+      ]
+    },
+    {
+      "path": "runtime.ts",
+      "layer": "",
+      "submodule": "",
+      "role": "production",
+      "text": "import {defineRuntime} from '@astrale-os/sdk/runtime'; import { work as first, work as second } from './functions/steps/steps.js'; import {work as facade} from './functions/index.js';const local=[first]; defineRuntime<any>()({functions:[first,second,facade,{},...[first]]});defineRuntime<any>()({functions:local});defineRuntime<any>()({functions:opaque});defineRuntime<any>()(opaque);\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/runtime",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 54
+        },
+        {
+          "specifier": "./functions/steps/steps.js",
+          "typeOnly": false,
+          "offset": 55,
+          "length": 75
+        },
+        {
+          "specifier": "./functions/index.js",
+          "typeOnly": false,
+          "offset": 131,
+          "length": 52
+        }
+      ]
+    },
+    {
+      "path": "application.ts",
+      "layer": "",
+      "submodule": "",
+      "role": "production",
+      "text": "import {defineApplication,requirements} from '@astrale-os/sdk/application';import {schema} from '@astrale-os/sdk/schema';import {Remote} from '@org/remote-domain';export const application=defineApplication({requirements:requirements({functions:[schema.resolve(Remote).functions.allowed]})});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/application",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 75
+        },
+        {
+          "specifier": "@astrale-os/sdk/schema",
+          "typeOnly": false,
+          "offset": 75,
+          "length": 46
+        },
+        {
+          "specifier": "@org/remote-domain",
+          "typeOnly": false,
+          "offset": 121,
+          "length": 42
+        }
+      ]
+    },
+    {
+      "path": "runtime-values.ts",
+      "layer": "",
+      "submodule": "",
+      "role": "production",
+      "text": "import {defineRuntime} from '@astrale-os/sdk/runtime';import * as Functions from './functions/index.js';defineRuntime<any>()({functions: Object.values(Functions)});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/runtime",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 54
+        },
+        {
+          "specifier": "./functions/index.js",
+          "typeOnly": false,
+          "offset": 54,
+          "length": 50
+        }
+      ]
+    },
+    {
+      "path": "functions/index.ts",
+      "layer": "functions",
+      "submodule": "",
+      "role": "production",
+      "text": "export {work} from './steps/steps.js';\n",
+      "imports": [
+        {
+          "specifier": "./steps/steps.js",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 38
+        }
+      ]
+    },
+    {
+      "path": "providers/remote/remote.ts",
+      "layer": "providers",
+      "submodule": "remote",
+      "role": "production",
+      "text": "import {defineProvider} from '@astrale-os/sdk/integration';import {reference} from '@astrale-os/sdk/client/session';import type {Remote} from '@org/remote-domain';defineProvider({}, {go(_input,execution){const ref=reference(remote,remote.functions.allowed); execution.invoke(ref); const wrong=reference(remote,remote.functions.missing);execution.invoke(wrong);execution.invoke(opaque);execution.invoke({} as never);function nested(remote:Remote){execution.invoke(reference(remote,remote.functions.allowed));execution.invoke(reference(remote,remote.functions.missing));} }});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/integration",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 59
+        },
+        {
+          "specifier": "@astrale-os/sdk/client/session",
+          "typeOnly": false,
+          "offset": 59,
+          "length": 57
+        },
+        {
+          "specifier": "@org/remote-domain",
+          "typeOnly": true,
+          "offset": 116,
+          "length": 47
+        }
+      ]
+    },
+    {
+      "path": "providers/aliases/aliases.ts",
+      "layer": "providers",
+      "submodule": "aliases",
+      "role": "production",
+      "text": "import {defineProvider} from '@astrale-os/sdk/integration';import {reference} from '@astrale-os/sdk/client/session';import type {Remote} from '@org/remote-domain';defineProvider({}, {go(remote:Remote,{invoke:run}){const call=run;call(reference(remote,remote.functions.allowed));let mutable=reference(remote,remote.functions.allowed);run(mutable);const immutable=reference(remote,remote.functions.allowed);run(immutable); {const immutable=reference(remote,remote.functions.missing);run(immutable)}; function helper(immutable){run(immutable)} }});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/integration",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 59
+        },
+        {
+          "specifier": "@astrale-os/sdk/client/session",
+          "typeOnly": false,
+          "offset": 59,
+          "length": 57
+        },
+        {
+          "specifier": "@org/remote-domain",
+          "typeOnly": true,
+          "offset": 116,
+          "length": 47
+        }
+      ]
+    },
+    {
+      "path": "providers/local/local.ts",
+      "layer": "providers",
+      "submodule": "local",
+      "role": "production",
+      "text": "import {work} from '../../functions/steps/steps.js';import type {S} from '../../schema/index.js';const opaque={};opaque.query();opaque.invoke();opaque.mutate();\n",
+      "imports": [
+        {
+          "specifier": "../../functions/steps/steps.js",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 52
+        },
+        {
+          "specifier": "../../schema/index.js",
+          "typeOnly": true,
+          "offset": 52,
+          "length": 45
+        }
+      ]
+    },
+    {
+      "path": "providers/shadow/shadow.ts",
+      "layer": "providers",
+      "submodule": "shadow",
+      "role": "production",
+      "text": "import {defineProvider} from '@astrale-os/sdk/integration';function shadow(defineProvider){defineProvider({}, {go(input,execution){execution.invoke(input)}})};const alias=defineProvider;alias({}, {go(input,execution){execution.invoke(input)}});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/integration",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 59
+        }
+      ]
+    },
+    {
+      "path": "schema/index.ts",
+      "layer": "schema",
+      "submodule": "",
+      "role": "production",
+      "text": "import {defineSchema} from '@astrale-os/sdk/schema';export const Old=defineSchema('left',{});export const Next=defineSchema('left',{});export const Other=defineSchema('right',{});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/schema",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 52
+        }
+      ]
+    },
+    {
+      "path": "migrations/check/check.ts",
+      "layer": "migrations",
+      "submodule": "check",
+      "role": "production",
+      "text": "import {defineMigration} from '@astrale-os/sdk';import {schema,Old,Next,Other} from '../../schema/index.js';defineMigration({from:schema.revision(Old),to:schema.revision(Next)});defineMigration({from:schema.revision(Old),to:schema.revision(Old)});defineMigration({from:schema.revision(Old),to:schema.revision(Other)});defineMigration({from:opaque,to:schema.revision(Next)});defineMigration({});defineMigration(opaque);\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 48
+        },
+        {
+          "specifier": "../../schema/index.js",
+          "typeOnly": false,
+          "offset": 48,
+          "length": 60
+        }
+      ]
+    },
+    {
+      "path": "migrations/imports/imports.ts",
+      "layer": "migrations",
+      "submodule": "imports",
+      "role": "production",
+      "text": "import type {work} from '../../functions/steps/steps.js';import bad from 'node:fs';import ok from 'node:assert/strict';import types from 'node:util/types';import adapter from '@astrale-os/adapter-cloudflare';import opaque from '#providers/missing';\n",
+      "imports": [
+        {
+          "specifier": "../../functions/steps/steps.js",
+          "typeOnly": true,
+          "offset": 0,
+          "length": 57
+        },
+        {
+          "specifier": "node:fs",
+          "typeOnly": false,
+          "offset": 57,
+          "length": 26
+        },
+        {
+          "specifier": "node:assert/strict",
+          "typeOnly": false,
+          "offset": 83,
+          "length": 36
+        },
+        {
+          "specifier": "node:util/types",
+          "typeOnly": false,
+          "offset": 119,
+          "length": 36
+        },
+        {
+          "specifier": "@astrale-os/adapter-cloudflare",
+          "typeOnly": false,
+          "offset": 155,
+          "length": 53
+        },
+        {
+          "specifier": "#providers/missing",
+          "typeOnly": false,
+          "offset": 208,
+          "length": 40
+        }
+      ]
+    },
+    {
+      "path": "migrations/facade/facade.ts",
+      "layer": "migrations",
+      "submodule": "facade",
+      "role": "production",
+      "text": "import {defineMigration} from '../index.js';defineMigration({});\n",
+      "imports": [
+        {
+          "specifier": "../index.js",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 44
+        }
+      ]
+    },
+    {
+      "path": "views/check/check.ts",
+      "layer": "views",
+      "submodule": "check",
+      "role": "production",
+      "text": "import {defineSchema,property,nodeClass} from '@astrale-os/sdk/schema';import {defineFrontend} from '@astrale-os/sdk/view';defineSchema('x',{});property({});nodeClass({});defineFrontend({});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/schema",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 71
+        },
+        {
+          "specifier": "@astrale-os/sdk/view",
+          "typeOnly": false,
+          "offset": 71,
+          "length": 52
+        }
+      ]
+    },
+    {
+      "path": "views/facade/facade.ts",
+      "layer": "views",
+      "submodule": "facade",
+      "role": "production",
+      "text": "import {defineSchema,defineFrontend} from '../index.js';defineSchema();defineFrontend({});\n",
+      "imports": [
+        {
+          "specifier": "../index.js",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 56
+        }
+      ]
+    },
+    {
+      "path": "views/shadow/shadow.ts",
+      "layer": "views",
+      "submodule": "shadow",
+      "role": "production",
+      "text": "import {property} from '@astrale-os/sdk/schema';function shadow(property){property({})};const alias=property;alias({});\n",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/schema",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 48
+        }
+      ]
+    },
+    {
+      "path": "functions/units/units.ts",
+      "layer": "functions",
+      "submodule": "units",
+      "role": "production",
+      "text": "import {defineWorkflow} from '@astrale-os/sdk/workflow';defineWorkflow()({},async({step})=>{step.run('\\uD800',()=>1);step.run('\\uDC00',()=>1);step.run('\\uFFFD',()=>1);step.run('\\uD800',()=>1);step.run('\\uDC00',()=>1);step.run('\\uD800\\uDC00',()=>1);step.run('\\u{10000}',()=>1);step.run('__proto__',()=>1);step.run('constructor',()=>1);});",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/workflow",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 56
+        }
+      ]
+    },
+    {
+      "path": "schema/units.ts",
+      "layer": "schema",
+      "submodule": "units",
+      "role": "production",
+      "text": "import {defineSchema} from '@astrale-os/sdk/schema';export const High=defineSchema('\\uD800',{});export const Low=defineSchema('\\uDC00',{});export const Repl=defineSchema('\\uFFFD',{});export const Pair=defineSchema('\\uD800\\uDC00',{});export const Scalar=defineSchema('\\u{10000}',{});",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk/schema",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 52
+        }
+      ]
+    },
+    {
+      "path": "migrations/units/units.ts",
+      "layer": "migrations",
+      "submodule": "units",
+      "role": "production",
+      "text": "import {defineMigration} from '@astrale-os/sdk';import {schema,High,Low,Repl,Pair,Scalar} from '../../schema/units.js';defineMigration({from:schema.revision(High),to:schema.revision(Low)});defineMigration({from:schema.revision(High),to:schema.revision(Repl)});defineMigration({from:schema.revision(Pair),to:schema.revision(Scalar)});",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 48
+        },
+        {
+          "specifier": "../../schema/units.js",
+          "typeOnly": false,
+          "offset": 48,
+          "length": 71
+        }
+      ]
+    },
+    {
+      "path": "functions/focused.test.ts",
+      "layer": "functions",
+      "submodule": "",
+      "role": "focused-test",
+      "text": "import {defineWorkflow} from '@astrale-os/sdk';interface BadClients{};defineWorkflow()({},async({step})=>step.run('',()=>1));",
+      "imports": [
+        {
+          "specifier": "@astrale-os/sdk",
+          "typeOnly": false,
+          "offset": 0,
+          "length": 47
+        }
+      ]
+    }
+  ],
+  "resolutions": {
+    "functions/steps/steps.ts": {
+      "@astrale-os/sdk/workflow": null,
+      "w": null,
+      "dup": null,
+      "nested": null,
+      "": null,
+      " x ": null,
+      "missing": null,
+      "opaque": null,
+      "unknown": null
+    },
+    "functions/closures/closures.ts": {
+      "@astrale-os/sdk": null,
+      "w": null,
+      "inner": null,
+      "outer": null,
+      "inside": null,
+      "x": null,
+      "outside": null
+    },
+    "functions/aliases/aliases.ts": {
+      "@astrale-os/sdk/workflow": null,
+      "a": null,
+      "b": null,
+      "not-step": null,
+      "inner": null
+    },
+    "functions/facade/facade.ts": {
+      "../index.js": "functions/index.ts",
+      "x": null
+    },
+    "functions/shadow/shadow.ts": {
+      "@astrale-os/sdk/workflow": null,
+      "x": null
+    },
+    "functions/unicode/unicode.ts": {
+      "@astrale-os/sdk/workflow": null,
+      "🌱": null,
+      "﻿x": null,
+      "x": null,
+      "🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱": null
+    },
+    "runtime.ts": {
+      "@astrale-os/sdk/runtime": null,
+      "./functions/steps/steps.js": "functions/steps/steps.ts",
+      "./functions/index.js": "functions/index.ts"
+    },
+    "application.ts": {
+      "@astrale-os/sdk/application": null,
+      "@astrale-os/sdk/schema": null,
+      "@org/remote-domain": null
+    },
+    "runtime-values.ts": {
+      "@astrale-os/sdk/runtime": null,
+      "./functions/index.js": "functions/index.ts"
+    },
+    "functions/index.ts": {
+      "./steps/steps.js": "functions/steps/steps.ts"
+    },
+    "providers/remote/remote.ts": {
+      "@astrale-os/sdk/integration": null,
+      "@astrale-os/sdk/client/session": null,
+      "@org/remote-domain": null
+    },
+    "providers/aliases/aliases.ts": {
+      "@astrale-os/sdk/integration": null,
+      "@astrale-os/sdk/client/session": null,
+      "@org/remote-domain": null
+    },
+    "providers/local/local.ts": {
+      "../../functions/steps/steps.js": "functions/steps/steps.ts",
+      "../../schema/index.js": "schema/index.ts"
+    },
+    "providers/shadow/shadow.ts": {
+      "@astrale-os/sdk/integration": null
+    },
+    "schema/index.ts": {
+      "@astrale-os/sdk/schema": null,
+      "left": null,
+      "right": null
+    },
+    "migrations/check/check.ts": {
+      "@astrale-os/sdk": null,
+      "../../schema/index.js": "schema/index.ts"
+    },
+    "migrations/imports/imports.ts": {
+      "../../functions/steps/steps.js": "functions/steps/steps.ts",
+      "node:fs": null,
+      "node:assert/strict": null,
+      "node:util/types": null,
+      "@astrale-os/adapter-cloudflare": null,
+      "#providers/missing": null
+    },
+    "migrations/facade/facade.ts": {
+      "../index.js": null
+    },
+    "views/check/check.ts": {
+      "@astrale-os/sdk/schema": null,
+      "@astrale-os/sdk/view": null,
+      "x": null
+    },
+    "views/facade/facade.ts": {
+      "../index.js": null
+    },
+    "views/shadow/shadow.ts": {
+      "@astrale-os/sdk/schema": null
+    },
+    "functions/units/units.ts": {
+      "@astrale-os/sdk/workflow": null,
+      "\ud800": null,
+      "\udc00": null,
+      "�": null,
+      "𐀀": null,
+      "constructor": null
+    },
+    "schema/units.ts": {
+      "@astrale-os/sdk/schema": null,
+      "\ud800": null,
+      "\udc00": null,
+      "�": null,
+      "𐀀": null
+    },
+    "migrations/units/units.ts": {
+      "@astrale-os/sdk": null,
+      "../../schema/units.js": "schema/units.ts"
+    },
+    "functions/focused.test.ts": {
+      "@astrale-os/sdk": null,
+      "": null
+    }
+  },
+  "stepAdmissions": {
+    "@astrale-os/sdk/workflow": true,
+    "w": true,
+    "dup": true,
+    "nested": true,
+    "": false,
+    " x ": false,
+    "missing": true,
+    "opaque": true,
+    "unknown": true,
+    "@astrale-os/sdk": true,
+    "inner": true,
+    "outer": true,
+    "inside": true,
+    "x": true,
+    "outside": true,
+    "a": true,
+    "b": true,
+    "not-step": true,
+    "../index.js": true,
+    "🌱": true,
+    "﻿x": false,
+    "x": true,
+    "🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱🌱": false,
+    "@astrale-os/sdk/runtime": true,
+    "./functions/steps/steps.js": true,
+    "./functions/index.js": true,
+    "@astrale-os/sdk/application": true,
+    "@astrale-os/sdk/schema": true,
+    "@org/remote-domain": true,
+    "./steps/steps.js": true,
+    "@astrale-os/sdk/integration": true,
+    "@astrale-os/sdk/client/session": true,
+    "../../functions/steps/steps.js": true,
+    "../../schema/index.js": true,
+    "left": true,
+    "right": true,
+    "node:fs": true,
+    "node:assert/strict": true,
+    "node:util/types": true,
+    "@astrale-os/adapter-cloudflare": true,
+    "#providers/missing": true,
+    "@astrale-os/sdk/view": true,
+    "\ud800": true,
+    "\udc00": true,
+    "�": true,
+    "𐀀": true,
+    "__proto__": true,
+    "constructor": true,
+    "../../schema/units.js": true
+  },
+  "stepAdmissionRows": [
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107,
+        47,
+        119,
+        111,
+        114,
+        107,
+        102,
+        108,
+        111,
+        119
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        119
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        100,
+        117,
+        112
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        110,
+        101,
+        115,
+        116,
+        101,
+        100
+      ],
+      "accepted": true
+    },
+    {
+      "units": [],
+      "accepted": false
+    },
+    {
+      "units": [
+        32,
+        120,
+        32
+      ],
+      "accepted": false
+    },
+    {
+      "units": [
+        109,
+        105,
+        115,
+        115,
+        105,
+        110,
+        103
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        111,
+        112,
+        97,
+        113,
+        117,
+        101
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        117,
+        110,
+        107,
+        110,
+        111,
+        119,
+        110
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        105,
+        110,
+        110,
+        101,
+        114
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        111,
+        117,
+        116,
+        101,
+        114
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        105,
+        110,
+        115,
+        105,
+        100,
+        101
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        120
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        111,
+        117,
+        116,
+        115,
+        105,
+        100,
+        101
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        97
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        98
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        110,
+        111,
+        116,
+        45,
+        115,
+        116,
+        101,
+        112
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        46,
+        46,
+        47,
+        105,
+        110,
+        100,
+        101,
+        120,
+        46,
+        106,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        55356,
+        57137
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        65279,
+        120
+      ],
+      "accepted": false
+    },
+    {
+      "units": [
+        133,
+        120
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137,
+        55356,
+        57137
+      ],
+      "accepted": false
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107,
+        47,
+        114,
+        117,
+        110,
+        116,
+        105,
+        109,
+        101
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        46,
+        47,
+        102,
+        117,
+        110,
+        99,
+        116,
+        105,
+        111,
+        110,
+        115,
+        47,
+        115,
+        116,
+        101,
+        112,
+        115,
+        47,
+        115,
+        116,
+        101,
+        112,
+        115,
+        46,
+        106,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        46,
+        47,
+        102,
+        117,
+        110,
+        99,
+        116,
+        105,
+        111,
+        110,
+        115,
+        47,
+        105,
+        110,
+        100,
+        101,
+        120,
+        46,
+        106,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107,
+        47,
+        97,
+        112,
+        112,
+        108,
+        105,
+        99,
+        97,
+        116,
+        105,
+        111,
+        110
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107,
+        47,
+        115,
+        99,
+        104,
+        101,
+        109,
+        97
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        111,
+        114,
+        103,
+        47,
+        114,
+        101,
+        109,
+        111,
+        116,
+        101,
+        45,
+        100,
+        111,
+        109,
+        97,
+        105,
+        110
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        46,
+        47,
+        115,
+        116,
+        101,
+        112,
+        115,
+        47,
+        115,
+        116,
+        101,
+        112,
+        115,
+        46,
+        106,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107,
+        47,
+        105,
+        110,
+        116,
+        101,
+        103,
+        114,
+        97,
+        116,
+        105,
+        111,
+        110
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107,
+        47,
+        99,
+        108,
+        105,
+        101,
+        110,
+        116,
+        47,
+        115,
+        101,
+        115,
+        115,
+        105,
+        111,
+        110
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        46,
+        46,
+        47,
+        46,
+        46,
+        47,
+        102,
+        117,
+        110,
+        99,
+        116,
+        105,
+        111,
+        110,
+        115,
+        47,
+        115,
+        116,
+        101,
+        112,
+        115,
+        47,
+        115,
+        116,
+        101,
+        112,
+        115,
+        46,
+        106,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        46,
+        46,
+        47,
+        46,
+        46,
+        47,
+        115,
+        99,
+        104,
+        101,
+        109,
+        97,
+        47,
+        105,
+        110,
+        100,
+        101,
+        120,
+        46,
+        106,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        108,
+        101,
+        102,
+        116
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        114,
+        105,
+        103,
+        104,
+        116
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        110,
+        111,
+        100,
+        101,
+        58,
+        102,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        110,
+        111,
+        100,
+        101,
+        58,
+        97,
+        115,
+        115,
+        101,
+        114,
+        116,
+        47,
+        115,
+        116,
+        114,
+        105,
+        99,
+        116
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        110,
+        111,
+        100,
+        101,
+        58,
+        117,
+        116,
+        105,
+        108,
+        47,
+        116,
+        121,
+        112,
+        101,
+        115
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        97,
+        100,
+        97,
+        112,
+        116,
+        101,
+        114,
+        45,
+        99,
+        108,
+        111,
+        117,
+        100,
+        102,
+        108,
+        97,
+        114,
+        101
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        35,
+        112,
+        114,
+        111,
+        118,
+        105,
+        100,
+        101,
+        114,
+        115,
+        47,
+        109,
+        105,
+        115,
+        115,
+        105,
+        110,
+        103
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        64,
+        97,
+        115,
+        116,
+        114,
+        97,
+        108,
+        101,
+        45,
+        111,
+        115,
+        47,
+        115,
+        100,
+        107,
+        47,
+        118,
+        105,
+        101,
+        119
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        55296
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        56320
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        65533
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        55296,
+        56320
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        95,
+        95,
+        112,
+        114,
+        111,
+        116,
+        111,
+        95,
+        95
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        99,
+        111,
+        110,
+        115,
+        116,
+        114,
+        117,
+        99,
+        116,
+        111,
+        114
+      ],
+      "accepted": true
+    },
+    {
+      "units": [
+        46,
+        46,
+        47,
+        46,
+        46,
+        47,
+        115,
+        99,
+        104,
+        101,
+        109,
+        97,
+        47,
+        117,
+        110,
+        105,
+        116,
+        115,
+        46,
+        106,
+        115
+      ],
+      "accepted": true
+    }
+  ],
+  "compositionPaths": {
+    "runtime.ts": true,
+    "application.ts": true,
+    "runtime-values.ts": true
+  },
+  "applicationPath": "application.ts"
+}

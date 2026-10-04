@@ -102,4 +102,3 @@ export class TransactionRecordDecoder {
             this.#deletes.push(this.#admission.deletion(record[1]));
     }
 }
-//# sourceMappingURL=transaction-records.js.map

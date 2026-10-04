@@ -37,4 +37,3 @@ export function createSpecificationValidityConformanceProfile() {
         },
     };
 }
-//# sourceMappingURL=profile.js.map

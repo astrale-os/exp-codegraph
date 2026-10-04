@@ -312,4 +312,3 @@ function isTypeScriptConfiguration(path) {
 function sortedUnique(values) {
     return Object.freeze([...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)));
 }
-//# sourceMappingURL=impact.js.map

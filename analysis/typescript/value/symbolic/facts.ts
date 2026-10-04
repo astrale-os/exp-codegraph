@@ -1,17 +1,21 @@
 import { createHash } from 'node:crypto'
 import { physicalPayloadForTransport } from '../../../facts/representation/index.ts'
 import type { FactId, OccurrenceId, SourceId, SymbolId } from '../../../identity/index.ts'
+import { combineCompleteness, type Completeness } from '../../../facts/index.ts'
 import type { AnalysisQuery, CapabilityStatus } from '../../../query/index.ts'
 import type { BodyOccurrence, ResolvedCall } from '../../body/index.ts'
+import type { TypeScriptFunctionHeader } from '../../model.ts'
 import { createTypeScriptFactReader, TypeScriptFactContractError, type TypeScriptFact } from '../../facts/index.ts'
-import type { ValueResult } from '../model.ts'
+import type { TypeScriptBodyDemandReceipt, ValueResult } from '../model.ts'
 import { projectPackedTypeScriptBody } from '../../physical/index.ts'
 import { bodyFragment, type BodyFragment, type NodeReference } from './fragment.ts'
 import { ValueIndexTable, type ValueIndexTableEdit } from './table.ts'
 import { CALL_SELECTION, CallSelection } from './selection.ts'
 
 type Body = TypeScriptFact<'body'>
-export type IndexedFact = Body | TypeScriptFact<'symbol'> | TypeScriptFact<'source'>
+type Demand = TypeScriptFact<'body-demand'>
+type DemandOwner = Demand['payload']['owners'][number]
+export type IndexedFact = Body | Demand | TypeScriptFact<'symbol'> | TypeScriptFact<'source'>
 export interface ValueDependency { readonly key: string; readonly fingerprint: string | undefined }
 export interface ValueIndexRevision {
   readonly token: object
@@ -22,6 +26,9 @@ export interface ValueIndexRevision {
 export interface ValueIndex {
   readonly callsSelection?: CallSelection
   readonly bodies: ReadonlyMap<SymbolId, Body>
+  readonly headers?: ReadonlyMap<SymbolId, TypeScriptFunctionHeader>
+  readonly callableOwners: ReadonlySet<SymbolId>
+  readonly effectCompleteness?: Completeness
   readonly occurrences: ReadonlyMap<OccurrenceId, BodyOccurrence>
   readonly children: ReadonlyMap<OccurrenceId, ReadonlyMap<string, OccurrenceId>>
   readonly parents: ReadonlyMap<OccurrenceId, readonly { parent: OccurrenceId; role: string }[]>
@@ -39,6 +46,8 @@ export interface ValueIndex {
   readonly fingerprints: Pick<ReadonlyMap<string, string>, 'get'>
   readonly evidence: Pick<ReadonlyMap<string, readonly FactId[]>, 'get'>
   readonly revision: ValueIndexRevision
+  /** Missing observed-mode data required before consuming this semantic read. */
+  requirements?(key: string): TypeScriptBodyDemandReceipt['requirements']
   dependency(key: string): ValueDependency
 }
 
@@ -156,9 +165,15 @@ interface Derived {
   readonly escapes: ReadonlyMap<SymbolId, readonly OccurrenceId[]>
   readonly aliases: ReadonlyMap<SymbolId, readonly Alias[]>
   readonly inputs: ReadonlySet<string>
+  readonly ordering: ReadonlyMap<string, readonly SymbolId[]>
 }
 interface Columns {
   readonly bodies: Column<SymbolId, Body>
+  readonly owners: Column<SymbolId, DemandOwner>
+  readonly headers: Column<SymbolId, TypeScriptFunctionHeader>
+  readonly witnesses: Column<OccurrenceId, BodyOccurrence>
+  readonly demands: Column<'global', readonly Demand[]>
+  readonly ordering: Column<string, readonly SymbolId[]>
   readonly occurrences: Column<OccurrenceId, NodeReference>
   readonly calls: Column<OccurrenceId, NodeReference>
   readonly callsBySource: Column<SourceId, readonly OccurrenceId[]>
@@ -176,6 +191,9 @@ export class IndexedValues implements ValueIndex {
   readonly callsSelection: CallSelection | undefined
   readonly work: { readonly facts: number; readonly bodies: number; readonly contributions: number }
   readonly bodies: ValueIndex['bodies']
+  readonly headers: ReadonlyMap<SymbolId, TypeScriptFunctionHeader>
+  readonly callableOwners: ValueIndex['callableOwners']
+  readonly effectCompleteness: Completeness | undefined
   readonly occurrences: ValueIndex['occurrences']
   readonly children: ValueIndex['children']
   readonly parents: ValueIndex['parents']
@@ -212,6 +230,7 @@ export class IndexedValues implements ValueIndex {
     revision: ValueIndexRevision,
     work = { facts: 0, bodies: 0, contributions: 0 },
     selection = new CallSelection(),
+    effectCompleteness?: Completeness,
   ) {
     this.#facts = facts; this.#columns = columns; this.#derived = derived
     this.#hashes = hashes; this.#factEvidence = factEvidence
@@ -222,7 +241,10 @@ export class IndexedValues implements ValueIndex {
     this.callsSelection = revision.selection === CALL_SELECTION ? selection : undefined
     this.work = Object.freeze(work)
     this.bodies = columns.bodies
-    this.occurrences = projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row))
+    this.headers = columns.headers
+    this.callableOwners = keysSet(fallbackMap<SymbolId, unknown, unknown>(columns.bodies, columns.owners))
+    this.effectCompleteness = effectCompleteness
+    this.occurrences = fallbackMap(projectColumn(columns.occurrences, (ref) => ref.fragment.node(ref.row)), columns.witnesses)
     this.children = projectColumn(columns.occurrences, (ref) => ref.fragment.children(ref.row), mergeChildren)
     this.parents = projectColumn(columns.occurrences, (ref) => ref.fragment.parents(ref.row), flatten)
     this.definitions = projectColumn(columns.occurrences, (ref) => ref.fragment.definitions(ref.row), flatten)
@@ -235,8 +257,11 @@ export class IndexedValues implements ValueIndex {
     this.mutations = mutationOwners; this.escapes = keysSet(columns.escapes); this.aliases = aliasSources
     this.fingerprints = { get: (key) => this.fingerprint(key) }
     this.evidence = { get: (key) => {
+      if (key.startsWith('header:')) return columns.headers.evidence(key.slice(7) as SymbolId, factEvidence)
       if (key.startsWith('function:')) return columns.bodies.evidence(key.slice(9) as SymbolId, factEvidence)
-      if (key.startsWith('occurrence:')) return columns.occurrences.evidence(key.slice(11) as OccurrenceId, factEvidence)
+      if (key.startsWith('occurrence:')) return columns.occurrences.evidence(key.slice(11) as OccurrenceId, factEvidence) ?? columns.witnesses.evidence(key.slice(11) as OccurrenceId, factEvidence)
+      if (key.startsWith('owner:')) return columns.owners.evidence(key.slice(6) as SymbolId, factEvidence) ?? columns.bodies.evidence(key.slice(6) as SymbolId, factEvidence)
+      if (key === 'effects:inventory') return columns.demands.evidence('global', factEvidence)
       if (key.startsWith('symbol:')) return columns.symbols.evidence(key.slice(7) as SymbolId, factEvidence)
       return this.#aggregateEvidence.get(key)
     } }
@@ -244,7 +269,7 @@ export class IndexedValues implements ValueIndex {
 
   static empty(): IndexedValues {
     const columns: Columns = {
-      bodies: new Column(), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
+      bodies: new Column(), owners: new Column(), headers: new Column(), witnesses: new Column(), demands: new Column(undefined, flatten), ordering: new Column(undefined, flatten), occurrences: new Column(), calls: new Column(), callsBySource: new Column(undefined, flatten),
       symbols: new Column(), sources: new Column(),
       initializers: new Column(undefined, flatten), mutations: new Column(undefined, flatten), escapes: new Column(undefined, flatten),
       aliases: new Column(undefined, flatten), dependents: new Column(undefined, flatten),
@@ -252,6 +277,28 @@ export class IndexedValues implements ValueIndex {
     return new IndexedValues(new ValueIndexTable(), columns, new ValueIndexTable(), new ValueIndexTable(),
       new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(), new ValueIndexTable(),
       { token: {}, changed: new Set() })
+  }
+
+  requirements(key: string): TypeScriptBodyDemandReceipt['requirements'] {
+    if (!this.#columns.demands.get('global')?.some((fact) => fact.payload.observed === true)) return []
+    if (key.startsWith('function:')) {
+      const owner = key.slice(9) as SymbolId
+      return this.#columns.owners.has(owner) && !this.bodies.has(owner) ? [{ owner, kind: 'body' }] : []
+    }
+    if (key.startsWith('occurrence:')) {
+      const id = key.slice(11) as OccurrenceId
+      const witness = this.#columns.witnesses.get(id)
+      const header = witness?.symbol && this.headers.get(witness.symbol)
+      const headerWitness = header && FUNCTION_SYNTAX.has(witness!.syntax) && sameSpan(header.span, witness!.span)
+      return !this.#columns.occurrences.has(id) && witness && !headerWitness ? [{ owner: witness.owner, kind: 'body' }] : []
+    }
+    const owners = new Set(this.#columns.ordering.get(key))
+    if (owners.size <= 1) return []
+    return [...owners].flatMap((owner) => {
+      const member = this.#columns.owners.get(owner)
+      if (!member) throw new TypeScriptFactContractError('body-demand', this.#columns.demands.get('global')![0]!.id, ['effect-owner-missing'])
+      return member.fact ? [] : [{ owner, kind: 'effect-order' as const }]
+    })
   }
 
   dependency(key: string): ValueDependency {
@@ -280,8 +327,10 @@ export class IndexedValues implements ValueIndex {
   }
 
   private fingerprint(key: string): string | undefined {
+    if (key.startsWith('header:')) return this.#columns.headers.fingerprint(key.slice(7) as SymbolId, this.#hashes)
     if (key.startsWith('function:')) return this.#columns.bodies.fingerprint(key.slice(9) as SymbolId, this.#hashes)
-    if (key.startsWith('occurrence:')) return this.#columns.occurrences.fingerprint(key.slice(11) as OccurrenceId, this.#hashes)
+    if (key.startsWith('occurrence:')) return this.#columns.occurrences.fingerprint(key.slice(11) as OccurrenceId, this.#hashes) ?? this.#columns.witnesses.fingerprint(key.slice(11) as OccurrenceId, this.#hashes)
+    if (key.startsWith('owner:')) return this.#columns.owners.fingerprint(key.slice(6) as SymbolId, this.#hashes) ?? this.#columns.bodies.fingerprint(key.slice(6) as SymbolId, this.#hashes)
     if (key.startsWith('symbol:')) return this.#columns.symbols.fingerprint(key.slice(7) as SymbolId, this.#hashes)
     return this.#witnesses.get(key)?.fingerprint
   }
@@ -327,8 +376,32 @@ export class IndexedValues implements ValueIndex {
         factEvidence.set(id, Object.freeze([id]))
       } else { facts.delete(id); hashes.delete(id); factEvidence.delete(id) }
     }
+    const inventory = columns.demands.get('global')
+    for (const fact of inventory ?? []) for (const owner of fact.payload.owners) {
+      const body = columns.bodies.get(owner.owner)
+      const header = columns.headers.get(owner.owner)
+      const source = header && columns.sources.get(header.span.source)
+      if (header && source && (source.payload.revision !== header.span.revision || source.payload.logicalPath !== owner.path)) {
+        throw new TypeScriptFactContractError('body-demand', fact.id, ['header-source-mismatch'])
+      }
+      if (header && body && (header.owner !== body.payload.body.function || body.payload.body.scope === 'module' ||
+        !body.provenance.evidence.some((span) => sameSpan(header.span, span)) ||
+        header.execution !== body.payload.body.execution ||
+        JSON.stringify(header.parameters) !== JSON.stringify(body.payload.body.parameters))) {
+        throw new TypeScriptFactContractError('body-demand', fact.id, ['header-body-mismatch'])
+      }
+      if (owner.fact && body?.id !== owner.fact) {
+        throw new TypeScriptFactContractError('body-demand', fact.id, ['materialized-owner-fact'])
+      }
+    }
+    const hadInventory = this.#columns.demands.has('global')
+    const effectCompleteness = demandEffectCompleteness(inventory, capabilities)
+    if (JSON.stringify(effectCompleteness) !== JSON.stringify(this.effectCompleteness)) touched.add('effects:inventory')
     const affected = new Set<FactId>()
-    for (const [id, fact] of changed) if (fact?.namespace === 'typescript.body' || this.#derived.has(id)) affected.add(id)
+    for (const [id, fact] of changed) if (fact?.namespace === 'typescript.body' || fact?.namespace === 'typescript.body-demand' || this.#derived.has(id)) affected.add(id)
+    // A revision changes effect authority atomically. Selected bodies contribute
+    // their full semantic relations; global effects come from the inventory once.
+    if (hadInventory !== !!inventory) for (const [id, fact] of this.#facts) if (fact.namespace === 'typescript.body') affected.add(id)
     if (inputs) for (const key of inputs) {
       // Effect classification asks whether a callee body exists, not for its contents.
       if (key.startsWith('function:') && this.bodies.has(key.slice(9) as SymbolId) === !!columns.bodies.get(key.slice(9) as SymbolId)) continue
@@ -338,8 +411,8 @@ export class IndexedValues implements ValueIndex {
       const previous = this.#derived.get(id)
       if (previous) derivedColumns(columns, id, previous, false, touched)
       const fact = facts.get(id)
-      if (fact?.namespace === 'typescript.body') {
-        const next = derive(fact, columns)
+      if (fact?.namespace === 'typescript.body' && !inventory || fact?.namespace === 'typescript.body-demand') {
+        const next = fact.namespace === 'typescript.body-demand' ? deriveDemand(fact) : derive(fact, columns)
         derivedColumns(columns, id, next, true, touched)
         derived.set(id, next)
       } else derived.delete(id)
@@ -351,23 +424,26 @@ export class IndexedValues implements ValueIndex {
     const aggregateEvidence = this.#aggregateEvidence.edit()
     const mutationOwners = this.#mutationOwners.edit()
     const aliasSources = this.#aliasSources.edit()
-    const directFingerprint = (key: string): string | undefined => key.startsWith('function:')
+    const directFingerprint = (key: string): string | undefined => key.startsWith('header:')
+      ? nextColumns.headers.fingerprint(key.slice(7) as SymbolId, nextHashes) : key.startsWith('function:')
       ? nextColumns.bodies.fingerprint(key.slice(9) as SymbolId, nextHashes) : key.startsWith('occurrence:')
-      ? nextColumns.occurrences.fingerprint(key.slice(11) as OccurrenceId, nextHashes) : key.startsWith('symbol:')
-      ? nextColumns.symbols.fingerprint(key.slice(7) as SymbolId, nextHashes) : undefined
-    const occurrenceFingerprint = (id: OccurrenceId) => nextColumns.occurrences.fingerprint(id, nextHashes)
+      ? nextColumns.occurrences.fingerprint(key.slice(11) as OccurrenceId, nextHashes) ?? nextColumns.witnesses.fingerprint(key.slice(11) as OccurrenceId, nextHashes) : key.startsWith('symbol:')
+      ? nextColumns.symbols.fingerprint(key.slice(7) as SymbolId, nextHashes) : key.startsWith('owner:')
+      ? nextColumns.owners.fingerprint(key.slice(6) as SymbolId, nextHashes) ?? nextColumns.bodies.fingerprint(key.slice(6) as SymbolId, nextHashes) : undefined
+    const occurrenceFingerprint = (id: OccurrenceId) => nextColumns.occurrences.fingerprint(id, nextHashes) ?? nextColumns.witnesses.fingerprint(id, nextHashes)
     const occurrenceEvidence = (ids: readonly OccurrenceId[]) => [...new Set(ids.flatMap((id) =>
-      nextColumns.occurrences.evidence(id, nextEvidence) ?? []))]
+      nextColumns.occurrences.evidence(id, nextEvidence) ?? nextColumns.witnesses.evidence(id, nextEvidence) ?? []))]
     const changedKeys = new Set<string>()
     for (const key of touched) {
       let fingerprint = directFingerprint(key)
       const separator = key.indexOf(':')
       const kind = key.slice(0, separator)
       const symbol = key.slice(separator + 1) as SymbolId
+      if (key === 'effects:inventory') fingerprint = inventory || effectCompleteness ? JSON.stringify([nextColumns.demands.fingerprint('global', nextHashes), effectCompleteness]) : undefined
       if (kind === 'initializers') {
         const values = nextColumns.initializers.get(symbol)
         if (values) {
-          fingerprint = JSON.stringify([...values].sort().map((id) => [id, occurrenceFingerprint(id)]))
+          fingerprint = JSON.stringify([nextColumns.initializers.fingerprint(symbol, nextHashes), [...values].sort().map((id) => [id, occurrenceFingerprint(id)])])
           aggregateEvidence.set(key, occurrenceEvidence(values))
         }
         else aggregateEvidence.delete(key)
@@ -377,9 +453,9 @@ export class IndexedValues implements ValueIndex {
           (kind === 'mutation' ? nextColumns.mutations.get(symbol) : kind === 'escape' ? nextColumns.escapes.get(symbol) : undefined)
         if (values?.length) {
           const ids = [...new Set(values)].sort()
-          fingerprint = JSON.stringify(ids.map((id) => [`occurrence:${id}`, occurrenceFingerprint(id)]))
+          fingerprint = JSON.stringify([(kind === 'mutation' ? nextColumns.mutations : kind === 'escape' ? nextColumns.escapes : nextColumns.aliases).fingerprint(symbol, nextHashes), ids.map((id) => [`occurrence:${id}`, occurrenceFingerprint(id)])])
           aggregateEvidence.set(key, occurrenceEvidence(ids))
-          if (kind === 'mutation') mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id)!.fragment.owner))])
+          if (kind === 'mutation') mutationOwners.set(symbol, [...new Set(ids.map((id) => nextColumns.occurrences.get(id)?.fragment.owner ?? nextColumns.witnesses.get(id)!.owner))])
           if (kind === 'aliases') aliasSources.set(symbol, [...new Set(aliases!.map((alias) => alias.from))])
         } else {
           aggregateEvidence.delete(key)
@@ -408,21 +484,23 @@ export class IndexedValues implements ValueIndex {
     const previousBodies = this.#columns.bodies, nextBodies = nextColumns.bodies
     const selection = this.#selection.update((function* () {
       for (const owner of bodyOwners) yield [previousBodies.get(owner), nextBodies.get(owner)] as const
-    })(), siteSources, this.#columns, nextColumns, capabilities, initial ? undefined : changedKeys)
+    })(), siteSources, this.#columns, nextColumns, capabilities, initial ? undefined : changedKeys, inventory)
     return new IndexedValues(facts.finish(), nextColumns, derived.finish(), nextHashes, nextEvidence, witnesses.finish(),
       aggregateEvidence.finish(), mutationOwners.finish(), aliasSources.finish(),
       { token: {}, ...(!initial ? { parent: this.revision.token } : {}), changed: changedKeys,
         ...(capabilities ? { selection: CALL_SELECTION } : {}) },
-      { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) }, selection)
+      { facts: changed.size, bodies: affected.size, contributions: Object.values(columns).reduce((sum, column) => sum + column.contributionWork, 0) }, selection, effectCompleteness)
   }
 }
 
 export async function loadValueIndex(query: AnalysisQuery): Promise<IndexedValues> {
   const reader = createTypeScriptFactReader(query)
-  const [bodies, symbols, sources, capabilities] = await Promise.all([
-    readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source')), query.capabilities(),
+  const capabilities = await query.capabilities()
+  const [bodies, symbols, sources, demands] = await Promise.all([
+    readIndexedBodies(query), collect(reader.export('symbol')), collect(reader.export('source')),
+    capabilities.some(({ capability }) => capability === 'typescript.body-demand') ? collect(reader.export('body-demand')) : [],
   ])
-  return IndexedValues.empty().update([...bodies, ...symbols, ...sources], [], true, capabilities)
+  return IndexedValues.empty().update([...bodies, ...symbols, ...sources, ...demands], [], true, capabilities)
 }
 
 function callOwnerSources(columns: Columns, id: OccurrenceId, sources: Set<SourceId>): void {
@@ -451,9 +529,27 @@ function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<s
     return
   }
   if (fact.namespace === 'typescript.source') { apply(columns.sources, fact.payload.source, fact); return }
+  if (fact.namespace === 'typescript.body-demand') {
+    apply(columns.demands, 'global', [fact])
+    touched.add('effects:inventory')
+    for (const member of fact.payload.owners) {
+      apply(columns.owners, member.owner, member); touched.add(`owner:${member.owner}`)
+      if (member.header && fact.completeness.kind === 'complete' && fact.payload.completeness.kind === 'complete') {
+        const header = Object.freeze({ ...member.header, span: Object.freeze({ ...member.header.span }),
+          parameters: Object.freeze([...member.header.parameters]) })
+        apply(columns.headers, member.owner, header)
+        touched.add(`header:${member.owner}`)
+      }
+    }
+    for (const witness of fact.payload.witnesses) {
+      apply(columns.witnesses, witness.id, witness)
+      touched.add(`occurrence:${witness.id}`); inputs?.add(`occurrence:${witness.id}`)
+    }
+    return
+  }
   const fragment = bodyFragment(fact)
   apply(columns.bodies, fragment.owner, fact)
-  touched.add(`function:${fragment.owner}`); inputs?.add(`function:${fragment.owner}`)
+  touched.add(`owner:${fragment.owner}`); touched.add(`function:${fragment.owner}`); inputs?.add(`function:${fragment.owner}`)
   const occurrence = (row: number) => {
     const id = fragment.id(row)
     const previous = columns.occurrences.get(id)
@@ -561,7 +657,7 @@ function derive(fact: Body, columns: Edits): Derived {
   }
   if (fragment.packed) for (let row = 0; row < fragment.packed.calls.length; row++) deriveCall(row)
   else for (const reference of fragment.logicalCalls()) deriveCall(reference.row)
-  return { initializers, mutations, escapes, aliases, inputs }
+  return { initializers, mutations, escapes, aliases, inputs, ordering: new Map() }
 }
 
 function derivedColumns(columns: Edits, owner: FactId, value: Derived, add: boolean, touched: Set<string>): void {
@@ -579,6 +675,10 @@ function derivedColumns(columns: Edits, owner: FactId, value: Derived, add: bool
     if (add) columns.aliases.set(key, owner, items)
     else columns.aliases.delete(key, owner)
     touched.add(`aliases:${key}`)
+  }
+  for (const [key, owners] of value.ordering) {
+    if (add) columns.ordering.set(key, owner, owners)
+    else columns.ordering.delete(key, owner)
   }
   for (const key of value.inputs) {
     if (add) columns.dependents.set(key, owner, [owner])
@@ -661,4 +761,58 @@ function projectSlot<Value, Result>(slot: Slot<Value> | { readonly owners: Reado
   const values = [...slot.owners].sort(([a], [b]) => a.localeCompare(b))
     .flatMap(([, contribution]) => { const result = project(contribution.value); return result === undefined ? [] : [result] })
   return values.length ? merge(values) : undefined
+}
+
+/** Thin witnesses fill absent rows; full semantic rows retain projection ownership. */
+function fallbackMap<Key extends string, Value, Fallback extends Value>(
+  primary: ReadonlyMap<Key, Value>, fallback: ReadonlyMap<Key, Fallback>,
+): ReadonlyMap<Key, Value> {
+  const get = (key: Key) => primary.get(key) ?? fallback.get(key)
+  const result: ReadonlyMap<Key, Value> = {
+    get, has: (key) => primary.has(key) || fallback.has(key),
+    get size() { let count = primary.size; for (const key of fallback.keys()) if (!primary.has(key)) count++; return count },
+    *entries(): MapIterator<[Key, Value]> {
+      yield* primary
+      for (const [key, value] of fallback) if (!primary.has(key)) yield [key, value]
+    },
+    *keys(): MapIterator<Key> { for (const [key] of result) yield key },
+    *values(): MapIterator<Value> { for (const [, value] of result) yield value },
+    [Symbol.iterator]() { return this.entries() },
+    forEach(callback, thisArg) { for (const [key, value] of result) callback.call(thisArg, value, key, result) },
+  }
+  return result
+}
+
+function demandEffectCompleteness(facts: readonly Demand[] | undefined, capabilities?: readonly CapabilityStatus[]): Completeness | undefined {
+  const status = capabilities?.find(({ capability }) => capability === 'typescript.body-demand')
+  if (!facts && !status) return
+  if (!facts?.length) return { kind: 'unavailable', reasons: [{ code: 'VALUE_EFFECT_INVENTORY_MISSING',
+    message: 'The selected body projection has no global effect inventory.', retryable: false }] }
+  let result: Completeness = status?.completeness ?? { kind: 'complete' }
+  for (const fact of facts) result = combineCompleteness(result, combineCompleteness(fact.completeness, fact.payload.completeness))
+  return result
+}
+
+function deriveDemand(fact: Demand): Derived {
+  const initializers = new Map<SymbolId, OccurrenceId[]>(), mutations = new Map<SymbolId, OccurrenceId[]>()
+  const escapes = new Map<SymbolId, OccurrenceId[]>(), aliases = new Map<SymbolId, Alias[]>()
+  const owners = new Map(fact.payload.owners.map((owner) => [owner.owner, owner]))
+  // Actual original fact IDs retain the full index's contribution order. Lists
+  // with several owners remain unreadable until each ID is supplied; a single
+  // owner's rows already retain their native order without loading its body.
+  const ordered = <Row extends { readonly owner: SymbolId }>(rows: readonly Row[]) => [...rows].sort((left, right) =>
+    (owners.get(left.owner)?.fact ?? left.owner).localeCompare(owners.get(right.owner)?.fact ?? right.owner))
+  for (const row of ordered(fact.payload.initializers)) append(initializers, row.symbol, row.occurrence)
+  for (const row of fact.payload.mutations) append(mutations, row.symbol, row.occurrence)
+  for (const row of fact.payload.escapes) append(escapes, row.symbol, row.occurrence)
+  for (const row of ordered(fact.payload.aliases)) append(aliases, row.symbol, { from: row.from, occurrence: row.occurrence })
+  const ordering = new Map<string, SymbolId[]>()
+  for (const row of fact.payload.initializers) append(ordering, `initializers:${row.symbol}`, row.owner)
+  for (const row of fact.payload.aliases) append(ordering, `aliases:${row.symbol}`, row.owner)
+  return { initializers, mutations, escapes, aliases, inputs: new Set(), ordering }
+}
+
+const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration'])
+function sameSpan(left: TypeScriptFunctionHeader['span'], right: BodyOccurrence['span']): boolean {
+  return left.source === right.source && left.revision === right.revision && left.start === right.start && left.end === right.end
 }

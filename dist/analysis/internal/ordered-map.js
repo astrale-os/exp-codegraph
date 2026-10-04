@@ -120,4 +120,3 @@ function removeFirst(current) {
         return current.right;
     return balance(node(current.key, current.value, removeFirst(current.left), current.right));
 }
-//# sourceMappingURL=ordered-map.js.map

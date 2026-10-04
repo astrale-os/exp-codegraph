@@ -36,4 +36,3 @@ export function readPointer(value, pointer) {
     }
     return { found: true, value: current };
 }
-//# sourceMappingURL=pointer.js.map

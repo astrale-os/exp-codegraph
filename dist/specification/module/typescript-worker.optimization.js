@@ -13,4 +13,3 @@ const result = {
 };
 process.stdout.write(JSON.stringify(result));
 process.stderr.write(JSON.stringify({ peakResidentBytes: process.resourceUsage().maxRSS * 1_024 }));
-//# sourceMappingURL=typescript-worker.optimization.js.map

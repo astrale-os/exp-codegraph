@@ -39,4 +39,3 @@ export function applicationCheckpointSpecificationDependencies(specification, co
         ].filter((source) => source !== specification.source && corpusSources.has(source)))]
         .sort((left, right) => left.localeCompare(right));
 }
-//# sourceMappingURL=projection.optimization.js.map

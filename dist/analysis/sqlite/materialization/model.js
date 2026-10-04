@@ -112,4 +112,3 @@ function immutable(value) {
         immutable(entry);
     return Object.freeze(value);
 }
-//# sourceMappingURL=model.js.map

@@ -115,4 +115,3 @@ export function analyzeSourceLines(input, analyzers = defaultRepositorySourceLin
     }
     return { metrics: analyzer.analyze(input), analyzer };
 }
-//# sourceMappingURL=lines.js.map

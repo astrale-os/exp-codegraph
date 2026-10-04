@@ -51,4 +51,3 @@ export function transition(definition, state, event) {
     }
     return target;
 }
-//# sourceMappingURL=state.js.map

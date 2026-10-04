@@ -26,4 +26,3 @@ export function applicationRepositoryExcludes(root, exclude) {
     const scopedArtifacts = rootName === 'evidence' || rootName === 'benchmark' ? ['artifacts'] : [];
     return [...new Set([...APPLICATION_REPOSITORY_EXCLUDES, ...scopedArtifacts, ...exclude])].sort((left, right) => left.localeCompare(right));
 }
-//# sourceMappingURL=scope.js.map

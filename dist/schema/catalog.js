@@ -68,4 +68,3 @@ function schemaCatalogDiagnostic(code, error, resource) {
         column: 1,
     };
 }
-//# sourceMappingURL=catalog.js.map

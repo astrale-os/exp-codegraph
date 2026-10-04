@@ -21,4 +21,3 @@ export function valueLimit(value) {
     }
     return undefined;
 }
-//# sourceMappingURL=limits.js.map

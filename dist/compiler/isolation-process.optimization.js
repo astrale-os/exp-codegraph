@@ -127,4 +127,3 @@ function positiveInteger(value, fallback) {
 function diagnostic(code, message) {
     return { source: 'isolation', code, severity: 'error', message };
 }
-//# sourceMappingURL=isolation-process.optimization.js.map

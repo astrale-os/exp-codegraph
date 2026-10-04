@@ -381,4 +381,3 @@ function sha256(value) {
 function withAcceleration(result, events) {
     return { ...result, acceleration: createCliAccelerationReceipt(events) };
 }
-//# sourceMappingURL=checkpoint.js.map

@@ -362,4 +362,3 @@ function byKey(left, right) {
 function byShardKey(left, right) {
     return left.key.localeCompare(right.key);
 }
-//# sourceMappingURL=state.js.map

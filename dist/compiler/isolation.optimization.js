@@ -41,4 +41,3 @@ function fixedBatches(length, maximum) {
 function positiveInteger(value, fallback) {
     return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-//# sourceMappingURL=isolation.optimization.js.map

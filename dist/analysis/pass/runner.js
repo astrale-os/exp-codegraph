@@ -507,4 +507,3 @@ function byFact(left, right) {
 function byHeader(left, right) {
     return left.id.localeCompare(right.id);
 }
-//# sourceMappingURL=runner.js.map

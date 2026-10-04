@@ -294,4 +294,3 @@ function sourcePosition(text, offset) {
     const before = text.slice(0, Math.max(0, offset)).split('\n');
     return { line: before.length, column: (before.at(-1)?.length ?? 0) + 1 };
 }
-//# sourceMappingURL=icon.js.map

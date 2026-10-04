@@ -16,4 +16,3 @@ export function observeDeclarationOnce(catalogRoot, checker, symbol, semantics) 
     byIdentity.set(identity, observed);
     return observed;
 }
-//# sourceMappingURL=observe.optimization.js.map

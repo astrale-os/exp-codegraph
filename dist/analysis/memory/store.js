@@ -150,4 +150,3 @@ class MemoryAnalysisStore {
             throw new Error('Analysis store is disposed.');
     }
 }
-//# sourceMappingURL=store.js.map

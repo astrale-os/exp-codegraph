@@ -3,4 +3,3 @@ import { validateBodyView } from './validation.js';
 export function validateFunctionBodyIR(body) {
     return validateBodyView(body);
 }
-//# sourceMappingURL=model.js.map

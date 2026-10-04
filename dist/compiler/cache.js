@@ -152,4 +152,3 @@ function isCacheable(compilation) {
 function positiveInteger(value, fallback) {
     return Number.isSafeInteger(value) && value > 0 ? value : fallback;
 }
-//# sourceMappingURL=cache.js.map

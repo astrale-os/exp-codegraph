@@ -61,7 +61,7 @@ export function createCallProjection(query, loadIndex) {
         const inventory = await pending;
         signal?.throwIfAborted();
         observe?.(inventory.selection ? inventory.index.revision : undefined, keys);
-        let completeness = inventory.completion;
+        let completeness = inventory.selection?.scoped(options, inventory.paths) ?? inventory.completion;
         if (paths?.size === 0 || sources?.size === 0)
             return Object.freeze({ sites: Object.freeze([]), completeness: freezeCompleteness(completeness) });
         const result = [];
@@ -132,4 +132,3 @@ async function collect(values) {
         result.push(value);
     return result;
 }
-//# sourceMappingURL=calls.js.map

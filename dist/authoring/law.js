@@ -2,4 +2,3 @@
 export function defineLaw(definition) {
     return definition;
 }
-//# sourceMappingURL=law.js.map

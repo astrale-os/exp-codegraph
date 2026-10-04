@@ -38,4 +38,3 @@ function hasUnresolvedEntrypoint(surface) {
     return surface.issues.some((issue) => issue.code === 'MODULE_ENTRYPOINT_NOT_IN_PROJECT' ||
         issue.code === 'MODULE_ENTRYPOINT_SYMBOL_UNRESOLVED');
 }
-//# sourceMappingURL=alias.js.map

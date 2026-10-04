@@ -12,17 +12,26 @@ const (
 	typescriptBodyPayloadCodecV5 = "typescript.body.packed/5"
 )
 
+// Demand is explicit selection authority, not a promise of global body IR.
+// Owned source identities and effects always cover the complete Program.
+type bodyDemandRecipe struct {
+	Paths  []string  `json:"paths"`
+	Owners *[]string `json:"owners,omitempty"`
+}
+
 type request struct {
-	ID           int            `json:"id"`
-	Kind         string         `json:"kind"`
-	Base         string         `json:"base,omitempty"`
-	BaseSequence int            `json:"baseSequence,omitempty"`
-	Generation   string         `json:"generation,omitempty"`
-	Sequence     int            `json:"sequence,omitempty"`
-	Changed      []string       `json:"changed,omitempty"`
-	Changes      []sourceChange `json:"changes,omitempty"`
-	Invalidate   bool           `json:"invalidate,omitempty"`
-	RecordLimits *recordLimits  `json:"recordLimits,omitempty"`
+	ID           int               `json:"id"`
+	Kind         string            `json:"kind"`
+	Base         string            `json:"base,omitempty"`
+	BaseSequence int               `json:"baseSequence,omitempty"`
+	Generation   string            `json:"generation,omitempty"`
+	Sequence     int               `json:"sequence,omitempty"`
+	Changed      []string          `json:"changed,omitempty"`
+	Changes      []sourceChange    `json:"changes,omitempty"`
+	Discover     bool              `json:"discover,omitempty"`
+	Invalidate   bool              `json:"invalidate,omitempty"`
+	RecordLimits *recordLimits     `json:"recordLimits,omitempty"`
+	BodyDemand   *bodyDemandRecipe `json:"bodyDemand,omitempty"`
 }
 
 // Private record-stream negotiation. Older producers ignore this request field
@@ -40,23 +49,13 @@ type sourceChange struct {
 }
 
 type response struct {
-	ID              int              `json:"id"`
-	ProtocolVersion int              `json:"protocolVersion"`
-	Kind            string           `json:"kind"`
-	Transaction     *factTransaction `json:"transaction,omitempty"`
-	Delta           *factDelta       `json:"delta,omitempty"`
-	Generation      string           `json:"generation,omitempty"`
-	Code            string           `json:"code,omitempty"`
-	Message         string           `json:"message,omitempty"`
-	Retryable       bool             `json:"retryable,omitempty"`
-}
-
-type factDelta struct {
-	ProtocolVersion int                `json:"protocolVersion"`
-	Base            string             `json:"base"`
-	Next            analysisGeneration `json:"next"`
-	Upserts         []factShard        `json:"upserts"`
-	Deletes         []string           `json:"deletes"`
+	ID              int    `json:"id"`
+	ProtocolVersion int    `json:"protocolVersion"`
+	Kind            string `json:"kind"`
+	Generation      string `json:"generation,omitempty"`
+	Code            string `json:"code,omitempty"`
+	Message         string `json:"message,omitempty"`
+	Retryable       bool   `json:"retryable,omitempty"`
 }
 
 type producerIdentity struct {

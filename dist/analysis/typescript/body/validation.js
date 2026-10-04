@@ -158,4 +158,3 @@ function validSymbolOrigin(origin) {
         typeof origin.file === 'string' && origin.file && Array.isArray(origin.path) &&
         origin.path.length && origin.path.every((part) => typeof part === 'string' && part));
 }
-//# sourceMappingURL=validation.js.map

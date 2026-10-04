@@ -64,4 +64,3 @@ function balancedCall(value) {
     }
     return !quote && brackets.length === 0;
 }
-//# sourceMappingURL=markdown-reference.js.map

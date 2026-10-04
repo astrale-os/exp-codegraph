@@ -242,7 +242,12 @@ describe('TypeSpec V2 generic analysis foundation', () => {
   it('enforces the extraction-ready production import DAG and headless boundary', async () => {
     const analysisRoot = resolve(import.meta.dirname, '../analysis')
     const files = await typescriptFiles(analysisRoot)
+    const nativeDistributionEdges = new Map([
+      [resolve(analysisRoot, 'native/decision-session.ts'), resolve(analysisRoot, 'typescript/distribution/resolve.ts')],
+      [resolve(analysisRoot, 'native/index.ts'), resolve(analysisRoot, 'typescript/distribution/index.ts')],
+    ])
     const allowed: Record<string, ReadonlySet<string>> = {
+      native: new Set(),
       facade: new Set([
         'binding',
         'facts',
@@ -291,7 +296,8 @@ describe('TypeSpec V2 generic analysis foundation', () => {
         if (
           targetOwner !== sourceOwner &&
           targetOwner !== 'facade' &&
-          !allowed[sourceOwner]?.has(targetOwner)
+          !allowed[sourceOwner]?.has(targetOwner) &&
+          nativeDistributionEdges.get(file) !== target
         ) {
           violations.push(`${sourceOwner}:${file} -> ${targetOwner}:${specifier}`)
         }

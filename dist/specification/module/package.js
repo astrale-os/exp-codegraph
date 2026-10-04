@@ -139,4 +139,3 @@ function isPackagePattern(pattern) {
     const prefix = pattern.slice(0, -1);
     return /^(?:@[a-z0-9][a-z0-9._-]*\/[a-z0-9._-]*|[a-z0-9][a-z0-9._-]*)$/.test(prefix);
 }
-//# sourceMappingURL=package.js.map

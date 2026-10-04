@@ -5,6 +5,7 @@ export const TYPESCRIPT_FACT_NAMESPACES = Object.freeze({
     symbol: 'typescript.symbol',
     occurrence: 'typescript.occurrence',
     body: 'typescript.body',
+    'body-demand': 'typescript.body-demand',
     module: 'astrale.typescript.module',
     declaration: 'astrale.typescript.module',
 });
@@ -16,6 +17,7 @@ export const TYPESCRIPT_ANALYSIS_CAPABILITIES = Object.freeze([
     TYPESCRIPT_FACT_NAMESPACES.symbol,
     TYPESCRIPT_FACT_NAMESPACES.occurrence,
     TYPESCRIPT_FACT_NAMESPACES.body,
+    TYPESCRIPT_FACT_NAMESPACES['body-demand'],
     TYPESCRIPT_FACT_NAMESPACES.module,
 ]);
 export class TypeScriptFactContractError extends Error {
@@ -31,4 +33,3 @@ export class TypeScriptFactContractError extends Error {
         this.diagnostics = diagnostics;
     }
 }
-//# sourceMappingURL=model.js.map

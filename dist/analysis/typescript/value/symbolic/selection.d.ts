@@ -5,6 +5,7 @@ import type { TypeScriptCallQuery } from '../../body/index.ts';
 import type { TypeScriptFact } from '../../facts/index.ts';
 import { ValueIndexTable } from './table.ts';
 type Body = TypeScriptFact<'body'>;
+type Demand = TypeScriptFact<'body-demand'>;
 type Reason = AnalysisFailure | AnalysisLimit;
 interface CountedReason {
     readonly reason: Reason;
@@ -42,9 +43,10 @@ export declare class CallSelection {
     #private;
     readonly completion: Completeness;
     readonly unmapped: number;
-    constructor(attributed?: ValueIndexTable<string, number>, bySource?: ValueIndexTable<SourceId, CompletionCounts>, unattributed?: CompletionCounts, completion?: Completeness, unmapped?: number);
+    constructor(attributed?: ValueIndexTable<string, number>, bySource?: ValueIndexTable<SourceId, CompletionCounts>, unattributed?: CompletionCounts, completion?: Completeness, unmapped?: number, demands?: readonly Demand[]);
     local(source: SourceId): Completeness | undefined;
     sources(): IterableIterator<readonly [SourceId, Completeness]>;
-    update(bodies: Iterable<readonly [Body | undefined, Body | undefined]>, touched: Set<SourceId>, before: SourceLookup, after: SourceLookup, capabilities: readonly CapabilityStatus[] | undefined, changed?: Set<string>): CallSelection;
+    scoped(options: TypeScriptCallQuery, paths: Pick<ReadonlyMap<SourceId, string>, 'get'>): Completeness;
+    update(bodies: Iterable<readonly [Body | undefined, Body | undefined]>, touched: Set<SourceId>, before: SourceLookup, after: SourceLookup, capabilities: readonly CapabilityStatus[] | undefined, changed?: Set<string>, demands?: readonly Demand[]): CallSelection;
 }
 export {};

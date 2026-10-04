@@ -26,4 +26,3 @@ catch (error) {
 for (const compilation of result)
     process.stdout.write(`${JSON.stringify(compilation)}\n`);
 process.stderr.write(`${apiCompilerWorkerResourceReport()}\n`);
-//# sourceMappingURL=worker.js.map

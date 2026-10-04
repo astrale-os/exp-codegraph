@@ -315,4 +315,3 @@ function duplicateDefinitionDiagnostics(kind, definitions, source, diagnostics) 
 function propertyDiagnostic(object, name, code, message, source, file) {
     return diagnostic(code, message, source, file, property(object, name) ?? object);
 }
-//# sourceMappingURL=descriptor.js.map

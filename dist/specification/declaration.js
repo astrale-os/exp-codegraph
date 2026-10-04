@@ -129,4 +129,3 @@ function stableCode(diagnostic) {
     const code = diagnostic.code.replaceAll(/[^A-Za-z0-9]+/g, '_').toUpperCase();
     return `API_${source}_${code}`;
 }
-//# sourceMappingURL=declaration.js.map

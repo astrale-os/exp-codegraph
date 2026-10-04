@@ -7,7 +7,7 @@
     "noEmit": false,
     "outDir": "dist",
     "rewriteRelativeImportExtensions": true,
-    "sourceMap": true
+    "sourceMap": false
   },
   "include": [
     "*.ts",
@@ -32,6 +32,7 @@
   "exclude": [
     "__tests__",
     "viewer",
-    "analysis/typescript/ttsc"
+    "analysis/typescript/ttsc",
+    "analysis/typescript/native"
   ]
 }

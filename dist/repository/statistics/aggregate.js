@@ -92,4 +92,3 @@ function round(value) {
 function uniqueReasons(reasons) {
     return [...new Map(reasons.map((reason) => [`${reason.code}\u0000${reason.message}`, reason])).values()].sort((left, right) => left.code.localeCompare(right.code) || left.message.localeCompare(right.message));
 }
-//# sourceMappingURL=aggregate.js.map

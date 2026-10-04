@@ -1,0 +1,1625 @@
+[
+  {
+    "id": "0:string",
+    "source": "const value='a';",
+    "kind": "string",
+    "units": [
+      97
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "0:template",
+    "source": "const value=`a`;",
+    "kind": "template",
+    "units": [
+      97
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "0:tagged-template",
+    "source": "const value=tag`a`;",
+    "kind": "template",
+    "units": [
+      97
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "1:string",
+    "source": "const value='';",
+    "kind": "string",
+    "units": [],
+    "diagnostics": []
+  },
+  {
+    "id": "1:template",
+    "source": "const value=``;",
+    "kind": "template",
+    "units": [],
+    "diagnostics": []
+  },
+  {
+    "id": "1:tagged-template",
+    "source": "const value=tag``;",
+    "kind": "template",
+    "units": [],
+    "diagnostics": []
+  },
+  {
+    "id": "2:string",
+    "source": "const value='\\uD800';",
+    "kind": "string",
+    "units": [
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "2:template",
+    "source": "const value=`\\uD800`;",
+    "kind": "template",
+    "units": [
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "2:tagged-template",
+    "source": "const value=tag`\\uD800`;",
+    "kind": "template",
+    "units": [
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "3:string",
+    "source": "const value='\\uDC00';",
+    "kind": "string",
+    "units": [
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "3:template",
+    "source": "const value=`\\uDC00`;",
+    "kind": "template",
+    "units": [
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "3:tagged-template",
+    "source": "const value=tag`\\uDC00`;",
+    "kind": "template",
+    "units": [
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "4:string",
+    "source": "const value='\\uFFFD';",
+    "kind": "string",
+    "units": [
+      65533
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "4:template",
+    "source": "const value=`\\uFFFD`;",
+    "kind": "template",
+    "units": [
+      65533
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "4:tagged-template",
+    "source": "const value=tag`\\uFFFD`;",
+    "kind": "template",
+    "units": [
+      65533
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "5:string",
+    "source": "const value='\\uD800\\uDC00';",
+    "kind": "string",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "5:template",
+    "source": "const value=`\\uD800\\uDC00`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "5:tagged-template",
+    "source": "const value=tag`\\uD800\\uDC00`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "6:string",
+    "source": "const value='\\uD800\\uD800';",
+    "kind": "string",
+    "units": [
+      55296,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "6:template",
+    "source": "const value=`\\uD800\\uD800`;",
+    "kind": "template",
+    "units": [
+      55296,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "6:tagged-template",
+    "source": "const value=tag`\\uD800\\uD800`;",
+    "kind": "template",
+    "units": [
+      55296,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "7:string",
+    "source": "const value='\\uDC00\\uD800';",
+    "kind": "string",
+    "units": [
+      56320,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "7:template",
+    "source": "const value=`\\uDC00\\uD800`;",
+    "kind": "template",
+    "units": [
+      56320,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "7:tagged-template",
+    "source": "const value=tag`\\uDC00\\uD800`;",
+    "kind": "template",
+    "units": [
+      56320,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "8:string",
+    "source": "const value='\\u{D800}';",
+    "kind": "string",
+    "units": [
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "8:template",
+    "source": "const value=`\\u{D800}`;",
+    "kind": "template",
+    "units": [
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "8:tagged-template",
+    "source": "const value=tag`\\u{D800}`;",
+    "kind": "template",
+    "units": [
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "9:string",
+    "source": "const value='\\u{DC00}';",
+    "kind": "string",
+    "units": [
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "9:template",
+    "source": "const value=`\\u{DC00}`;",
+    "kind": "template",
+    "units": [
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "9:tagged-template",
+    "source": "const value=tag`\\u{DC00}`;",
+    "kind": "template",
+    "units": [
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "10:string",
+    "source": "const value='\\u{D800}\\u{DC00}';",
+    "kind": "string",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "10:template",
+    "source": "const value=`\\u{D800}\\u{DC00}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "10:tagged-template",
+    "source": "const value=tag`\\u{D800}\\u{DC00}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "11:string",
+    "source": "const value='\\uD800\\u{DC00}';",
+    "kind": "string",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "11:template",
+    "source": "const value=`\\uD800\\u{DC00}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "11:tagged-template",
+    "source": "const value=tag`\\uD800\\u{DC00}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "12:string",
+    "source": "const value='\\u{D800}\\uDC00';",
+    "kind": "string",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "12:template",
+    "source": "const value=`\\u{D800}\\uDC00`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "12:tagged-template",
+    "source": "const value=tag`\\u{D800}\\uDC00`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "13:string",
+    "source": "const value='\\u{10000}';",
+    "kind": "string",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "13:template",
+    "source": "const value=`\\u{10000}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "13:tagged-template",
+    "source": "const value=tag`\\u{10000}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "14:string",
+    "source": "const value='\\u{10ffff}';",
+    "kind": "string",
+    "units": [
+      56319,
+      57343
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "14:template",
+    "source": "const value=`\\u{10ffff}`;",
+    "kind": "template",
+    "units": [
+      56319,
+      57343
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "14:tagged-template",
+    "source": "const value=tag`\\u{10ffff}`;",
+    "kind": "template",
+    "units": [
+      56319,
+      57343
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "15:string",
+    "source": "const value='\\u{F0000}\\uD800';",
+    "kind": "string",
+    "units": [
+      56192,
+      56320,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "15:template",
+    "source": "const value=`\\u{F0000}\\uD800`;",
+    "kind": "template",
+    "units": [
+      56192,
+      56320,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "15:tagged-template",
+    "source": "const value=tag`\\u{F0000}\\uD800`;",
+    "kind": "template",
+    "units": [
+      56192,
+      56320,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "16:string",
+    "source": "const value='\\uD800\\u{F0000}';",
+    "kind": "string",
+    "units": [
+      55296,
+      56192,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "16:template",
+    "source": "const value=`\\uD800\\u{F0000}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56192,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "16:tagged-template",
+    "source": "const value=tag`\\uD800\\u{F0000}`;",
+    "kind": "template",
+    "units": [
+      55296,
+      56192,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "17:string",
+    "source": "const value='\\u{F0000}\\u{F0001}\\uD800\\uDC00';",
+    "kind": "string",
+    "units": [
+      56192,
+      56320,
+      56192,
+      56321,
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "17:template",
+    "source": "const value=`\\u{F0000}\\u{F0001}\\uD800\\uDC00`;",
+    "kind": "template",
+    "units": [
+      56192,
+      56320,
+      56192,
+      56321,
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "17:tagged-template",
+    "source": "const value=tag`\\u{F0000}\\u{F0001}\\uD800\\uDC00`;",
+    "kind": "template",
+    "units": [
+      56192,
+      56320,
+      56192,
+      56321,
+      55296,
+      56320
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "18:string",
+    "source": "const value='\\\\uD800';",
+    "kind": "string",
+    "units": [
+      92,
+      117,
+      68,
+      56,
+      48,
+      48
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "18:template",
+    "source": "const value=`\\\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      68,
+      56,
+      48,
+      48
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "18:tagged-template",
+    "source": "const value=tag`\\\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      68,
+      56,
+      48,
+      48
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "19:string",
+    "source": "const value='\\\\\\uD800';",
+    "kind": "string",
+    "units": [
+      92,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "19:template",
+    "source": "const value=`\\\\\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "19:tagged-template",
+    "source": "const value=tag`\\\\\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "20:string",
+    "source": "const value='\\uD800\\x41';",
+    "kind": "string",
+    "units": [
+      55296,
+      65
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "20:template",
+    "source": "const value=`\\uD800\\x41`;",
+    "kind": "template",
+    "units": [
+      55296,
+      65
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "20:tagged-template",
+    "source": "const value=tag`\\uD800\\x41`;",
+    "kind": "template",
+    "units": [
+      55296,
+      65
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "21:string",
+    "source": "const value='\\x41\\uD800';",
+    "kind": "string",
+    "units": [
+      65,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "21:template",
+    "source": "const value=`\\x41\\uD800`;",
+    "kind": "template",
+    "units": [
+      65,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "21:tagged-template",
+    "source": "const value=tag`\\x41\\uD800`;",
+    "kind": "template",
+    "units": [
+      65,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "22:string",
+    "source": "const value='\\0\\uD800';",
+    "kind": "string",
+    "units": [
+      0,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "22:template",
+    "source": "const value=`\\0\\uD800`;",
+    "kind": "template",
+    "units": [
+      0,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "22:tagged-template",
+    "source": "const value=tag`\\0\\uD800`;",
+    "kind": "template",
+    "units": [
+      0,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "23:string",
+    "source": "const value='\\08\\uD800';",
+    "kind": "string",
+    "units": [
+      0,
+      56,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "23:template",
+    "source": "const value=`\\08\\uD800`;",
+    "kind": "template",
+    "units": [
+      0,
+      56,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "23:tagged-template",
+    "source": "const value=tag`\\08\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      48,
+      56,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "24:string",
+    "source": "const value='\\01\\uD800';",
+    "kind": "string",
+    "units": [
+      1,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "24:template",
+    "source": "const value=`\\01\\uD800`;",
+    "kind": "template",
+    "units": [
+      1,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "24:tagged-template",
+    "source": "const value=tag`\\01\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      48,
+      49,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "25:string",
+    "source": "const value='\\177\\uD800';",
+    "kind": "string",
+    "units": [
+      127,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "25:template",
+    "source": "const value=`\\177\\uD800`;",
+    "kind": "template",
+    "units": [
+      127,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "25:tagged-template",
+    "source": "const value=tag`\\177\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      49,
+      55,
+      55,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "26:string",
+    "source": "const value='\\477\\uD800';",
+    "kind": "string",
+    "units": [
+      39,
+      55,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "26:template",
+    "source": "const value=`\\477\\uD800`;",
+    "kind": "template",
+    "units": [
+      39,
+      55,
+      55296
+    ],
+    "diagnostics": [
+      1487
+    ]
+  },
+  {
+    "id": "26:tagged-template",
+    "source": "const value=tag`\\477\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      52,
+      55,
+      55,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "27:string",
+    "source": "const value='\\8\\uD800';",
+    "kind": "string",
+    "units": [
+      56,
+      55296
+    ],
+    "diagnostics": [
+      1488
+    ]
+  },
+  {
+    "id": "27:template",
+    "source": "const value=`\\8\\uD800`;",
+    "kind": "template",
+    "units": [
+      56,
+      55296
+    ],
+    "diagnostics": [
+      1488
+    ]
+  },
+  {
+    "id": "27:tagged-template",
+    "source": "const value=tag`\\8\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      56,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "28:string",
+    "source": "const value='\\9\\uD800';",
+    "kind": "string",
+    "units": [
+      57,
+      55296
+    ],
+    "diagnostics": [
+      1488
+    ]
+  },
+  {
+    "id": "28:template",
+    "source": "const value=`\\9\\uD800`;",
+    "kind": "template",
+    "units": [
+      57,
+      55296
+    ],
+    "diagnostics": [
+      1488
+    ]
+  },
+  {
+    "id": "28:tagged-template",
+    "source": "const value=tag`\\9\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      57,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "29:string",
+    "source": "const value='\\a\\uD800';",
+    "kind": "string",
+    "units": [
+      97,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "29:template",
+    "source": "const value=`\\a\\uD800`;",
+    "kind": "template",
+    "units": [
+      97,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "29:tagged-template",
+    "source": "const value=tag`\\a\\uD800`;",
+    "kind": "template",
+    "units": [
+      97,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "30:string",
+    "source": "const value='\\xZ\\uD800';",
+    "kind": "string",
+    "units": [
+      92,
+      120,
+      90,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "30:template",
+    "source": "const value=`\\xZ\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      120,
+      90,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "30:tagged-template",
+    "source": "const value=tag`\\xZ\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      120,
+      90,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "31:string",
+    "source": "const value='\\uZ\\uD800';",
+    "kind": "string",
+    "units": [
+      92,
+      117,
+      90,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "31:template",
+    "source": "const value=`\\uZ\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      90,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "31:tagged-template",
+    "source": "const value=tag`\\uZ\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      90,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "32:string",
+    "source": "const value='\\u{Z}\\uD800';",
+    "kind": "string",
+    "units": [
+      92,
+      117,
+      123,
+      90,
+      125,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "32:template",
+    "source": "const value=`\\u{Z}\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      123,
+      90,
+      125,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "32:tagged-template",
+    "source": "const value=tag`\\u{Z}\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      123,
+      90,
+      125,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "33:string",
+    "source": "const value='\\u{110000}\\uD800';",
+    "kind": "string",
+    "units": [
+      92,
+      117,
+      123,
+      49,
+      49,
+      48,
+      48,
+      48,
+      48,
+      125,
+      55296
+    ],
+    "diagnostics": [
+      1198
+    ]
+  },
+  {
+    "id": "33:template",
+    "source": "const value=`\\u{110000}\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      123,
+      49,
+      49,
+      48,
+      48,
+      48,
+      48,
+      125,
+      55296
+    ],
+    "diagnostics": [
+      1198
+    ]
+  },
+  {
+    "id": "33:tagged-template",
+    "source": "const value=tag`\\u{110000}\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      123,
+      49,
+      49,
+      48,
+      48,
+      48,
+      48,
+      125,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "34:string",
+    "source": "const value='\\u{}\\uD800';",
+    "kind": "string",
+    "units": [
+      92,
+      117,
+      123,
+      125,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "34:template",
+    "source": "const value=`\\u{}\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      123,
+      125,
+      55296
+    ],
+    "diagnostics": [
+      1125
+    ]
+  },
+  {
+    "id": "34:tagged-template",
+    "source": "const value=tag`\\u{}\\uD800`;",
+    "kind": "template",
+    "units": [
+      92,
+      117,
+      123,
+      125,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "35:string",
+    "source": "const value='\\b\\f\\n\\r\\t\\v\\uD800';",
+    "kind": "string",
+    "units": [
+      8,
+      12,
+      10,
+      13,
+      9,
+      11,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "35:template",
+    "source": "const value=`\\b\\f\\n\\r\\t\\v\\uD800`;",
+    "kind": "template",
+    "units": [
+      8,
+      12,
+      10,
+      13,
+      9,
+      11,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "35:tagged-template",
+    "source": "const value=tag`\\b\\f\\n\\r\\t\\v\\uD800`;",
+    "kind": "template",
+    "units": [
+      8,
+      12,
+      10,
+      13,
+      9,
+      11,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "36:string",
+    "source": "const value='\\uFEFFx';",
+    "kind": "string",
+    "units": [
+      65279,
+      120
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "36:template",
+    "source": "const value=`\\uFEFFx`;",
+    "kind": "template",
+    "units": [
+      65279,
+      120
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "36:tagged-template",
+    "source": "const value=tag`\\uFEFFx`;",
+    "kind": "template",
+    "units": [
+      65279,
+      120
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "37:string",
+    "source": "const value='\\u0085x';",
+    "kind": "string",
+    "units": [
+      133,
+      120
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "37:template",
+    "source": "const value=`\\u0085x`;",
+    "kind": "template",
+    "units": [
+      133,
+      120
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "37:tagged-template",
+    "source": "const value=tag`\\u0085x`;",
+    "kind": "template",
+    "units": [
+      133,
+      120
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "38:string",
+    "source": "const value='🌱';",
+    "kind": "string",
+    "units": [
+      55356,
+      57137
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "38:template",
+    "source": "const value=`🌱`;",
+    "kind": "template",
+    "units": [
+      55356,
+      57137
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "38:tagged-template",
+    "source": "const value=tag`🌱`;",
+    "kind": "template",
+    "units": [
+      55356,
+      57137
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "39:string",
+    "source": "const value='é';",
+    "kind": "string",
+    "units": [
+      233
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "39:template",
+    "source": "const value=`é`;",
+    "kind": "template",
+    "units": [
+      233
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "39:tagged-template",
+    "source": "const value=tag`é`;",
+    "kind": "template",
+    "units": [
+      233
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "40:string",
+    "source": "const value='é';",
+    "kind": "string",
+    "units": [
+      101,
+      769
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "40:template",
+    "source": "const value=`é`;",
+    "kind": "template",
+    "units": [
+      101,
+      769
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "40:tagged-template",
+    "source": "const value=tag`é`;",
+    "kind": "template",
+    "units": [
+      101,
+      769
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "41:string",
+    "source": "const value='\\é';",
+    "kind": "string",
+    "units": [
+      233
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "41:template",
+    "source": "const value=`\\é`;",
+    "kind": "template",
+    "units": [
+      233
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "41:tagged-template",
+    "source": "const value=tag`\\é`;",
+    "kind": "template",
+    "units": [
+      233
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "42:string",
+    "source": "const value='\\🌱';",
+    "kind": "string",
+    "units": [
+      55356,
+      57137
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "42:template",
+    "source": "const value=`\\🌱`;",
+    "kind": "template",
+    "units": [
+      55356,
+      57137
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "42:tagged-template",
+    "source": "const value=tag`\\🌱`;",
+    "kind": "template",
+    "units": [
+      55356,
+      57137
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "43:string",
+    "source": "const value='\\�';",
+    "kind": "string",
+    "units": [
+      65533
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "43:template",
+    "source": "const value=`\\�`;",
+    "kind": "template",
+    "units": [
+      65533
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "43:tagged-template",
+    "source": "const value=tag`\\�`;",
+    "kind": "template",
+    "units": [
+      65533
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "44:string",
+    "source": "const value='\\\r\nx\\uD800';",
+    "kind": "string",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "44:template",
+    "source": "const value=`\\\r\nx\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "44:tagged-template",
+    "source": "const value=tag`\\\r\nx\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "45:string",
+    "source": "const value='\\\nx\\uD800';",
+    "kind": "string",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "45:template",
+    "source": "const value=`\\\nx\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "45:tagged-template",
+    "source": "const value=tag`\\\nx\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "46:string",
+    "source": "const value='\\ x\\uD800';",
+    "kind": "string",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "46:template",
+    "source": "const value=`\\ x\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "46:tagged-template",
+    "source": "const value=tag`\\ x\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "47:string",
+    "source": "const value='\\ x\\uD800';",
+    "kind": "string",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "47:template",
+    "source": "const value=`\\ x\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "47:tagged-template",
+    "source": "const value=tag`\\ x\\uD800`;",
+    "kind": "template",
+    "units": [
+      120,
+      55296
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "jsx:a\\uD800",
+    "source": "const value=<X name=\"a\\uD800\"/>;",
+    "tsx": true,
+    "kind": "string",
+    "units": [
+      97,
+      92,
+      117,
+      68,
+      56,
+      48,
+      48
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "jsx:a\\uDC00",
+    "source": "const value=<X name=\"a\\uDC00\"/>;",
+    "tsx": true,
+    "kind": "string",
+    "units": [
+      97,
+      92,
+      117,
+      68,
+      67,
+      48,
+      48
+    ],
+    "diagnostics": []
+  },
+  {
+    "id": "jsx:a\\uD800\\uDC00",
+    "source": "const value=<X name=\"a\\uD800\\uDC00\"/>;",
+    "tsx": true,
+    "kind": "string",
+    "units": [
+      97,
+      92,
+      117,
+      68,
+      56,
+      48,
+      48,
+      92,
+      117,
+      68,
+      67,
+      48,
+      48
+    ],
+    "diagnostics": []
+  }
+]

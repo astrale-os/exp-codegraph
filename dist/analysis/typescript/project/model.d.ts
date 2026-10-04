@@ -1,7 +1,7 @@
 /// <reference lib="esnext.disposable" preserve="true" />
 import type { AnalysisGeneration, FactTransaction } from '../../generation/index.ts';
 import type { AnalysisQuery, AnalysisStore } from '../../query/index.ts';
-import type { NativeAnalysisSessionFactory, NativeProjectDescriptor, NativeSourceChange } from '../../protocol/index.ts';
+import type { NativeAnalysisSessionFactory, NativeProjectDescriptor, NativeSourceChange, NativeBodyDemand } from '../../protocol/index.ts';
 import type { SourceId } from '../../identity/index.ts';
 import type { TypeScriptFactReader } from '../facts/index.ts';
 import type { TypeScriptCallInventory, TypeScriptCallQuery } from '../body/index.ts';
@@ -57,7 +57,10 @@ export interface TypeScriptProject {
 export interface TypeScriptProjectRefresh {
     readonly changed?: readonly string[];
     readonly changes?: readonly NativeSourceChange[];
+    /** Discover changes to compiler-owned inputs, including failed resolutions. */
+    readonly discover?: boolean;
     readonly invalidate?: boolean;
+    readonly bodyDemand?: NativeBodyDemand;
     readonly signal?: AbortSignal;
 }
 export interface TypeScriptProjectUpdate {

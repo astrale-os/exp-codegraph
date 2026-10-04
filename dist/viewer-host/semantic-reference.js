@@ -7,4 +7,3 @@ export function semanticReferenceHref(reference) {
     parameters.set('apiDecl', reference.target.declaration);
     return `?${parameters}`;
 }
-//# sourceMappingURL=semantic-reference.js.map

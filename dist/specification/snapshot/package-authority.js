@@ -42,4 +42,3 @@ function within(root, target) {
     const path = relative(root, target);
     return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
 }
-//# sourceMappingURL=package-authority.js.map

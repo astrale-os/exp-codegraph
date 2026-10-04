@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { createMemoryAnalysisStore } from '../../memory/index.js';
 import { createProcessNativeAnalysisSessionFactory } from '../../protocol/index.js';
+import { captureBodyDemand } from '../../protocol/body-demand.js';
 import { resolvePackagedNativeAnalysis } from '../distribution/index.js';
 import { createTypeScriptAnalysisService } from '../service.js';
 import { createTypeScriptFactReader } from '../facts/index.js';
@@ -37,6 +38,7 @@ class ResidentProject {
     #tail = Promise.resolve();
     #closed = false;
     #closing;
+    #bodyDemand;
     #readers = new Set();
     #lifetime = new AbortController();
     #descriptor;
@@ -90,10 +92,17 @@ class ResidentProject {
             signal: options.signal ? AbortSignal.any([options.signal, this.#lifetime.signal]) : this.#lifetime.signal,
             ...(options.changed ? { changed: [...options.changed] } : {}),
             ...(options.changes ? { changes: options.changes.map((change) => ({ ...change })) } : {}),
+            ...(options.bodyDemand ? { bodyDemand: captureBodyDemand(options.bodyDemand) } : {}),
         };
         return this.enqueue(async () => {
             request.signal?.throwIfAborted();
             try {
+                // The project owns selection intent across a disposable native process.
+                // Resolve omission inside the queue so a later request cannot alter an earlier one.
+                if (request.bodyDemand)
+                    this.#bodyDemand = request.bodyDemand;
+                else if (this.#bodyDemand)
+                    request.bodyDemand = this.#bodyDemand;
                 this.#service ??= await createTypeScriptAnalysisService({
                     project: this.#descriptor,
                     sessions: { open: (project) => this.#sessions.open(project, { signal: request.signal }) },
@@ -248,4 +257,3 @@ class ResidentProject {
         return result;
     }
 }
-//# sourceMappingURL=project.js.map

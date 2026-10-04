@@ -5,4 +5,3 @@ export const DEFAULT_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
     maxTotalBytes: 256 * 1024 * 1024,
     maximumScopes: 32,
 });
-//# sourceMappingURL=model.js.map

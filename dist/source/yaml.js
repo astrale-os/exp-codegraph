@@ -136,4 +136,3 @@ function jsonValue(value, path, diagnostics, file, document, lines, ancestors, b
         diagnostics.push({ code, message, file, pointer, ...sourcePosition(document, lines, pointer) });
     }
 }
-//# sourceMappingURL=yaml.js.map

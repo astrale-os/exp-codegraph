@@ -6,7 +6,7 @@ import { createTypeScriptFactReader } from '../../facts/index.ts'
 import { IndexedValues, loadValueIndex, readIndexedBodies, type IndexedFact } from './facts.ts'
 import { ValueIndexTable } from './table.ts'
 
-type Kind = 'body' | 'symbol' | 'source'
+type Kind = 'body' | 'body-demand' | 'symbol' | 'source'
 interface Shard { readonly digest: string; readonly kind: Kind; readonly facts: readonly FactId[] }
 interface Base { readonly index: Promise<IndexedValues>; readonly shards: ValueIndexTable<FactShardKey, Shard> }
 interface Record {
@@ -108,20 +108,20 @@ export class ValueIndexOwner {
       return loadValueIndex(query)
     }
     const reader = createTypeScriptFactReader(query)
-    const ids: { [Key in Kind]: FactId[] } = { body: [], symbol: [], source: [] }
+    const ids: { [Key in Kind]: FactId[] } = { body: [], 'body-demand': [], symbol: [], source: [] }
     const deleted: FactId[] = []
     for (const [key, shard] of record.changed) {
       deleted.push(...base.shards.get(key)?.facts ?? [])
       if (shard) ids[shard.kind].push(...shard.facts)
     }
-    const [bodies, symbols, sources, capabilities] = await Promise.all([
+    const [bodies, symbols, sources, demands, capabilities] = await Promise.all([
       readIndexedBodies(query, ids.body), reader.factsById('symbol', ids.symbol), reader.factsById('source', ids.source),
-      query.capabilities(),
+      ids['body-demand'].length ? reader.factsById('body-demand', ids['body-demand']) : [], query.capabilities(),
     ])
-    if (bodies.length !== ids.body.length || symbols.length !== ids.symbol.length || sources.length !== ids.source.length) {
+    if (bodies.length !== ids.body.length || symbols.length !== ids.symbol.length || sources.length !== ids.source.length || demands.length !== ids['body-demand'].length) {
       throw new Error('A committed value index shard is missing facts in its pinned query.')
     }
-    const next = index.update([...bodies, ...symbols, ...sources] as IndexedFact[], deleted, false, capabilities)
+    const next = index.update([...bodies, ...symbols, ...sources, ...demands] as IndexedFact[], deleted, false, capabilities)
     // Resolved indices and trie roots stand alone. A quiet watch cannot retain a
     // linked list of previous revisions, transactions, queries or deleted shards.
     record.base = undefined
@@ -131,7 +131,7 @@ export class ValueIndexOwner {
 }
 
 function kind(namespace: string): Kind | undefined {
-  return namespace === 'typescript.body' ? 'body' : namespace === 'typescript.symbol' ? 'symbol'
+  return namespace === 'typescript.body-demand' ? 'body-demand' : namespace === 'typescript.body' ? 'body' : namespace === 'typescript.symbol' ? 'symbol'
     : namespace === 'typescript.source' ? 'source' : undefined
 }
 function matches(shard: Shard | undefined, reference: FactShardReference): boolean {

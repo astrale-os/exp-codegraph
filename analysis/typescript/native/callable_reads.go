@@ -47,6 +47,7 @@ func (x *extractor) observeCallable(owner string, node *shimast.Node, callbackOn
 	read := callableRead{start: node.Pos(), end: node.End(), kind: node.Kind, callbackOnly: callbackOnly}
 	dependencies := map[string]bool{}
 	observe := func(symbol *shimast.Symbol) {
+		x.observeProjectionSymbol(symbol)
 		for _, declaration := range symbol.Declarations {
 			if file := shimast.GetSourceFileOfNode(declaration); file != nil && file.FileName() != owner {
 				dependencies[file.FileName()] = true

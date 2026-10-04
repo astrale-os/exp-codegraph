@@ -119,4 +119,3 @@ function isLayoutObservation(value) {
         Array.isArray(value.entries) &&
         Array.isArray(value.diagnostics));
 }
-//# sourceMappingURL=layout.js.map

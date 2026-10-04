@@ -84,7 +84,7 @@ export function createCallProjection(query: AnalysisQuery, loadIndex: () => Prom
     const inventory = await pending
     signal?.throwIfAborted()
     observe?.(inventory.selection ? inventory.index.revision : undefined, keys!)
-    let completeness = inventory.completion
+    let completeness = inventory.selection?.scoped(options, inventory.paths) ?? inventory.completion
     if (paths?.size === 0 || sources?.size === 0) return Object.freeze({ sites: Object.freeze([]), completeness: freezeCompleteness(completeness) })
     const result: TypeScriptCallSite[] = []
     const unresolvedSources = new Set<SourceId>()

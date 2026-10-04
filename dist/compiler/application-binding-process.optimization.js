@@ -117,4 +117,3 @@ if (process.argv.includes(WORKER_ARGUMENT)) {
         peakResidentBytes: process.resourceUsage().maxRSS * 1_024,
     }));
 }
-//# sourceMappingURL=application-binding-process.optimization.js.map

@@ -1,6 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createRequire } from 'node:module'
-import { dirname, resolve } from 'node:path'
+import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/physical/index.ts'
@@ -56,14 +55,14 @@ it('preserves columnar and legacy packed native bodies with exact negotiation', 
 }, 95_000)
 
 async function goTest(files: readonly string[], options: readonly string[] = []): Promise<string> {
-  const require = createRequire(import.meta.url)
-  const ttsc = createRequire(require.resolve('ttsc/package.json'))
-  const platform = dirname(ttsc.resolve(`@ttsc/${process.platform}-${process.arch}/package.json`))
-  const go = resolve(platform, 'bin/go/bin', process.platform === 'win32' ? 'go.exe' : 'go')
-  const { stdout } = await promisify(execFile)(go, ['test', ...files, '-count=1', ...options], {
-    cwd: resolve(import.meta.dirname, '../analysis/typescript/native'),
+  const { stdout } = await promisify(execFile)(process.execPath, [
+    resolve(import.meta.dirname, '../scripts/native/test.mjs'),
+    '--files-json', JSON.stringify(files),
+    '--options-json', JSON.stringify(options),
+  ], {
+    cwd: resolve(import.meta.dirname, '..'),
     timeout: 90_000,
-    env: { ...process.env, GOTOOLCHAIN: 'local' },
+    env: process.env,
   })
   return stdout
 }

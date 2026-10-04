@@ -182,4 +182,3 @@ function compareSource(left, right) {
 function portable(path) {
     return sep === '/' ? path : path.split(sep).join('/');
 }
-//# sourceMappingURL=select.js.map

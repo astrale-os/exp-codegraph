@@ -10,4 +10,3 @@ export class SourceEditAdapterError extends Error {
         this.code = code;
     }
 }
-//# sourceMappingURL=editing.js.map

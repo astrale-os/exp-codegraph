@@ -99,21 +99,21 @@ export class ValueIndexOwner {
             return loadValueIndex(query);
         }
         const reader = createTypeScriptFactReader(query);
-        const ids = { body: [], symbol: [], source: [] };
+        const ids = { body: [], 'body-demand': [], symbol: [], source: [] };
         const deleted = [];
         for (const [key, shard] of record.changed) {
             deleted.push(...base.shards.get(key)?.facts ?? []);
             if (shard)
                 ids[shard.kind].push(...shard.facts);
         }
-        const [bodies, symbols, sources, capabilities] = await Promise.all([
+        const [bodies, symbols, sources, demands, capabilities] = await Promise.all([
             readIndexedBodies(query, ids.body), reader.factsById('symbol', ids.symbol), reader.factsById('source', ids.source),
-            query.capabilities(),
+            ids['body-demand'].length ? reader.factsById('body-demand', ids['body-demand']) : [], query.capabilities(),
         ]);
-        if (bodies.length !== ids.body.length || symbols.length !== ids.symbol.length || sources.length !== ids.source.length) {
+        if (bodies.length !== ids.body.length || symbols.length !== ids.symbol.length || sources.length !== ids.source.length || demands.length !== ids['body-demand'].length) {
             throw new Error('A committed value index shard is missing facts in its pinned query.');
         }
-        const next = index.update([...bodies, ...symbols, ...sources], deleted, false, capabilities);
+        const next = index.update([...bodies, ...symbols, ...sources, ...demands], deleted, false, capabilities);
         // Resolved indices and trie roots stand alone. A quiet watch cannot retain a
         // linked list of previous revisions, transactions, queries or deleted shards.
         record.base = undefined;
@@ -122,10 +122,9 @@ export class ValueIndexOwner {
     }
 }
 function kind(namespace) {
-    return namespace === 'typescript.body' ? 'body' : namespace === 'typescript.symbol' ? 'symbol'
+    return namespace === 'typescript.body-demand' ? 'body-demand' : namespace === 'typescript.body' ? 'body' : namespace === 'typescript.symbol' ? 'symbol'
         : namespace === 'typescript.source' ? 'source' : undefined;
 }
 function matches(shard, reference) {
     return !!shard && shard.digest === reference.digest && shard.kind === kind(reference.namespace) && shard.facts.length === reference.facts;
 }
-//# sourceMappingURL=owner.js.map

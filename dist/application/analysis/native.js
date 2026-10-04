@@ -34,4 +34,3 @@ export function createCodegraphApplicationSessionFactory(options = {}) {
 function definedEnvironment(environment) {
     return Object.fromEntries(Object.entries(environment).filter((entry) => entry[1] !== undefined));
 }
-//# sourceMappingURL=native.js.map

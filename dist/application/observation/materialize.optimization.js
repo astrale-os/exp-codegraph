@@ -52,4 +52,3 @@ function owningHistoryRoot(path) {
     const offset = path.indexOf(marker);
     return offset < 0 ? undefined : `${path.slice(0, offset)}${marker}`;
 }
-//# sourceMappingURL=materialize.optimization.js.map

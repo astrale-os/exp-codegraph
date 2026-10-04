@@ -176,4 +176,3 @@ function cancellable(work, signal) {
         }
     });
 }
-//# sourceMappingURL=compute.js.map

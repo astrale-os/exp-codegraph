@@ -31,4 +31,3 @@ export function operationAuthoringSyntaxAnalysis(source, text, create) {
     values.set(source, { text, ...created });
     return created;
 }
-//# sourceMappingURL=authoring-syntax.optimization.js.map

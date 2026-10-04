@@ -135,4 +135,3 @@ function stringArray(value) {
     }
     return true;
 }
-//# sourceMappingURL=manifest.js.map

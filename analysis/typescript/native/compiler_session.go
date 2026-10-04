@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"unsafe"
 
@@ -20,17 +21,34 @@ import (
 type authoredSourceFS struct{ shimvfs.FS }
 
 func (fs authoredSourceFS) ReadFile(path string) (string, bool) {
-	content, err := os.ReadFile(path)
+	content, err := readAuthoredSourceFile(path, fs.FS)
+	return content, err == nil
+}
+
+// Compiler loading and explicit source changes share the authored decoding
+// boundary. The returned string owns its immutable read buffer.
+func readAuthoredSourceFile(path string, fallback shimvfs.FS) (string, error) {
+	return readAuthoredSourceFileFrom(path, fallback, os.ReadFile)
+}
+
+// The live actor may lend its original raw first-read cell. UTF16 decoding
+// remains the original separate decoder operation.
+func readAuthoredSourceFileFrom(path string, fallback shimvfs.FS, read func(string) ([]byte, error)) (string, error) {
+	content, err := read(path)
 	if err != nil {
-		return "", false
+		return "", err
 	}
 	if len(content) >= 2 && ((content[0] == 0xff && content[1] == 0xfe) || (content[0] == 0xfe && content[1] == 0xff)) {
 		// Preserve the compiler's decoding support for UTF-16 encoded files.
-		return fs.FS.ReadFile(path)
+		decoded, ok := fallback.ReadFile(path)
+		if !ok {
+			return "", fmt.Errorf("could not decode authored source %s", path)
+		}
+		return decoded, nil
 	}
 	// ReadFile gives us exclusive ownership; neither this buffer nor the returned
 	// immutable source text is mutated. Match tsgo's zero-copy OS reader.
-	return unsafe.String(unsafe.SliceData(content), len(content)), true
+	return unsafe.String(unsafe.SliceData(content), len(content)), nil
 }
 
 // driver.NewSession fixes its own filesystem and ignores LoadProgramOptions.FS.
@@ -41,16 +59,18 @@ type compilerSession struct {
 	overlay *driver.OverlayFS
 	program *driver.Program
 	release func()
+	inputs  *compilerInputFS
 }
 
 func newCompilerSession(root, config string) (*compilerSession, []driver.Diagnostic, error) {
 	fs := shimbundled.WrapFS(shimcachedvfs.From(authoredSourceFS{FS: shimosvfs.FS()}))
-	overlay := driver.NewOverlayFS(fs)
+	inputs := newCompilerInputFS(fs, newAuthoredCompilerDisk())
+	overlay := driver.NewOverlayFS(inputs)
 	program, diagnostics, err := driver.LoadProgram(root, config, driver.LoadProgramOptions{ForceNoEmit: true, FS: overlay})
 	if program == nil || err != nil {
 		return nil, diagnostics, err
 	}
-	return &compilerSession{root: root, overlay: overlay, program: program, release: func() { _ = program.Close() }}, diagnostics, nil
+	return &compilerSession{root: root, overlay: overlay, program: program, inputs: inputs, release: func() { _ = program.Close() }}, diagnostics, nil
 }
 
 func (s *compilerSession) Program() *driver.Program { return s.program }
@@ -65,6 +85,7 @@ func (s *compilerSession) SourceText(path string) (string, bool) {
 
 func (s *compilerSession) Apply(path, content string) bool {
 	s.overlay.Set(path, content)
+	s.inputs.applied(path, content)
 	name := path
 	if file := s.program.SourceFile(path); file != nil {
 		name = file.FileName()

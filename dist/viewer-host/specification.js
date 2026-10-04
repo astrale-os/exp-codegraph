@@ -4,4 +4,3 @@ export function viewerSpecificationDiagnostics(specification) {
         ...specification.modules.flatMap((module) => module.diagnostics),
     ];
 }
-//# sourceMappingURL=specification.js.map

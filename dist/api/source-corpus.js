@@ -137,4 +137,3 @@ export function declarationPathInside(root, target) {
     const path = relative(root, target);
     return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`));
 }
-//# sourceMappingURL=source-corpus.js.map

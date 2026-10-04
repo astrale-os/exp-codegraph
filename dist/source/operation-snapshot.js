@@ -63,4 +63,3 @@ export async function readOperationSourceText(file, maximumBytes = MAX_FILE_BYTE
         throw new Error(`File exceeds ${maximumBytes} bytes.`);
     return admitted.text;
 }
-//# sourceMappingURL=operation-snapshot.js.map

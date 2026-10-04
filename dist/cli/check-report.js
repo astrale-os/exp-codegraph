@@ -67,4 +67,3 @@ export function createCliCheckReport(input) {
 export function encodeCliCheckReport(report) {
     return JSON.stringify(report, null, 2);
 }
-//# sourceMappingURL=check-report.js.map

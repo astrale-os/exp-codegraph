@@ -155,4 +155,3 @@ export async function portableApplicationReference(store, producerFingerprint, s
     });
     return admitted.ok ? admitted.reference : undefined;
 }
-//# sourceMappingURL=store.js.map

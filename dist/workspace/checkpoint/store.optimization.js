@@ -21,4 +21,3 @@ export async function mapCheckpointWork(values, concurrency, operation) {
         throw failure;
     return output;
 }
-//# sourceMappingURL=store.optimization.js.map
