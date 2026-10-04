@@ -111,6 +111,7 @@ describe('packed release artifact', () => {
       './specification',
       './workspace',
       './package.json',
+      './analysis/native',
     ])
   })
 

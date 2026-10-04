@@ -12,13 +12,6 @@ import (
 
 const bodyDemandNamespace = "typescript.body-demand"
 
-// Demand is explicit selection authority, not a promise of global body IR.
-// Owned source identities and effects always cover the complete Program.
-type bodyDemandRecipe struct {
-	Paths  []string  `json:"paths"`
-	Owners *[]string `json:"owners,omitempty"`
-}
-
 type demandOwner struct {
 	Owner        string          `json:"owner"`
 	Scope        string          `json:"scope"`

@@ -17,8 +17,9 @@ let originalFacts: IndexedFact[]
 const certificateIds = new Set<Demand['id']>()
 
 // The independently compiled full snapshot is the header producer oracle. The
-// frozen H12 native producer has no headers; this fixture exercises the additive
-// wire contract without claiming native H17 producer qualification.
+// current producer may publish headers, so the compatibility fixture explicitly
+// projects them out before exercising the additive wire contract. Native producer
+// behavior is independently covered by typescript-function-header-native.test.ts.
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'codegraph-function-header-'))
   await Promise.all([
@@ -68,6 +69,10 @@ export const shared = { value: 'stable' }
   const reader = createTypeScriptFactReader(selected.query)
   for (const kind of ['body', 'symbol', 'source', 'body-demand'] as const) for await (const fact of reader.export(kind)) originalFacts.push(fact as IndexedFact)
   original = originalFacts.find((fact): fact is Demand => fact.namespace === 'typescript.body-demand')!
+  const nativeOriginal = original
+  original = revise({ ...nativeOriginal.payload, owners: nativeOriginal.payload.owners.map(({ header: _header, ...owner }) => owner) })
+  baseIndex = baseIndex.update([original], [nativeOriginal.id])
+  expect(baseIndex.headers.size).toBe(0)
   const owners = original.payload.owners.map((owner) => {
     const body = fullIndex.bodies.get(owner.owner)?.payload.body
     if (owner.scope !== 'function' || !body?.execution) return owner

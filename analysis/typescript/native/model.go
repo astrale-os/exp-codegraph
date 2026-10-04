@@ -12,6 +12,13 @@ const (
 	typescriptBodyPayloadCodecV5 = "typescript.body.packed/5"
 )
 
+// Demand is explicit selection authority, not a promise of global body IR.
+// Owned source identities and effects always cover the complete Program.
+type bodyDemandRecipe struct {
+	Paths  []string  `json:"paths"`
+	Owners *[]string `json:"owners,omitempty"`
+}
+
 type request struct {
 	ID           int               `json:"id"`
 	Kind         string            `json:"kind"`
