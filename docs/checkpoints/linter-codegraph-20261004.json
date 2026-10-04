@@ -1,0 +1,179 @@
+{
+  "schema": "astrale.sdk-codegraph.checkpoint/v1",
+  "date": "2026-10-04",
+  "branch": "checkpoint/linter-codegraph-20261004",
+  "tag": "checkpoint-linter-codegraph-20261004",
+  "authorization": "Push retained SDK and Codegraph work; preserve 1Pact and unrelated repositories.",
+  "initialBaselines": {
+    "sdk": "cad2f224ddcb4ff5137231584fc25208d28611fc",
+    "codegraph": "f35484f143ca31ad6f2b4c4a9d93a4fffbbd890a"
+  },
+  "qualifiedSourceCommits": {
+    "sdk": "8a2470cac32f5ef80a89e2f81dd03cec815dfca0",
+    "codegraph": "41adb45c1c24fda1ef3218ac40084fe23fd76765"
+  },
+  "native": {
+    "artifact": {
+      "bytes": 30017666,
+      "executable": "bin/codegraph-native",
+      "package": "@astrale-os/codegraph-native-darwin-arm64",
+      "sha256": "082d06c0004e99bc9f9f02fa4287bc287f4a098ae6ce35d177fe774c66b769a3",
+      "target": "darwin-arm64"
+    },
+    "format": "astrale.codegraph.native-build",
+    "packageVersion": "0.1.0",
+    "protocolVersion": 1,
+    "source": {
+      "dirty": false,
+      "revision": "41adb45c1c24fda1ef3218ac40084fe23fd76765"
+    },
+    "toolchain": {
+      "go": "go1.26.5",
+      "ttsc": "0.25.0",
+      "typescriptGo": "v0.0.0-20260429010842-56ab4af42157"
+    },
+    "version": 1
+  },
+  "production": {
+    "scope": "Tracked maintained SDK src TS/TSX and repository-wide Codegraph TS/TSX/Go; fixtures, specs, generated, qualification and tests excluded.",
+    "sdk": {
+      "initial": 35520,
+      "checkpoint": 41068,
+      "delta": 5548
+    },
+    "codegraph": {
+      "initial": 74262,
+      "checkpoint": 92996,
+      "delta": 18734
+    },
+    "combinedDelta": 24282
+  },
+  "builtJavaScriptAndDeclarations": {
+    "sdkBytes": 1693084,
+    "codegraphBytes": 2066610,
+    "dependenciesExcluded": true
+  },
+  "checks": {
+    "codegraph": {
+      "build": "pass",
+      "typechecks": "pass",
+      "globalCheck": {
+        "exitCode": 0,
+        "specifications": 44,
+        "diagnostics": 0
+      },
+      "fullSuite": {
+        "exitCode": 0,
+        "files": 124,
+        "passedTests": 995
+      },
+      "nativeMain": {
+        "exitCode": 0,
+        "rootTestsStarted": 341,
+        "passedActionsIncludingSubtests": 1326,
+        "historicalSkips": 4
+      },
+      "unchangedSupplementaryGoPackages": {
+        "rootTests": 62,
+        "passedActions": 112,
+        "exitCodes": [
+          0,
+          0
+        ]
+      }
+    },
+    "sdk": {
+      "build": "pass",
+      "typechecks": 11,
+      "focusedLinterTests": 460,
+      "nodeServerV1Tests": 1,
+      "nodeScriptTests": 56,
+      "wholeSuite": {
+        "exitCode": 1,
+        "passedTests": 1749,
+        "failedTests": 1,
+        "totalTests": 1750,
+        "failure": "source-watch directory membership event was not observed; host Node/Bun probes also missed events. Isolated repeats remain unstable. Full green gate is open."
+      }
+    },
+    "fieldComposition": {
+      "privateMacOSPackage": true,
+      "copiedProjectOnly": true,
+      "wholeReportsMatched": 8,
+      "onlyReportRootDurationExcluded": true,
+      "arrayOrdersPreserved": true,
+      "genericEnabled": true,
+      "defaultBudgets": true,
+      "legacyBootstrapImports": 0,
+      "editedCopiesRestored": true,
+      "publicReleaseQualified": false,
+      "all12ProjectsQualified": false
+    }
+  },
+  "cleanup": {
+    "standardGoCachesRemoved": 42,
+    "allocatedGiBBeforeRemoval": 75.89507293701172,
+    "oneCacheRecreatedBySubsequentChecks": true,
+    "archivedAndRemovedWorktrees": 8,
+    "orphanedWorktreeRegistrationsPruned": 4,
+    "archivesByteModeLinkAndCompletenessVerified": true,
+    "sourcesAndProofsPreserved": true,
+    "measuredNet": {
+      "method": "du -sk; allocated directory size, not an APFS physical-block guarantee",
+      "beforePerfKiB": 220783816,
+      "afterPerfKiB": 143199304,
+      "afterNewConsolidationKiB": 6584828,
+      "netReductionKiB": 70999684,
+      "netReductionGiB": 67.71057510375977
+    }
+  },
+  "host": {
+    "shellExecution": "restored and verified after tool/daemon session renewal",
+    "originalDaemonPid": 81318,
+    "originalDaemonNumericFds": 253,
+    "globalSoftFdLimit": 256,
+    "permanentLeakPrevention": "not proved",
+    "filesystemEvents": "unstable on host; recovery of shell is not proof of watcher recovery"
+  },
+  "acceptance": {
+    "initialToCheckpoint10xLatency": false,
+    "initialToCheckpointNetMinus10000ProductionLOC": false,
+    "comparableMemoryAcceptance": false,
+    "mergedOrDeployed": false,
+    "publicRelease": false
+  },
+  "next": [
+    "Close SDK filesystem-watch qualification with healthy event delivery and preserve all lifecycle assertions.",
+    "Integrate each checkpoint with its current origin/main; preserve unrelated SDK changes.",
+    "Declare the SDK Codegraph dependency and prepare matched native/Rust release assets for every supported platform; verify isolated consumer install.",
+    "Run paired initial-versus-checkpoint cold/warm/noop and RSS on fixed real projects; qualify diagnostic precision/recall from labelled cases.",
+    "Resume structural architecture work; retire replaced paths only after equivalence evidence."
+  ],
+  "evidence": {
+    "localDirectory": "astrale/.worktrees/linter-consolidation-20261004/evidence",
+    "fieldProof": {
+      "path": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-consolidation-20261004/evidence/qualified-field-final.json",
+      "bytes": 4638,
+      "sha256": "eaaa6e4e073509dc813422ff0867523846061b24b9eb2561d0bf4993ffa232e3",
+      "mode": 420
+    },
+    "globalFootprintProof": {
+      "path": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-perf-20261001/review/codegraph-global-footprint-lock-D-20261004-v1.json",
+      "bytes": 7646,
+      "sha256": "ccf910738f2e0fed79205e657b755c556abd3c0d88e09f0417e28141a45fa045",
+      "mode": 420
+    },
+    "sdkWholeSuiteTerminal": {
+      "path": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-consolidation-20261004/evidence/sdk-full-after-session-recovery/terminal.json",
+      "bytes": 98,
+      "sha256": "c9bf2be1de570c00858cc858fe62ea00eb3c949264b3b638310762905a3229e7",
+      "mode": 420
+    },
+    "codegraphWholeSuiteTerminal": {
+      "path": "/Users/bryandjafer/Documents/astrale/.worktrees/linter-consolidation-20261004/evidence/cg-full-tests-final/terminal.json",
+      "bytes": 125,
+      "sha256": "93091acc737fc9da909986100f7275adff386dc45897a9667f401bfe0f0ff54f",
+      "mode": 420
+    }
+  }
+}
