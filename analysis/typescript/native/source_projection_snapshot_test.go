@@ -4,12 +4,15 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"runtime"
 	"testing"
 )
 
 // The hashes were captured from the qualified pre-C0 H12 binary, not generated
 // by the assembler under test. Cover both fresh products and retained-body
-// reemission; these fingerprints include every legacy fact byte and ID.
+// reemission; these fingerprints include every legacy fact byte and ID on the
+// captured platform. The compiler universe binds OS/architecture before fact
+// IDs are derived. Every platform independently checks fresh correspondence.
 // H17 headers are independently checked against full bodies, then projected out
 // with their derived identities to preserve this immutable pre-H17 oracle.
 func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
@@ -18,8 +21,11 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 		t.Fatal(err)
 	}
 	var oracle struct {
-		Provenance struct{ BinarySha256 string }
-		Cases      map[string]map[string]string
+		Provenance struct {
+			BinarySha256 string
+			Platform     struct{ OS, Architecture string }
+		}
+		Cases map[string]map[string]string
 	}
 	if err := json.Unmarshal(encoded, &oracle); err != nil {
 		t.Fatal(err)
@@ -27,8 +33,16 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 	if oracle.Provenance.BinarySha256 != "250c1f807b2e8074772b2e78b672201f8d53c2c7d3a869ed05d7b6fe296f21c3" {
 		t.Fatal("oracle is not tied to the qualified H12 artifact")
 	}
+	if oracle.Provenance.Platform.OS != "darwin" || oracle.Provenance.Platform.Architecture != "arm64" {
+		t.Fatal("oracle lost its qualified Darwin ARM64 platform")
+	}
+	onOraclePlatform := runtime.GOOS == oracle.Provenance.Platform.OS && runtime.GOARCH == oracle.Provenance.Platform.Architecture
 	assertProduct := func(t *testing.T, name string, transaction *factTransaction) {
 		t.Helper()
+		if !onOraclePlatform {
+			t.Log("frozen H12 byte oracle is Darwin ARM64 only; fresh correspondence remains checked")
+			return
+		}
 		transaction = legacyH12Projection(t, transaction)
 		got := map[string]string{
 			"generation": transaction.Next.ID,
@@ -61,6 +75,38 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer a.close()
+			assertFresh := func(transaction *factTransaction, recipe *bodyDemandRecipe) {
+				t.Helper()
+				freshAnalyzer, err := newAnalyzer(root, "tsconfig.json", "projection-oracle-v1", capabilities, nil, codecs, 0, 0, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer freshAnalyzer.close()
+				fresh, _, err := freshAnalyzer.refresh(request{ID: 1, BodyDemand: recipe})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if transaction.Next.ID != fresh.Next.ID || stableJSON(transaction.Manifest) != stableJSON(fresh.Manifest) {
+					t.Fatal("retained source projection differs from the complete fresh manifest/identity")
+				}
+				freshShards := map[string]factShard{}
+				for _, shard := range fresh.Upserts {
+					freshShards[shard.Key] = shard
+				}
+				if !reflect.DeepEqual(a.pending.state.callableReads, freshAnalyzer.pending.state.callableReads) {
+					t.Fatal("retained source projection differs from complete fresh callable reads")
+				}
+				for _, shard := range transaction.Upserts {
+					if stableJSON(shard) != stableJSON(freshShards[shard.Key]) {
+						t.Fatal("retained source projection changed fresh fact bytes/IDs/order")
+					}
+				}
+				for _, key := range transaction.Deletes {
+					if _, exists := freshShards[key]; exists {
+						t.Fatal("retained source projection deleted a current fresh shard")
+					}
+				}
+			}
 			empty := []string{}
 			recipe := &bodyDemandRecipe{Paths: []string{"entry.ts"}, Owners: &empty}
 			if name == "empty" || name == "full" || name == "packed-full" {
@@ -73,6 +119,7 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertProduct(t, name, current)
+			assertFresh(current, recipe)
 			if name != "roots" {
 				return
 			}
@@ -99,6 +146,7 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 					t.Fatal(err)
 				}
 				assertProduct(t, phase, current)
+				assertFresh(current, recipe)
 			}
 		})
 	}

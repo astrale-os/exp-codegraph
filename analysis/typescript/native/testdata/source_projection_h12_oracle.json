@@ -2,6 +2,7 @@
   "provenance": {
     "nativeCommit": "f2381372fefb67b281506291b6c13187ada39e8f",
     "binarySha256": "250c1f807b2e8074772b2e78b672201f8d53c2c7d3a869ed05d7b6fe296f21c3",
+    "platform": { "os": "darwin", "architecture": "arm64" },
     "universeSeed": "projection-oracle-v1",
     "fixture": "writeBodyDemandFixture",
     "format": "SHA256 of canonical JSON; complete current manifest and upsert shards including current generation metadata",

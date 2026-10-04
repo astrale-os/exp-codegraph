@@ -69,6 +69,9 @@ jobs:
         run: pnpm native:build -- --target ${{ matrix.target }} --output .native-output/${{ matrix.target }}
       - name: Build package distribution
         run: pnpm build
+      - name: Check the frozen Darwin ARM64 oracle and complete native regression suite
+        if: matrix.target == 'darwin-arm64'
+        run: pnpm native:test
       - name: Qualify native semantics and extension boundary
         run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Qualify native regression and diagnostic transport

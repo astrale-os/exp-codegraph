@@ -23,7 +23,7 @@ try {
   const files = argument('--files-json', [])
   const options = argument('--options-json', [])
   const code = await new Promise((complete, reject) => {
-    const child = spawn(toolchain.go, ['test', ...(files.length ? files : ['./analysis/typescript/native']), '-count=1', ...options], {
+    const child = spawn(toolchain.go, ['test', ...(files.length ? files : ['./analysis/typescript/native/...']), '-count=1', ...options], {
       cwd: files.length ? resolve(root, 'analysis/typescript/native') : root, stdio: 'inherit', env: { ...process.env, GOTOOLCHAIN: 'local', GOWORK: work },
     })
     child.once('error', reject)
