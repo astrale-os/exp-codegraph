@@ -14,7 +14,7 @@ import (
 
 func liveInputSession(t *testing.T, setup func(string)) (*governanceSession, string) {
 	t.Helper()
-	root := t.TempDir()
+	root := governanceTempDir(t)
 	governanceWrite(t, root, "index.ts", "export {}")
 	governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"target":"ES2022"},"include":["index.ts"]}`)
 	if setup != nil {
@@ -134,7 +134,7 @@ func TestClosedSourceLiveInputRejectsForeignAndTerminalPhasesBeforeIO(t *testing
 }
 
 func TestClosedSourceLiveInputActualStatNegativeAndSymlinkUnion(t *testing.T) {
-	target, replacement := t.TempDir(), t.TempDir()
+	target, replacement := governanceTempDir(t), governanceTempDir(t)
 	governanceWrite(t, target, "package.json", "{}")
 	if err := os.Mkdir(filepath.Join(target, "\U00010000"), 0755); err != nil {
 		t.Fatal(err)

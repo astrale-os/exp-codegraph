@@ -12,6 +12,14 @@ import (
 func governanceTestPolicy() governancePolicy {
 	return governancePolicy{Rules: "id\tscope\tkind\tseverity\tmessage\tverification\texample\nIMP-STATIC\timports\tdependency\terror\tmessage\tproof\tproof.md\n", Layers: []governanceLayer{{ID: "schema", SourcePath: "schema/", Required: true}, {ID: "mutations", SourcePath: "mutations/"}, {ID: "tests", SourcePath: "tests/"}}, RootFiles: []governanceRoot{{ID: "package", SourcePath: "index.ts", Role: "package-facade", Required: true}}, Dependencies: json.RawMessage("[]"), Aliases: json.RawMessage("[]")}
 }
+func governanceTempDir(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
 func governanceWrite(t *testing.T, root, path, text string) {
 	t.Helper()
 	absolute := filepath.Join(root, path)
@@ -20,6 +28,37 @@ func governanceWrite(t *testing.T, root, path, text string) {
 	}
 	if err := os.WriteFile(absolute, []byte(text), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+func TestGovernanceCaptureCanonicalizesSymlinkedParentAndGuardsRetarget(t *testing.T) {
+	parent, replacement := governanceTempDir(t), governanceTempDir(t)
+	for _, directory := range []string{parent, replacement} {
+		governanceWrite(t, directory, "domain/index.ts", "export {}")
+	}
+	alias := filepath.Join(governanceTempDir(t), "parent")
+	if err := os.Symlink(parent, alias); err != nil {
+		t.Fatal(err)
+	}
+	requested := filepath.Join(alias, "domain")
+	project, err := captureGovernedProject(requested, governanceTestPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical := filepath.Join(parent, "domain")
+	if project.Root != canonical || project.capture.root != canonical {
+		t.Fatalf("capture retained requested alias: project=%q capture=%q", project.Root, project.capture.root)
+	}
+	if ok, err := project.capture.Verify(); !ok || err != nil {
+		t.Fatalf("unchanged requested root failed verification: %v", err)
+	}
+	if err := os.Remove(alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(replacement, alias); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := project.capture.Verify(); ok {
+		t.Fatal("publication accepted a retargeted requested root")
 	}
 }
 func TestGovernanceFinalBarrierRejectsNewNegativeConfig(t *testing.T) {

@@ -36,7 +36,7 @@ func typeDemandTestProject(t *testing.T, root string, cache *governanceTypeDeman
 }
 func typeDemandFixture(t *testing.T) string {
 	t.Helper()
-	root := t.TempDir()
+	root := governanceTempDir(t)
 	governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","noLib":true,"types":[]},"include":["mutations","queries","schema"]}`)
 	governanceWrite(t, root, "mutations/demand.ts", `import { subject } from '../schema/value.js'; subject;`)
 	governanceWrite(t, root, "schema/value.ts", `export const subject = { before: 1 };`)
