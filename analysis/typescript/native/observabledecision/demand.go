@@ -1028,7 +1028,7 @@ func observeQueries(context DemandContext, observer *demandObserver, includeID b
 			shapeValue = shapeRun.eval(value.module, call.Arguments.Nodes[0], value.env)
 		}
 		observation.ProjectorProof = shapeRun.finish(shapeValue, "")
-		observation.ProjectorShape = DemandShape{Curried: value.curried, Callable: shapeValue.kind == "function"}
+		observation.ProjectorShape = DemandShape{Curried: value.curried && len(call.Arguments.Nodes) == 1, Callable: shapeValue.kind == "function"}
 		if shapeValue.kind == "function" {
 			observation.ProjectorShape.Async = ast.GetCombinedModifierFlags(shapeValue.node)&ast.ModifierFlagsAsync != 0
 			observation.ProjectorShape.ParameterCount = len(shapeValue.node.Parameters())

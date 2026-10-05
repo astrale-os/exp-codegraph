@@ -22,9 +22,6 @@ func EvaluateRuntimeQueries(project *Project, input RuntimeQueryInput) Result {
 	w := qmWriter{project: project}
 	observations := []qmObservation{}
 	for _, value := range input.Product.Observations {
-		if value.ConstructorIdentity == "astrale.sdk.defineCollectionQuery" {
-			continue
-		}
 		file := project.FilesByPath[value.Path]
 		if file == nil {
 			w.residual("QRY-CANON", nil, nil, "Runtime query source is not a current admitted source.")
