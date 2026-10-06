@@ -76,8 +76,8 @@ func basicFamilySamePrefix(t *testing.T, old, new *governedProject, a, b *basicF
 		t.Fatalf("physical resolver order differs\nold=%#v\nnew=%#v", a.Reads, b.Reads)
 	}
 	if !reflect.DeepEqual(old.capture.observations, new.capture.observations) ||
-		!reflect.DeepEqual(old.capture.compiler.observed, new.capture.compiler.observed) ||
-		!reflect.DeepEqual(old.capture.compiler.rawReads, new.capture.compiler.rawReads) ||
+		!reflect.DeepEqual(compilerTestObservations(old.capture.compiler), compilerTestObservations(new.capture.compiler)) ||
+		!reflect.DeepEqual(compilerTestRawReads(old.capture.compiler), compilerTestRawReads(new.capture.compiler)) ||
 		old.capture.compiler.inconsistent != new.capture.compiler.inconsistent {
 		t.Fatal("actual captured presence/content/metadata prefix differs")
 	}

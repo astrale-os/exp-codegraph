@@ -1,0 +1,745 @@
+{
+  "schema": 1,
+  "producer": "Frozen original SDK capturedSourceFile/collectImports; no native-generated expectations",
+  "sdkRevision": "8a2470cac32f5ef80a89e2f81dd03cec815dfca0",
+  "typescript": "6.0.3",
+  "originalOracleSHA256": "53d1f30720d1522f24020b338bf112efc3437c08a9255027bd36fcbb79cf017e",
+  "cases": [
+    {
+      "name": "empty",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "export {};",
+          "imports": []
+        }
+      ]
+    },
+    {
+      "name": "kernel-core",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import x from '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "kernel-dsl",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/kernel-dsl';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "core-subpath",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import * as x from '@astrale-os/kernel-core/graph';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 103, 114, 97, 112, 104],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dsl-subpath",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import {x as y} from '@astrale-os/kernel-dsl/schema';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108, 47, 115, 99, 104, 101, 109, 97],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "type-clause",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import type { X } from '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": true,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "type-specifiers",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import { type X } from '@astrale-os/kernel-dsl';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": true,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "mixed-types",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import {type X, Y} from '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "type-specifiers-verbatim",
+      "verbatimModuleSyntax": true,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import {type X} from '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reexport-star",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "export * from '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "reexport-type",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "export type {X} from '@astrale-os/kernel-dsl';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": true,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "dynamic",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "async function f(){return import('@astrale-os/kernel-core')}",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "import-type",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "type X = import('@astrale-os/kernel-dsl').X;",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": true,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "import-type-template",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "type X = import(`@astrale-os/kernel-core`).X;",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": true,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "runtime-template",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "const x = import(`@astrale-os/kernel-core`);",
+          "imports": []
+        }
+      ]
+    },
+    {
+      "name": "runtime-options",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "const x = import('@astrale-os/kernel-core', {with:{type:'json'}});",
+          "imports": []
+        }
+      ]
+    },
+    {
+      "name": "require",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "const x = require('@astrale-os/kernel-core');",
+          "imports": []
+        }
+      ]
+    },
+    {
+      "name": "import-equals",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import x = require('@astrale-os/kernel-dsl');",
+          "imports": []
+        }
+      ]
+    },
+    {
+      "name": "near-prefix",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/kernel-core-other'; import '@astrale-os/kernel-dslx';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 45, 111, 116, 104, 101, 114],
+              "typeOnly": false,
+              "dynamic": false
+            },
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108, 120],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "case-sensitive",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@Astrale-os/kernel-core'; import '@astrale-os/Kernel-dsl';",
+          "imports": [
+            {
+              "specifierUnits": [64, 65, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            },
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 75, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "backslash",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/kernel-core\\\\graph';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 92, 103, 114, 97, 112, 104],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "sdk-allowed",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/sdk/schema';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 115, 100, 107, 47, 115, 99, 104, 101, 109, 97],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "url",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import 'npm:@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [110, 112, 109, 58, 64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "relative",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import './@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [46, 47, 64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "duplicate",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/kernel-core';\nimport '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            },
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "collector-order",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "const a=import('@astrale-os/kernel-core/a');\nexport * from '@astrale-os/kernel-dsl';\ntype T=import('@astrale-os/kernel-core/b').T;\nimport '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": false,
+              "dynamic": false
+            },
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            },
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 97],
+              "typeOnly": false,
+              "dynamic": true
+            },
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 98],
+              "typeOnly": true,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "bom-crlf-emoji",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "﻿// 😀\r\nimport '@astrale-os/kernel-core';\r\n",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "line-separators",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "//x import '@astrale-os/kernel-dsl'; ",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "escaped-prefix",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '\\u0040astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "escaped-suffix",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/kernel-core/\\u0067raph';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 103, 114, 97, 112, 104],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "surrogate-suffix",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/kernel-core/\\uD800';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 55296],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "surrogate-pair-suffix",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import '@astrale-os/kernel-dsl/\\uD83D\\uDE00';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108, 47, 55357, 56832],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "malformed",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "import { from '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "jsx",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.tsx",
+          "text": "import '@astrale-os/kernel-core'; export const X=()=> <div/>;",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "mts",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.mts",
+          "text": "export * from '@astrale-os/kernel-dsl';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "focused-test",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/__tests__/case.ts",
+          "text": "import '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "test-suffix",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.test.ts",
+          "text": "import '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "system-test",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "tests/case.ts",
+          "text": "import '@astrale-os/kernel-core';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "file-order-and-roles",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/z.ts",
+          "text": "import '@astrale-os/kernel-core/z';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 122],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        },
+        {
+          "path": "schema/__tests__/x.ts",
+          "text": "import '@astrale-os/kernel-core/test';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 116, 101, 115, 116],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        },
+        {
+          "path": "schema/a.ts",
+          "text": "import '@astrale-os/kernel-dsl/a';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108, 47, 97],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "surrogate-export",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "export * from '@astrale-os/kernel-dsl/\\uD800';",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108, 47, 55296],
+              "typeOnly": false,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "surrogate-dynamic",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "const x=import('@astrale-os/kernel-core/\\uD800');",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 99, 111, 114, 101, 47, 55296],
+              "typeOnly": false,
+              "dynamic": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "surrogate-import-type",
+      "verbatimModuleSyntax": false,
+      "files": [
+        {
+          "path": "schema/case.ts",
+          "text": "type X=import('@astrale-os/kernel-dsl/\\uD800').X;",
+          "imports": [
+            {
+              "specifierUnits": [64, 97, 115, 116, 114, 97, 108, 101, 45, 111, 115, 47, 107, 101, 114, 110, 101, 108, 45, 100, 115, 108, 47, 55296],
+              "typeOnly": true,
+              "dynamic": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

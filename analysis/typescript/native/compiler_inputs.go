@@ -39,12 +39,12 @@ type compilerRawInput struct {
 	value compilerRawRead
 }
 
-// First-value journal elements never change. Separate prefixes preserve the
-// original read's raw-before-observed publication, including an in-flight read.
+// First-value journal elements never change. Joined compiler consumers retain
+// completed reads published atomically in raw-before-observed logical order.
 // A receipt retains only capped slice headers, never the mutable filesystem.
 // Identity proves a common first-value journal without retaining its FS.
 // Nonzero size prevents distinct empty journals from sharing a Go address.
-type compilerInputJournal struct { marker byte }
+type compilerInputJournal struct{ marker byte }
 
 type compilerInputPrefix struct {
 	origin       *compilerInputJournal
@@ -62,14 +62,12 @@ type compilerInputFS struct {
 	shimvfs.FS
 	disk       shimvfs.FS
 	mu         sync.Mutex
-	observed   map[compilerInputKey]string
 	operations map[compilerInputKey]*compilerCapturedOperation
-	rawReads   map[string]compilerRawRead
 	prefix     compilerInputPrefix
 }
 
 func newCompilerInputFS(fs, disk shimvfs.FS) *compilerInputFS {
-	return &compilerInputFS{FS: fs, disk: disk, observed: map[compilerInputKey]string{}, rawReads: map[string]compilerRawRead{}, prefix: compilerInputPrefix{origin: &compilerInputJournal{}}}
+	return &compilerInputFS{FS: fs, disk: disk, operations: map[compilerInputKey]*compilerCapturedOperation{}, prefix: compilerInputPrefix{origin: &compilerInputJournal{}}}
 }
 func (fs *compilerInputFS) remember(path string, kind compilerInputKind, value string) {
 	fs.mu.Lock()
@@ -77,13 +75,17 @@ func (fs *compilerInputFS) remember(path string, kind compilerInputKind, value s
 	// Compiler paths may be virtual URIs (bundled:///libs), not OS paths.
 	// Preserve the exact filesystem identity used to obtain the observation.
 	key := compilerInputKey{path, kind}
-	if before, seen := fs.observed[key]; seen && fs.singleCapture {
+	fs.rememberLocked(key, fs.operationLocked(key), value)
+}
+
+func (fs *compilerInputFS) rememberLocked(key compilerInputKey, cell *compilerCapturedOperation, value string) {
+	if before, seen := cell.observation, cell.observed; seen && fs.singleCapture {
 		if before != value {
 			fs.inconsistent = true
 		}
 		return
 	}
-	fs.observed[key] = value
+	cell.observation, cell.observed = value, true
 	if fs.singleCapture {
 		fs.prefix.observations = append(fs.prefix.observations, compilerInputObservation{key: key, before: value})
 	}
@@ -122,28 +124,9 @@ func (fs *compilerInputFS) readFileFrom(path string, read func(string) (string, 
 	if ok && fs.singleCapture && strings.EqualFold(filepath.Base(path), "package.json") {
 		fs.certifyJSON(path, content)
 	}
-	fs.rememberRaw(path, compilerRawRead{content, ok})
-	fs.remember(path, inputRead, inputText(content, ok))
 	return content, ok
 }
 
-// Keep raw publication distinct from the following observed fingerprint. A
-// concurrent receipt can see this original intermediate prefix under fs.mu.
-func (fs *compilerInputFS) rememberRaw(path string, value compilerRawRead) {
-	fs.mu.Lock()
-	defer fs.mu.Unlock()
-	if fs.rawReads == nil {
-		fs.rawReads = map[string]compilerRawRead{}
-	}
-	if before, seen := fs.rawReads[path]; !seen || !fs.singleCapture {
-		fs.rawReads[path] = value
-		if fs.singleCapture {
-			fs.prefix.reads = append(fs.prefix.reads, compilerRawInput{path, value})
-		}
-	} else if before != value {
-		fs.inconsistent = true
-	}
-}
 func (fs *compilerInputFS) FileExists(path string) bool {
 	return captureCompilerOperation(fs, compilerInputKey{path, inputFile}, func() bool {
 		value := fs.FS.FileExists(path)
@@ -173,6 +156,7 @@ func (fs *compilerInputFS) Realpath(path string) string {
 		return value
 	})
 }
+
 // Both consumers join the same physical Stat cell. Only a general Stat caller
 // consumes its full tuple; SDK regular membership consumes its exact projection.
 func (fs *compilerInputFS) stat(path string) shimvfs.FileInfo {
@@ -217,13 +201,10 @@ func inputStat(value shimvfs.FileInfo) string {
 // facts. Semantic receipt prefixes continue to use only observed consumption.
 // The caller holds mu or owns the completed capture exclusively.
 func (fs *compilerInputFS) publicationObservationsLocked() []compilerInputObservation {
-	rows := make([]compilerInputObservation, 0, len(fs.observed))
-	for key, before := range fs.observed {
-		rows = append(rows, compilerInputObservation{key, before})
-	}
+	rows := fs.semanticObservationsLocked()
 	for key, cell := range fs.operations {
-		if key.kind == inputMetadata && cell.value != nil {
-			if _, observed := fs.observed[key]; !observed {
+		if fs.singleCapture && key.kind == inputMetadata && cell.value != nil {
+			if !cell.observed {
 				value := cell.value.(compilerCapturedValue[shimvfs.FileInfo]).value
 				rows = append(rows, compilerInputObservation{key, inputStat(value)})
 			}
@@ -249,10 +230,7 @@ func (fs *compilerInputFS) applied(path, content string) {
 
 func (s *compilerSession) discover() (paths []string, rebuild bool) {
 	s.inputs.mu.Lock()
-	observed := make([]compilerInputObservation, 0, len(s.inputs.observed))
-	for key, value := range s.inputs.observed {
-		observed = append(observed, compilerInputObservation{key: key, before: value})
-	}
+	observed := s.inputs.semanticObservationsLocked()
 	s.inputs.mu.Unlock()
 	after := s.inputs.observe(observed)
 	changed := map[string]bool{}

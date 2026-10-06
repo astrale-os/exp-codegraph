@@ -236,29 +236,18 @@ func (b *bodyBuilder) buildRelations(node *shimast.Node) {
 }
 
 func (b *bodyBuilder) walkOwned(node *shimast.Node) {
-	if node == nil {
-		return
-	}
-	if shimast.IsPartOfTypeNode(node) {
-		return
-	}
-	switch node.Kind {
-	case shimast.KindInterfaceDeclaration, shimast.KindTypeAliasDeclaration,
-		shimast.KindImportDeclaration, shimast.KindExportDeclaration,
-		shimast.KindClassDeclaration, shimast.KindClassExpression, shimast.KindModuleDeclaration:
-		return
-	}
-	if shimast.IsFunctionLike(node) {
+	walkOwnedBody(node, b.observeOwnedBodyNode)
+}
+
+func (b *bodyBuilder) observeOwnedBodyNode(node *shimast.Node, kind string, nestedFunction bool) {
+	if nestedFunction {
 		// A function literal is a value in the enclosing scope, but its
 		// execution belongs only to the separately indexed function body.
-		if node.Body() != nil {
-			id := b.addOccurrence(node, "expression")
-			b.setOccurrenceSymbol(id, b.x.functionID(node))
-			b.values[id] = b.value(node)
-		}
+		id := b.addOccurrence(node, "expression")
+		b.setOccurrenceSymbol(id, b.x.functionID(node))
+		b.values[id] = b.value(node)
 		return
 	}
-	kind := bodyKind(node)
 	if kind != "" {
 		id := b.addOccurrence(node, kind)
 		if valueCandidate(node) {
@@ -276,10 +265,6 @@ func (b *bodyBuilder) walkOwned(node *shimast.Node) {
 	if node.Kind == shimast.KindIdentifier {
 		b.identifier(node)
 	}
-	node.ForEachChild(func(child *shimast.Node) bool {
-		b.walkOwned(child)
-		return false
-	})
 }
 
 func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {

@@ -2,8 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -70,12 +68,6 @@ type governanceSession struct {
 	parseCache        map[string]*governedFile
 	root              string
 	generation        int
-	staged            *governanceCandidate
-}
-type governanceCandidate struct {
-	token, reportDigest, inputCertificate string
-	generation                            int
-	capture                               *governanceCapture
 }
 
 // Every project, retained lease and generation callback borrows this stable heap
@@ -168,33 +160,6 @@ func (session *governanceSession) prepareSource(params governancePrepare) (*gove
 	return project, product, nil
 }
 
-// Stage is a private composition boundary for a future qualified whole-report
-// assembler. The public server below never calls it for partial rule products.
-func (session *governanceSession) stage(project *governedProject, reportJSON string) *governanceCandidate {
-	session.generation++
-	digest := sha256.Sum256([]byte(reportJSON))
-	reportDigest := hex.EncodeToString(digest[:])
-	input := project.capture.certificate()
-	token := governanceHash([]byte(fmt.Sprintf("%d\000%s\000%s", session.generation, input, reportDigest)))
-	candidate := &governanceCandidate{token, reportDigest, input, session.generation, project.capture}
-	session.staged = candidate
-	return candidate
-}
-func (session *governanceSession) seal(token, reportDigest string) (map[string]any, error) {
-	candidate := session.staged
-	session.staged = nil
-	if candidate == nil || candidate.token != token || candidate.reportDigest != reportDigest {
-		return map[string]any{"status": "retry"}, nil
-	}
-	same, err := candidate.capture.Verify()
-	if err != nil {
-		return nil, err
-	}
-	if !same {
-		return map[string]any{"status": "retry"}, nil
-	}
-	return map[string]any{"status": "committed", "token": token, "reportDigest": reportDigest, "generation": candidate.generation, "inputCertificate": candidate.inputCertificate}, nil
-}
 func runDecisionServe(arguments []string) int {
 	root := ""
 	if len(arguments) == 2 && arguments[0] == "--cwd" {
@@ -227,7 +192,6 @@ func runDecisionServe(arguments []string) int {
 		switch request.Method {
 		case "prepare":
 			session.discardProducts()
-			session.staged = nil
 			var params governancePrepare
 			err = json.Unmarshal(request.Params, &params)
 			if err == nil {
@@ -265,7 +229,7 @@ func runDecisionServe(arguments []string) int {
 				if params.ProductsDigest != "" {
 					result, err = session.sealProducts(params.Token, params.ProductsDigest, params.ReportDigest)
 				} else {
-					result, err = session.seal(params.Token, params.ReportDigest)
+					result = map[string]any{"status": "retry"}
 				}
 			}
 		default:

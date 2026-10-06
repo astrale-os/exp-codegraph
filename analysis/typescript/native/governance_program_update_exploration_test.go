@@ -180,10 +180,10 @@ func TestGenerationBrokerRoutesRetainedHostOperations(t *testing.T) {
 	if !present || text != "current" {
 		t.Fatalf("late value %q %v", text, present)
 	}
-	if _, seen := old.capture.compiler.rawReads[late]; seen {
+	if _, seen := compilerTestRawReads(old.capture.compiler)[late]; seen {
 		t.Fatal("late read leaked into old actual owner")
 	}
-	if next.capture.compiler.rawReads[late].text != "current" {
+	if compilerTestRawReads(next.capture.compiler)[late].text != "current" {
 		t.Fatal("late read missing current actual receipt")
 	}
 	governanceWrite(t, root, "late-owner.txt", "changed")
@@ -238,6 +238,10 @@ func TestGenerationGuardedBodyProposalAndDependencyRejection(t *testing.T) {
 			}
 			next, nextFile, nextNode := typeDemandTestProject(t, root, &governanceTypeDemandCache{})
 			updated, reused := retained.propose(next)
+			session := &governanceSession{programGeneration: retained}
+			if reused {
+				next.borrowedGeneration = retained
+			}
 			if kind == "body" || kind == "late-hidden-source" {
 				if !reused {
 					next.typeOwner.configuration()
@@ -267,9 +271,12 @@ func TestGenerationGuardedBodyProposalAndDependencyRejection(t *testing.T) {
 				if kind == "late-hidden-source" {
 					governanceWrite(t, root, "schema/value.ts", `export const subject={after:1};`)
 				}
-				valid, err := retained.verifyProposal(next)
-				if err != nil || valid != (kind == "body") {
-					t.Fatalf("final old-dependency barrier valid=%v err=%v", valid, err)
+				status := generationSessionSeal(t, session, next, kind)
+				if (status == "committed") != (kind == "body") || status != "committed" && status != "retry" {
+					t.Fatalf("final old-dependency seal status=%s", status)
+				}
+				if status == "retry" && (session.programGeneration != nil || next.borrowedGeneration != nil || next.runtimeSyntax != nil) {
+					t.Fatal("rejected proposal survived its owning session seal")
 				}
 			} else if kind == "config" || kind == "new-negative" {
 				if reused || updated != nil {
@@ -279,11 +286,10 @@ func TestGenerationGuardedBodyProposalAndDependencyRejection(t *testing.T) {
 				if !reused {
 					t.Fatalf("private proposal unavailable: %s", kind)
 				}
-				valid, err := retained.verifyProposal(next)
-				if err != nil || valid || retained.program != nil || retained.broker != nil {
-					t.Fatalf("stale capsule not retired: %v %v", valid, err)
+				if status := generationSessionSeal(t, session, next, kind); status != "retry" || session.programGeneration != nil || next.borrowedGeneration != nil || next.runtimeSyntax != nil {
+					t.Fatalf("stale proposal not retired by session: %s", status)
 				}
-				if _, again := retained.propose(next); again {
+				if _, again := session.programGeneration.propose(next); again {
 					t.Fatal("retry borrowed retired metadata")
 				}
 				_, fresh := testTypeDemand(t, root, &governanceTypeDemandCache{})

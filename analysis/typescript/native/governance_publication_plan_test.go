@@ -31,10 +31,10 @@ func TestPublicationPlanOperationFixture(t *testing.T) {
 			}
 			current.compiler.FileExists(filepath.Join(root, "absent.ts"))
 			assertions := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
-			for path, value := range current.compiler.rawReads {
+			for path, value := range compilerTestRawReads(current.compiler) {
 				assertions.barrierReads[path] = value
 			}
-			for key, value := range current.compiler.observed {
+			for key, value := range compilerTestObservations(current.compiler) {
 				if key.kind != inputRead {
 					assertions.barrierObservations[key] = value
 				}

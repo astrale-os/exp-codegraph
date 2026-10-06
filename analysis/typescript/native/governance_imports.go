@@ -2,12 +2,25 @@ package main
 
 import (
 	"astrale-typespec-v2-native-analysis/authoredsource"
+	"astrale-typespec-v2-native-analysis/jsstring"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 )
 
 func governanceLiteral(node *ast.Node) bool {
 	return node != nil && (node.Kind == ast.KindStringLiteral || node.Kind == ast.KindNoSubstitutionTemplateLiteral)
 }
+
+// Preserve the original SDK's decoded UTF16 module specifier, including lone
+// surrogates. Literal.Text normalizes those to replacement characters. The
+// shared existing decoder owns quoted/template literal semantics; retain the
+// old Text result only when that decoder reports unsupported/invalid syntax.
+func governanceImportSpecifierText(file *ast.SourceFile, literal *ast.Node) string {
+	if value, err := jsstring.FromLiteral(file, literal); err == nil {
+		return value.WTF8()
+	}
+	return literal.Text()
+}
+
 func governanceCollectImports(file *ast.SourceFile, verbatim bool) []governanceImport {
 	result := []governanceImport{}
 	for _, statement := range file.Statements.Nodes {
@@ -31,7 +44,7 @@ func governanceCollectImports(file *ast.SourceFile, verbatim bool) []governanceI
 				}
 			}
 			bindings, namespace := authoredsource.CollectImportBindings(statement)
-			result = append(result, governanceImport{Specifier: d.ModuleSpecifier.Text(), TypeOnly: typeOnly, Node: statement, Bindings: bindings, Namespace: namespace})
+			result = append(result, governanceImport{Specifier: governanceImportSpecifierText(file, d.ModuleSpecifier), TypeOnly: typeOnly, Node: statement, Bindings: bindings, Namespace: namespace})
 		case ast.KindExportDeclaration:
 			d := statement.AsExportDeclaration()
 			if d.ModuleSpecifier == nil || d.ModuleSpecifier.Kind != ast.KindStringLiteral {
@@ -46,7 +59,7 @@ func governanceCollectImports(file *ast.SourceFile, verbatim bool) []governanceI
 				}
 				typeOnly = typeOnly || all
 			}
-			result = append(result, governanceImport{Specifier: d.ModuleSpecifier.Text(), TypeOnly: typeOnly, Node: statement})
+			result = append(result, governanceImport{Specifier: governanceImportSpecifierText(file, d.ModuleSpecifier), TypeOnly: typeOnly, Node: statement})
 		}
 	}
 	var visit func(*ast.Node)
@@ -54,13 +67,13 @@ func governanceCollectImports(file *ast.SourceFile, verbatim bool) []governanceI
 		if node.Kind == ast.KindImportType {
 			arg := node.AsImportTypeNode().Argument
 			if arg != nil && arg.Kind == ast.KindLiteralType && governanceLiteral(arg.AsLiteralTypeNode().Literal) {
-				result = append(result, governanceImport{Specifier: arg.AsLiteralTypeNode().Literal.Text(), TypeOnly: true, Node: node})
+				result = append(result, governanceImport{Specifier: governanceImportSpecifierText(file, arg.AsLiteralTypeNode().Literal), TypeOnly: true, Node: node})
 			}
 		}
 		if node.Kind == ast.KindCallExpression {
 			c := node.AsCallExpression()
 			if c.Expression.Kind == ast.KindImportKeyword && c.Arguments != nil && len(c.Arguments.Nodes) == 1 && c.Arguments.Nodes[0].Kind == ast.KindStringLiteral {
-				result = append(result, governanceImport{Specifier: c.Arguments.Nodes[0].Text(), Dynamic: true, Node: node})
+				result = append(result, governanceImport{Specifier: governanceImportSpecifierText(file, c.Arguments.Nodes[0]), Dynamic: true, Node: node})
 			}
 		}
 		node.ForEachChild(func(child *ast.Node) bool { visit(child); return false })

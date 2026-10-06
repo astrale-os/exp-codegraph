@@ -173,7 +173,7 @@ func TestGovernanceTypeDemandReferenceFormsAndPackageConditions(t *testing.T) {
 				if next.stats.CompilerPrograms != 0 || next.stats.TypeCacheHits != 1 {
 					t.Fatalf("expected private deferred candidate: %#v", next.stats)
 				}
-				if _, forged := next.capture.compiler.observed[compilerInputKey{filepath.Join(root, "node_modules/cache-pkg/first.d.ts"), inputRead}]; forged {
+				if _, forged := compilerTestObservations(next.capture.compiler)[compilerInputKey{filepath.Join(root, "node_modules/cache-pkg/first.d.ts"), inputRead}]; forged {
 					t.Fatal("pending external bytes promoted to actual compiler reads")
 				}
 				same, err := next.capture.Verify()

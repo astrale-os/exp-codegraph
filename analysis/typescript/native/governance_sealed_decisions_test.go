@@ -102,7 +102,7 @@ func TestSealedDecisionClonesPendingAndActualRawReadClosure(t *testing.T) {
 	old := &governanceCapture{compiler: inputs, compilerAssertions: []*governanceCompilerReadAssertions{pending}}
 	expected := governanceExpectedCapture(old)
 	delete(pending.barrierReads, missing)
-	delete(inputs.rawReads, path)
+	inputs.operations[compilerInputKey{path, inputRead}].value = nil
 	if len(expected.compilerAssertions) != 2 || len(expected.compilerAssertions[0].barrierReads) != 1 || len(expected.compilerAssertions[1].barrierReads) != 1 {
 		t.Fatal("raw closure borrowed or omitted")
 	}

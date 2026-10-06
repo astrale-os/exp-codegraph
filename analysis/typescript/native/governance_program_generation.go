@@ -68,10 +68,16 @@ func governanceRetainProgramGeneration(project *governedProject, broker *governa
 	fs := project.capture.compiler
 	receipt := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
 	fs.mu.Lock()
-	for path, value := range fs.rawReads {
-		receipt.barrierReads[path] = value
+	for key, cell := range fs.operations {
+		if key.kind == inputRead && cell.value != nil {
+			receipt.barrierReads[key.path] = cell.value.(compilerCapturedValue[compilerRawRead]).value
+		}
 	}
-	for key, value := range fs.observed {
+	for key, cell := range fs.operations {
+		if !cell.observed {
+			continue
+		}
+		value := cell.observation
 		if _, raw := receipt.barrierReads[key.path]; key.kind == inputRead && raw {
 			continue
 		}
@@ -172,21 +178,6 @@ func governanceGenerationRelative(root, path string) string {
 		return ""
 	}
 	return filepath.ToSlash(relative)
-}
-
-// The public products owner must perform this retirement when its final original
-// old/current conjunction rejects a speculative proposal. This probe method uses
-// the SAME existing uncached capture barrier, not an alternative publication test.
-func (generation *governanceProgramGeneration) verifyProposal(project *governedProject) (bool, error) {
-	valid, err := project.capture.Verify()
-	if err != nil || !valid {
-		generation.program = nil
-		generation.broker = nil
-		generation.receipts = nil
-		generation.syntax = nil
-		project.runtimeSyntax = nil
-	}
-	return valid, err
 }
 
 // A type cell computed from speculative old metadata is also private. If this

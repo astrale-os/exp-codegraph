@@ -68,19 +68,15 @@ func TestGovernanceFinalBarrierRejectsNewNegativeConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	session := governanceSession{}
-	candidate := session.stage(project, `{"report":"private-not-qualified"}`)
+	captures := []*governanceCapture{project.capture}
+	if valid, err := governanceVerifyPublication(captures); !valid || err != nil {
+		t.Fatalf("unchanged capture cannot publish: %v %v", valid, err)
+	}
 	governanceWrite(t, root, "pnpm-workspace.yaml", "packages: []\n")
-	result, err := session.seal(candidate.token, candidate.reportDigest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result["status"] != "retry" {
-		t.Fatal("published report after negative config observation changed")
-	}
-	result, err = session.seal(candidate.token, candidate.reportDigest)
-	if err != nil || result["status"] != "retry" {
-		t.Fatal("replayed token was accepted")
+	for attempt := 0; attempt < 2; attempt++ {
+		if valid, err := governanceVerifyPublication(captures); valid || err != nil {
+			t.Fatalf("negative config accepted at publication attempt %d: %v %v", attempt, valid, err)
+		}
 	}
 }
 func TestGovernanceFinalBarrierRejectsBytesAfterConsumerAdmission(t *testing.T) {
@@ -90,12 +86,15 @@ func TestGovernanceFinalBarrierRejectsBytesAfterConsumerAdmission(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	session := governanceSession{}
-	candidate := session.stage(project, `{"report":"private-not-qualified"}`)
+	captures := []*governanceCapture{project.capture}
+	if valid, err := governanceVerifyPublication(captures); !valid || err != nil {
+		t.Fatalf("unchanged capture cannot publish: %v %v", valid, err)
+	}
 	governanceWrite(t, root, "mutations/source.ts", "require('y')")
-	result, err := session.seal(candidate.token, candidate.reportDigest)
-	if err != nil || result["status"] != "retry" {
-		t.Fatalf("accepted same-size edit%v%v", result, err)
+	for attempt := 0; attempt < 2; attempt++ {
+		if valid, err := governanceVerifyPublication(captures); valid || err != nil {
+			t.Fatalf("same-size edit accepted at publication attempt %d: %v %v", attempt, valid, err)
+		}
 	}
 }
 func TestGovernanceFinalBarrierLeavesUnobservedIgnoredBytesAlone(t *testing.T) {

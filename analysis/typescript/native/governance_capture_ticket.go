@@ -27,7 +27,7 @@ func (capture *governanceCapture) semanticTicket() string {
 	compilerConflict := false
 	if capture.compiler != nil {
 		capture.compiler.mu.Lock()
-		compilerCount = len(capture.compiler.observed)
+		compilerCount = len(capture.compiler.prefix.observations)
 		compilerConflict = capture.compiler.inconsistent
 		immutable := capture.compiler.singleCapture
 		capture.compiler.mu.Unlock()

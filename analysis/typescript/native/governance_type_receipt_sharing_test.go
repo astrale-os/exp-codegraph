@@ -47,10 +47,10 @@ func originalTypeReceiptRows(owner *governanceTypeAuthority, demanded string) or
 	fs := owner.project.capture.compiler
 	fs.mu.Lock()
 	defer fs.mu.Unlock()
-	for path, value := range fs.rawReads {
+	for path, value := range compilerTestRawReads(fs) {
 		out.reads[path] = value
 	}
-	for key, value := range fs.observed {
+	for key, value := range compilerTestObservations(fs) {
 		out.observations[key] = value
 	}
 	return out
@@ -132,7 +132,7 @@ func TestGovernanceTypeReceiptsShareOnlyOnePlainBaseAndExactEarlierFrontier(t *t
 	project.FilesByPath["schema/value.ts"].Text = oldText
 }
 
-func TestGovernanceTypeReceiptPreservesRawBeforeObservedPrefixAndMissingRawGuard(t *testing.T) {
+func TestGovernanceTypeReceiptCompletedRawFixtureAndMissingRawGuard(t *testing.T) {
 	root := typeDemandFixture(t)
 	project, file, node := typeDemandTestProject(t, root, &governanceTypeDemandCache{})
 	t.Cleanup(func() {
@@ -145,13 +145,13 @@ func TestGovernanceTypeReceiptPreservesRawBeforeObservedPrefixAndMissingRawGuard
 	}
 	fs := project.capture.compiler
 	path := filepath.Join(root, "raw-before-observed.txt")
-	// These are the original readFileFrom's two publication steps. Capture the
-	// exact intermediate state without a scheduler-dependent race or hook.
+	// Construct a completed raw-only oracle fixture. Live compiler receipt cuts
+	// follow joined readers and atomically include their read fingerprints.
 	fs.rememberRaw(path, compilerRawRead{"original intermediate raw", true})
 	first := requireTypeReceipt(t, project.typeOwner, project.FilesByPath[file.Path].AbsolutePath)
 	rows := sharedTypeReceiptRows(first)
 	if rows.reads[path] != (compilerRawRead{"original intermediate raw", true}) {
-		t.Fatal("in-flight raw value omitted")
+		t.Fatal("completed raw fixture value omitted")
 	}
 	if _, observed := rows.observations[compilerInputKey{path, inputRead}]; observed {
 		t.Fatal("future observed fingerprint appeared in raw-only prefix")
@@ -166,7 +166,7 @@ func TestGovernanceTypeReceiptPreservesRawBeforeObservedPrefixAndMissingRawGuard
 	if !valid || assertions.barrierReads[path] != rows.reads[path] {
 		t.Fatal("raw-only obligation did not survive original replay")
 	}
-	if _, actual := current.capture.compiler.rawReads[path]; actual {
+	if _, actual := compilerTestRawReads(current.capture.compiler)[path]; actual {
 		t.Fatal("expected intermediate raw value became a current observation")
 	}
 	missing := filepath.Join(root, "observed-without-raw.txt")
@@ -190,7 +190,7 @@ func TestGovernanceTypeReceiptJournalFirstValuesConflictsAndLegacyReplacement(t 
 	}
 	fs.rememberRaw(path, compilerRawRead{"after", true})
 	fs.remember(path, inputRead, inputText("after", true))
-	if !fs.inconsistent || fs.rawReads[path] != first || fs.prefix.reads[0].value != first || len(fs.prefix.reads) != 1 || len(fs.prefix.observations) != 1 {
+	if !fs.inconsistent || compilerTestRawReads(fs)[path] != first || fs.prefix.reads[0].value != first || len(fs.prefix.reads) != 1 || len(fs.prefix.observations) != 1 {
 		t.Fatal("conflicting value replaced an original first row")
 	}
 	if valid, err := (&governanceCapture{observations: map[string]governanceObservation{}, compiler: fs}).Verify(); err != nil || valid {
@@ -201,7 +201,7 @@ func TestGovernanceTypeReceiptJournalFirstValuesConflictsAndLegacyReplacement(t 
 	legacy.remember(path, inputFile, inputBool(false))
 	legacy.rememberRaw(path, compilerRawRead{"current", true})
 	legacy.remember(path, inputFile, inputBool(true))
-	if legacy.rawReads[path].text != "current" || legacy.observed[compilerInputKey{path, inputFile}] != inputBool(true) || legacy.inconsistent || len(legacy.prefix.reads) != 0 || len(legacy.prefix.observations) != 0 {
+	if compilerTestRawReads(legacy)[path].text != "current" || compilerTestObservations(legacy)[compilerInputKey{path, inputFile}] != inputBool(true) || legacy.inconsistent || len(legacy.prefix.reads) != 0 || len(legacy.prefix.observations) != 0 {
 		t.Fatal("legacy generation replacement acquired a decision journal")
 	}
 }
