@@ -126,26 +126,18 @@ func (b *thinBody) mark(node *shimast.Node, kind string) {
 	}
 }
 
-// Mirror walkOwned's admission order, without allocating body rows, values,
+// Use the shared owned grammar without allocating body rows, values,
 // control flow, definition-use indexes or canonical full-body preimages.
 func (b *thinBody) walk(node *shimast.Node) {
-	if node == nil || shimast.IsPartOfTypeNode(node) {
+	walkOwnedBody(node, b.observeOwnedBodyNode)
+}
+
+func (b *thinBody) observeOwnedBodyNode(node *shimast.Node, kind string, nestedFunction bool) {
+	if nestedFunction {
+		b.mark(node, "expression")
+		b.literals = append(b.literals, node)
 		return
 	}
-	switch node.Kind {
-	case shimast.KindInterfaceDeclaration, shimast.KindTypeAliasDeclaration,
-		shimast.KindImportDeclaration, shimast.KindExportDeclaration,
-		shimast.KindClassDeclaration, shimast.KindClassExpression, shimast.KindModuleDeclaration:
-		return
-	}
-	if shimast.IsFunctionLike(node) {
-		if node.Body() != nil {
-			b.mark(node, "expression")
-			b.literals = append(b.literals, node)
-		}
-		return
-	}
-	kind := bodyKind(node)
 	if kind != "" {
 		b.mark(node, kind)
 		if kind == "assignment" || node.Kind == shimast.KindVariableDeclaration {
@@ -176,10 +168,6 @@ func (b *thinBody) walk(node *shimast.Node) {
 	if node.Kind == shimast.KindDeleteExpression && b.kinds[node] != "" {
 		b.effects = append(b.effects, node)
 	}
-	node.ForEachChild(func(child *shimast.Node) bool {
-		b.walk(child)
-		return false
-	})
 }
 
 func (b *thinBody) identifierSymbol(node *shimast.Node) *shimast.Symbol {
