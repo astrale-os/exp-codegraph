@@ -39,7 +39,7 @@ func TestPublicationTicketRetainsReplacingCompilerMapSemantics(t *testing.T) {
 	compiler.remember("/captured/source", inputFile, "absent")
 	before := capture.certificate()
 	compiler.remember("/captured/source", inputFile, "present")
-	if len(compiler.observed) != 1 || before == capture.certificate() {
+	if len(compilerTestObservations(compiler)) != 1 || before == capture.certificate() {
 		t.Fatal("legacy compiler replacement cannot use immutable observation-count admission")
 	}
 }

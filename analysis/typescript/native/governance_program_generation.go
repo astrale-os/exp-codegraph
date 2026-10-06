@@ -68,10 +68,16 @@ func governanceRetainProgramGeneration(project *governedProject, broker *governa
 	fs := project.capture.compiler
 	receipt := &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{}, barrierObservations: map[compilerInputKey]string{}}
 	fs.mu.Lock()
-	for path, value := range fs.rawReads {
-		receipt.barrierReads[path] = value
+	for key, cell := range fs.operations {
+		if key.kind == inputRead && cell.value != nil {
+			receipt.barrierReads[key.path] = cell.value.(compilerCapturedValue[compilerRawRead]).value
+		}
 	}
-	for key, value := range fs.observed {
+	for key, cell := range fs.operations {
+		if !cell.observed {
+			continue
+		}
+		value := cell.observation
 		if _, raw := receipt.barrierReads[key.path]; key.kind == inputRead && raw {
 			continue
 		}

@@ -180,10 +180,10 @@ func TestGenerationBrokerRoutesRetainedHostOperations(t *testing.T) {
 	if !present || text != "current" {
 		t.Fatalf("late value %q %v", text, present)
 	}
-	if _, seen := old.capture.compiler.rawReads[late]; seen {
+	if _, seen := compilerTestRawReads(old.capture.compiler)[late]; seen {
 		t.Fatal("late read leaked into old actual owner")
 	}
-	if next.capture.compiler.rawReads[late].text != "current" {
+	if compilerTestRawReads(next.capture.compiler)[late].text != "current" {
 		t.Fatal("late read missing current actual receipt")
 	}
 	governanceWrite(t, root, "late-owner.txt", "changed")

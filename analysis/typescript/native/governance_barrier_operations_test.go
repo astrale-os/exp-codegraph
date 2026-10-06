@@ -98,7 +98,7 @@ func TestGovernanceBarrierOperationWorkersJoinBeforePublication(t *testing.T) {
 	disk.FS = gated
 	compiler := governanceNewCompilerInputFS(disk)
 	for index := 0; index < 32; index++ {
-		compiler.observed[compilerInputKey{path: fmt.Sprintf("missing-%d", index), kind: inputFile}] = "absent"
+		compiler.remember(fmt.Sprintf("missing-%d", index), inputFile, "absent")
 	}
 	capture := &governanceCapture{compiler: compiler}
 	completed := make(chan bool, 1)
@@ -148,12 +148,16 @@ func TestGovernanceBarrierCurrentAndExpectedGuardsOwnOneFreshProbe(t *testing.T)
 	expected := governanceExpectedCapture(current)
 	world := &governanceBarrierReads{}
 	currentPlan := governanceCompilePublication([]*governanceCapture{current})
-	if !currentPlan.consistent { t.Fatal("current capture has contradictory publication guards") }
+	if !currentPlan.consistent {
+		t.Fatal("current capture has contradictory publication guards")
+	}
 	if valid, err := currentPlan.verify(world); !valid || err != nil {
 		t.Fatal("fresh current original probe was rejected")
 	}
 	expectedPlan := governanceCompilePublication([]*governanceCapture{expected})
-	if !expectedPlan.consistent { t.Fatal("expected capture has contradictory publication guards") }
+	if !expectedPlan.consistent {
+		t.Fatal("expected capture has contradictory publication guards")
+	}
 	if valid, err := expectedPlan.verify(world); !valid || err != nil {
 		t.Fatal("same original probe lost a distinct expected guard")
 	}
@@ -165,7 +169,9 @@ func TestGovernanceBarrierCurrentAndExpectedGuardsOwnOneFreshProbe(t *testing.T)
 		changed.probe(governanceProbeRequest{Kind: kind, Path: path})
 	}
 	changedPlan := governanceCompilePublication([]*governanceCapture{changed})
-	if !changedPlan.consistent { t.Fatal("changed capture has contradictory publication guards") }
+	if !changedPlan.consistent {
+		t.Fatal("changed capture has contradictory publication guards")
+	}
 	if valid, err := changedPlan.verify(world); valid || err != nil {
 		t.Fatal("contradictory expected fingerprints initialized the actual operation cell")
 	}

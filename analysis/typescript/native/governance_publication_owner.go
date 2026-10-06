@@ -161,7 +161,10 @@ func governanceOriginalCompilerSchedule(captures []*governanceCapture) []map[str
 			}
 			row["raw-replay-methods"] = len(raw)
 			row["nonread-replay-methods"] = len(operations)
-			for key := range capture.compiler.observed {
+			for key, cell := range capture.compiler.operations {
+				if !cell.observed {
+					continue
+				}
 				if key.kind == inputRead {
 					row["separate-streaming-observations"]++
 				} else {

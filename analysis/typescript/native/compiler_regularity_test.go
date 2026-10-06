@@ -34,8 +34,8 @@ type regularityTestInfo struct {
 }
 
 func (info regularityTestInfo) Mode() os.FileMode  { return info.mode }
-func (info regularityTestInfo) IsDir() bool       { return info.mode.IsDir() }
-func (info regularityTestInfo) Size() int64       { return info.size }
+func (info regularityTestInfo) IsDir() bool        { return info.mode.IsDir() }
+func (info regularityTestInfo) Size() int64        { return info.size }
 func (info regularityTestInfo) ModTime() time.Time { return info.modified }
 
 func regularityCapture(fs vfs.FS) *governanceCapture {
@@ -64,7 +64,7 @@ func TestCompilerRegularitySharesCapturedAndFreshStat(t *testing.T) {
 	if disk.stats.Load() != 1 {
 		t.Fatal("capture duplicated physical Stat", disk.stats.Load())
 	}
-	if fs.observed[compilerInputKey{"source", inputMetadata}] != inputStat(info) {
+	if compilerTestObservations(fs)[compilerInputKey{"source", inputMetadata}] != inputStat(info) {
 		t.Fatal("general Stat lost its full dependency")
 	}
 	disk.stats.Store(0)
@@ -119,7 +119,7 @@ func TestCompilerRegularityRetainsNilDirectorySpecialAndCoherence(t *testing.T) 
 			if !item.unavailable && (row.Boolean == nil || *row.Boolean != item.regular) {
 				t.Fatalf("wire membership changed: %#v", row)
 			}
-			if fs.observed[compilerInputKey{"source", inputMetadata}] != "" {
+			if compilerTestObservations(fs)[compilerInputKey{"source", inputMetadata}] != "" {
 				t.Fatal("membership invented a general Stat dependency")
 			}
 			if item.exists {
@@ -183,10 +183,10 @@ func TestCompilerRegularityExpectedSnapshotRetainsPhysicalStat(t *testing.T) {
 			capture.compiler.regularity("source")
 			expected := governanceExpectedCapture(capture)
 			key := compilerInputKey{"source", inputMetadata}
-			if _, general := capture.compiler.observed[key]; general {
+			if _, general := compilerTestObservations(capture.compiler)[key]; general {
 				t.Fatal("snapshot contaminated semantic receipt prefix")
 			}
-			if expected.compiler.observed[key] != inputStat(disk.info) {
+			if compilerTestObservations(expected.compiler)[key] != inputStat(disk.info) {
 				t.Fatal("retained expected snapshot lost physical Stat")
 			}
 			if expected.canonicalCertificate() != capture.canonicalCertificate() {
@@ -210,10 +210,10 @@ func TestCompilerRegularityGeneralStatRecordsDependencyBeforeReturn(t *testing.T
 	// A completed physical cell alone is not a finished general Stat consumer.
 	fs.stat("source")
 	key := compilerInputKey{"source", inputMetadata}
-	if _, consumed := fs.observed[key]; consumed {
+	if _, consumed := compilerTestObservations(fs)[key]; consumed {
 		t.Fatal("physical capture invented Stat consumption")
 	}
-	if inputStat(fs.Stat("source")) != inputStat(info) || fs.observed[key] != inputStat(info) {
+	if inputStat(fs.Stat("source")) != inputStat(info) || compilerTestObservations(fs)[key] != inputStat(info) {
 		t.Fatal("completed Stat consumer omitted full dependency")
 	}
 	if disk.stats.Load() != 1 {

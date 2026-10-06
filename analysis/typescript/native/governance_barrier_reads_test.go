@@ -108,7 +108,7 @@ func TestGovernanceBarrierConflictingReceiptsAndFreshSeals(t *testing.T) {
 	if valid, err := capture.Verify(); !valid || err != nil {
 		t.Fatalf("equal projections failed %v %v", valid, err)
 	}
-	if len(compiler.rawReads) != 0 || len(compiler.observed) != 0 {
+	if len(compilerTestRawReads(compiler)) != 0 || len(compilerTestObservations(compiler)) != 0 {
 		t.Fatal("expected receipts became actual observations")
 	}
 	capture.compilerAssertions = append(capture.compilerAssertions, &governanceCompilerReadAssertions{barrierReads: map[string]compilerRawRead{path: {"other", true}}})

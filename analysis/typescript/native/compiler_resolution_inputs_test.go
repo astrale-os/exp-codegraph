@@ -73,7 +73,7 @@ func TestCompilerResolutionProjectionKeepsActualBytesAndNegativeCells(t *testing
 		t.Fatal("snapshot reread disk or changed first cells")
 	}
 	fs.mu.Lock()
-	observation := compilerInputObservation{key: compilerInputKey{config, inputRead}, before: fs.observed[compilerInputKey{config, inputRead}]}
+	observation := compilerInputObservation{key: compilerInputKey{config, inputRead}, before: compilerTestObservations(fs)[compilerInputKey{config, inputRead}]}
 	fs.mu.Unlock()
 	if fs.observe([]compilerInputObservation{observation})[0] == observation.before {
 		t.Fatal("fresh original guard missed the edit")

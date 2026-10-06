@@ -23,13 +23,15 @@ func TestPublicationCompilerOperationsShareOneFreshOwner(t *testing.T) {
 			key := compilerInputKey{path, kind}
 			value := observeCompilerInput(capture.compiler.disk, key)
 			assertions.barrierObservations[key] = value
-			capture.compiler.observed[key] = value
+			capture.compiler.remember(key.path, key.kind, value)
 		}
 		capture.compilerAssertions = []*governanceCompilerReadAssertions{assertions}
 	}
 	world := &governanceBarrierReads{}
 	plan := governanceCompilePublication(captures)
-	if !plan.consistent { t.Fatal("coherent captures have contradictory publication guards") }
+	if !plan.consistent {
+		t.Fatal("coherent captures have contradictory publication guards")
+	}
 	if valid, err := plan.verify(world); !valid || err != nil {
 		t.Fatalf("original guard failed %v %v", valid, err)
 	}

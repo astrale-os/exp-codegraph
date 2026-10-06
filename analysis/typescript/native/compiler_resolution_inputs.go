@@ -73,7 +73,7 @@ func (capture *governanceCapture) resolutionInputs(configPaths []string) (compil
 // Called only under fs.mu by the exclusive post-lane actor or snapshot owner.
 func (capture *governanceCapture) resolutionInputLocked(key compilerInputKey, cell *compilerCapturedOperation, configuration map[string]bool) (compilerResolutionInput, bool) {
 	fs := capture.compiler
-	row := compilerResolutionInput{Path: key.path, Fingerprint: fs.observed[key]}
+	row := compilerResolutionInput{Path: key.path, Fingerprint: cell.observation}
 	switch key.kind {
 	case inputRead:
 		row.Operation = "read"

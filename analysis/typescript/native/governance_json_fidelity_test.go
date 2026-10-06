@@ -60,8 +60,8 @@ func TestGovernanceJSONFidelityOriginalMetadataPorts(t *testing.T) {
 			}
 			fs.mu.Lock()
 			faithful := !fs.metadataLossy
-			raw := fs.rawReads[path]
-			observation := fs.observed[compilerInputKey{path, inputRead}]
+			raw := compilerTestRawReads(fs)[path]
+			observation := compilerTestObservations(fs)[compilerInputKey{path, inputRead}]
 			fs.mu.Unlock()
 			if faithful != test.faithful || raw != (compilerRawRead{test.text, true}) || observation != inputText(test.text, true) {
 				t.Fatalf("actual metadata prefix changed: fidelity=%v raw=%#v observation=%q", faithful, raw, observation)
@@ -71,7 +71,7 @@ func TestGovernanceJSONFidelityOriginalMetadataPorts(t *testing.T) {
 				t.Fatal("missing metadata became present")
 			}
 			fs.mu.Lock()
-			absent, recorded := fs.rawReads[missing]
+			absent, recorded := compilerTestRawReads(fs)[missing]
 			fs.mu.Unlock()
 			if !recorded || absent.present {
 				t.Fatal("original negative read guard lost")
@@ -91,7 +91,7 @@ func TestGovernanceJSONFidelityActualExtendedConfig(t *testing.T) {
 	}
 	fs := project.capture.compiler
 	fs.mu.Lock()
-	value, present := fs.rawReads[filepath.Join(root, "base.options")]
+	value, present := compilerTestRawReads(fs)[filepath.Join(root, "base.options")]
 	lossy := fs.metadataLossy
 	fs.mu.Unlock()
 	if !present || value != (compilerRawRead{base, true}) || !lossy {

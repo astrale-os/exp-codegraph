@@ -78,7 +78,7 @@ func (capture *governanceCapture) liveResolutionInputOwner() bool {
 func (capture *governanceCapture) resolutionReadCorresponds(path string) bool {
 	fs := capture.compiler
 	fs.mu.Lock()
-	value, completed := fs.rawReads[path]
+	value, completed := fs.rawReadLocked(path)
 	fs.mu.Unlock()
 	raw, captured := capture.byteCells[path]
 	if !completed || !captured {
