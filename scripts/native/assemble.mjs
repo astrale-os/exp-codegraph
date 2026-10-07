@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import {
@@ -67,30 +67,20 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   if (stableJson(artifact) !== stableJson(build.artifact)) {
     throw new Error(`${target} build and package manifests disagree.`)
   }
-  const sourceExecutable = resolve(sourceRoot, artifact.executable)
-  await chmod(sourceExecutable, 0o755)
-  await assertRegularExecutable(sourceExecutable, target)
-  const digest = await digestFile(sourceExecutable)
-  if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
-    throw new Error(`${target} artifact bytes differ from its build manifest.`)
-  }
-  if (artifact.oxlint) {
-    const sourceOxlint = resolve(sourceRoot, artifact.oxlint.executable)
-    await assertRegularExecutable(sourceOxlint, target)
-    const oxlintDigest = await digestFile(sourceOxlint)
-    if (oxlintDigest.bytes !== artifact.oxlint.bytes || oxlintDigest.sha256 !== artifact.oxlint.sha256) {
-      throw new Error(`${target} codegraph-oxlint bytes differ from its build manifest.`)
-    }
-  }
-
   const packageRoot = resolve(root, 'native-packages', target)
-  const destination = resolve(packageRoot, expected.executable)
-  await mkdir(dirname(destination), { recursive: true })
-  await copyFile(sourceExecutable, destination)
+  await stageExecutable(
+    resolve(sourceRoot, artifact.executable),
+    resolve(packageRoot, expected.executable),
+    artifact,
+    target,
+  )
   if (artifact.oxlint) {
-    const oxlintDestination = resolve(packageRoot, artifact.oxlint.executable)
-    await copyFile(resolve(sourceRoot, artifact.oxlint.executable), oxlintDestination)
-    await chmod(oxlintDestination, 0o755)
+    await stageExecutable(
+      resolve(sourceRoot, artifact.oxlint.executable),
+      resolve(packageRoot, artifact.oxlint.executable),
+      artifact.oxlint,
+      target,
+    )
   }
   await copyFile(resolve(root, 'LICENSE'), resolve(packageRoot, 'LICENSE'))
   await copyFile(
@@ -136,4 +126,24 @@ function argument(name) {
   const value = process.argv[index + 1]
   if (!value || value.startsWith('--')) throw new Error(`${name} requires a value.`)
   return value
+}
+
+// GitHub artifact transport keeps content, but not executable mode. Authenticate
+// downloaded bytes first and normalize only the owned package staging copy.
+async function stageExecutable(source, destination, artifact, target) {
+  if (!(await lstat(source)).isFile()) {
+    throw new Error(`${target} downloaded artifact is not a regular file: ${source}`)
+  }
+  const digest = await digestFile(source)
+  if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
+    throw new Error(`${target} ${artifact.executable} bytes differ from its build manifest.`)
+  }
+  await mkdir(dirname(destination), { recursive: true })
+  await copyFile(source, destination)
+  await chmod(destination, 0o755)
+  await assertRegularExecutable(destination, target)
+  const staged = await digestFile(destination)
+  if (staged.bytes !== artifact.bytes || staged.sha256 !== artifact.sha256) {
+    throw new Error(`${target} staged ${artifact.executable} bytes differ from its build manifest.`)
+  }
 }

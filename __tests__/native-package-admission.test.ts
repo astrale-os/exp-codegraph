@@ -1,6 +1,6 @@
 import { execFile as execFileCallback } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
@@ -91,6 +91,100 @@ describe('qualified release archive admission', () => {
     ]) expect(() => assertNpmConsumerLock(lock)).toThrow()
   })
 })
+
+describe('downloaded native artifact assembly', () => {
+  it.skipIf(process.platform === 'win32')('stages authenticated 0644 Go and workers as executable copies without changing downloads', async () => {
+    const fixture = await assemblyFixture()
+    await execFile(process.execPath, ['scripts/native/assemble.mjs', '--input', fixture.input], { cwd: fixture.root })
+    const release = JSON.parse(await readFile(join(fixture.root, 'native-release.json'), 'utf8'))
+    expect(Object.keys(release.artifacts)).toEqual(Object.keys(NATIVE_TARGETS))
+    expect(release.artifacts['win32-x64'].oxlint).toBeUndefined()
+    for (const file of fixture.files) {
+      expect(await readFile(file.source)).toEqual(file.bytes)
+      expect((await stat(file.source)).mode & 0o777).toBe(0o644)
+      expect(await readFile(file.destination)).toEqual(file.bytes)
+      expect((await stat(file.destination)).mode & 0o777).toBe(0o755)
+      expect(createHash('sha256').update(await readFile(file.destination)).digest('hex')).toBe(file.sha256)
+    }
+  })
+
+  it.skipIf(process.platform === 'win32').each(['Go', 'worker'] as const)('rejects same-length %s corruption before staging those bytes', async (kind) => {
+    const fixture = await assemblyFixture()
+    const file = fixture.files[kind === 'Go' ? 0 : 1]!
+    const corrupted = Buffer.from(file.bytes)
+    corrupted[0] = corrupted[0]! ^ 1
+    await writeFile(file.source, corrupted)
+    await expect(execFile(process.execPath, ['scripts/native/assemble.mjs', '--input', fixture.input], { cwd: fixture.root }))
+      .rejects.toThrow('bytes differ from its build manifest')
+    await expect(stat(file.destination)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(file.source)).toEqual(corrupted)
+  })
+
+  it.skipIf(process.platform === 'win32').each(['symlink', 'directory'] as const)('rejects a downloaded %s instead of following or normalizing it', async (kind) => {
+    const fixture = await assemblyFixture()
+    const file = fixture.files[0]!
+    const foreign = join(fixture.root, 'foreign')
+    await writeFile(foreign, file.bytes, { mode: 0o644 })
+    await rm(file.source)
+    if (kind === 'symlink') await symlink(foreign, file.source)
+    else await mkdir(file.source)
+    await expect(execFile(process.execPath, ['scripts/native/assemble.mjs', '--input', fixture.input], { cwd: fixture.root }))
+      .rejects.toThrow('downloaded artifact is not a regular file')
+    await expect(stat(file.destination)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await readFile(foreign)).toEqual(file.bytes)
+    expect((await stat(foreign)).mode & 0o777).toBe(0o644)
+  })
+})
+
+// These synthetic files qualify transport/assembly only and are never executed.
+async function assemblyFixture() {
+  const root = await mkdtemp(join(tmpdir(), 'codegraph-assembly-transport-'))
+  temporary.push(root)
+  const input = join(root, 'downloads')
+  const scripts = join(root, 'scripts/native')
+  await mkdir(scripts, { recursive: true })
+  for (const name of ['assemble.mjs', 'shared.mjs']) {
+    await copyFile(new URL(`../scripts/native/${name}`, import.meta.url), join(scripts, name))
+  }
+  await writeFile(join(root, 'package.json'), JSON.stringify({ version, type: 'module' }))
+  await writeFile(join(root, 'LICENSE'), 'assembly license fixture\n')
+  await writeFile(join(root, 'THIRD_PARTY_NOTICES.md'), 'assembly notices fixture\n')
+  const files: { source: string, destination: string, bytes: Buffer, sha256: string }[] = []
+  for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
+    const bytes = Buffer.from(`assembly fixture ${target} Go`)
+    const workerBytes = Buffer.from(`assembly fixture ${target} worker`)
+    const worker = oxlintDescriptor(target, workerBytes)
+    const artifact = { target, package: expected.package, executable: expected.executable,
+      bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+      ...(oxlintEligible(target) ? { oxlint: worker } : {}),
+    }
+    const source = join(input, target)
+    const destination = join(root, 'native-packages', target)
+    await mkdir(destination, { recursive: true })
+    await writeFile(join(destination, 'package.json'), JSON.stringify(publicManifest(expected.package)))
+    const toolchain = { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture',
+      ...(oxlintEligible(target) ? { oxlint: { rustc: 'fixture', cargo: 'fixture', cargoLockSha256: '5'.repeat(64) } } : {}),
+    }
+    await mkdir(source, { recursive: true })
+    await writeFile(join(source, 'manifest.json'), JSON.stringify({
+      format: 'astrale.codegraph.native-artifact', version: 1, packageVersion: version, protocolVersion: 1, artifact,
+    }))
+    await writeFile(join(source, 'build.json'), JSON.stringify({
+      format: 'astrale.codegraph.native-build', version: 1, packageVersion: version, protocolVersion: 1,
+      source: { revision, dirty: false }, toolchain, artifact,
+    }))
+    for (const record of [{ descriptor: artifact, bytes },
+      ...(oxlintEligible(target) ? [{ descriptor: worker, bytes: workerBytes }] : [])]) {
+      const path = join(source, record.descriptor.executable)
+      await mkdir(join(path, '..'), { recursive: true })
+      await writeFile(path, record.bytes)
+      await chmod(path, 0o644)
+      files.push({ source: path, destination: join(destination, record.descriptor.executable),
+        bytes: record.bytes, sha256: record.descriptor.sha256 })
+    }
+  }
+  return { root, input, files }
+}
 
 async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' | 'oxlint' | 'missing-oxlint' | 'oxlint-source' | 'notices') {
   const root = await mkdtemp(join(tmpdir(), 'codegraph-release-admission-'))
