@@ -66,6 +66,9 @@ func (x *extractor) callTargetOrigin(symbol *shimast.Symbol) *callTargetOrigin {
 // A const alias preserves a callable's value identity. Its resolved signature
 // alone would also match mutable or merely structurally compatible lookalikes.
 func (x *extractor) canonicalCallSymbol(node *shimast.Node, read func(*shimast.Symbol)) *shimast.Symbol {
+	if x.typeOnlyValueReference(node, read) {
+		return nil
+	}
 	symbol := unalias(x.checker, x.checker.GetSymbolAtLocation(node))
 	seen := map[*shimast.Symbol]bool{}
 	for symbol != nil && !seen[symbol] {
@@ -96,6 +99,51 @@ func (x *extractor) canonicalCallSymbol(node *shimast.Node, read func(*shimast.S
 		symbol = next
 	}
 	return symbol
+}
+
+// A resolved signature does not certify that its authored reference exists at
+// runtime. Inspect import/export aliases before erasing them, including aliases
+// reached through variable initializers and namespace receivers. This certificate
+// is shared by canonical exports and callable body selection.
+func (x *extractor) typeOnlyValueReference(node *shimast.Node, read func(*shimast.Symbol)) bool {
+	pending := []*shimast.Node{node}
+	seen := map[*shimast.Node]bool{}
+	aliases := map[*shimast.Symbol]bool{}
+	for len(pending) > 0 {
+		node = pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if node == nil || seen[node] {
+			continue
+		}
+		seen[node] = true
+		switch node.Kind {
+		case shimast.KindParenthesizedExpression, shimast.KindAsExpression, shimast.KindSatisfiesExpression,
+			shimast.KindNonNullExpression, shimast.KindTypeAssertionExpression:
+			pending = append(pending, node.Expression())
+			continue
+		case shimast.KindPropertyAccessExpression:
+			pending = append(pending, node.AsPropertyAccessExpression().Expression)
+		case shimast.KindIdentifier:
+		default:
+			continue
+		}
+		symbol := x.checker.GetSymbolAtLocation(node)
+		for symbol != nil && symbol.Flags&shimast.SymbolFlagsAlias != 0 && !aliases[symbol] {
+			aliases[symbol] = true
+			read(symbol)
+			if x.checker.GetTypeOnlyAliasDeclaration(symbol) != nil {
+				return true
+			}
+			symbol = x.checker.GetImmediateAliasedSymbol(symbol)
+		}
+		declaration := declarationNode(unalias(x.checker, symbol))
+		// This only detects non-runtime provenance; the canonical target selector
+		// independently keeps its const-only value identity restriction.
+		if declaration != nil && declaration.Kind == shimast.KindVariableDeclaration {
+			pending = append(pending, declaration.AsVariableDeclaration().Initializer)
+		}
+	}
+	return false
 }
 
 // Only the value assigned to a callable binding is an executable target.
