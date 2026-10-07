@@ -121,12 +121,23 @@ func (owner *governanceRuntimeAuthority) Resolve(path, specifier, export string)
 		return result
 	}
 	symbol = unalias(check, symbol)
-	// Follow only executable const identifier/property aliases, as the legacy
-	// callable owner does. Structurally callable types are never a value witness.
+	// Follow only executable const identifier/property aliases. The shared
+	// callable owner certifies raw aliases before erasing import provenance.
 	x := &extractor{checker: check}
 	if declaration := declarationNode(symbol); declaration != nil && declaration.Kind == ast.KindVariableDeclaration && ast.IsConst(declaration) {
 		if initializer := declaration.AsVariableDeclaration().Initializer; initializer != nil && (initializer.Kind == ast.KindIdentifier || initializer.Kind == ast.KindPropertyAccessExpression) {
-			symbol = x.canonicalCallSymbol(initializer, func(*ast.Symbol) {})
+			aliasSources := map[*ast.SourceFile]bool{}
+			ticket := owner.Identity.Project.capture.semanticTicket()
+			symbol = x.canonicalCallSymbol(initializer, func(binding *ast.Symbol) {
+				for _, declaration := range binding.Declarations {
+					if source := ast.GetSourceFileOfNode(declaration); source != nil && !aliasSources[source] {
+						aliasSources[source] = true
+						if path, owned := governanceRuntimeProgramOwned(owner.Identity.Project.Root, source.FileName()); owned {
+							result.Reads = append(result.Reads, observabledecision.SemanticRead{Kind: "canonical-runtime-alias-source", Path: path, Fingerprint: ticket})
+						}
+					}
+				}
+			})
 		}
 	}
 	origin, reason := owner.origin(symbol)
@@ -167,8 +178,14 @@ func (owner *governanceRuntimeAuthority) GlobalValue(path string, node *ast.Node
 		return observabledecision.GlobalValueObservation{}
 	}
 	check := owner.Identity.TypeOwner.program.Checker
-	symbol := unalias(check, check.GetSymbolAtLocation(matched))
+	symbol := check.GetSymbolAtLocation(matched)
 	read := observabledecision.SemanticRead{Kind: "actual-global-value-origin", Path: path, Name: matched.Text(), Fingerprint: owner.Identity.Project.capture.semanticTicket()}
+	// Type-only imports are deliberately absent from the syntax value bindings.
+	// A global fallback must not turn that absence into an executable alias.
+	if symbol != nil && symbol.Flags&ast.SymbolFlagsAlias != 0 && check.GetTypeOnlyAliasDeclaration(symbol) != nil {
+		return observabledecision.GlobalValueObservation{Known: true, Reads: []observabledecision.SemanticRead{read}}
+	}
+	symbol = unalias(check, symbol)
 	if symbol == nil {
 		return observabledecision.GlobalValueObservation{Known: true, Reads: []observabledecision.SemanticRead{read}}
 	}
