@@ -459,3 +459,29 @@ func TestRuntimeReexportElementAccessKeepsUnsupportedContract(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeReexportMutableNamespaceAliasPreservesTypeOnlyProvenance(t *testing.T) {
+	for _, runtime := range []bool{true, false} {
+		name, modifier := "type-only", "type "
+		if runtime {
+			name, modifier = "runtime", ""
+		}
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			governanceWrite(t, root, "mutations/source.ts", `import {contractProjector} from '../schema/facade';const selected=contractProjector;`)
+			governanceWrite(t, root, "schema/helper.ts", `export function identity(){return {id:'stable.id'}}`)
+			governanceWrite(t, root, "schema/middle.ts", "import "+modifier+`* as ns from './helper';let receiver=ns;export const published=receiver.identity;`)
+			governanceWrite(t, root, "schema/facade.ts", `export {published as contractProjector} from './middle';`)
+			governanceWrite(t, root, "tsconfig.json", `{"compilerOptions":{"target":"ES2022","moduleResolution":"Bundler","module":"ESNext"},"include":["mutations/**/*.ts","schema/**/*.ts"]}`)
+			_, owner := runtimeReexportOwner(t, root)
+			proof := runtimeReexportID(t, owner)
+			if runtime {
+				if proof.Outcome.Kind != "known" || proof.Value.Literal != "stable.id" {
+					t.Fatalf("runtime namespace alias rejected: %#v", proof)
+				}
+			} else if proof.Outcome.Kind != "unknown" {
+				t.Fatalf("mutable receiver erased type-only provenance: %#v", proof)
+			}
+		})
+	}
+}

@@ -103,7 +103,7 @@ func (x *extractor) canonicalCallSymbol(node *shimast.Node, read func(*shimast.S
 
 // A resolved signature does not certify that its authored reference exists at
 // runtime. Inspect import/export aliases before erasing them, including aliases
-// reached through const initializers and namespace receivers. This certificate
+// reached through variable initializers and namespace receivers. This certificate
 // is shared by canonical exports and callable body selection.
 func (x *extractor) typeOnlyValueReference(node *shimast.Node, read func(*shimast.Symbol)) bool {
 	pending := []*shimast.Node{node}
@@ -137,7 +137,9 @@ func (x *extractor) typeOnlyValueReference(node *shimast.Node, read func(*shimas
 			symbol = x.checker.GetImmediateAliasedSymbol(symbol)
 		}
 		declaration := declarationNode(unalias(x.checker, symbol))
-		if declaration != nil && declaration.Kind == shimast.KindVariableDeclaration && shimast.IsConst(declaration) {
+		// This only detects non-runtime provenance; the canonical target selector
+		// independently keeps its const-only value identity restriction.
+		if declaration != nil && declaration.Kind == shimast.KindVariableDeclaration {
 			pending = append(pending, declaration.AsVariableDeclaration().Initializer)
 		}
 	}
