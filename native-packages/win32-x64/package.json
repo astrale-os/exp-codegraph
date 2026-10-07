@@ -2,7 +2,7 @@
   "cpu": [
     "x64"
   ],
-  "description": "Opaque Windows x64 native artifact for @astrale-os/codegraph",
+  "description": "Opaque Windows x64 native analysis artifact for @astrale-os/codegraph",
   "engines": {
     "node": ">=22.13 <23 || >=24 <25 || >=26 <27"
   },

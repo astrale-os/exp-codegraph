@@ -5,13 +5,16 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path
 
 import {
   admitNativeArtifactPackageManifest,
+  admitNativeOxlintPackageManifest,
   currentNativeAnalysisTarget,
   NATIVE_ARTIFACT_PACKAGES,
   readNativeReleaseManifest,
 } from './manifest.ts'
 import type {
   PackagedNativeAnalysisOptions,
+  NativeAnalysisTarget,
   ResolvedPackagedNativeAnalysis,
+  ResolvedPackagedNativeOxlint,
 } from './model.ts'
 import { NativeAnalysisDistributionError } from './model.ts'
 
@@ -27,12 +30,29 @@ export async function resolvePackagedNativeAnalysis(
     const admitted = await admitExecutable(command, target)
     return { ...admitted, command, target, packageVersion, origin: 'explicit' }
   }
+  const authority = await resolvePackage(root, packageVersion, target)
+  const native = await admitPackagedExecutable(authority.artifactRoot, authority.artifact, target, authority.artifact.package)
+  return { ...native, target, packageVersion, origin: 'package' }
+}
+
+/** Resolve the generic worker independently so the original analyzer can recover without it. */
+export async function resolvePackagedNativeOxlint(): Promise<ResolvedPackagedNativeOxlint> {
+  const root = packageRoot()
+  const packageVersion = await installedPackageVersion(resolve(root, 'package.json'))
+  const target = currentNativeAnalysisTarget()
+  const authority = await resolvePackage(root, packageVersion, target)
+  const worker = admitNativeOxlintPackageManifest(authority.manifest, authority.artifact)
+  const admitted = await admitPackagedExecutable(authority.artifactRoot, worker, target, authority.artifact.package)
+  return { ...worker, ...admitted, target, packageVersion, origin: 'package' }
+}
+
+async function resolvePackage(root: string, packageVersion: string, target: string) {
   const release = await readNativeReleaseManifest(
     resolve(root, 'native-release.json'),
     packageVersion,
     target,
   )
-  const artifact = release.artifacts[target as keyof typeof release.artifacts]
+  const artifact = release.artifacts[target as NativeAnalysisTarget]
   if (!artifact || NATIVE_ARTIFACT_PACKAGES[artifact.target] !== artifact.package) {
     throw new NativeAnalysisDistributionError(
       'NATIVE_TARGET_UNSUPPORTED',
@@ -73,14 +93,23 @@ export async function resolvePackagedNativeAnalysis(
       { cause },
     )
   }
-  admitNativeArtifactPackageManifest(packageManifest, artifact, packageVersion)
+  const manifest = admitNativeArtifactPackageManifest(packageManifest, artifact, packageVersion)
+  return { artifactRoot, artifact, manifest }
+}
+
+async function admitPackagedExecutable(
+  artifactRoot: string,
+  artifact: { readonly executable: string; readonly bytes: number; readonly sha256: string },
+  target: string,
+  packageName: string,
+): Promise<{ readonly command: string; readonly bytes: number; readonly sha256: string }> {
   let command: string
   try {
     command = await realpath(resolve(artifactRoot, artifact.executable))
   } catch (cause) {
     throw new NativeAnalysisDistributionError(
       'NATIVE_ARTIFACT_INVALID',
-      `${artifact.package} executable is missing or unreadable.`,
+      `${packageName} executable ${artifact.executable} is missing or unreadable.`,
       target,
       { cause },
     )
@@ -88,7 +117,7 @@ export async function resolvePackagedNativeAnalysis(
   if (!within(artifactRoot, command)) {
     throw new NativeAnalysisDistributionError(
       'NATIVE_ARTIFACT_INVALID',
-      `${artifact.package} executable resolves outside its package.`,
+      `${packageName} executable resolves outside its package.`,
       target,
     )
   }
@@ -96,11 +125,11 @@ export async function resolvePackagedNativeAnalysis(
   if (admitted.bytes !== artifact.bytes || admitted.sha256 !== artifact.sha256) {
     throw new NativeAnalysisDistributionError(
       'NATIVE_ARTIFACT_DIGEST_MISMATCH',
-      `${artifact.package} executable does not match the qualified release manifest.`,
+      `${packageName} executable ${artifact.executable} does not match the qualified release manifest.`,
       target,
     )
   }
-  return { ...admitted, command, target, packageVersion, origin: 'package' }
+  return { ...admitted, command }
 }
 
 async function admitExecutable(path: string, target: string): Promise<{

@@ -7,8 +7,12 @@ on:
     paths:
       - '.github/workflows/native-release.yml'
       - '__tests__/native-distribution.test.ts'
+      - '__tests__/native-package-admission.test.ts'
+      - '__tests__/npm-distribution-policy.test.ts'
       - '__tests__/typescript-project.test.ts'
       - 'analysis/**'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
       - 'native-packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -21,8 +25,12 @@ on:
     paths:
       - '.github/workflows/native-release.yml'
       - '__tests__/native-distribution.test.ts'
+      - '__tests__/native-package-admission.test.ts'
+      - '__tests__/npm-distribution-policy.test.ts'
       - '__tests__/typescript-project.test.ts'
       - 'analysis/**'
+      - 'LICENSE'
+      - 'THIRD_PARTY_NOTICES.md'
       - 'native-packages/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -65,6 +73,9 @@ jobs:
       - uses: astrale-os/config/.github/actions/setup@9bffee57d53b603b556bb545145fdde10f20a4c5
         with:
           frozen-lockfile: 'true'
+      - name: Prepare the pinned Rust toolchain
+        if: matrix.target != 'win32-x64'
+        run: node scripts/native/build-oxlint.mjs --prepare-toolchain
       - name: Build exact native artifact
         run: pnpm native:build -- --target ${{ matrix.target }} --output .native-output/${{ matrix.target }}
       - name: Build package distribution
@@ -72,6 +83,9 @@ jobs:
       - name: Check the frozen Darwin ARM64 oracle and complete native regression suite
         if: matrix.target == 'darwin-arm64'
         run: pnpm native:test
+      - name: Qualify the actual built Oxlint worker lifetime and captured I/O
+        if: matrix.target != 'win32-x64'
+        run: pnpm native:test -- --files-json '["."]' --options-json '["-run=TestOwned|TestPolicyLaneOwned"]' --owned-artifact .native-output/${{ matrix.target }}/bin/codegraph-oxlint${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Qualify native semantics and extension boundary
         run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Qualify native regression and diagnostic transport
@@ -172,7 +186,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           package-manager-cache: false
       - name: Prove GitHub artifact installation and native execution
-        run: node qualification/v2/release/packed-consumer.mjs --release-directory release
+        run: node qualification/v2/release/packed-consumer.mjs --release-directory release --require-oxlint
       - name: Qualify SQLite on the minimum supported Node release
         if: matrix.node-version == '22.13.0'
         run: node node_modules/vitest/vitest.mjs run __tests__/analysis-v2.test.ts -t 'SQLite|memory and SQLite|telemetry' --maxWorkers 1

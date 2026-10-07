@@ -113,8 +113,8 @@ func governanceOpenOwnedArtifact(path string, artifact []byte) (*governanceOwned
 }
 func governanceAcquireOwnedArtifact(artifact []byte, store string) (*governanceOwnedArtifactLease, error) {
 	// Current actual package bytes, never expected-as-actual worker authority.
-	if len(artifact) != governanceOwnedArtifactLength || governanceHash(artifact) != governanceOwnedArtifactSHA {
-		return nil, fmt.Errorf("current package bytes differ from original qualified worker")
+	if !governanceQualifiedOwnedArtifact(artifact) {
+		return nil, fmt.Errorf("current package bytes differ from the build-qualified worker")
 	}
 	if err := os.MkdirAll(store, 0700); err != nil {
 		return nil, err

@@ -14,6 +14,7 @@ describe('qualified npm distribution policy', () => {
     const build = await manifest('tsconfig.build.json')
     expect(build.compilerOptions.sourceMap).toBe(false)
     expect(build.compilerOptions.declarationMap).toBe(false)
+    expect((await manifest('package.json')).files).toContain('!analysis/oxlint/**')
   })
 
   it('keeps exactly six public npm packages aligned to the root version', async () => {
@@ -61,6 +62,7 @@ describe('qualified npm distribution policy', () => {
     expect(steps[publisher].with['github-token']).toBeUndefined()
     expect(steps.at(-2).run).toContain('--npm-published')
     expect(steps.at(-1).run).toContain('--npm-version')
+    expect(steps.at(-1).run).toContain('--require-oxlint')
     const source = await readFile(resolve(root, '.github/workflows/publish.yml'), 'utf8')
     expect(source).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|npm publish|pnpm publish/u)
   })
@@ -70,9 +72,25 @@ describe('qualified npm distribution policy', () => {
     const native = await workflow('native-release.yml')
     expect(native.permissions).toEqual({ contents: 'read' })
     expect(native.jobs.publish).toBeUndefined()
+    for (const trigger of ['push', 'pull_request']) {
+      expect(native.on[trigger].paths).toContain('LICENSE')
+      expect(native.on[trigger].paths).toContain('THIRD_PARTY_NOTICES.md')
+    }
     expect(native.jobs.build.strategy.matrix.include.map((entry: { target: string }) => entry.target).sort())
       .toEqual([...targets].sort())
     expect(native.jobs['packed-consumer'].needs).toBe('assemble')
+    expect(native.jobs.build.steps.some((step: { run?: string }) => step.run?.includes('build-oxlint.mjs --prepare-toolchain'))).toBe(true)
+    // Upload must pass through the builder whose worker delivery includes
+    // mandatory source-owner tests; preparing Rust alone is not qualification.
+    const builder = native.jobs.build.steps.findIndex((step: { run?: string }) => step.run?.includes('pnpm native:build'))
+    const upload = native.jobs.build.steps.findIndex((step: { uses?: string }) => step.uses?.startsWith('actions/upload-artifact@'))
+    expect(builder).toBeGreaterThan(0)
+    expect(native.jobs.build.steps[builder].if).toBeUndefined()
+    expect(upload).toBeGreaterThan(builder)
+    const owned = native.jobs.build.steps.find((step: { run?: string }) => step.run?.includes('--owned-artifact'))
+    expect(owned?.if).toBe("matrix.target != 'win32-x64'")
+    const consumer = native.jobs['packed-consumer'].steps.find((step: { run?: string }) => step.run?.includes('qualification/v2/release/packed-consumer.mjs'))
+    expect(consumer?.run).toContain('--require-oxlint')
     expect(JSON.stringify(native)).not.toMatch(/id-token|workflow run publish|\/publish\//u)
   })
 })

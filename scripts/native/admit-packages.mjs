@@ -8,7 +8,8 @@ import { promisify } from 'node:util'
 
 import {
   NATIVE_RELEASE_FORMAT, NATIVE_TARGETS, PROTOCOL_VERSION,
-  assertArtifactManifest, assertToolchain, stableJson,
+  assertArtifactManifest, assertOxlintSources, assertToolchain, stableJson,
+  oxlintEligible,
 } from './shared.mjs'
 
 const execFile = promisify(execFileCallback)
@@ -48,22 +49,35 @@ export async function admitReleasePackages(directory, sourceRevision, version) {
   assert.equal(release.packageVersion, version)
   assert.equal(release.protocolVersion, PROTOCOL_VERSION)
   assert.equal(release.sourceRevision, sourceRevision, 'Archive source revision differs.')
-  assertToolchain(release.toolchain)
+  assertToolchain(release.toolchain, { requireOxlint: true })
   assert.deepEqual(Object.keys(release.artifacts).sort(), Object.keys(NATIVE_TARGETS).sort())
+  assertOxlintSources(release.artifacts)
+  const notices = await Promise.all(['LICENSE', 'THIRD_PARTY_NOTICES.md'].map(async (member) => ({
+    member, bytes: await archiveMember(rootArchive, member),
+  })))
+  assert(notices.every(({ bytes }) => bytes.length > 0), 'Release license notices are empty.')
   const packages = []
   for (const unit of units) {
     const archive = resolve(directory, archiveName(unit.name, version))
     const manifest = await archiveJson(archive, 'package.json')
     assertPublicManifest(manifest, unit.name, version)
     if (unit.target) {
+      for (const { member, bytes } of notices) {
+        assert((await archiveMember(archive, member)).equals(bytes), `${unit.name} ${member} differs from the root release.`)
+      }
       const expected = NATIVE_TARGETS[unit.target]
       assert.deepEqual(manifest.os, [expected.os])
       assert.deepEqual(manifest.cpu, [expected.cpu])
-      const artifact = assertArtifactManifest(await archiveJson(archive, 'manifest.json'), unit.target, version)
+      const artifact = assertArtifactManifest(await archiveJson(archive, 'manifest.json'), unit.target, version, { requireOxlint: oxlintEligible(unit.target) })
       assert.equal(stableJson(artifact), stableJson(release.artifacts[unit.target]))
       const binary = await archiveMember(archive, expected.executable)
       assert.equal(binary.length, artifact.bytes, `${unit.name} executable size differs.`)
       assert.equal(hash(binary, 'sha256'), artifact.sha256, `${unit.name} executable digest differs.`)
+      if (artifact.oxlint) {
+        const oxlint = await archiveMember(archive, artifact.oxlint.executable)
+        assert.equal(oxlint.length, artifact.oxlint.bytes, `${unit.name} codegraph-oxlint size differs.`)
+        assert.equal(hash(oxlint, 'sha256'), artifact.oxlint.sha256, `${unit.name} codegraph-oxlint digest differs.`)
+      }
     } else {
       assert.deepEqual(manifest.optionalDependencies, Object.fromEntries(
         Object.values(NATIVE_TARGETS).map(({ package: name }) => [name, version]),

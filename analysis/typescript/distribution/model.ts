@@ -11,6 +11,20 @@ export interface NativeAnalysisArtifact {
   readonly executable: string
   readonly bytes: number
   readonly sha256: string
+  /** Absent in historical packages built before the captured generic worker was distributed. */
+  readonly oxlint?: NativeOxlintArtifact
+}
+
+export interface NativeOxlintArtifact {
+  readonly executable: string
+  readonly bytes: number
+  readonly sha256: string
+  readonly engineVersion: '1.81.0'
+  readonly protocolVersion: 1
+  readonly source: {
+    readonly revision: string
+    readonly patchSha256: string
+  }
 }
 
 export interface NativeAnalysisReleaseManifest {
@@ -23,6 +37,11 @@ export interface NativeAnalysisReleaseManifest {
     readonly ttsc: string
     readonly typescriptGo: string
     readonly go: string
+    readonly oxlint?: {
+      readonly rustc: string
+      readonly cargo: string
+      readonly cargoLockSha256: string
+    }
   }
   readonly artifacts: Readonly<Partial<Record<NativeAnalysisTarget, NativeAnalysisArtifact>>>
 }
@@ -35,6 +54,7 @@ export type NativeAnalysisDistributionErrorCode =
   | 'NATIVE_ARTIFACT_INVALID'
   | 'NATIVE_ARTIFACT_DIGEST_MISMATCH'
   | 'NATIVE_ARTIFACT_NOT_EXECUTABLE'
+  | 'NATIVE_OXLINT_UNAVAILABLE'
 
 export class NativeAnalysisDistributionError extends Error {
   readonly name = 'NativeAnalysisDistributionError'
@@ -65,4 +85,12 @@ export interface ResolvedPackagedNativeAnalysis {
   readonly target: string
   readonly packageVersion: string
   readonly origin: 'explicit' | 'package'
+}
+
+/** A separately admitted companion capability; its absence never invalidates the Go analyzer. */
+export interface ResolvedPackagedNativeOxlint extends NativeOxlintArtifact {
+  readonly command: string
+  readonly target: string
+  readonly packageVersion: string
+  readonly origin: 'package'
 }

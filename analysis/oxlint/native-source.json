@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "engineVersion": "1.81.0",
+  "protocolVersion": 1,
+  "repository": "https://github.com/oxc-project/oxc.git",
+  "revision": "0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+  "patch": {
+    "path": "patches/codegraph-oxlint.patch",
+    "sha256": "d85e07723f7705ffd0ac89bf20c3c24ba45ef666d562dca6eb3f4dafc2bc25e3"
+  },
+  "cargoLockSha256": "ab8bcaf81198a83fc5584a5c7cc922d7ca3769fb4e886b66174a6a55b41a9a54",
+  "rustToolchain": "1.98.0",
+  "package": "oxc_linter",
+  "artifactKind": "example",
+  "binary": "captured",
+  "ignoreVendor": {
+    "version": "0.4.33",
+    "archiveSha256": "00b69833ed729dc5aa7d19541d96d6cf8e9137194207a04916d658e43168402f",
+    "path": "vendor/ignore"
+  }
+}

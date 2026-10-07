@@ -40,6 +40,11 @@ Import direction points from each consumer to the owner it needs. The public `an
 structural facade; it owns no mutable singleton, store selection, process lifecycle, or TypeSpec
 policy.
 
+The `oxlint` directory owns the pinned upstream source recipe and maintained capture patch used
+by the native release builder. These are build inputs, excluded from the installed root package.
+The installed Go analyzer owns the worker process and captured-input journal; consumers resolve
+the separately admitted `codegraph-oxlint` executable without compiling Rust or importing its AST.
+
 ```mermaid
 sequenceDiagram
   participant N as Native session

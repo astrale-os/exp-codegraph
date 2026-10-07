@@ -39,7 +39,8 @@
     "workspace",
     "!dist/**/*.map",
     "!analysis/typescript/native/**",
-    "!analysis/typescript/ttsc/**"
+    "!analysis/typescript/ttsc/**",
+    "!analysis/oxlint/**"
   ],
   "type": "module",
   "exports": {

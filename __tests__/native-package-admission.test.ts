@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   admitQualificationRun, admitRegistryVersions, admitReleasePackages, assertNpmConsumerLock,
 } from '../scripts/native/admit-packages.mjs'
-import { NATIVE_TARGETS } from '../scripts/native/shared.mjs'
+import { assertArtifact, assertOxlintArtifact, NATIVE_TARGETS, oxlintEligible, oxlintExecutable } from '../scripts/native/shared.mjs'
 
 const execFile = promisify(execFileCallback)
 const temporary: string[] = []
@@ -29,8 +29,31 @@ describe('qualified release archive admission', () => {
     await expect(admitReleasePackages(directory, '2'.repeat(40), version)).rejects.toThrow('source revision')
   })
 
-  it.each(['binary', 'dependency', 'version'] as const)('rejects a torn %s publication cohort before publishing', async (corruption) => {
+  it.each(['binary', 'dependency', 'version', 'oxlint', 'missing-oxlint', 'oxlint-source', 'notices'] as const)('rejects a torn %s publication cohort before publishing', async (corruption) => {
     await expect(admitReleasePackages(await releaseFixture(corruption), revision, version)).rejects.toThrow()
+  })
+
+  it('reads historical Go-only artifacts but requires a worker for a new release', () => {
+    const target = 'darwin-arm64'
+    const artifact = { target, package: NATIVE_TARGETS[target].package,
+      executable: NATIVE_TARGETS[target].executable, bytes: 1, sha256: '0'.repeat(64) }
+    expect(() => assertArtifact(artifact, target, version)).not.toThrow()
+    expect(() => assertArtifact(artifact, target, version, { requireOxlint: true })).toThrow('no qualified')
+  })
+
+  it.each(Object.keys(NATIVE_TARGETS))('binds the worker filename, engine, protocol and source for %s', (target) => {
+    const descriptor = oxlintDescriptor(target, Buffer.from('schema fixture'))
+    if (!oxlintEligible(target)) {
+      expect(() => assertOxlintArtifact(descriptor, target)).toThrow()
+      return
+    }
+    expect(() => assertOxlintArtifact(descriptor, target)).not.toThrow()
+    for (const changed of [
+      { executable: '../codegraph-oxlint' }, { executable: 'bin/captured-owned-oxlint-1.81.0' },
+      { bytes: 0 }, { sha256: 'invalid' }, { engineVersion: '1.78.0' }, { protocolVersion: 2 },
+      { source: { ...descriptor.source, revision: 'main' } },
+      { source: { ...descriptor.source, patchSha256: 'invalid' } },
+    ]) expect(() => assertOxlintArtifact({ ...descriptor, ...changed }, target)).toThrow()
   })
 
   it('requires successful main qualification from the exact workflow, repository and revision', () => {
@@ -69,7 +92,7 @@ describe('qualified release archive admission', () => {
   })
 })
 
-async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version') {
+async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' | 'oxlint' | 'missing-oxlint' | 'oxlint-source' | 'notices') {
   const root = await mkdtemp(join(tmpdir(), 'codegraph-release-admission-'))
   temporary.push(root)
   const output = join(root, 'archives')
@@ -77,12 +100,19 @@ async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version') 
   const artifacts: Record<string, unknown> = {}
   for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     const bytes = Buffer.from(`qualified ${target} executable`)
+    const workerBytes = Buffer.from(`archive admission fixture ${target} worker`)
+    const oxlint = oxlintDescriptor(target, workerBytes)
+    if (corruption === 'oxlint-source' && target === 'linux-x64') oxlint.source.patchSha256 = '6'.repeat(64)
     const artifact = {
       target, package: expected.package, executable: expected.executable,
       bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+      ...(oxlintEligible(target) && !(corruption === 'missing-oxlint' && target === 'linux-x64') ? { oxlint } : {}),
     }
     artifacts[target] = artifact
     await packFixture(root, output, expected.package, {
+      'LICENSE': Buffer.from('release license fixture\n'),
+      'THIRD_PARTY_NOTICES.md': Buffer.from(corruption === 'notices' && target === 'linux-x64'
+        ? 'torn notices fixture\n' : 'release third-party notices fixture\n'),
       'package.json': { ...publicManifest(expected.package), os: [expected.os], cpu: [expected.cpu],
         ...(corruption === 'version' && target === 'linux-x64' ? { version: '0.0.0' } : {}),
       },
@@ -91,9 +121,12 @@ async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version') 
         protocolVersion: 1, artifact,
       },
       [expected.executable]: corruption === 'binary' && target === 'win32-x64' ? Buffer.from('changed') : bytes,
+      ...(oxlintEligible(target) ? { [oxlint.executable]: corruption === 'oxlint' && target === 'linux-x64' ? Buffer.from('changed') : workerBytes } : {}),
     })
   }
   await packFixture(root, output, '@astrale-os/codegraph', {
+    'LICENSE': Buffer.from('release license fixture\n'),
+    'THIRD_PARTY_NOTICES.md': Buffer.from('release third-party notices fixture\n'),
     'package.json': {
       ...publicManifest('@astrale-os/codegraph'),
       optionalDependencies: Object.fromEntries(Object.values(NATIVE_TARGETS).map(({ package: name }) =>
@@ -102,10 +135,17 @@ async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version') 
     'native-release.json': {
       format: 'astrale.codegraph.native-release', version: 1, packageVersion: version,
       protocolVersion: 1, sourceRevision: revision, artifacts,
-      toolchain: { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture' },
+      toolchain: { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture',
+        oxlint: { rustc: 'fixture', cargo: 'fixture', cargoLockSha256: '5'.repeat(64) } },
     },
   })
   return output
+}
+
+function oxlintDescriptor(target: string, bytes: Buffer) {
+  return { executable: oxlintExecutable(target), bytes: bytes.length,
+    sha256: createHash('sha256').update(bytes).digest('hex'), engineVersion: '1.81.0', protocolVersion: 1,
+    source: { revision: '3'.repeat(40), patchSha256: '4'.repeat(64) } }
 }
 
 function publicManifest(name: string) {

@@ -73,4 +73,4 @@ jobs:
           CODEGRAPH_PACKAGE_VERSION: ${{ steps.packages.outputs.version }}
           ACTIONS_ID_TOKEN_REQUEST_TOKEN: ''
           ACTIONS_ID_TOKEN_REQUEST_URL: ''
-        run: node qualification/v2/release/packed-consumer.mjs --npm-version "$CODEGRAPH_PACKAGE_VERSION" --source-revision "$EXPECTED_SHA"
+        run: node qualification/v2/release/packed-consumer.mjs --npm-version "$CODEGRAPH_PACKAGE_VERSION" --source-revision "$EXPECTED_SHA" --require-oxlint

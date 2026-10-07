@@ -25,6 +25,18 @@ the release validator rejects local or ranged native dependencies inside the roo
 Consumers install only `@astrale-os/codegraph@VERSION`; the package manager selects the matching
 optional native package. Runtime admission still checks that binary against the release manifest.
 
+New macOS and Linux packages also deliver `bin/codegraph-oxlint`, built from the pinned Oxlint
+1.81.0 source recipe and maintained patch. Rust is a build input; consumers do not install a Rust
+toolchain. The worker descriptor records its actual bytes, SHA-256, engine/protocol versions and
+source pins, and the Go executable binds that same identity at build time. Both executables are
+qualified after installation with lifecycle, capture, stale-publication and repair controls.
+
+The worker is a separate capability admitted by `resolvePackagedNativeOxlint`. Its absence or
+corruption does not invalidate `resolvePackagedNativeAnalysis`, which allows consumers to recover
+through their original analyzer. Windows delivers Go alone until captured-worker ownership and OS
+error identities are qualified. Linux worker builds target GNU libc; worker distribution does not
+admit a consumer's original Oxlint bindings, presets or domain rule implementations.
+
 The existing native workflow builds on every target and qualifies the installed archives on
 Node 22.13, 22, 24 and 26. Its `codegraph-release` artifact contains the six tarballs. The manual
 publisher requires a successful main run of that exact workflow at the exact selected source SHA.
