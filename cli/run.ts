@@ -22,6 +22,11 @@ import {
 } from '../conformance/index.ts'
 import { USAGE } from './parse.ts'
 import {
+  capabilityReport,
+  capabilitySummary,
+  type CliCapabilityReport,
+} from './capability.ts'
+import {
   createCliCheckReport,
   encodeCliCheckReport,
   groupDiagnostics,
@@ -148,8 +153,11 @@ export async function runCommand(
     const diagnostics = applicationDiagnostics(snapshot)
 
     if (command.name === 'check' || command.name === 'changed') {
+      reader = await application.open(snapshot.id)
+      const capabilities = await capabilityReport(reader)
       if (command.name === 'check') {
         return reportCheckResult(output, command, snapshot, {
+          capabilities,
           ...(snapshot.selection.kind === 'full' && refreshed.checkProjection
             ? {
                 catalog: {
@@ -176,10 +184,14 @@ export async function runCommand(
       }
       const groups = groupDiagnostics(diagnostics)
       for (const diagnostic of groups) printDiagnosticGroup(output, diagnostic)
-      reportCheck(output, command, changed, snapshot, {
-        causes: groups.length,
-        occurrences: diagnosticOccurrenceCount(groups),
-      })
+      reportCheck(
+        output,
+        command,
+        changed,
+        snapshot,
+        { causes: groups.length, occurrences: diagnosticOccurrenceCount(groups) },
+        capabilities,
+      )
       return { exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0 }
     }
 
@@ -251,11 +263,21 @@ export function reportCheckResult(
     | 'qualifications'
     | 'diagnostics'
   >,
-  options: { readonly catalog?: CliCheckCatalog } = {},
+  options: {
+    readonly catalog?: CliCheckCatalog
+    readonly capabilities?: CliCapabilityReport
+  } = {},
 ): CliResult {
   const diagnostics = applicationDiagnostics(snapshot)
   const qualificationFailed = snapshot.qualifications.some((value) => value.status !== 'pass')
-  reportCheckOutput(output, command, snapshot, groupDiagnostics(diagnostics), qualificationFailed)
+  reportCheckOutput(
+    output,
+    command,
+    snapshot,
+    groupDiagnostics(diagnostics),
+    qualificationFailed,
+    options.capabilities,
+  )
   return {
     exitCode: diagnostics.length > 0 || qualificationFailed ? 1 : 0,
     check: {
@@ -304,6 +326,7 @@ function reportCheckOutput(
   >,
   diagnostics: readonly CliDiagnosticGroup[],
   qualificationFailed: boolean,
+  capabilities?: CliCapabilityReport,
 ): void {
   if (command.format === 'json') {
     output.out(
@@ -316,16 +339,21 @@ function reportCheckOutput(
           specificationSources: snapshot.specifications.map((value) => value.source),
           diagnostics,
           qualificationFailed,
+          ...(capabilities ? { capabilities } : {}),
         }),
       ),
     )
     return
   }
   for (const diagnostic of diagnostics) printDiagnosticGroup(output, diagnostic)
-  reportCheck(output, command, undefined, snapshot, {
-    causes: diagnostics.length,
-    occurrences: diagnosticOccurrenceCount(diagnostics),
-  })
+  reportCheck(
+    output,
+    command,
+    undefined,
+    snapshot,
+    { causes: diagnostics.length, occurrences: diagnosticOccurrenceCount(diagnostics) },
+    capabilities,
+  )
 }
 
 function diagnosticOccurrenceCount(diagnostics: readonly CliDiagnosticGroup[]): number {
@@ -427,7 +455,10 @@ function reportCheck(
   changed: ChangedSpecificationScope | undefined,
   snapshot: Pick<TypeSpecApplicationSnapshot, 'selection' | 'specifications'>,
   diagnostics: { readonly causes: number; readonly occurrences: number },
+  capabilities?: CliCapabilityReport,
 ): void {
+  const derived = capabilities && capabilitySummary(capabilities)
+  if (derived) output.out(derived)
   const selected = selectedSpecificationSources(snapshot)
   const support = snapshot.selection.kind === 'focused' ? snapshot.selection.support.length : 0
   const checked =

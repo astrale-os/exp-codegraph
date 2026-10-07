@@ -29,6 +29,7 @@ import type {
   AuthoredStateResource,
   SpecificationSnapshot,
 } from './model.ts'
+import { resolveCapabilityReferences } from './capability-reference.ts'
 import { loadSpecificationPackageAuthority } from './package-authority.ts'
 
 /** Compile only authored normative meaning; observation and qualification are separate consumers. */
@@ -91,6 +92,11 @@ export async function compileSpecificationSnapshot(
     moduleRoot,
     inventory,
   )
+  const capabilityReferenceDiagnostics = await resolveCapabilityReferences(
+    root,
+    moduleRoot,
+    capabilities.resources,
+  )
   diagnostics.push(
     ...api.diagnostics,
     ...(internal?.diagnostics ?? []),
@@ -118,6 +124,7 @@ export async function compileSpecificationSnapshot(
       packages: packages.resources,
       packagePatterns: packagePatterns.resources,
     }),
+    ...capabilityReferenceDiagnostics,
   )
 
   const authoredLaws: AuthoredLawResource[] = laws.resources.map((resource) => ({

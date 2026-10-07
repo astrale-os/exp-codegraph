@@ -154,6 +154,83 @@ export const QUERY = defineCapability({
     ])
   })
 
+  it('extracts local and descendant capability citations', () => {
+    const result = compileDescriptor(
+      'capability',
+      'runtime/.spec/capabilities/runtime.ts',
+      `import { defineCapability } from '@astrale-os/codegraph/authoring'
+export const RUNTIME_STARTS = defineCapability({
+  id: 'RUNTIME-STARTS',
+  statement: 'The runtime starts.',
+  laws: ['RUNTIME-ORDERED', { module: 'boot', id: 'BOOT-INPUT-BEFORE-DURABLE' }],
+  capabilities: [{ module: 'boot/journal', id: 'JOURNAL-REPLAYS' }],
+})
+`,
+    )
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.definitions).toEqual([
+      {
+        exportName: 'RUNTIME_STARTS',
+        id: 'RUNTIME-STARTS',
+        statement: 'The runtime starts.',
+        laws: ['RUNTIME-ORDERED', { module: 'boot', id: 'BOOT-INPUT-BEFORE-DURABLE' }],
+        capabilities: [{ module: 'boot/journal', id: 'JOURNAL-REPLAYS' }],
+      },
+    ])
+  })
+
+  it('rejects citations outside strict descendants, duplicates, and non-literal entries', () => {
+    const result = compileDescriptor(
+      'capability',
+      'runtime/.spec/capabilities/runtime.ts',
+      `import { defineCapability } from '@astrale-os/codegraph/authoring'
+const dynamic = 'RUNTIME-DYNAMIC'
+export const RUNTIME_STARTS = defineCapability({
+  id: 'RUNTIME-STARTS',
+  statement: 'The runtime starts.',
+  laws: [
+    { module: '../server', id: 'SERVER-LISTENS' },
+    { module: './boot', id: 'BOOT-INPUT-BEFORE-DURABLE' },
+    { module: '/boot', id: 'BOOT-INPUT-BEFORE-DURABLE' },
+    { module: 'boot/../../server', id: 'SERVER-LISTENS' },
+    { module: 'boot', id: 'BOOT-INPUT-BEFORE-DURABLE' },
+    { module: 'boot', id: 'BOOT-INPUT-BEFORE-DURABLE' },
+    'RUNTIME-ORDERED',
+    'RUNTIME-ORDERED',
+    dynamic,
+  ],
+  capabilities: 'RUNTIME-READY',
+})
+`,
+    )
+
+    expect(
+      result.diagnostics.map(({ code, line, column }) => ({ code, line, column })),
+    ).toEqual([
+      { code: 'MODULE_DESCRIPTOR_STATEMENT_INVALID', line: 2, column: 1 },
+      { code: 'CAPABILITY_MODULE_INVALID', line: 7, column: 7 },
+      { code: 'CAPABILITY_MODULE_INVALID', line: 8, column: 7 },
+      { code: 'CAPABILITY_MODULE_INVALID', line: 9, column: 7 },
+      { code: 'CAPABILITY_MODULE_INVALID', line: 10, column: 7 },
+      { code: 'CAPABILITY_REFERENCE_DUPLICATE', line: 12, column: 5 },
+      { code: 'CAPABILITY_REFERENCE_DUPLICATE', line: 14, column: 5 },
+      { code: 'MODULE_DESCRIPTOR_FIELD_INVALID', line: 15, column: 5 },
+      { code: 'MODULE_DESCRIPTOR_FIELD_INVALID', line: 17, column: 3 },
+    ])
+    expect(result.diagnostics[5]?.message).toBe(
+      'Capability RUNTIME-STARTS cites BOOT-INPUT-BEFORE-DURABLE in module boot more than once in laws.',
+    )
+    expect(result.definitions).toEqual([
+      {
+        exportName: 'RUNTIME_STARTS',
+        id: 'RUNTIME-STARTS',
+        statement: 'The runtime starts.',
+        laws: [{ module: 'boot', id: 'BOOT-INPUT-BEFORE-DURABLE' }, 'RUNTIME-ORDERED'],
+      },
+    ])
+  })
+
   it('rejects mutable descriptor bindings', () => {
     const result = compileDescriptor(
       'capability',

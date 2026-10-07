@@ -29,3 +29,27 @@ export const SPECIFICATION_COMPILER_WORK_OBSERVABILITY = defineLaw({
     },
   ],
 })
+
+export const SPECIFICATION_CAPABILITY_CITATIONS_DESCEND = defineLaw({
+  id: 'SPECIFICATION-CAPABILITY-CITATIONS-DESCEND',
+  statement:
+    'A capability citation resolves only to a law or capability declared by the citing module or by a specified strict descendant module; an unresolved citation, a repeated citation, and a capability that reaches itself through capabilities are specification diagnostics.',
+  tests: [
+    {
+      file: '../__tests__/capability-derivation.test.ts',
+      id: 'SPECIFICATION-CAPABILITY-CITATIONS-DESCEND',
+    },
+  ],
+})
+
+export const SPECIFICATION_CAPABILITY_STATUS_DERIVED = defineLaw({
+  id: 'SPECIFICATION-CAPABILITY-STATUS-DERIVED',
+  statement:
+    'A capability status is derived and never authored, stored, or diagnosed: declared when the capability cites nothing, held when every cited law has an active attached test and every cited capability is held, and partial otherwise.',
+  tests: [
+    {
+      file: '../__tests__/capability-derivation.test.ts',
+      id: 'SPECIFICATION-CAPABILITY-STATUS-DERIVED',
+    },
+  ],
+})

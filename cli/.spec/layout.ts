@@ -5,6 +5,7 @@ export default defineLayout({
   entries: [
     'acceleration.ts',
     'application.ts',
+    'capability.ts',
     'changes.ts',
     'check-report.ts',
     'checkpoint.ts',

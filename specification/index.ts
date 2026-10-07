@@ -1,6 +1,16 @@
 export type { ImplementationBinding } from './binding.ts'
 export { initializeModuleSpecification, MINIMUM_MODULE_SPEC } from './module/init.ts'
 export { compileDescriptor } from './module/descriptor.ts'
+export {
+  capabilityReferenceSources,
+  deriveCapabilityStatuses,
+} from './capability.ts'
+export type {
+  CapabilityCoordinate,
+  CapabilityDerivationModule,
+  CapabilityStatus,
+  DerivedCapability,
+} from './capability.ts'
 export type {
   DescriptorCompilation,
   DescriptorDefinitions,

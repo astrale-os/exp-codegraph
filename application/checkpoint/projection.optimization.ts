@@ -1,4 +1,5 @@
 import type { SpecificationSnapshot } from '../../specification/index.ts'
+import { capabilityReferenceSources } from '../../specification/index.ts'
 import type { ApplicationCheckpointExpectation } from './model.ts'
 
 import { applicationSelectionOwners } from '../selection/index.ts'
@@ -55,6 +56,7 @@ export function applicationCheckpointSpecificationDependencies(
       specification.module.internal,
       ...specification.module.ports,
     ].flatMap((resource) => resource?.model?.dependencies.map(({ file }) => file) ?? []),
+    ...capabilityReferenceSources(specification),
   ].filter((source) => source !== specification.source && corpusSources.has(source)))]
     .sort((left, right) => left.localeCompare(right))
 }

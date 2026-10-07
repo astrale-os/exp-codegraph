@@ -8,7 +8,9 @@ import type {
   StateSpecification,
 } from '../resource/index.ts'
 import type { TestEvidenceReference } from '../../authoring/evidence.ts'
+import type { SemanticReference } from '../../authoring/reference.ts'
 
+import { isDescendantModulePath, semanticReferenceKey } from '../capability.ts'
 import {
   AUTHORING_SPECIFIER,
   authoredSourceFile,
@@ -161,7 +163,7 @@ function definitionOf(
     object,
     new Set(
       kind === 'capability'
-        ? ['id', 'statement']
+        ? ['id', 'statement', 'laws', 'capabilities']
         : kind === 'law'
           ? ['id', 'statement', 'formal', 'tests']
           : kind === 'benchmark'
@@ -200,7 +202,24 @@ function definitionOf(
       ),
     )
   }
-  if (kind === 'capability') return { exportName, id, statement }
+  if (kind === 'capability') {
+    const laws = optionalSemanticReferences(object, 'laws', id, source, file, diagnostics)
+    const capabilities = optionalSemanticReferences(
+      object,
+      'capabilities',
+      id,
+      source,
+      file,
+      diagnostics,
+    )
+    return {
+      exportName,
+      id,
+      statement,
+      ...(laws ? { laws } : {}),
+      ...(capabilities ? { capabilities } : {}),
+    }
+  }
   if (kind === 'law') {
     const formal = optionalString(object, 'formal', source, file, diagnostics)
     const tests = optionalEvidenceReferences(object, 'tests', source, file, diagnostics)
@@ -595,6 +614,98 @@ function optionalEvidenceReferences(
   return values
 }
 
+function optionalSemanticReferences(
+  object: ts.ObjectLiteralExpression,
+  name: 'laws' | 'capabilities',
+  capability: string,
+  source: string,
+  file: ts.SourceFile,
+  diagnostics: Diagnostic[],
+): readonly SemanticReference[] | undefined {
+  const member = property(object, name)
+  if (!member) return
+  if (!ts.isArrayLiteralExpression(member.initializer)) {
+    diagnostics.push(
+      diagnostic(
+        'MODULE_DESCRIPTOR_FIELD_INVALID',
+        `Descriptor field ${name} must be an array of semantic identifiers or { module, id } literals.`,
+        source,
+        file,
+        member,
+      ),
+    )
+    return
+  }
+  const values: SemanticReference[] = []
+  const seen = new Set<string>()
+  for (const element of member.initializer.elements) {
+    const reference = semanticReference(element, name, source, file, diagnostics)
+    if (!reference) continue
+    const identity = semanticReferenceKey(reference)
+    if (seen.has(identity)) {
+      diagnostics.push(
+        diagnostic(
+          'CAPABILITY_REFERENCE_DUPLICATE',
+          `Capability ${capability} cites ${describeSemanticReference(reference)} more than once in ${name}.`,
+          source,
+          file,
+          element,
+        ),
+      )
+      continue
+    }
+    seen.add(identity)
+    values.push(reference)
+  }
+  return values
+}
+
+function semanticReference(
+  element: ts.Expression,
+  name: string,
+  source: string,
+  file: ts.SourceFile,
+  diagnostics: Diagnostic[],
+): SemanticReference | undefined {
+  const local = stringLiteral(element)
+  if (local !== undefined) {
+    if (SEMANTIC_ID.test(local)) return local
+  } else if (ts.isObjectLiteralExpression(element)) {
+    validateProperties(element, new Set(['module', 'id']), source, file, diagnostics)
+    const module = requiredString(element, 'module', source, file, diagnostics)
+    const id = requiredString(element, 'id', source, file, diagnostics)
+    if (!module || !id) return
+    if (!isDescendantModulePath(module)) {
+      diagnostics.push(
+        propertyDiagnostic(
+          element,
+          'module',
+          'CAPABILITY_MODULE_INVALID',
+          'A cited module must be a POSIX path to a strict descendant module: no leading ./ or /, and no . or .. segment.',
+          source,
+          file,
+        ),
+      )
+      return
+    }
+    if (SEMANTIC_ID.test(id)) return { module, id }
+  }
+  diagnostics.push(
+    diagnostic(
+      'MODULE_DESCRIPTOR_FIELD_INVALID',
+      `Descriptor field ${name} must contain only semantic identifiers or { module, id } literals.`,
+      source,
+      file,
+      element,
+    ),
+  )
+  return
+}
+
+function describeSemanticReference(reference: SemanticReference): string {
+  return typeof reference === 'string' ? reference : `${reference.id} in module ${reference.module}`
+}
+
 function validateProperties(
   object: ts.ObjectLiteralExpression,
   allowed: ReadonlySet<string>,
@@ -683,4 +794,69 @@ function propertyDiagnostic(
   file: ts.SourceFile,
 ): Diagnostic {
   return diagnostic(code, message, source, file, property(object, name) ?? object)
+}
+
+/**
+ * Locate one authored descriptor value for a diagnostic derived after extraction.
+ *
+ * The path names literal fields; a reference step selects the first array element spelling that
+ * exact semantic reference. An unknown step falls back to the nearest located ancestor.
+ */
+export function locateDescriptorValue(
+  source: string,
+  text: string,
+  exportName: string,
+  path: readonly (string | { readonly reference: SemanticReference })[] = [],
+): { readonly line: number; readonly column: number } {
+  const file = authoredSourceFile(source, text)
+  let node: ts.Node | undefined
+  let value: ts.Expression | undefined
+  for (const statement of file.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== exportName) continue
+      node = declaration
+      const argument =
+        declaration.initializer && ts.isCallExpression(declaration.initializer)
+          ? declaration.initializer.arguments[0]
+          : undefined
+      value = argument
+    }
+  }
+  if (!node) return { line: 1, column: 1 }
+  for (const step of path) {
+    if (!value) break
+    if (typeof step === 'string') {
+      if (!ts.isObjectLiteralExpression(value)) break
+      const member = property(value, step)
+      if (!member) break
+      node = member
+      value = member.initializer
+      continue
+    }
+    if (!ts.isArrayLiteralExpression(value)) break
+    const identity = semanticReferenceKey(step.reference)
+    const element = value.elements.find((candidate) => {
+      const authored = authoredSemanticReference(candidate)
+      return authored !== undefined && semanticReferenceKey(authored) === identity
+    })
+    if (!element) break
+    node = element
+    value = element
+  }
+  const position = file.getLineAndCharacterOfPosition(node.getStart(file))
+  return { line: position.line + 1, column: position.character + 1 }
+}
+
+function authoredSemanticReference(element: ts.Expression): SemanticReference | undefined {
+  const local = stringLiteral(element)
+  if (local !== undefined) return local
+  if (!ts.isObjectLiteralExpression(element)) return
+  const module = property(element, 'module')
+  const id = property(element, 'id')
+  const moduleValue = module ? stringLiteral(module.initializer) : undefined
+  const idValue = id ? stringLiteral(id.initializer) : undefined
+  return moduleValue !== undefined && idValue !== undefined
+    ? { module: moduleValue, id: idValue }
+    : undefined
 }
