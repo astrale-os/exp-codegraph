@@ -36,9 +36,23 @@ interface CapabilityDefinition {
   readonly statement: string
 }
 
+/** A string cites the citing module; the object form cites a strict descendant module. */
+type SemanticReference = string | { readonly module: string; readonly id: string }
+
+interface CapabilitySpecification extends CapabilityDefinition {
+  readonly laws?: readonly SemanticReference[]
+  readonly capabilities?: readonly SemanticReference[]
+}
+
 interface TestEvidenceReference {
   readonly file: string
   readonly id: string
+}
+
+/** One implementation file, optionally one top-level declaration or `Class.member` inside it. */
+interface CodeAnchorReference {
+  readonly file: string
+  readonly symbol?: string
 }
 
 export interface AuthoredLawSpecification {
@@ -47,6 +61,7 @@ export interface AuthoredLawSpecification {
   readonly statement: string
   readonly formal?: string
   readonly tests?: readonly TestEvidenceReference[]
+  readonly code?: readonly CodeAnchorReference[]
 }
 
 export interface AuthoredStateSpecification {
@@ -66,7 +81,7 @@ interface BenchmarkDefinition extends CapabilityDefinition {
 export type DescriptorKind = 'capability' | 'law' | 'state' | 'benchmark'
 
 export interface DescriptorDefinitions {
-  readonly capability: readonly CapabilityDefinition[]
+  readonly capability: readonly CapabilitySpecification[]
   readonly law: readonly AuthoredLawSpecification[]
   readonly state: readonly AuthoredStateSpecification[]
   readonly benchmark: readonly BenchmarkDefinition[]
@@ -83,6 +98,17 @@ export function compileDescriptor<Kind extends DescriptorKind>(
   source: string,
   text: string,
 ): DescriptorCompilation<Kind>
+
+/** One authored array element: a string literal, or an object of exactly these string fields. */
+export type DescriptorElement = string | Readonly<Record<string, string | undefined>>
+
+/** Locate one authored descriptor value for a diagnostic derived after extraction. */
+export function locateDescriptorValue(
+  source: string,
+  text: string,
+  exportName: string,
+  path?: readonly (string | { readonly element: DescriptorElement })[],
+): { readonly line: number; readonly column: number }
 
 interface SchemaResource extends TextResource {
   readonly schema: unknown
@@ -127,6 +153,7 @@ interface ModuleSourceReference {
 
 export type SpecificationSnapshotId = `specification:${string}`
 
+type CapabilityResource = DescriptorResource<'capability', CapabilitySpecification>
 export type AuthoredLawResource = DescriptorResource<'law', AuthoredLawSpecification>
 export type AuthoredStateResource = DescriptorResource<'state', AuthoredStateSpecification>
 
@@ -163,7 +190,7 @@ export interface SpecificationSnapshot {
   readonly module: SpecificationModuleSnapshot
   readonly schemas: readonly SchemaResource[]
   readonly examples: readonly ExampleResource[]
-  readonly capabilities: readonly DescriptorResource<'capability', CapabilityDefinition>[]
+  readonly capabilities: readonly CapabilityResource[]
   readonly flows: readonly ModuleCodeResource[]
   readonly laws: readonly AuthoredLawResource[]
   readonly states: readonly AuthoredStateResource[]
@@ -175,6 +202,70 @@ export interface SpecificationSnapshot {
   readonly sourceReferences: readonly ModuleSourceReference[]
   readonly diagnostics: readonly Diagnostic[]
 }
+
+export type CapabilityStatus = 'declared' | 'partial' | 'held'
+
+/** One semantic identifier addressed by its catalog-relative module root. */
+export interface CapabilityCoordinate {
+  readonly module: string
+  readonly id: string
+}
+
+export interface CapabilityDerivationModule {
+  readonly root: string
+  readonly capabilities: readonly CapabilityResource[]
+  /** Declared laws, each with whether at least one active test declaration is attached. */
+  readonly laws: readonly { readonly id: string; readonly active: boolean }[]
+}
+
+export interface DerivedCapability extends CapabilityCoordinate {
+  readonly source: string
+  readonly status: CapabilityStatus
+  /** Cited laws without an active test and cited capabilities that are not held. */
+  readonly blocking: {
+    readonly laws: readonly CapabilityCoordinate[]
+    readonly capabilities: readonly CapabilityCoordinate[]
+  }
+}
+
+/** Public-contract anchors of every descendant module cited by one module's capabilities. */
+export function capabilityReferenceSources(specification: {
+  readonly root: string
+  readonly capabilities: readonly CapabilityResource[]
+}): readonly string[]
+
+export interface CapabilityCitation extends CapabilityCoordinate {
+  readonly source: string
+  /** The cited laws and capabilities through which this capability reaches the given laws. */
+  readonly cites: {
+    readonly laws: readonly CapabilityCoordinate[]
+    readonly capabilities: readonly CapabilityCoordinate[]
+  }
+}
+
+/** Capabilities citing any given law, direct citers first, then those citing through others. */
+export function capabilitiesCiting(
+  modules: readonly Pick<CapabilityDerivationModule, 'root' | 'capabilities'>[],
+  laws: readonly CapabilityCoordinate[],
+): readonly CapabilityCitation[]
+
+export interface ModuleSemanticDeclarations {
+  readonly root: string
+  readonly source: string
+  readonly capabilities: readonly CapabilityResource[]
+  readonly laws: readonly DescriptorResource<'law', AuthoredLawSpecification>[]
+}
+
+/** Parse only the capability and law descriptors of one specified module. */
+export function loadModuleSemanticDeclarations(
+  catalogRoot: string,
+  specDirectory: string,
+): Promise<ModuleSemanticDeclarations | undefined>
+
+/** Derive reported capability statuses; a status is never a diagnostic. */
+export function deriveCapabilityStatuses(
+  modules: readonly CapabilityDerivationModule[],
+): readonly DerivedCapability[]
 
 /** Compile authored `.spec` meaning without implementation, test, layout, or UI observations. */
 export function compileSpecificationSnapshot(

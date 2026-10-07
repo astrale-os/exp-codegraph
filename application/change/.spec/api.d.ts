@@ -44,4 +44,8 @@ export function findSpecificationImpact(
   path: string,
   options?: SpecificationChangeOptions,
 ): SpecificationImpact
+/** Attached test files and code anchors: qualification inputs of the citing owner at any depth. */
+export function specificationEvidenceInputs(
+  specification: Pick<SpecificationSnapshot, 'root' | 'laws' | 'states'>,
+): readonly string[]
 export function assertCanonicalRepositoryPath(path: string): string

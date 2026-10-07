@@ -1,5 +1,8 @@
 import type { SpecificationSnapshot } from '../../specification/index.ts'
-import { compileSpecificationSnapshots } from '../../specification/index.ts'
+import {
+  capabilityReferenceSources,
+  compileSpecificationSnapshots,
+} from '../../specification/index.ts'
 import type { RepositoryInventory, RepositorySourceService } from '../../repository/index.ts'
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.ts'
 import type { ApplicationSpecificationAnchor } from './model.ts'
@@ -80,6 +83,7 @@ export async function compileRequestedSpecificationClosure(
       const dependencies = [
         ...specification.sourceReferences.map((reference) => reference.target.source),
         ...declarationDependencies(specification),
+        ...capabilityReferenceSources(specification),
       ]
       for (const source of dependencies) {
         const anchor = anchorBySource.get(source)

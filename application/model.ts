@@ -73,6 +73,8 @@ export interface TypeSpecApplicationRefreshOptions {
   readonly includeDependents?: boolean
   readonly requireCompleteLayout?: boolean
   readonly requireExactLayout?: boolean
+  /** Require every law of the qualified modules to carry a test reference or a code anchor. */
+  readonly requireLawEvidence?: boolean
   readonly requestedProfiles?: readonly string[]
   /** Additional closed schema catalogs, supplied explicitly and pinned by content revision. */
   readonly schemaRoots?: readonly string[]

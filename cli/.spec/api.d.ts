@@ -28,6 +28,29 @@ export type CliCheckScope =
       readonly support: readonly string[]
     }
 
+export interface CliCapabilityCoordinate {
+  /** Catalog-relative module root; `.` names the catalog root. */
+  readonly module: string
+  readonly id: string
+}
+
+export interface CliCapabilityStatus extends CliCapabilityCoordinate {
+  readonly source: string
+  readonly status: 'declared' | 'partial' | 'held'
+  /** Present only when partial: cited laws without an active test, cited capabilities not held. */
+  readonly blocking?: {
+    readonly laws: readonly CliCapabilityCoordinate[]
+    readonly capabilities: readonly CliCapabilityCoordinate[]
+  }
+}
+
+export interface CliCapabilityReport {
+  readonly declared: number
+  readonly partial: number
+  readonly held: number
+  readonly entries: readonly CliCapabilityStatus[]
+}
+
 export interface CliCheckReport {
   readonly format: 'astrale.codegraph.check-report'
   readonly version: 1
@@ -37,6 +60,8 @@ export interface CliCheckReport {
   readonly scope: CliCheckScope
   readonly qualificationFailed: boolean
   readonly diagnostics: readonly CliDiagnosticGroup[]
+  /** Derived status of every checked capability; reported, never a diagnostic. */
+  readonly capabilities?: CliCapabilityReport
   readonly summary: {
     readonly specifications: number
     readonly diagnosticCauses: number

@@ -2,6 +2,7 @@
 import { clearLine, cursorTo } from 'node:readline';
 import { createCliApplicationService } from './cli/application.js';
 import { changedSpecificationScope } from './cli/changes.js';
+import { changedLawImpact } from './cli/impact.js';
 import { runCliCommand } from './cli/checkpoint.js';
 import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.js';
 import { parseCommand, USAGE } from './cli/parse.js';
@@ -26,6 +27,7 @@ try {
         createApplication: createCliApplicationService,
         startDev,
         changedSpecificationScope,
+        changedLawImpact,
         planEvidenceTests,
         executeEvidenceTests,
     }, {

@@ -415,6 +415,9 @@ function testServices(
       throw new Error('unexpected dev')
     },
     changedSpecificationScope: async () => ({ kind: 'none', files: [], base: 'HEAD' }),
+    changedLawImpact: async () => {
+      throw new Error('unexpected impact')
+    },
     planEvidenceTests: async () => {
       throw new Error('unexpected evidence plan')
     },

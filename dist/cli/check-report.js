@@ -55,6 +55,7 @@ export function createCliCheckReport(input) {
         scope,
         qualificationFailed: input.qualificationFailed,
         diagnostics: input.diagnostics,
+        ...(input.capabilities ? { capabilities: input.capabilities } : {}),
         summary: {
             specifications: scope.kind === 'full'
                 ? scope.specifications.length

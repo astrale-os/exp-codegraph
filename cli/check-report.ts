@@ -1,5 +1,6 @@
 import type { TypeSpecApplicationSelection } from '../application/index.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
+import type { CliCapabilityReport } from './capability.ts'
 
 export const CLI_CHECK_REPORT_FORMAT = 'astrale.codegraph.check-report'
 export const CLI_CHECK_REPORT_VERSION = 1
@@ -40,6 +41,8 @@ export interface CliCheckReport {
   readonly scope: CliCheckScope
   readonly qualificationFailed: boolean
   readonly diagnostics: readonly CliDiagnosticGroup[]
+  /** Derived status of every checked capability; absent from a projected report. */
+  readonly capabilities?: CliCapabilityReport
   readonly summary: {
     readonly specifications: number
     readonly diagnosticCauses: number
@@ -98,6 +101,7 @@ export function createCliCheckReport(input: {
   readonly specificationSources: readonly string[]
   readonly diagnostics: readonly CliDiagnosticGroup[]
   readonly qualificationFailed: boolean
+  readonly capabilities?: CliCapabilityReport
 }): CliCheckReport {
   const diagnosticOccurrences = input.diagnostics.reduce(
     (total, diagnostic) => total + diagnostic.pointers.length,
@@ -126,6 +130,7 @@ export function createCliCheckReport(input: {
     scope,
     qualificationFailed: input.qualificationFailed,
     diagnostics: input.diagnostics,
+    ...(input.capabilities ? { capabilities: input.capabilities } : {}),
     summary: {
       specifications:
         scope.kind === 'full'

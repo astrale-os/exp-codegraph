@@ -31,6 +31,7 @@ import type {
   SpecificationSnapshot,
 } from '../../specification/index.ts'
 import type { LawResource, StateResource } from '../../specification/resource/index.ts'
+import { resolveCodeAnchors } from '../../specification/module/code-anchor.ts'
 import { compileLayout, observeLayout } from '../../specification/module/layout.ts'
 import { resolveTestEvidence } from '../../specification/module/test-evidence.ts'
 import {
@@ -458,12 +459,11 @@ async function observeSpecificationTests(
 ): Promise<ApplicationTestEvidenceFact> {
   const laws = specification.laws.map(withEmptyEvidence) as LawResource[]
   const states = specification.states.map(withEmptyStateEvidence) as StateResource[]
-  const resolved = await resolveTestEvidence(
-    root,
-    resolve(root, specification.root),
-    laws,
-    states,
-  )
+  const moduleRoot = resolve(root, specification.root)
+  const [resolved, anchorDiagnostics] = await Promise.all([
+    resolveTestEvidence(root, moduleRoot, laws, states),
+    resolveCodeAnchors(root, moduleRoot, specification.laws),
+  ])
   return {
     specification: specification.id,
     laws: resolved.laws.flatMap((resource) =>
@@ -480,7 +480,10 @@ async function observeSpecificationTests(
         evidence: definition.testEvidence,
       })),
     ),
-    diagnostics: resolved.diagnostics,
+    // A code anchor is evidence for a law that no test can attach to; it resolves here as well.
+    diagnostics: anchorDiagnostics.length
+      ? [...resolved.diagnostics, ...anchorDiagnostics]
+      : resolved.diagnostics,
   }
 }
 

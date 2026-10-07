@@ -1,4 +1,4 @@
-import { compileSpecificationSnapshots } from '../../specification/index.js';
+import { capabilityReferenceSources, compileSpecificationSnapshots, } from '../../specification/index.js';
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.js';
 import { planApplicationDependencyOptimization, } from './dependency.optimization.js';
 import { planApplicationSpecificationAnchors } from './select.js';
@@ -44,6 +44,7 @@ export async function compileRequestedSpecificationClosure(root, anchors, select
             const dependencies = [
                 ...specification.sourceReferences.map((reference) => reference.target.source),
                 ...declarationDependencies(specification),
+                ...capabilityReferenceSources(specification),
             ];
             for (const source of dependencies) {
                 const anchor = anchorBySource.get(source);

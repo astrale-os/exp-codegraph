@@ -1,6 +1,7 @@
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import type { SpecificationSnapshot } from '../../specification/index.ts'
+import { capabilityReferenceSources } from '../../specification/index.ts'
 import type {
   SelectApplicationSpecificationsOptions,
   ApplicationSpecificationAnchor,
@@ -89,6 +90,16 @@ export function selectApplicationSpecifications(
       ),
     ] as const),
   )
+  // A capability may cite laws and capabilities of descendant modules. Those modules support its
+  // derivation without making their own public-contract consumers dependents of the citation.
+  const citations = new Map(
+    specifications.map((specification) => [
+      specification.source,
+      capabilityReferenceSources(specification).filter(
+        (source) => source !== specification.source && bySource.has(source),
+      ),
+    ] as const),
+  )
   const selected = new Set(requested.flatMap((target) =>
     applicationSelectionOwners(specifications, target).map((value) => value.source),
   ))
@@ -112,11 +123,18 @@ export function selectApplicationSpecifications(
         changed = true
       }
     }
+    for (const [source, cited] of citations) {
+      if (cited.some((target) => primary.includes(target))) selected.add(source)
+    }
   }
   const closure = new Set(selected)
   const pending = [...selected]
   while (pending.length) {
-    for (const dependency of dependencies.get(pending.pop()!) ?? []) {
+    const source = pending.pop()!
+    for (const dependency of [
+      ...(dependencies.get(source) ?? []),
+      ...(citations.get(source) ?? []),
+    ]) {
       if (closure.has(dependency)) continue
       closure.add(dependency)
       pending.push(dependency)

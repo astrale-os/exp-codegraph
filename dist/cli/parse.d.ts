@@ -1,5 +1,5 @@
 import type { CliCheckOutputFormat } from './check-report.ts';
-export declare const USAGE = "Usage:\n  cg --version\n  cg init [module-directory]\n  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--quiet] [--no-cache]\n  cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]\n  cg test [module-path]... [--root <directory>] [--quiet] [--no-cache]\n  cg test changed [base] [--root <directory>] [--quiet] [--no-cache]\n  cg verify [root] [--select <relative-path>]... [--schema-root <directory>]... [--require-pass] [--details] [--quiet]\n  cg dev [root] [--port <number>] [--open] [--verify] [--no-cache]";
+export declare const USAGE = "Usage:\n  cg --version\n  cg init [module-directory]\n  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--require-law-evidence] [--format <text|json>] [--quiet] [--no-cache]\n  cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--require-law-evidence] [--scope-only] [--quiet] [--no-cache]\n  cg test [module-path]... [--root <directory>] [--quiet] [--no-cache]\n  cg test changed [base] [--root <directory>] [--quiet] [--no-cache]\n  cg verify [root] [--select <relative-path>]... [--schema-root <directory>]... [--require-pass] [--details] [--quiet]\n  cg dev [root] [--port <number>] [--open] [--verify] [--no-cache]";
 export type CliCommand = {
     name: 'help';
     successful: boolean;
@@ -15,6 +15,7 @@ export type CliCommand = {
     select: readonly string[];
     requireCompleteLayout: boolean;
     requireExactLayout: boolean;
+    requireLawEvidence: boolean;
     format: CliCheckOutputFormat;
     quiet: boolean;
     cache: boolean;
@@ -32,6 +33,7 @@ export type CliCommand = {
     base?: string;
     exclude: readonly string[];
     requireCompleteLayout: boolean;
+    requireLawEvidence: boolean;
     scopeOnly: boolean;
     quiet: boolean;
     cache: boolean;

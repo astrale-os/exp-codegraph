@@ -1,4 +1,5 @@
 import {
+  defineCapability,
   defineCode,
   defineLaw,
   defineLayout,
@@ -84,6 +85,25 @@ defineLaw({
   id: 'JOB-TERMINAL',
   statement: 'Terminal jobs cannot transition.',
   tests: [{ file: '../__tests__/job.test.ts', id: 'JOB-REJECTS-TERMINAL' }],
+})
+
+const jobCapability = defineCapability({
+  id: 'JOB-RUNS',
+  statement: 'Jobs run to a terminal state.',
+  laws: ['JOB-TERMINAL', { module: 'queue', id: 'QUEUE-ORDERED' }],
+  capabilities: [{ module: 'queue/retry', id: 'RETRY-BOUNDED' }],
+})
+const citedLaw: 'JOB-TERMINAL' = jobCapability.laws[0]
+const citedModule: 'queue/retry' = jobCapability.capabilities[0].module
+void [citedLaw, citedModule]
+
+defineCapability({
+  id: 'JOB-RUNS',
+  statement: 'Jobs run to a terminal state.',
+  laws: [
+    // @ts-expect-error a descendant citation names its module and its identifier
+    { module: 'queue' },
+  ],
 })
 
 const state: StateOf<typeof job> = 'running'

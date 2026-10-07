@@ -5,8 +5,8 @@ import type { CliCheckOutputFormat } from './check-report.ts'
 export const USAGE = `Usage:
   cg --version
   cg init [module-directory]
-  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--quiet] [--no-cache]
-  cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]
+  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--require-law-evidence] [--format <text|json>] [--quiet] [--no-cache]
+  cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--require-law-evidence] [--scope-only] [--quiet] [--no-cache]
   cg test [module-path]... [--root <directory>] [--quiet] [--no-cache]
   cg test changed [base] [--root <directory>] [--quiet] [--no-cache]
   cg verify [root] [--select <relative-path>]... [--schema-root <directory>]... [--require-pass] [--details] [--quiet]
@@ -23,6 +23,7 @@ export type CliCommand =
       select: readonly string[]
       requireCompleteLayout: boolean
       requireExactLayout: boolean
+      requireLawEvidence: boolean
       format: CliCheckOutputFormat
       quiet: boolean
       cache: boolean
@@ -42,6 +43,7 @@ export type CliCommand =
       base?: string
       exclude: readonly string[]
       requireCompleteLayout: boolean
+      requireLawEvidence: boolean
       scopeOnly: boolean
       quiet: boolean
       cache: boolean
@@ -128,6 +130,7 @@ function parseChanged(
   base?: string
   exclude: readonly string[]
   requireCompleteLayout: boolean
+  requireLawEvidence: boolean
   scopeOnly: boolean
   quiet: boolean
   cache: boolean
@@ -137,6 +140,7 @@ function parseChanged(
   let hasRoot = false
   const exclude: string[] = []
   let requireCompleteLayout = false
+  let requireLawEvidence = false
   let scopeOnly = false
   let quiet = false
   let cache = cacheDefault
@@ -148,6 +152,8 @@ function parseChanged(
       exclude.push(value)
     } else if (argument === '--require-complete-layout' && !requireCompleteLayout) {
       requireCompleteLayout = true
+    } else if (argument === '--require-law-evidence' && !requireLawEvidence) {
+      requireLawEvidence = true
     } else if (argument === '--scope-only' && !scopeOnly) {
       scopeOnly = true
     } else if (argument === '--quiet' && !quiet) {
@@ -166,6 +172,7 @@ function parseChanged(
     ...(base ? { base } : {}),
     exclude,
     requireCompleteLayout,
+    requireLawEvidence,
     scopeOnly,
     quiet,
     cache,
@@ -186,6 +193,7 @@ function parseCheck(
   select: readonly string[]
   requireCompleteLayout: boolean
   requireExactLayout: boolean
+  requireLawEvidence: boolean
   format: CliCheckOutputFormat
   quiet: boolean
   cache: boolean
@@ -196,6 +204,7 @@ function parseCheck(
   const select: string[] = []
   let requireCompleteLayout = false
   let requireExactLayout = false
+  let requireLawEvidence = false
   let format: CliCheckOutputFormat = 'text'
   let hasFormat = false
   let quiet = false
@@ -214,6 +223,8 @@ function parseCheck(
       requireCompleteLayout = true
     } else if (argument === '--require-exact-layout' && !requireExactLayout) {
       requireExactLayout = true
+    } else if (argument === '--require-law-evidence' && !requireLawEvidence) {
+      requireLawEvidence = true
     } else if (argument === '--format' && !hasFormat) {
       const value = args[++index]
       if (value !== 'text' && value !== 'json') usageError()
@@ -235,6 +246,7 @@ function parseCheck(
     select,
     requireCompleteLayout,
     requireExactLayout,
+    requireLawEvidence,
     format,
     quiet,
     cache,

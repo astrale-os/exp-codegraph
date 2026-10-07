@@ -1,9 +1,11 @@
+import { locateDescriptorValue } from './descriptor.js';
 import { matchesPackagePattern } from './package.js';
 /** Validate relationships that only become visible after all module artifacts are loaded. */
 export function validateModuleSemantics(resources) {
     const diagnostics = [];
     validateSemanticIds(resources, diagnostics);
     validateBenchmarks(resources, diagnostics);
+    validateCapabilityReferences(resources, diagnostics);
     validateSchemaIdentities(resources.schemas, diagnostics);
     validatePackageDefinitions(resources, diagnostics);
     return diagnostics;
@@ -46,6 +48,73 @@ function validateBenchmarks(resources, diagnostics) {
             });
         }
     }
+}
+/** Resolve the citations a capability makes inside its own module; descendants need the catalog. */
+function validateCapabilityReferences(resources, diagnostics) {
+    const laws = new Set(resources.laws.flatMap((resource) => resource.definitions.map((definition) => definition.id)));
+    const capabilities = new Map();
+    for (const resource of resources.capabilities) {
+        for (const definition of resource.definitions) {
+            if (capabilities.has(definition.id))
+                continue;
+            capabilities.set(definition.id, (definition.capabilities ?? []).filter((reference) => typeof reference === 'string'));
+        }
+    }
+    for (const resource of resources.capabilities) {
+        for (const definition of resource.definitions) {
+            const located = (field, reference) => ({
+                file: resource.source,
+                ...locateDescriptorValue(resource.source, resource.text, definition.exportName, [
+                    field,
+                    { element: reference },
+                ]),
+            });
+            for (const reference of definition.laws ?? []) {
+                if (typeof reference !== 'string' || laws.has(reference))
+                    continue;
+                diagnostics.push({
+                    code: 'CAPABILITY_LAW_UNKNOWN',
+                    message: `Capability ${definition.id} references undeclared law ${reference}.`,
+                    ...located('laws', reference),
+                });
+            }
+            for (const reference of definition.capabilities ?? []) {
+                if (typeof reference !== 'string' || capabilities.has(reference))
+                    continue;
+                diagnostics.push({
+                    code: 'CAPABILITY_CAPABILITY_UNKNOWN',
+                    message: `Capability ${definition.id} references undeclared capability ${reference}.`,
+                    ...located('capabilities', reference),
+                });
+            }
+            // Citations only descend into other modules, so every cycle closes inside this module.
+            const cycle = capabilityCycle(definition.id, capabilities);
+            if (!cycle)
+                continue;
+            diagnostics.push({
+                code: 'CAPABILITY_CYCLE',
+                message: `Capability ${definition.id} reaches itself through capabilities: ${cycle.join(' → ')}.`,
+                ...located('capabilities', cycle[1]),
+            });
+        }
+    }
+}
+/** Shortest citation path leading one capability back to itself, when one exists. */
+function capabilityCycle(origin, capabilities) {
+    const pending = [[origin]];
+    const visited = new Set();
+    while (pending.length) {
+        const path = pending.shift();
+        for (const cited of capabilities.get(path.at(-1)) ?? []) {
+            if (cited === origin)
+                return [...path, cited];
+            if (visited.has(cited) || !capabilities.has(cited))
+                continue;
+            visited.add(cited);
+            pending.push([...path, cited]);
+        }
+    }
+    return;
 }
 function validateSchemaIdentities(schemas, diagnostics) {
     const seen = new Map();
