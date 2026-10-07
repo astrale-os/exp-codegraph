@@ -51,29 +51,36 @@ func TestOwnedArtifactStagedPublication(t *testing.T) {
 	if err != nil {
 		t.Fatalf("staging mkdir: %v", err)
 	}
-	stagedPath := filepath.Join(staging, governanceOwnedArtifactName)
+	payload := filepath.Join(staging, governanceOwnedArtifactPayloadName)
+	if err := os.Mkdir(payload, 0700); err != nil {
+		t.Fatalf("payload mkdir: %v", err)
+	}
+	stagedPath := filepath.Join(payload, governanceOwnedArtifactName)
 	if err := os.WriteFile(stagedPath, raw, 0500); err != nil {
 		t.Fatalf("write %q: %v", stagedPath, err)
 	}
-	if err := os.Chmod(staging, 0500); err != nil {
-		t.Fatalf("chmod %q: %v", staging, err)
+	if err := os.Chmod(payload, 0500); err != nil {
+		t.Fatalf("chmod %q: %v", payload, err)
 	}
 	staged, err := governanceOpenOwnedArtifact(stagedPath, raw)
 	if err != nil {
 		t.Fatalf("staged-open %q: %v", stagedPath, err)
 	}
-	original := staged.fileInfo
+	original, originalPayload, originalEnvelope := staged.fileInfo, staged.directoryInfo, staged.envelopeInfo
+	if original.Mode().Perm() != 0500 || originalPayload.Mode().Perm() != 0500 || originalEnvelope.Mode().Perm() != 0700 {
+		t.Fatal("staging did not seal the payload inside a movable envelope")
+	}
 	staged.close()
-	capsule := filepath.Join(store, governanceOwnedArtifactSHA)
+	capsule := governanceOwnedArtifactEnvelopePath(store)
 	if err := os.Rename(staging, capsule); err != nil {
 		t.Fatalf("rename %q to %q: %v", staging, capsule, err)
 	}
-	published, err := governanceOpenOwnedArtifact(filepath.Join(capsule, governanceOwnedArtifactName), raw)
+	published, err := governanceOpenOwnedArtifact(filepath.Join(capsule, governanceOwnedArtifactPayloadName, governanceOwnedArtifactName), raw)
 	if err != nil {
 		t.Fatalf("published-open %q: %v", capsule, err)
 	}
 	defer published.close()
-	if !os.SameFile(original, published.fileInfo) || !published.verify() {
+	if !os.SameFile(original, published.fileInfo) || !os.SameFile(originalPayload, published.directoryInfo) || !os.SameFile(originalEnvelope, published.envelopeInfo) || !published.verify() {
 		t.Fatal("publication changed the verified inode or bytes")
 	}
 }
@@ -82,7 +89,7 @@ func TestOwnedArtifactRejectionInspection(t *testing.T) {
 	// Opening is intentionally independent of the build-qualified byte gate;
 	// small actual filesystem fixtures exercise the rejection diagnostic itself.
 	store := ownedArtifactTestStore(t)
-	capsule := filepath.Join(store, "fixture")
+	capsule := filepath.Join(store, "fixture", governanceOwnedArtifactPayloadName)
 	if err := os.MkdirAll(capsule, 0700); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +266,7 @@ func TestOwnedArtifactRetirementDoesNotFollowForeignSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.Symlink(foreign, filepath.Join(store, governanceOwnedArtifactSHA)); err != nil {
+	if err = os.Symlink(foreign, governanceOwnedArtifactEnvelopePath(store)); err != nil {
 		t.Fatal(err)
 	}
 	lease, err := governanceAcquireOwnedArtifact(raw, store)
@@ -404,6 +411,240 @@ func TestOwnedArtifactStoreAndOwnerRemainCurrentThroughSeal(t *testing.T) {
 			capture := &governanceCapture{ownedGenericArtifact: lease}
 			if valid, _ := capture.Verify(); valid {
 				t.Fatal("changed runtime owner published capture")
+			}
+		})
+	}
+}
+
+func TestOwnedArtifactEnvelopeGuardsAndRecovery(t *testing.T) {
+	raw := ownedArtifactTestBytes(t)
+	for _, mode := range []string{"permissions", "symlink-to-old-envelope"} {
+		t.Run(mode, func(t *testing.T) {
+			store := ownedArtifactTestStore(t)
+			lease, err := governanceAcquireOwnedArtifact(raw, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.close()
+			envelope := lease.envelopePath
+			if mode == "permissions" {
+				if err := os.Chmod(envelope, 0500); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				old := envelope + ".old"
+				if err := os.Rename(envelope, old); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(old, envelope); err != nil {
+					t.Fatal(err)
+				}
+				// The same payload and worker still resolve through this alias.
+				current, err := os.Lstat(lease.path)
+				if err != nil || !os.SameFile(current, lease.fileInfo) {
+					t.Fatal("alias did not retain worker identity")
+				}
+				payload, err := os.Lstat(filepath.Dir(lease.path))
+				if err != nil || !os.SameFile(payload, lease.directoryInfo) {
+					t.Fatal("alias did not retain payload identity")
+				}
+			}
+			if lease.verify() {
+				t.Fatal("changed envelope authorized unchanged worker bytes")
+			}
+			if valid, _ := (&governanceCapture{ownedGenericArtifact: lease}).Verify(); valid {
+				t.Fatal("changed envelope sealed capture")
+			}
+			recovered, err := governanceAcquireOwnedArtifact(raw, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer recovered.close()
+			if !recovered.verify() || lease.verify() {
+				t.Fatal("recovery crossed envelope lifetime")
+			}
+		})
+	}
+}
+
+func TestOwnedArtifactInnerSymlinkRecoveryDoesNotChangeForeignTarget(t *testing.T) {
+	raw := ownedArtifactTestBytes(t)
+	store := ownedArtifactTestStore(t)
+	envelope := governanceOwnedArtifactEnvelopePath(store)
+	if err := os.MkdirAll(envelope, 0700); err != nil {
+		t.Fatal(err)
+	}
+	foreign := t.TempDir()
+	path := filepath.Join(foreign, governanceOwnedArtifactName)
+	if err := os.WriteFile(path, raw, 0500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(foreign, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(foreign, 0700) })
+	before, err := os.Lstat(foreign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerBefore, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(foreign, filepath.Join(envelope, governanceOwnedArtifactPayloadName)); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := governanceAcquireOwnedArtifact(raw, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.close()
+	after, err := os.Lstat(foreign)
+	if err != nil || !os.SameFile(before, after) || after.Mode() != before.Mode() {
+		t.Fatal("foreign payload directory changed")
+	}
+	workerAfter, err := os.Lstat(path)
+	actual, readErr := os.ReadFile(path)
+	if err != nil || readErr != nil || !os.SameFile(workerBefore, workerAfter) || workerAfter.Mode() != workerBefore.Mode() || governanceHash(actual) != governanceHash(raw) {
+		t.Fatal("foreign worker changed")
+	}
+	if !lease.verify() {
+		t.Fatal("owned replacement did not verify")
+	}
+}
+
+func TestOwnedArtifactPublicationCrashStatesRecover(t *testing.T) {
+	raw := ownedArtifactTestBytes(t)
+	for _, state := range []string{"abandoned-staging", "published-before-acquire"} {
+		t.Run(state, func(t *testing.T) {
+			store := ownedArtifactTestStore(t)
+			staging := filepath.Join(store, "publishing-abandoned")
+			payload := filepath.Join(staging, governanceOwnedArtifactPayloadName)
+			if err := os.MkdirAll(payload, 0700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(payload, governanceOwnedArtifactName)
+			if state == "abandoned-staging" {
+				if err := os.WriteFile(path, []byte("incomplete"), 0500); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.WriteFile(path, raw, 0500); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(payload, 0500); err != nil {
+					t.Fatal(err)
+				}
+				staged, err := governanceOpenOwnedArtifact(path, raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				staged.close()
+				if err := os.Rename(staging, governanceOwnedArtifactEnvelopePath(store)); err != nil {
+					t.Fatal(err)
+				}
+				path = filepath.Join(governanceOwnedArtifactEnvelopePath(store), governanceOwnedArtifactPayloadName, governanceOwnedArtifactName)
+			}
+			before, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lease, err := governanceAcquireOwnedArtifact(raw, store)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lease.close()
+			if !lease.verify() {
+				t.Fatal("crash-state recovery did not verify")
+			}
+			if state == "published-before-acquire" && !os.SameFile(before, lease.fileInfo) {
+				t.Fatal("complete published worker was replaced")
+			}
+			if state == "abandoned-staging" {
+				actual, err := os.ReadFile(path)
+				if err != nil || string(actual) != "incomplete" {
+					t.Fatal("unpublished staging became source authority or was changed")
+				}
+			}
+		})
+	}
+}
+
+func TestOwnedArtifactOldFlatNamespaceCoexistsUnchanged(t *testing.T) {
+	raw := ownedArtifactTestBytes(t)
+	store := ownedArtifactTestStore(t)
+	old := filepath.Join(store, governanceOwnedArtifactSHA)
+	if err := os.MkdirAll(old, 0700); err != nil {
+		t.Fatal(err)
+	}
+	oldPath := filepath.Join(old, governanceOwnedArtifactName)
+	if err := os.WriteFile(oldPath, raw, 0500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(old, 0500); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Lstat(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workerBefore, err := os.Lstat(oldPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := governanceAcquireOwnedArtifact(raw, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.close()
+	after, err := os.Lstat(old)
+	actual, readErr := os.ReadFile(oldPath)
+	workerAfter, workerErr := os.Lstat(oldPath)
+	if err != nil || readErr != nil || workerErr != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() || !os.SameFile(workerBefore, workerAfter) || workerBefore.Mode() != workerAfter.Mode() || governanceHash(actual) != governanceHash(raw) {
+		t.Fatal("old binary namespace changed")
+	}
+	if lease.envelopePath == old || !lease.verify() {
+		t.Fatal("new publication used old namespace")
+	}
+}
+
+func TestOwnedArtifactUnsealRejectsForeignDirectoryIdentity(t *testing.T) {
+	for _, kind := range []string{"replacement-directory", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			root := ownedArtifactTestStore(t)
+			path := filepath.Join(root, "observed")
+			if err := os.MkdirAll(path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			expected, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Rename(path, path+".old"); err != nil {
+				t.Fatal(err)
+			}
+			foreign := path
+			if kind == "symlink" {
+				foreign = filepath.Join(root, "foreign")
+			}
+			if err := os.Mkdir(foreign, 0500); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "symlink" {
+				if err := os.Symlink(foreign, path); err != nil {
+					t.Fatal(err)
+				}
+			}
+			before, err := os.Lstat(foreign)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := governanceUnsealOwnedArtifactDirectory(path, expected); err == nil {
+				t.Fatal("foreign directory identity was unsealed")
+			}
+			after, err := os.Lstat(foreign)
+			if err != nil || !os.SameFile(before, after) || before.Mode() != after.Mode() {
+				t.Fatal("foreign directory identity or modes changed")
 			}
 		})
 	}
