@@ -49,12 +49,19 @@ interface TestEvidenceReference {
   readonly id: string
 }
 
+/** One implementation file, optionally one top-level declaration or `Class.member` inside it. */
+interface CodeAnchorReference {
+  readonly file: string
+  readonly symbol?: string
+}
+
 export interface AuthoredLawSpecification {
   readonly exportName: string
   readonly id: string
   readonly statement: string
   readonly formal?: string
   readonly tests?: readonly TestEvidenceReference[]
+  readonly code?: readonly CodeAnchorReference[]
 }
 
 export interface AuthoredStateSpecification {
@@ -91,6 +98,17 @@ export function compileDescriptor<Kind extends DescriptorKind>(
   source: string,
   text: string,
 ): DescriptorCompilation<Kind>
+
+/** One authored array element: a string literal, or an object of exactly these string fields. */
+export type DescriptorElement = string | Readonly<Record<string, string | undefined>>
+
+/** Locate one authored descriptor value for a diagnostic derived after extraction. */
+export function locateDescriptorValue(
+  source: string,
+  text: string,
+  exportName: string,
+  path?: readonly (string | { readonly element: DescriptorElement })[],
+): { readonly line: number; readonly column: number }
 
 interface SchemaResource extends TextResource {
   readonly schema: unknown

@@ -168,7 +168,15 @@ export function createModuleLayoutConformanceProfile(
   options?: ModuleLayoutConformanceOptions,
 ): ConformanceProfile
 
-export function createModuleTestEvidenceConformanceProfile(): ConformanceProfile
+export interface ModuleTestEvidenceConformanceOptions {
+  /** Require every law to carry a test reference or a code anchor. */
+  readonly requireLawEvidence?: boolean
+}
+
+/** Resolve attached tests and code anchors; optionally require evidence on every law. */
+export function createModuleTestEvidenceConformanceProfile(
+  options?: ModuleTestEvidenceConformanceOptions,
+): ConformanceProfile
 
 export function createModuleSchemaConformanceProfile(): ConformanceProfile
 

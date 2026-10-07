@@ -53,3 +53,15 @@ export const SPECIFICATION_CAPABILITY_STATUS_DERIVED = defineLaw({
     },
   ],
 })
+
+export const SPECIFICATION_CODE_ANCHOR_SYNTACTIC = defineLaw({
+  id: 'SPECIFICATION-CODE-ANCHOR-SYNTACTIC',
+  statement:
+    'A code anchor resolves to a file inside the catalog root and, for a JavaScript or TypeScript file, to a top-level declaration or a class member by parsing alone; the anchored file is never imported or executed.',
+  tests: [
+    {
+      file: '../__tests__/code-anchor.test.ts',
+      id: 'SPECIFICATION-CODE-ANCHOR-SYNTACTIC',
+    },
+  ],
+})

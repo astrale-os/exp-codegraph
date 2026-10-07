@@ -296,6 +296,31 @@ local and CI qualification. Omitting `tests` is valid and is shown as no test at
 state machines, conformance tests can additionally enumerate `transitionsOf` and
 `illegalTransitionsOf` against an implementation-specific harness.
 
+### Code anchors
+
+A law that no test can attach to names the implementation it constrains instead:
+
+```ts
+export const RESOLVER_VALIDATES_BEFORE_INSTALL = defineLaw({
+  id: 'RESOLVER-VALIDATES-BEFORE-INSTALL',
+  statement: 'A local artifact is validated against its bundle before it is installed.',
+  code: [
+    { file: 'src/resolver.ts', symbol: 'Resolver.resolve' },
+    { file: 'proofs/Resolver.lean' },
+  ],
+})
+```
+
+`file` follows the same path rules as `tests[].file`: it is relative to the owning module and must
+stay inside the catalog root. Without `symbol`, the file must exist, whatever its extension. With
+`symbol`, the file must be JavaScript or TypeScript and must declare that name at its top level, or,
+for `Class.member`, that member in a top-level class. Resolution is syntactic like test evidence:
+the anchored file is parsed, never imported or executed. An anchor that does not resolve is an
+error; a resolved anchor states where the law lives and claims nothing about its truth.
+
+A law may carry tests, anchors, both, or neither. `--require-law-evidence` makes a law with neither
+a test reference nor a code anchor an error.
+
 ## TypeScript composition and dependency direction
 
 All specification TypeScript is checked with strict, no-emit semantics. The checker also enforces
@@ -542,8 +567,8 @@ stays acyclic without giving up compiler-project or content caches.
 
 ```sh
 cg init [module-directory]
-cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--no-cache]
-cg changed [root] [base] [--scope-only] [--no-cache]
+cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--require-law-evidence] [--format <text|json>] [--no-cache]
+cg changed [root] [base] [--require-law-evidence] [--scope-only] [--no-cache]
 cg test [module-path]... [--root <directory>] [--no-cache]
 cg test changed [base] [--root <directory>] [--no-cache]
 cg verify [root] [--select <relative-path>]... [--require-pass] [--details]
@@ -611,6 +636,10 @@ passing profiles and serialized expected/actual type graphs stay out of routine 
 requires selected module layouts to use `exact: true`; exact layouts implicitly govern the complete
 module root. This provides a focused migration gate without forcing unrelated sparse layouts to
 migrate in the same change.
+
+`--require-law-evidence`, accepted by `check` and `changed`, requires every law of the checked
+modules to carry at least one test reference or one code anchor, so that no law is attached to
+nothing observable. It is off by default.
 
 `check` discovers both profiles, validates and composes every artifact, checks package and schema
 catalog authority, and reports stable source diagnostics.

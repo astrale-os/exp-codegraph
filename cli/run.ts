@@ -408,6 +408,7 @@ function refreshOptions(
       includeDependents: command.name === 'changed',
       requireCompleteLayout: command.requireCompleteLayout,
       requireExactLayout: command.name === 'check' && command.requireExactLayout,
+      requireLawEvidence: command.requireLawEvidence,
     }
   }
   if (command.name === 'test') {

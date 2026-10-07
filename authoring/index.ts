@@ -1,4 +1,4 @@
-export type { TestEvidenceReference } from './evidence.ts'
+export type { CodeAnchorReference, TestEvidenceReference } from './evidence.ts'
 export type { SemanticReference } from './reference.ts'
 
 export { defineCode } from './code.ts'

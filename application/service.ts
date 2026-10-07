@@ -43,8 +43,8 @@ import type { ApplicationSchemaDependencyResource } from './observation/index.ts
 import { deriveAnalysisId } from '../analysis/index.ts'
 import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.ts'
 import {
-  MODULE_LAYOUT_PROFILE_ID,
   createModuleLayoutConformanceProfile,
+  createModuleTestEvidenceConformanceProfile,
   createTypeSpecConformanceProfiles,
   planConformance,
   qualifySpecifications,
@@ -1069,7 +1069,16 @@ function qualificationMatchesPlan(
     qualification.profiles.length !== plan.ordered.length ||
     qualification.profiles.some((profile, index) => {
       const expected = plan.ordered[index]?.manifest
-      return !expected || profile.id !== expected.id || profile.version !== expected.version
+      return (
+        !expected ||
+        profile.id !== expected.id ||
+        profile.version !== expected.version ||
+        // A required rule changes what a profile evaluates without changing its identity.
+        !sameOrderedStrings(
+          profile.rules.map((rule) => rule.rule),
+          expected.rules,
+        )
+      )
     })
   ) {
     return false
@@ -1151,6 +1160,7 @@ function applicationRefreshKey(options: TypeSpecApplicationRefreshOptions): stri
     includeDependents: options.includeDependents === true,
     requireCompleteLayout: options.requireCompleteLayout === true,
     requireExactLayout: options.requireExactLayout === true,
+    requireLawEvidence: options.requireLawEvidence === true,
     requestedProfiles: sortedUnique(options.requestedProfiles ?? []),
     compilerAnalysis: options.compilerAnalysis !== false,
     moduleBindings: options.moduleBindings === true,
@@ -1273,15 +1283,22 @@ function applicationProfiles(
   profiles: readonly ConformanceProfile[],
   options: TypeSpecApplicationRefreshOptions,
 ): readonly ConformanceProfile[] {
-  if (!options.requireCompleteLayout && !options.requireExactLayout) return profiles
-  const layout = createModuleLayoutConformanceProfile({
-    requireComplete: Boolean(options.requireCompleteLayout || options.requireExactLayout),
-    requireExact: Boolean(options.requireExactLayout),
-  })
-  const replaced = profiles.map((profile) =>
-    profile.manifest.id === MODULE_LAYOUT_PROFILE_ID ? layout : profile,
-  )
-  return replaced.some((profile) => profile.manifest.id === MODULE_LAYOUT_PROFILE_ID)
-    ? replaced
-    : [...replaced, layout]
+  const required: ConformanceProfile[] = []
+  if (options.requireCompleteLayout || options.requireExactLayout) {
+    required.push(
+      createModuleLayoutConformanceProfile({
+        requireComplete: Boolean(options.requireCompleteLayout || options.requireExactLayout),
+        requireExact: Boolean(options.requireExactLayout),
+      }),
+    )
+  }
+  if (options.requireLawEvidence) {
+    required.push(createModuleTestEvidenceConformanceProfile({ requireLawEvidence: true }))
+  }
+  return required.reduce((installed, replacement) => {
+    const replaced = installed.map((profile) =>
+      profile.manifest.id === replacement.manifest.id ? replacement : profile,
+    )
+    return replaced.includes(replacement) ? replaced : [...replaced, replacement]
+  }, profiles)
 }

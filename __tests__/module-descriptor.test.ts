@@ -231,6 +231,84 @@ export const RUNTIME_STARTS = defineCapability({
     ])
   })
 
+  it('extracts whole-file and symbol code anchors on a law', () => {
+    const result = compileDescriptor(
+      'law',
+      'module/.spec/laws/resolver.ts',
+      `import { defineLaw } from '@astrale-os/codegraph/authoring'
+export const RESOLVER_VALIDATES = defineLaw({
+  id: 'RESOLVER-VALIDATES',
+  statement: 'A local artifact is validated before it is installed.',
+  code: [
+    { file: 'src/resolver.ts', symbol: 'Resolver.resolve' },
+    { file: 'src/resolver.ts', symbol: 'validateRequirements' },
+    { file: 'proofs/Resolver.lean' },
+  ],
+})
+`,
+    )
+
+    expect(result.diagnostics).toEqual([])
+    expect(result.definitions).toEqual([
+      {
+        exportName: 'RESOLVER_VALIDATES',
+        id: 'RESOLVER-VALIDATES',
+        statement: 'A local artifact is validated before it is installed.',
+        code: [
+          { file: 'src/resolver.ts', symbol: 'Resolver.resolve' },
+          { file: 'src/resolver.ts', symbol: 'validateRequirements' },
+          { file: 'proofs/Resolver.lean' },
+        ],
+        testEvidence: [],
+      },
+    ])
+  })
+
+  it('rejects malformed code anchors where they are authored', () => {
+    const malformed = compileDescriptor(
+      'law',
+      'module/.spec/laws/resolver.ts',
+      `import { defineLaw } from '@astrale-os/codegraph/authoring'
+export const RESOLVER_VALIDATES = defineLaw({
+  id: 'RESOLVER-VALIDATES',
+  statement: 'A local artifact is validated before it is installed.',
+  code: [
+    { file: 'src/resolver.ts', symbol: 'Resolver.resolve.inner' },
+    { file: 'src/resolver.ts', symbol: 'resolve()' },
+    { file: 'src/resolver.ts', line: 12 },
+    'src/resolver.ts',
+    { symbol: 'Resolver' },
+  ],
+})
+`,
+    )
+    expect(
+      malformed.diagnostics.map(({ code, line, column }) => ({ code, line, column })),
+    ).toEqual([
+      { code: 'CODE_ANCHOR_SYMBOL_INVALID', line: 6, column: 32 },
+      { code: 'CODE_ANCHOR_SYMBOL_INVALID', line: 7, column: 32 },
+      { code: 'MODULE_DESCRIPTOR_FIELD_UNKNOWN', line: 8, column: 32 },
+      { code: 'MODULE_DESCRIPTOR_FIELD_INVALID', line: 9, column: 5 },
+      { code: 'MODULE_DESCRIPTOR_FIELD_MISSING', line: 10, column: 5 },
+    ])
+    expect(malformed.definitions[0]).toMatchObject({ code: [{ file: 'src/resolver.ts' }] })
+
+    const duplicated = compileDescriptor(
+      'law',
+      'module/.spec/laws/resolver.ts',
+      `import { defineLaw } from '@astrale-os/codegraph/authoring'
+export const RESOLVER_VALIDATES = defineLaw({
+  id: 'RESOLVER-VALIDATES',
+  statement: 'A local artifact is validated before it is installed.',
+  code: [{ file: 'src/resolver.ts' }, { file: 'src/resolver.ts' }],
+})
+`,
+    )
+    expect(duplicated.diagnostics).toEqual([
+      expect.objectContaining({ code: 'MODULE_DESCRIPTOR_FIELD_DUPLICATE', line: 5, column: 3 }),
+    ])
+  })
+
   it('rejects mutable descriptor bindings', () => {
     const result = compileDescriptor(
       'capability',

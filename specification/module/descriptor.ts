@@ -7,7 +7,7 @@ import type {
   LawSpecification,
   StateSpecification,
 } from '../resource/index.ts'
-import type { TestEvidenceReference } from '../../authoring/evidence.ts'
+import type { CodeAnchorReference, TestEvidenceReference } from '../../authoring/evidence.ts'
 import type { SemanticReference } from '../../authoring/reference.ts'
 
 import { isDescendantModulePath, semanticReferenceKey } from '../capability.ts'
@@ -25,6 +25,7 @@ import {
 } from './authoring-syntax.ts'
 
 const SEMANTIC_ID = /^[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+$/
+const CODE_ANCHOR_SYMBOL = /^[A-Za-z_$][\w$]*(?:\.#?[A-Za-z_$][\w$]*)?$/u
 
 export type DescriptorKind = 'capability' | 'law' | 'state' | 'benchmark'
 
@@ -165,7 +166,7 @@ function definitionOf(
       kind === 'capability'
         ? ['id', 'statement', 'laws', 'capabilities']
         : kind === 'law'
-          ? ['id', 'statement', 'formal', 'tests']
+          ? ['id', 'statement', 'formal', 'tests', 'code']
           : kind === 'benchmark'
             ? ['id', 'statement', 'workload', 'metrics', 'capability', 'assumptions']
             : ['initial', 'transitions', 'tests'],
@@ -223,12 +224,14 @@ function definitionOf(
   if (kind === 'law') {
     const formal = optionalString(object, 'formal', source, file, diagnostics)
     const tests = optionalEvidenceReferences(object, 'tests', source, file, diagnostics)
+    const code = optionalCodeAnchors(object, 'code', source, file, diagnostics)
     return {
       exportName,
       id,
       statement,
       ...(formal ? { formal } : {}),
       ...(tests ? { tests } : {}),
+      ...(code ? { code } : {}),
       testEvidence: [],
     }
   }
@@ -614,6 +617,76 @@ function optionalEvidenceReferences(
   return values
 }
 
+function optionalCodeAnchors(
+  object: ts.ObjectLiteralExpression,
+  name: string,
+  source: string,
+  file: ts.SourceFile,
+  diagnostics: Diagnostic[],
+): readonly CodeAnchorReference[] | undefined {
+  const member = property(object, name)
+  if (!member) return
+  if (!ts.isArrayLiteralExpression(member.initializer)) {
+    diagnostics.push(
+      diagnostic(
+        'MODULE_DESCRIPTOR_FIELD_INVALID',
+        `Descriptor field ${name} must be an array of { file, symbol? } literals.`,
+        source,
+        file,
+        member,
+      ),
+    )
+    return
+  }
+  const values: CodeAnchorReference[] = []
+  for (const element of member.initializer.elements) {
+    if (!ts.isObjectLiteralExpression(element)) {
+      diagnostics.push(
+        diagnostic(
+          'MODULE_DESCRIPTOR_FIELD_INVALID',
+          `Descriptor field ${name} must contain only { file, symbol? } literals.`,
+          source,
+          file,
+          element,
+        ),
+      )
+      continue
+    }
+    validateProperties(element, new Set(['file', 'symbol']), source, file, diagnostics)
+    const anchorFile = requiredString(element, 'file', source, file, diagnostics)
+    const symbol = optionalString(element, 'symbol', source, file, diagnostics)
+    if (!anchorFile || (property(element, 'symbol') && !symbol)) continue
+    if (symbol && !CODE_ANCHOR_SYMBOL.test(symbol)) {
+      diagnostics.push(
+        propertyDiagnostic(
+          element,
+          'symbol',
+          'CODE_ANCHOR_SYMBOL_INVALID',
+          'A code anchor symbol must name a top-level declaration or Class.member.',
+          source,
+          file,
+        ),
+      )
+      continue
+    }
+    values.push({ file: anchorFile, ...(symbol ? { symbol } : {}) })
+  }
+  const identities = values.map(({ file, symbol }) => `${file}\0${symbol ?? ''}`)
+  if (new Set(identities).size !== identities.length) {
+    diagnostics.push(
+      diagnostic(
+        'MODULE_DESCRIPTOR_FIELD_DUPLICATE',
+        `Descriptor field ${name} contains duplicate code anchors.`,
+        source,
+        file,
+        member,
+      ),
+    )
+    return
+  }
+  return values
+}
+
 function optionalSemanticReferences(
   object: ts.ObjectLiteralExpression,
   name: 'laws' | 'capabilities',
@@ -796,17 +869,20 @@ function propertyDiagnostic(
   return diagnostic(code, message, source, file, property(object, name) ?? object)
 }
 
+/** One authored array element: a string literal, or an object of exactly these string fields. */
+export type DescriptorElement = string | Readonly<Record<string, string | undefined>>
+
 /**
  * Locate one authored descriptor value for a diagnostic derived after extraction.
  *
- * The path names literal fields; a reference step selects the first array element spelling that
- * exact semantic reference. An unknown step falls back to the nearest located ancestor.
+ * A string step names a literal field; an element step selects the first array element spelling
+ * exactly that literal. An unknown step falls back to the nearest located ancestor.
  */
 export function locateDescriptorValue(
   source: string,
   text: string,
   exportName: string,
-  path: readonly (string | { readonly reference: SemanticReference })[] = [],
+  path: readonly (string | { readonly element: DescriptorElement })[] = [],
 ): { readonly line: number; readonly column: number } {
   const file = authoredSourceFile(source, text)
   let node: ts.Node | undefined
@@ -816,11 +892,10 @@ export function locateDescriptorValue(
     for (const declaration of statement.declarationList.declarations) {
       if (!ts.isIdentifier(declaration.name) || declaration.name.text !== exportName) continue
       node = declaration
-      const argument =
+      value =
         declaration.initializer && ts.isCallExpression(declaration.initializer)
           ? declaration.initializer.arguments[0]
           : undefined
-      value = argument
     }
   }
   if (!node) return { line: 1, column: 1 }
@@ -835,11 +910,7 @@ export function locateDescriptorValue(
       continue
     }
     if (!ts.isArrayLiteralExpression(value)) break
-    const identity = semanticReferenceKey(step.reference)
-    const element = value.elements.find((candidate) => {
-      const authored = authoredSemanticReference(candidate)
-      return authored !== undefined && semanticReferenceKey(authored) === identity
-    })
+    const element = value.elements.find((candidate) => spellsElement(candidate, step.element))
     if (!element) break
     node = element
     value = element
@@ -848,15 +919,16 @@ export function locateDescriptorValue(
   return { line: position.line + 1, column: position.character + 1 }
 }
 
-function authoredSemanticReference(element: ts.Expression): SemanticReference | undefined {
-  const local = stringLiteral(element)
-  if (local !== undefined) return local
-  if (!ts.isObjectLiteralExpression(element)) return
-  const module = property(element, 'module')
-  const id = property(element, 'id')
-  const moduleValue = module ? stringLiteral(module.initializer) : undefined
-  const idValue = id ? stringLiteral(id.initializer) : undefined
-  return moduleValue !== undefined && idValue !== undefined
-    ? { module: moduleValue, id: idValue }
-    : undefined
+function spellsElement(candidate: ts.Expression, expected: DescriptorElement): boolean {
+  if (typeof expected === 'string') return stringLiteral(candidate) === expected
+  if (!ts.isObjectLiteralExpression(candidate)) return false
+  const authored = new Map<string, string | undefined>()
+  for (const member of candidate.properties) {
+    const name = ts.isPropertyAssignment(member) ? propertyName(member.name) : undefined
+    if (name && ts.isPropertyAssignment(member)) authored.set(name, stringLiteral(member.initializer))
+  }
+  const fields = Object.entries(expected).filter(([, value]) => value !== undefined)
+  return (
+    authored.size === fields.length && fields.every(([name, value]) => authored.get(name) === value)
+  )
 }

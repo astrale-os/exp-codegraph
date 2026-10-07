@@ -106,7 +106,7 @@ function validateCapabilityReferences(
         file: resource.source,
         ...locateDescriptorValue(resource.source, resource.text, definition.exportName, [
           field,
-          { reference },
+          { element: reference },
         ]),
       })
       for (const reference of definition.laws ?? []) {

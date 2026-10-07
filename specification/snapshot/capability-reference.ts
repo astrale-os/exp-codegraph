@@ -75,7 +75,7 @@ export async function resolveCapabilityReferences(
             file: resource.source,
             ...locateDescriptorValue(resource.source, resource.text, definition.exportName, [
               field,
-              { reference },
+              { element: reference },
               property,
             ]),
           })
