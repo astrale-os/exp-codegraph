@@ -234,6 +234,34 @@ export function capabilityReferenceSources(specification: {
   readonly capabilities: readonly CapabilityResource[]
 }): readonly string[]
 
+export interface CapabilityCitation extends CapabilityCoordinate {
+  readonly source: string
+  /** The cited laws and capabilities through which this capability reaches the given laws. */
+  readonly cites: {
+    readonly laws: readonly CapabilityCoordinate[]
+    readonly capabilities: readonly CapabilityCoordinate[]
+  }
+}
+
+/** Capabilities citing any given law, direct citers first, then those citing through others. */
+export function capabilitiesCiting(
+  modules: readonly Pick<CapabilityDerivationModule, 'root' | 'capabilities'>[],
+  laws: readonly CapabilityCoordinate[],
+): readonly CapabilityCitation[]
+
+export interface ModuleSemanticDeclarations {
+  readonly root: string
+  readonly source: string
+  readonly capabilities: readonly CapabilityResource[]
+  readonly laws: readonly DescriptorResource<'law', AuthoredLawSpecification>[]
+}
+
+/** Parse only the capability and law descriptors of one specified module. */
+export function loadModuleSemanticDeclarations(
+  catalogRoot: string,
+  specDirectory: string,
+): Promise<ModuleSemanticDeclarations | undefined>
+
 /** Derive reported capability statuses; a status is never a diagnostic. */
 export function deriveCapabilityStatuses(
   modules: readonly CapabilityDerivationModule[],

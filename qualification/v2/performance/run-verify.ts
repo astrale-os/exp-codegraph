@@ -20,6 +20,7 @@ import { createNodeTypeSpecApplicationService } from '../../../application/node/
 import { applicationRepositoryExcludes, resolveApplicationRoot } from '../../../application/discovery/index.ts'
 import { defaultTypeSpecCacheDirectory } from '../../../cache/file-store.ts'
 import { changedSpecificationScope } from '../../../cli/changes.ts'
+import { changedLawImpact } from '../../../cli/impact.ts'
 import { executeEvidenceTests, planEvidenceTests } from '../../../cli/evidence.ts'
 import { parseCommand } from '../../../cli/parse.ts'
 import { runCommand } from '../../../cli/run.ts'
@@ -82,6 +83,7 @@ const services: CliServices = {
     throw new Error('Verify performance runner cannot start a development server.')
   },
   changedSpecificationScope,
+  changedLawImpact,
   planEvidenceTests,
   executeEvidenceTests,
 }

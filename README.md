@@ -607,6 +607,29 @@ global checks such as stale version-reference validation. This local path is adv
 unselected full `check`, including catalog-wide schema and package authority, remains the CI
 qualification gate.
 
+After the scope, `changed` prints an impact section that relates the changed files to the
+specification, at file granularity:
+
+```text
+Impact: 2 laws, 2 capabilities, 1 module without a law.
+  law runtime#RUNTIME-ORDERED: code runtime/src/order.ts changed
+  law runtime/boot#BOOT-INPUT-BEFORE-DURABLE: test runtime/boot/__tests__/boot.test.ts changed
+  capability runtime#RUNTIME-STARTS: cites law runtime#RUNTIME-ORDERED, law runtime/boot#BOOT-INPUT-BEFORE-DURABLE
+  capability .#KERNEL-BOOTS: cites capability runtime#RUNTIME-STARTS
+  module runtime/query: no law, 2 changed source files (runtime/query/src/cost.ts, +1 more)
+```
+
+A law is listed when one of its attached test files or code anchor files changed, with each file as
+the reason. A capability is listed when it cites a listed law, directly or through other
+capabilities; direct citers come first. A module is listed when it owns a changed JavaScript or
+TypeScript source file outside `.spec/`, `.history/`, and test material while declaring no law at
+all. Identifiers are written `<module root>#<id>`, with `.` for the catalog root.
+
+The section is computed on demand from capability and law descriptors alone: nothing is stored
+between runs, no contract is compiled, and it is therefore also printed under `--scope-only` and
+when the scope falls back to the full catalog. It names what to re-read; it is informational and
+never changes the exit status.
+
 `test` resolves the same module paths without `--select` ceremony. With no paths it runs all active
 attached evidence; with positional paths it runs those modules; `test changed` runs direct changed
 owners plus downstream public-contract consumers while excluding upstream support-only modules.

@@ -8,6 +8,7 @@ import type { RunningDevServer } from '../server/start.ts'
 import type { DevOptions } from '../server/start.ts'
 import type { Diagnostic } from '../source/diagnostic.ts'
 import type { ChangedSpecificationScope } from './changes.ts'
+import type { ChangedLawImpact } from './impact.ts'
 import type { CliAccelerationReceipt } from './acceleration.ts'
 import type { EvidenceTestPlan, EvidenceTestResult } from './evidence.ts'
 import type { CliCommand } from './parse.ts'
@@ -36,6 +37,7 @@ import {
   CHECK_SEMANTIC_PLAN,
   type CliCheckCatalog,
 } from './semantic-pack/model.ts'
+import { impactIsEmpty, printLawImpact } from './impact.ts'
 import { createDevStartupProgress } from './progress.ts'
 import {
   printQualificationProfile,
@@ -64,6 +66,11 @@ export interface CliServices {
     options: Extract<CliCommand, { name: 'dev' }> & Pick<DevOptions, 'telemetry'>,
   ): Promise<RunningDevServer>
   changedSpecificationScope(root: string, base?: string): Promise<ChangedSpecificationScope>
+  changedLawImpact(
+    root: string,
+    files: readonly string[],
+    exclude?: readonly string[],
+  ): Promise<ChangedLawImpact>
   planEvidenceTests(
     root: string,
     reader: TypeSpecApplicationReader,
@@ -139,10 +146,14 @@ export async function runCommand(
       : undefined
   if (changed?.kind === 'none') {
     output.out(`No specification-affecting changes found against ${changed.base}.`)
+    if (command.name === 'changed') await reportLawImpact(command, services, output, changed)
     return { exitCode: 0 }
   }
   if (changed) reportChangedScope(output, changed, command.quiet)
-  if (command.name === 'changed' && command.scopeOnly) return { exitCode: 0 }
+  if (command.name === 'changed') {
+    await reportLawImpact(command, services, output, changed!)
+    if (command.scopeOnly) return { exitCode: 0 }
+  }
 
   const cache = 'cache' in command ? command.cache : true
   const application = await services.createApplication(command.root, cache, portableCheckpoint)
@@ -580,6 +591,29 @@ function reportChangedScope(
     output.out(
       `Full catalog scope triggered by ${shown.join(', ')}${remaining ? ` (+${remaining} more)` : ''}.`,
     )
+  }
+}
+
+/**
+ * Print which laws, capabilities, and law-less modules a change set touches.
+ *
+ * The section is informational: it is derived from descriptors alone, before any check runs, and
+ * neither its content nor a failure to compute it can change the exit status.
+ */
+async function reportLawImpact(
+  command: Extract<CliCommand, { name: 'changed' }>,
+  services: CliServices,
+  output: CliOutput,
+  changed: ChangedSpecificationScope,
+): Promise<void> {
+  if (!changed.files.length) return
+  try {
+    const impact = await services.changedLawImpact(command.root, changed.files, command.exclude)
+    // Without an affected specification there is no scope to annotate unless a law is touched.
+    if (changed.kind === 'none' && impactIsEmpty(impact)) return
+    printLawImpact(output, impact)
+  } catch (error) {
+    output.out(`Impact unavailable: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

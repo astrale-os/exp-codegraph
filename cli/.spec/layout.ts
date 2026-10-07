@@ -10,6 +10,7 @@ export default defineLayout({
     'check-report.ts',
     'checkpoint.ts',
     'evidence.ts',
+    'impact.ts',
     'limits.ts',
     'parse.ts',
     'progress.ts',

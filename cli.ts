@@ -3,6 +3,7 @@ import { clearLine, cursorTo } from 'node:readline'
 
 import { createCliApplicationService } from './cli/application.ts'
 import { changedSpecificationScope } from './cli/changes.ts'
+import { changedLawImpact } from './cli/impact.ts'
 import { runCliCommand } from './cli/checkpoint.ts'
 import { executeEvidenceTests, planEvidenceTests } from './cli/evidence.ts'
 import { parseCommand, USAGE } from './cli/parse.ts'
@@ -30,6 +31,7 @@ try {
       createApplication: createCliApplicationService,
       startDev,
       changedSpecificationScope,
+      changedLawImpact,
       planEvidenceTests,
       executeEvidenceTests,
     },

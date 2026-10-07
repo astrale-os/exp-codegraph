@@ -2,10 +2,12 @@ export type { ImplementationBinding } from './binding.ts'
 export { initializeModuleSpecification, MINIMUM_MODULE_SPEC } from './module/init.ts'
 export { compileDescriptor, locateDescriptorValue } from './module/descriptor.ts'
 export {
+  capabilitiesCiting,
   capabilityReferenceSources,
   deriveCapabilityStatuses,
 } from './capability.ts'
 export type {
+  CapabilityCitation,
   CapabilityCoordinate,
   CapabilityDerivationModule,
   CapabilityStatus,
@@ -24,6 +26,8 @@ export {
 export type { SpecificationCompilationBatchOptions } from './snapshot/index.ts'
 export type { SpecificationCompilationPhase } from './snapshot/index.ts'
 export { specificationModuleId } from './snapshot/index.ts'
+export { loadModuleSemanticDeclarations } from './snapshot/index.ts'
+export type { ModuleSemanticDeclarations } from './snapshot/index.ts'
 export type {
   AuthoredLawResource,
   AuthoredLawSpecification,

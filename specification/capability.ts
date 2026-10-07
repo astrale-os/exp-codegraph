@@ -65,6 +65,47 @@ export function capabilityReferenceSources(specification: {
   return [...sources].sort(compare)
 }
 
+export interface CapabilityCitation extends CapabilityCoordinate {
+  readonly source: string
+  /** The cited laws and capabilities through which this capability reaches the given laws. */
+  readonly cites: {
+    readonly laws: readonly CapabilityCoordinate[]
+    readonly capabilities: readonly CapabilityCoordinate[]
+  }
+}
+
+/** Capabilities that cite any of the given laws, directly or through other capabilities. */
+export function capabilitiesCiting(
+  modules: readonly Pick<CapabilityDerivationModule, 'root' | 'capabilities'>[],
+  laws: readonly CapabilityCoordinate[],
+): readonly CapabilityCitation[] {
+  const entries = derivationEntries(modules)
+  const reachedLaws = new Set(laws.map(coordinateKey))
+  const reached = new Set<string>()
+  const ordered: DerivationEntry[] = []
+  // Each round admits the capabilities one citation further from the laws: direct citers first.
+  for (;;) {
+    const round = entries.filter(
+      (entry) =>
+        !reached.has(coordinateKey(entry)) &&
+        (entry.laws.some((law) => reachedLaws.has(coordinateKey(law))) ||
+          entry.capabilities.some((cited) => reached.has(coordinateKey(cited)))),
+    )
+    if (!round.length) break
+    for (const entry of round) reached.add(coordinateKey(entry))
+    ordered.push(...round)
+  }
+  return ordered.map((entry) => ({
+    module: entry.module,
+    id: entry.id,
+    source: entry.source,
+    cites: {
+      laws: entry.laws.filter((law) => reachedLaws.has(coordinateKey(law))),
+      capabilities: entry.capabilities.filter((cited) => reached.has(coordinateKey(cited))),
+    },
+  }))
+}
+
 /**
  * Derive every capability status from authored citations and attached active tests.
  *
@@ -75,31 +116,18 @@ export function capabilityReferenceSources(specification: {
 export function deriveCapabilityStatuses(
   modules: readonly CapabilityDerivationModule[],
 ): readonly DerivedCapability[] {
-  const ordered = [...modules].sort((left, right) => compare(left.root, right.root))
   const activeLaws = new Map<string, boolean>()
-  const capabilities = new Map<string, DerivationEntry>()
-  const entries: DerivationEntry[] = []
-  for (const module of ordered) {
+  for (const module of modules) {
     for (const law of module.laws) {
       const key = coordinateKey({ module: module.root, id: law.id })
       activeLaws.set(key, law.active || activeLaws.get(key) === true)
     }
-    for (const resource of module.capabilities) {
-      for (const definition of resource.definitions) {
-        const entry: DerivationEntry = {
-          module: module.root,
-          id: definition.id,
-          source: resource.source,
-          laws: (definition.laws ?? []).map((reference) => coordinate(module.root, reference)),
-          capabilities: (definition.capabilities ?? []).map((reference) =>
-            coordinate(module.root, reference),
-          ),
-        }
-        entries.push(entry)
-        const key = coordinateKey(entry)
-        if (!capabilities.has(key)) capabilities.set(key, entry)
-      }
-    }
+  }
+  const entries = derivationEntries(modules)
+  const capabilities = new Map<string, DerivationEntry>()
+  for (const entry of entries) {
+    const key = coordinateKey(entry)
+    if (!capabilities.has(key)) capabilities.set(key, entry)
   }
 
   const derived = new Map<DerivationEntry, DerivedCapability>()
@@ -138,6 +166,27 @@ interface DerivationEntry extends CapabilityCoordinate {
   readonly source: string
   readonly laws: readonly CapabilityCoordinate[]
   readonly capabilities: readonly CapabilityCoordinate[]
+}
+
+/** Every declared capability with its citations resolved, in stable module order. */
+function derivationEntries(
+  modules: readonly Pick<CapabilityDerivationModule, 'root' | 'capabilities'>[],
+): readonly DerivationEntry[] {
+  return [...modules]
+    .sort((left, right) => compare(left.root, right.root))
+    .flatMap((module) =>
+      module.capabilities.flatMap((resource) =>
+        resource.definitions.map((definition) => ({
+          module: module.root,
+          id: definition.id,
+          source: resource.source,
+          laws: (definition.laws ?? []).map((reference) => coordinate(module.root, reference)),
+          capabilities: (definition.capabilities ?? []).map((reference) =>
+            coordinate(module.root, reference),
+          ),
+        })),
+      ),
+    )
 }
 
 function coordinate(root: string, reference: SemanticReference): CapabilityCoordinate {

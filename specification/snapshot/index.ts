@@ -5,6 +5,10 @@ export {
   type SpecificationCompilationPhase,
 } from './batch.ts'
 export { specificationModuleId } from './identity.ts'
+export {
+  loadModuleSemanticDeclarations,
+  type ModuleSemanticDeclarations,
+} from './capability-reference.ts'
 export type {
   AuthoredLawResource,
   AuthoredLawSpecification,
