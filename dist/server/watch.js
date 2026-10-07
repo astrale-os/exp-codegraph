@@ -131,7 +131,10 @@ function testEvidenceSources(specification) {
     const sources = new Set();
     for (const resource of [...specification.laws, ...specification.states]) {
         for (const definition of resource.definitions) {
-            for (const reference of definition.tests ?? []) {
+            for (const reference of [
+                ...(definition.tests ?? []),
+                ...('code' in definition ? (definition.code ?? []) : []),
+            ]) {
                 if (isAbsolute(reference.file) || reference.file.includes('\\'))
                     continue;
                 const source = posix.normalize(posix.join(specification.root, reference.file));

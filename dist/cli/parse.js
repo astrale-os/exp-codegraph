@@ -2,8 +2,8 @@ import { resolve } from 'node:path';
 export const USAGE = `Usage:
   cg --version
   cg init [module-directory]
-  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--quiet] [--no-cache]
-  cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--scope-only] [--quiet] [--no-cache]
+  cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--require-law-evidence] [--format <text|json>] [--quiet] [--no-cache]
+  cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--require-law-evidence] [--scope-only] [--quiet] [--no-cache]
   cg test [module-path]... [--root <directory>] [--quiet] [--no-cache]
   cg test changed [base] [--root <directory>] [--quiet] [--no-cache]
   cg verify [root] [--select <relative-path>]... [--schema-root <directory>]... [--require-pass] [--details] [--quiet]
@@ -75,6 +75,7 @@ function parseChanged(args, cacheDefault) {
     let hasRoot = false;
     const exclude = [];
     let requireCompleteLayout = false;
+    let requireLawEvidence = false;
     let scopeOnly = false;
     let quiet = false;
     let cache = cacheDefault;
@@ -88,6 +89,9 @@ function parseChanged(args, cacheDefault) {
         }
         else if (argument === '--require-complete-layout' && !requireCompleteLayout) {
             requireCompleteLayout = true;
+        }
+        else if (argument === '--require-law-evidence' && !requireLawEvidence) {
+            requireLawEvidence = true;
         }
         else if (argument === '--scope-only' && !scopeOnly) {
             scopeOnly = true;
@@ -114,6 +118,7 @@ function parseChanged(args, cacheDefault) {
         ...(base ? { base } : {}),
         exclude,
         requireCompleteLayout,
+        requireLawEvidence,
         scopeOnly,
         quiet,
         cache,
@@ -131,6 +136,7 @@ function parseCheck(args, cacheDefault) {
     const select = [];
     let requireCompleteLayout = false;
     let requireExactLayout = false;
+    let requireLawEvidence = false;
     let format = 'text';
     let hasFormat = false;
     let quiet = false;
@@ -154,6 +160,9 @@ function parseCheck(args, cacheDefault) {
         }
         else if (argument === '--require-exact-layout' && !requireExactLayout) {
             requireExactLayout = true;
+        }
+        else if (argument === '--require-law-evidence' && !requireLawEvidence) {
+            requireLawEvidence = true;
         }
         else if (argument === '--format' && !hasFormat) {
             const value = args[++index];
@@ -181,6 +190,7 @@ function parseCheck(args, cacheDefault) {
         select,
         requireCompleteLayout,
         requireExactLayout,
+        requireLawEvidence,
         format,
         quiet,
         cache,

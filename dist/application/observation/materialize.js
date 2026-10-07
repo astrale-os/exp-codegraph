@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { APPLICATION_BINDING_FACT_NAMESPACE, deriveAnalysisId, factShardDigest, generationIdentity, shardReference, } from '../../analysis/index.js';
 import { validateModuleSchemaCatalog } from '../../schema/catalog.js';
+import { resolveCodeAnchors } from '../../specification/module/code-anchor.js';
 import { compileLayout, observeLayout } from '../../specification/module/layout.js';
 import { resolveTestEvidence } from '../../specification/module/test-evidence.js';
 import { APPLICATION_LAYOUT_FACT_NAMESPACE, APPLICATION_CONTEXT_FACT_NAMESPACE, APPLICATION_SCHEMA_FACT_NAMESPACE, APPLICATION_TEST_FACT_NAMESPACE, } from './model.js';
@@ -297,7 +298,11 @@ async function observeSpecificationLayout(root, specification) {
 async function observeSpecificationTests(root, specification) {
     const laws = specification.laws.map(withEmptyEvidence);
     const states = specification.states.map(withEmptyStateEvidence);
-    const resolved = await resolveTestEvidence(root, resolve(root, specification.root), laws, states);
+    const moduleRoot = resolve(root, specification.root);
+    const [resolved, anchorDiagnostics] = await Promise.all([
+        resolveTestEvidence(root, moduleRoot, laws, states),
+        resolveCodeAnchors(root, moduleRoot, specification.laws),
+    ]);
     return {
         specification: specification.id,
         laws: resolved.laws.flatMap((resource) => resource.definitions.map((definition) => ({
@@ -310,7 +315,10 @@ async function observeSpecificationTests(root, specification) {
             source: resource.source,
             evidence: definition.testEvidence,
         }))),
-        diagnostics: resolved.diagnostics,
+        // A code anchor is evidence for a law that no test can attach to; it resolves here as well.
+        diagnostics: anchorDiagnostics.length
+            ? [...resolved.diagnostics, ...anchorDiagnostics]
+            : resolved.diagnostics,
     };
 }
 function withEmptyEvidence(resource) {

@@ -1,4 +1,5 @@
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { capabilityReferenceSources } from '../../specification/index.js';
 export function applicationSpecificationAnchors(root, directories) {
     return directories
         .map((directory) => {
@@ -64,6 +65,12 @@ export function selectApplicationSpecifications(root, specifications, options = 
             .map((reference) => reference.target.source)
             .filter((source) => source !== specification.source && bySource.has(source))),
     ]));
+    // A capability may cite laws and capabilities of descendant modules. Those modules support its
+    // derivation without making their own public-contract consumers dependents of the citation.
+    const citations = new Map(specifications.map((specification) => [
+        specification.source,
+        capabilityReferenceSources(specification).filter((source) => source !== specification.source && bySource.has(source)),
+    ]));
     const selected = new Set(requested.flatMap((target) => applicationSelectionOwners(specifications, target).map((value) => value.source)));
     if (!selected.size) {
         return invalidSelection(specifications, options, 'SELECTION_EMPTY', `No specification matches: ${requested.join(', ')}`, requested);
@@ -80,11 +87,19 @@ export function selectApplicationSpecifications(root, specifications, options = 
                 changed = true;
             }
         }
+        for (const [source, cited] of citations) {
+            if (cited.some((target) => primary.includes(target)))
+                selected.add(source);
+        }
     }
     const closure = new Set(selected);
     const pending = [...selected];
     while (pending.length) {
-        for (const dependency of dependencies.get(pending.pop()) ?? []) {
+        const source = pending.pop();
+        for (const dependency of [
+            ...(dependencies.get(source) ?? []),
+            ...(citations.get(source) ?? []),
+        ]) {
             if (closure.has(dependency))
                 continue;
             closure.add(dependency);
