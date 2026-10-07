@@ -126,6 +126,48 @@ function validArtifact(input: unknown, target: string, packageName: string): boo
   );
 }
 
+/** Admit only the companion capability; Go consumers do not consume its metadata. */
+export function admitNativeOxlintPackageManifest(
+  input: NativeArtifactPackageManifest,
+  expected: NativeAnalysisArtifact,
+): NonNullable<NativeAnalysisArtifact["oxlint"]> {
+  if (!expected.oxlint) {
+    throw new NativeAnalysisDistributionError("NATIVE_OXLINT_UNAVAILABLE",
+      `Codegraph has no packaged Oxlint worker for ${expected.target}.`, expected.target);
+  }
+  if (!validOxlint(expected.oxlint, expected.target) ||
+    !validOxlint(input.artifact.oxlint, expected.target) ||
+    !sameOxlint(input.artifact.oxlint, expected.oxlint)) {
+    throw new NativeAnalysisDistributionError("NATIVE_ARTIFACT_INVALID",
+      `Oxlint worker manifests disagree for ${expected.target}.`, expected.target);
+  }
+  return expected.oxlint;
+}
+
+function validOxlint(input: unknown, target: string): boolean {
+  const value = record(input);
+  const source = record(value.source);
+  return (
+    target !== "win32-x64" &&
+    value.executable === `bin/codegraph-oxlint${target === "win32-x64" ? ".exe" : ""}` &&
+    Number.isSafeInteger(value.bytes) && (value.bytes as number) > 0 &&
+    typeof value.sha256 === "string" && /^[a-f0-9]{64}$/u.test(value.sha256) &&
+    value.engineVersion === "1.81.0" && value.protocolVersion === 1 &&
+    typeof source.revision === "string" && /^[a-f0-9]{40}$/u.test(source.revision) &&
+    typeof source.patchSha256 === "string" && /^[a-f0-9]{64}$/u.test(source.patchSha256)
+  );
+}
+
+function sameOxlint(input: unknown, expected: NativeAnalysisArtifact["oxlint"]): boolean {
+  if (input === undefined || expected === undefined) return input === expected;
+  const value = record(input);
+  const source = record(value.source);
+  return value.executable === expected.executable && value.bytes === expected.bytes &&
+    value.sha256 === expected.sha256 && value.engineVersion === expected.engineVersion &&
+    value.protocolVersion === expected.protocolVersion &&
+    source.revision === expected.source.revision && source.patchSha256 === expected.source.patchSha256;
+}
+
 function portableArtifactPath(value: string): boolean {
   return (
     Boolean(value) &&

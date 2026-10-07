@@ -21,11 +21,6 @@ import (
 	"time"
 )
 
-// Populated from the exact private original1.81 build, never client parameters.
-const governanceOwnedArtifactName = "captured-owned-oxlint-1.81.0"
-const governanceOwnedArtifactSHA = "fd6eeb3f9bee5879040cbf2304021f5735932a45d9009768b85a4791d7818df5"
-const governanceOwnedArtifactLength = 9838944
-
 type governanceOwnedStartup struct {
 	DirectoryMs     float64   `json:"directoryMs"`
 	SnapshotWriteMs float64   `json:"snapshotWriteMs"`
@@ -57,8 +52,8 @@ func (p *governanceOwnedProcess) close() {
 	})
 }
 func governanceNewOwnedProcess(artifact []byte) (*governanceOwnedProcess, error) {
-	if len(artifact) != governanceOwnedArtifactLength || governanceHash(artifact) != governanceOwnedArtifactSHA {
-		return nil, fmt.Errorf("current package bytes differ from original qualified worker")
+	if !governanceQualifiedOwnedArtifact(artifact) {
+		return nil, fmt.Errorf("current package bytes differ from the build-qualified worker")
 	}
 	store, err := governanceOwnedRuntimeArtifactStore()
 	if err != nil {
@@ -69,8 +64,8 @@ func governanceNewOwnedProcess(artifact []byte) (*governanceOwnedProcess, error)
 func governanceNewOwnedProcessWithin(artifact []byte, store string) (*governanceOwnedProcess, error) {
 	began := time.Now()
 	// Resource identity failures are not runtime capability failures.
-	if len(artifact) != governanceOwnedArtifactLength || governanceHash(artifact) != governanceOwnedArtifactSHA {
-		return nil, fmt.Errorf("current package bytes differ from original qualified worker")
+	if !governanceQualifiedOwnedArtifact(artifact) {
+		return nil, fmt.Errorf("current package bytes differ from the build-qualified worker")
 	}
 	lease, err := governanceAcquireOwnedArtifact(artifact, store)
 	if err != nil {
@@ -195,7 +190,7 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 		return nil, fmt.Errorf("original producer is already closed for this capture")
 	}
 	engine := state.GenericEngine
-	if engine == nil || engine.Version != "1.81.0" || engine.ArtifactDigest != governanceOwnedArtifactSHA {
+	if engine == nil || governanceOwnedArtifactLength == 0 || engine.Version != governanceOwnedEngineVersion || engine.ArtifactDigest != governanceOwnedArtifactSHA {
 		return nil, fmt.Errorf("owned original engine artifact is not selected")
 	}
 	if !filepath.IsAbs(params.ConfigPath) || (len(params.Config) == 0) == (params.ConfigBytes == nil) {
@@ -211,7 +206,7 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 		return map[string]any{"status": "retry"}, nil
 	}
 	artifact, err := os.ReadFile(artifactPath)
-	if err != nil || len(artifact) != governanceOwnedArtifactLength || governanceHash(artifact) != governanceOwnedArtifactSHA {
+	if err != nil || !governanceQualifiedOwnedArtifact(artifact) {
 		return nil, fmt.Errorf("owned worker artifact differs from qualified bytes")
 	}
 	if session.genericProducer == nil || session.genericProducer.closed.Load() {

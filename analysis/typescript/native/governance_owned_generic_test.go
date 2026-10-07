@@ -351,7 +351,7 @@ func TestOwnedColdInitializationProfile(t *testing.T) {
 		}
 		rows = append(rows, row)
 	}
-	out := map[string]any{"artifactSha256": governanceOwnedArtifactSHA, "artifactBytes": governanceOwnedArtifactLength, "samples": rows, "scope": "Exact unchanged fd6 original1.81 artifact, real Go-owned private snapshot constructor. EOF measures loader + original Worker default/main before any request. First frame includes original draft discovery/source/audit projection on a private generated single-source root. Component timing only, no whole-driver qualification, prewarmed service or redefined public cold."}
+	out := map[string]any{"artifactSha256": governanceOwnedArtifactSHA, "artifactBytes": governanceOwnedArtifactLength, "samples": rows, "scope": "Current build-qualified Oxlint1.81 worker, real Go-owned private snapshot constructor. EOF measures loader + original Worker default/main before any request. First frame includes original draft discovery/source/audit projection on a private generated single-source root. Component timing only, no whole-driver qualification, prewarmed service or redefined public cold."}
 	encoded, _ := json.MarshalIndent(out, "", "  ")
 	if err := os.WriteFile(*ownedColdProfilePath, append(encoded, '\n'), 0600); err != nil {
 		t.Fatal(err)

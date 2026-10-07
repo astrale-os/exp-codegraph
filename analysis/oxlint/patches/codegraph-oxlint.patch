@@ -1,0 +1,3141 @@
+diff --git a/Cargo.lock b/Cargo.lock
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -1164,8 +1164,6 @@
+ [[package]]
+ name = "ignore"
+ version = "0.4.33"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "00b69833ed729dc5aa7d19541d96d6cf8e9137194207a04916d658e43168402f"
+ dependencies = [
+  "crossbeam-deque",
+  "globset",
+@@ -2239,6 +2237,7 @@
+ name = "oxc_linter"
+ version = "1.81.0"
+ dependencies = [
++ "base64",
+  "bitflags",
+  "constcat",
+  "convert_case 0.12.0",
+@@ -2277,6 +2276,7 @@
+  "oxc_span",
+  "oxc_str",
+  "oxc_syntax",
++ "oxlint-capture-authority",
+  "papaya",
+  "phf",
+  "rayon",
+@@ -2947,6 +2947,15 @@
+ ]
+ 
+ [[package]]
++name = "oxlint-capture-authority"
++version = "0.0.0"
++dependencies = [
++ "ignore",
++ "oxc_config",
++ "tempfile",
++]
++
++[[package]]
+ name = "papaya"
+ version = "0.2.5"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -1,7 +1,7 @@
+ [workspace]
+ resolver = "3"
+-members = ["apps/*", "crates/*", "napi/*", "tasks/*"]
+-exclude = ["apps/shared", "tasks/lint_rules", "tasks/e2e"]
++members = ["apps/*", "crates/*", "napi/*", "tasks/*", "capture-authority"]
++exclude = ["apps/shared", "tasks/lint_rules", "tasks/e2e", "vendor/ignore"]
+ 
+ [workspace.package]
+ authors = ["Boshen <boshenc@gmail.com>", "Oxc contributors"]
+@@ -293,6 +293,7 @@
+ # even at the same version.
+ # Force the registry request to resolve to the workspace copy so there's a single instance.
+ [patch.crates-io]
++ignore = { path = "vendor/ignore" }
+ oxc_allocator = { path = "crates/oxc_allocator" }
+ 
+ [profile.dev]
+diff --git a/capture-authority/Cargo.toml b/capture-authority/Cargo.toml
+new file mode 100644
+--- /dev/null
++++ b/capture-authority/Cargo.toml
+@@ -0,0 +1,9 @@
++[package]
++name = "oxlint-capture-authority"
++version = "0.0.0"
++edition = "2024"
++[dependencies]
++ignore = { path = "../vendor/ignore" }
++oxc_config = { path = "../crates/oxc_config" }
++[dev-dependencies]
++tempfile = "3.27.0"
+diff --git a/capture-authority/src/lib.rs b/capture-authority/src/lib.rs
+new file mode 100644
+--- /dev/null
++++ b/capture-authority/src/lib.rs
+@@ -0,0 +1,175 @@
++//! Generic traversal over the native service's immutable observations. Pattern
++//! parsing, VCS precedence, whitelist and ancestor pruning remain the original
++//! pinned ignore owner. This layer owns only the directory traversal request
++//! boundary, Oxlint's explicit file-extension/minified/VCS filters and link loops.
++pub use ignore::captured::{CapturedFileSystem, CapturedMetadata};
++use ignore::{WalkBuilder, overrides::OverrideBuilder};
++use std::{
++    collections::HashSet,
++    ffi::OsString,
++    io,
++    path::{Path, PathBuf},
++    sync::Arc,
++};
++
++/// The original directory entry type avoids an extra per-file stat operation.
++#[derive(Clone, Copy, Debug)]
++pub enum CapturedEntryKind {
++    File,
++    Directory,
++    Symlink,
++    Other,
++}
++#[derive(Clone, Debug)]
++pub struct CapturedDirectoryEntry {
++    pub name: OsString,
++    pub kind: CapturedEntryKind,
++}
++/// Directory membership is captured independently from metadata and read bytes.
++pub trait GenericCapture: CapturedFileSystem {
++    fn directory(&self, path: &Path) -> io::Result<Vec<CapturedDirectoryEntry>>;
++    /// Missing observations, including ones swallowed by original ignore I/O,
++    /// require another same-token capture wave, never a complete path result.
++    fn assert_observations_complete(&self) -> io::Result<()>;
++}
++
++#[derive(Debug)]
++pub struct DiscoveredMembership {
++    /// Lexical absolute identities, as returned by the original CLI walker.
++    pub paths: Vec<PathBuf>,
++    /// Captured operational failures skipped by CLI traversal. They remain seal
++    /// dependencies even when no diagnostic is emitted for them.
++    pub traversal_errors: Vec<(PathBuf, io::ErrorKind)>,
++}
++
++/// SDK invokes the CLI with exactly one directory target and explicit --config.
++/// Therefore base config ignores are applied by original LintIgnoreMatcher AFTER
++/// this function, and nested Oxlint configuration discovery is disabled.
++/// Missing reads may expand a private speculative traversal plan. No result is
++/// observable until the final completeness gate; replay starts with new matchers
++/// after each requirement wave, so cached speculative ignore answers never escape.
++/// `extensions` MUST be the engine's original LINTABLE_EXTENSIONS authority.
++pub fn discover<C: GenericCapture + 'static>(
++    capture: Arc<C>,
++    root: &Path,
++    command_ignore_patterns: &[String],
++    extensions: &[&str],
++) -> io::Result<DiscoveredMembership> {
++    if !root.is_absolute() {
++        return Err(io::Error::new(io::ErrorKind::InvalidInput, "absolute root required"));
++    }
++    let boundary = vcs_boundary(capture.as_ref(), root)?;
++    // Exact original GitignoreChecker semantics: separately reject ignored root
++    // and ignored ancestors before walking. Root itself is otherwise whitelisted.
++    let matcher_root = boundary.as_deref().unwrap_or_else(|| root.ancestors().last().unwrap());
++    let mut check_builder = WalkBuilder::new(matcher_root);
++    oxc_config::configure_walk_builder(&mut check_builder, boundary.is_some());
++    let mut check = check_builder.build_captured_matchers(capture.clone())?.remove(0);
++    let root_ignored = check.matched(root.strip_prefix(matcher_root).unwrap(), true).is_ignore();
++    if root_ignored {
++        return Ok(DiscoveredMembership { paths: vec![], traversal_errors: vec![] });
++    }
++    let mut overrides = OverrideBuilder::new(root);
++    for pattern in command_ignore_patterns {
++        overrides
++            .add(&format!("!{pattern}"))
++            .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
++    }
++    let mut builder = WalkBuilder::new(root);
++    builder
++        .add_custom_ignore_filename(".eslintignore")
++        .overrides(overrides.build().map_err(io::Error::other)?);
++    oxc_config::configure_walk_builder(&mut builder, boundary.is_some()).follow_links(true);
++    let mut matcher = builder.build_captured_matchers(capture.clone())?.remove(0);
++    let mut result = DiscoveredMembership { paths: vec![], traversal_errors: vec![] };
++    let mut pending = vec![(root.to_path_buf(), HashSet::<PathBuf>::new())];
++    while let Some((directory, mut ancestors)) = pending.pop() {
++        let canonical = match capture.canonicalize(&directory) {
++            Ok(path) => path,
++            Err(error) => {
++                result.traversal_errors.push((directory, error.kind()));
++                continue;
++            }
++        };
++        if !ancestors.insert(canonical) {
++            continue;
++        }
++        let entries = match capture.directory(&directory) {
++            Ok(entries) => entries,
++            Err(error) => {
++                result.traversal_errors.push((directory, error.kind()));
++                continue;
++            }
++        };
++        let mut names = HashSet::new();
++        for entry in entries {
++            let name = entry.name;
++            let single = Path::new(&name);
++            if single.components().count() != 1
++                || !matches!(single.components().next(), Some(std::path::Component::Normal(_)))
++                || !names.insert(name.clone())
++            {
++                return Err(io::Error::new(
++                    io::ErrorKind::InvalidData,
++                    "invalid captured directory member",
++                ));
++            }
++            let path = directory.join(&name);
++            let metadata = match entry.kind {
++                CapturedEntryKind::Directory => {
++                    CapturedMetadata { is_dir: true, is_file: false, len: 0 }
++                }
++                CapturedEntryKind::File => {
++                    CapturedMetadata { is_dir: false, is_file: true, len: 0 }
++                }
++                CapturedEntryKind::Other => {
++                    CapturedMetadata { is_dir: false, is_file: false, len: 0 }
++                }
++                CapturedEntryKind::Symlink => match capture.metadata(&path, true) {
++                    Ok(value) => value,
++                    Err(error) => {
++                        result.traversal_errors.push((path, error.kind()));
++                        continue;
++                    }
++                },
++            };
++            if metadata.is_dir && (name == ".git" || name == ".jj") {
++                continue;
++            }
++            let ignored =
++                matcher.matched(path.strip_prefix(root).unwrap(), metadata.is_dir).is_ignore();
++            if ignored {
++                continue;
++            }
++            if metadata.is_dir {
++                pending.push((path, ancestors.clone()));
++                continue;
++            }
++            let filename = name.to_string_lossy();
++            if [".min.", "-min.", "_min."].iter().any(|part| filename.contains(part)) {
++                continue;
++            }
++            if path
++                .extension()
++                .is_some_and(|extension| extensions.iter().any(|wanted| extension == *wanted))
++            {
++                result.paths.push(path);
++            }
++        }
++    }
++    capture.assert_observations_complete()?;
++    Ok(result)
++}
++fn vcs_boundary<C: GenericCapture>(capture: &C, root: &Path) -> io::Result<Option<PathBuf>> {
++    let metadata = capture.metadata(root, true);
++    let start =
++        if metadata.is_ok_and(|m| m.is_file) { root.parent().unwrap_or(root) } else { root };
++    for path in start.ancestors() {
++        let git = capture.metadata(&path.join(".git"), true).is_ok();
++        let jj = if git { false } else { capture.metadata(&path.join(".jj"), true).is_ok() };
++        if git || jj {
++            return Ok(Some(path.to_path_buf()));
++        }
++    }
++    Ok(None)
++}
+diff --git a/capture-authority/tests/discovery.rs b/capture-authority/tests/discovery.rs
+new file mode 100644
+--- /dev/null
++++ b/capture-authority/tests/discovery.rs
+@@ -0,0 +1,271 @@
++use ignore::{WalkBuilder, overrides::OverrideBuilder};
++use oxlint_capture_authority::{
++    CapturedDirectoryEntry, CapturedEntryKind, CapturedFileSystem, CapturedMetadata,
++    GenericCapture, discover,
++};
++use std::{
++    collections::{HashMap, HashSet},
++    fs, io,
++    path::{Path, PathBuf},
++    sync::{Arc, Mutex},
++};
++#[derive(Clone, Debug)]
++enum Value {
++    Metadata(CapturedMetadata),
++    Bytes(Vec<u8>),
++    Path(PathBuf),
++    Names(Vec<CapturedDirectoryEntry>),
++    Error(io::ErrorKind),
++}
++#[derive(Debug, Default)]
++struct Capture {
++    rows: Mutex<HashMap<(String, PathBuf), Value>>,
++    missing: Mutex<HashSet<(String, PathBuf)>>,
++    replay: bool,
++}
++impl Capture {
++    fn operation(
++        &self,
++        kind: &str,
++        path: &Path,
++        read: impl FnOnce() -> io::Result<Value>,
++    ) -> io::Result<Value> {
++        let key = (kind.to_string(), path.to_path_buf());
++        if self.replay {
++            return match self.rows.lock().unwrap().get(&key).cloned() {
++                Some(Value::Error(e)) => Err(io::Error::from(e)),
++                Some(v) => Ok(v),
++                None => {
++                    self.missing.lock().unwrap().insert(key);
++                    Err(io::Error::from(io::ErrorKind::WouldBlock))
++                }
++            };
++        }
++        let result = read();
++        let value = match &result {
++            Ok(value) => value.clone(),
++            Err(e) => Value::Error(e.kind()),
++        };
++        self.rows.lock().unwrap().insert(key, value);
++        result
++    }
++    fn snapshot(&self) -> Self {
++        Self {
++            rows: Mutex::new(self.rows.lock().unwrap().clone()),
++            replay: true,
++            ..Self::default()
++        }
++    }
++}
++impl CapturedFileSystem for Capture {
++    fn metadata(&self, path: &Path, follow: bool) -> io::Result<CapturedMetadata> {
++        match self.operation(if follow { "stat" } else { "lstat" }, path, || {
++            let m = if follow { fs::metadata(path)? } else { fs::symlink_metadata(path)? };
++            Ok(Value::Metadata(CapturedMetadata {
++                is_dir: m.is_dir(),
++                is_file: m.is_file(),
++                len: m.len(),
++            }))
++        })? {
++            Value::Metadata(v) => Ok(v),
++            _ => unreachable!(),
++        }
++    }
++    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
++        match self.operation("read", path, || fs::read(path).map(Value::Bytes))? {
++            Value::Bytes(v) => Ok(v),
++            _ => unreachable!(),
++        }
++    }
++    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
++        match self.operation("canonicalize", path, || fs::canonicalize(path).map(Value::Path))? {
++            Value::Path(v) => Ok(v),
++            _ => unreachable!(),
++        }
++    }
++}
++impl GenericCapture for Capture {
++    fn directory(&self, path: &Path) -> io::Result<Vec<CapturedDirectoryEntry>> {
++        match self.operation("directory", path, || {
++            fs::read_dir(path)?
++                .map(|r| {
++                    r.and_then(|e| {
++                        let t = e.file_type()?;
++                        Ok(CapturedDirectoryEntry {
++                            name: e.file_name(),
++                            kind: if t.is_dir() {
++                                CapturedEntryKind::Directory
++                            } else if t.is_file() {
++                                CapturedEntryKind::File
++                            } else if t.is_symlink() {
++                                CapturedEntryKind::Symlink
++                            } else {
++                                CapturedEntryKind::Other
++                            },
++                        })
++                    })
++                })
++                .collect::<io::Result<Vec<_>>>()
++                .map(Value::Names)
++        })? {
++            Value::Names(v) => Ok(v),
++            _ => unreachable!(),
++        }
++    }
++    fn assert_observations_complete(&self) -> io::Result<()> {
++        if self.missing.lock().unwrap().is_empty() {
++            Ok(())
++        } else {
++            Err(io::Error::from(io::ErrorKind::WouldBlock))
++        }
++    }
++}
++fn put(root: &Path, path: &str, content: &str) {
++    let p = root.join(path);
++    fs::create_dir_all(p.parent().unwrap()).unwrap();
++    fs::write(p, content).unwrap();
++}
++fn baseline(root: &Path, patterns: &[String]) -> Vec<PathBuf> {
++    let boundary = oxc_config::all_paths_have_vcs_boundary(&[root.to_path_buf()], root);
++    let mut checker = oxc_config::GitignoreChecker::new();
++    if checker.is_gitignored(root, root) {
++        return vec![];
++    }
++    let mut o = OverrideBuilder::new(root);
++    for p in patterns {
++        o.add(&format!("!{p}")).unwrap();
++    }
++    let mut b = WalkBuilder::new(root);
++    b.add_custom_ignore_filename(".eslintignore").overrides(o.build().unwrap());
++    oxc_config::configure_walk_builder(&mut b, boundary).follow_links(true);
++    let mut rows: Vec<_> = b
++        .build()
++        .filter_map(Result::ok)
++        .filter_map(|e| {
++            if e.file_type().is_none_or(|t| t.is_dir()) {
++                return None;
++            }
++            let name = e.file_name().to_string_lossy();
++            if [".min.", "-min.", "_min."].iter().any(|p| name.contains(p)) {
++                return None;
++            }
++            if e.path().extension().is_some_and(|ext| ext == "ts" || ext == "js") {
++                Some(e.path().to_path_buf())
++            } else {
++                None
++            }
++        })
++        .collect();
++    rows.sort();
++    rows
++}
++fn observed(c: Arc<Capture>, root: &Path, patterns: &[String]) -> Vec<PathBuf> {
++    let mut paths = discover(c, root, patterns, &["ts", "js"]).unwrap().paths;
++    paths.sort();
++    paths
++}
++#[test]
++fn original_ignore_hierarchy_bytes_and_snapshot_remain_owned() {
++    for vcs in [false, true] {
++        let t = tempfile::tempdir().unwrap();
++        let top = t.path();
++        let root = top.join("domain");
++        fs::create_dir_all(&root).unwrap();
++        if vcs {
++            fs::create_dir(top.join(".git")).unwrap();
++            put(top, ".git/info/exclude", "domain/excluded.ts\n");
++        }
++        put(top, ".gitignore", "domain/parent-blocked.ts\n");
++        put(&root, ".gitignore", "\u{feff}blocked/\r\n!blocked/allowed.ts\r\n*.gen.ts\n[invalid\n");
++        put(&root, ".eslintignore", "eslint-blocked.ts\n!keep.gen.ts\n");
++        put(&root, "nested/.gitignore", "*.ts\n!retained.ts\n");
++        for p in [
++            "ok.ts",
++            ".hidden.ts",
++            "parent-blocked.ts",
++            "excluded.ts",
++            "blocked/allowed.ts",
++            "blocked/drop.ts",
++            "eslint-blocked.ts",
++            "generated.gen.ts",
++            "keep.gen.ts",
++            "nested/drop.ts",
++            "nested/retained.ts",
++            "dist/build.ts",
++            "test.min.js",
++            "test-min.js",
++            "test_min.js",
++            "ok.js",
++            "note.txt",
++        ] {
++            put(&root, p, "");
++        }
++        let patterns = vec!["**/dist/**".to_string()];
++        let live = Arc::new(Capture::default());
++        let actual = observed(live.clone(), &root, &patterns);
++        assert_eq!(actual, baseline(&root, &patterns));
++        let snapshot = Arc::new(live.snapshot());
++        fs::remove_dir_all(&root).unwrap();
++        assert_eq!(
++            actual,
++            observed(snapshot, &root, &patterns),
++            "replay must not touch live source or ignore files"
++        );
++    }
++}
++#[test]
++fn ignored_root_and_ancestor_cannot_be_resurrected() {
++    let t = tempfile::tempdir().unwrap();
++    let root = t.path().join("blocked/domain");
++    fs::create_dir_all(&root).unwrap();
++    put(t.path(), ".gitignore", "blocked/\n");
++    put(&root, ".gitignore", "!ok.ts\n");
++    put(&root, "ok.ts", "");
++    assert_eq!(observed(Arc::new(Capture::default()), &root, &[]), baseline(&root, &[]));
++    assert!(baseline(&root, &[]).is_empty());
++}
++#[test]
++fn missing_observation_is_a_capture_wave_never_absence() {
++    let t = tempfile::tempdir().unwrap();
++    put(t.path(), "ok.ts", "");
++    let live = Arc::new(Capture::default());
++    observed(live.clone(), t.path(), &[]);
++    let snapshot = live.snapshot();
++    snapshot.rows.lock().unwrap().remove(&("stat".to_string(), t.path().join(".gitignore")));
++    let result = discover(Arc::new(snapshot), t.path(), &[], &["ts"]);
++    assert_eq!(result.unwrap_err().kind(), io::ErrorKind::WouldBlock);
++}
++#[cfg(unix)]
++#[test]
++fn symlink_directory_alias_and_cycle_match_original_walk() {
++    use std::os::unix::fs::symlink;
++    let t = tempfile::tempdir().unwrap();
++    put(t.path(), "src/a.ts", "");
++    put(t.path(), "src/.gitignore", "drop.ts\n");
++    put(t.path(), "src/drop.ts", "");
++    symlink(t.path().join("src"), t.path().join("alias")).unwrap();
++    symlink(t.path(), t.path().join("src/loop")).unwrap();
++    let live = Arc::new(Capture::default());
++    let rows = observed(live.clone(), t.path(), &[]);
++    assert_eq!(rows, baseline(t.path(), &[]));
++    let snapshot = Arc::new(live.snapshot());
++    fs::remove_file(t.path().join("alias")).unwrap();
++    assert_eq!(rows, observed(snapshot, t.path(), &[]));
++}
++#[test]
++fn worktree_common_exclude_is_the_original_owner() {
++    let t = tempfile::tempdir().unwrap();
++    let root = t.path().join("domain");
++    fs::create_dir_all(&root).unwrap();
++    let git = t.path().join("git/worktrees/domain");
++    fs::create_dir_all(&git).unwrap();
++    put(&root, ".git", &format!("gitdir: {}\n", git.display()));
++    put(&git, "commondir", "../..\n");
++    put(&t.path().join("git"), "info/exclude", "excluded.ts\n");
++    put(&root, "ok.ts", "");
++    put(&root, "excluded.ts", "");
++    let live = Arc::new(Capture::default());
++    let actual = observed(live, &root, &[]);
++    assert_eq!(actual, baseline(&root, &[]));
++    assert_eq!(actual, vec![root.join("ok.ts")]);
++}
+diff --git a/crates/oxc_linter/Cargo.toml b/crates/oxc_linter/Cargo.toml
+--- a/crates/oxc_linter/Cargo.toml
++++ b/crates/oxc_linter/Cargo.toml
+@@ -79,6 +79,8 @@
+ url = { workspace = true }
+ 
+ [dev-dependencies]
++oxlint-capture-authority = { path = "../../capture-authority" }
++base64 = { workspace = true }
+ insta = { workspace = true }
+ markdown = { workspace = true }
+ 
+diff --git a/crates/oxc_linter/examples/captured/authority.rs b/crates/oxc_linter/examples/captured/authority.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/oxc_linter/examples/captured/authority.rs
+@@ -0,0 +1,1468 @@
++//! Same-token captured I/O adapter for the original generic membership owner.
++use base64::{Engine, engine::general_purpose::STANDARD};
++use oxc_linter::{LINTABLE_EXTENSIONS, LintIgnoreMatcher};
++use oxlint_capture_authority::{
++    CapturedDirectoryEntry, CapturedEntryKind, CapturedFileSystem, CapturedMetadata,
++    GenericCapture, discover,
++};
++use serde::{Deserialize, Serialize};
++use serde_json::{Value, json};
++use std::{
++    collections::{BTreeSet, HashMap},
++    io,
++    path::{Path, PathBuf},
++    sync::{Arc, Condvar, Mutex},
++};
++
++#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq, Ord, PartialOrd, Hash)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct Requirement {
++    pub id: String,
++    pub kind: String,
++    pub path: PathBuf,
++    #[serde(default, skip_serializing_if = "is_false")]
++    pub follow_links: bool,
++}
++
++fn is_false(value: &bool) -> bool {
++    !*value
++}
++
++#[derive(Clone, Debug, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct Observation {
++    id: String,
++    status: String,
++    value: Option<Value>,
++    error: Option<Value>,
++}
++
++#[derive(Clone, Deserialize, Serialize)]
++#[serde(deny_unknown_fields)]
++pub struct Row {
++    requirement: Requirement,
++    observation: Observation,
++}
++
++#[derive(Clone, Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++pub struct DiscoverRequest {
++    operation: String,
++    pub token: String,
++    pub root: PathBuf,
++    config_path: PathBuf,
++    config: Option<Value>,
++    config_bytes: Option<Vec<u8>>,
++    command_ignore_patterns: Vec<String>,
++    observations: Vec<Row>,
++    observation_frame: Option<u64>,
++    go_owner: Option<Value>,
++}
++
++#[derive(Debug)]
++struct Capture {
++    rows: HashMap<(String, PathBuf, bool), Observation>,
++    missing: Mutex<BTreeSet<(String, PathBuf, bool)>>,
++    used: Mutex<BTreeSet<(String, PathBuf, bool)>>,
++}
++
++impl Capture {
++    fn admit(rows: Vec<Row>) -> Result<Self, String> {
++        let mut admitted = HashMap::new();
++        for row in rows {
++            let r = row.requirement;
++            let o = row.observation;
++            if r.id.is_empty()
++                || r.id != o.id
++                || !r.path.is_absolute()
++                || !matches!(
++                    r.kind.as_str(),
++                    "metadata" | "read-bytes" | "directory" | "canonicalize"
++                )
++                || !matches!(o.status.as_str(), "known" | "error")
++            {
++                return Err("invalid or unsupported same-token generic observation".into());
++            }
++            if o.status == "known" && (o.value.is_none() || o.error.is_some())
++                || o.status == "error" && (o.error.is_none() || o.value.is_some())
++            {
++                return Err("captured observation status/value conflict".into());
++            }
++            if o.status == "known" {
++                let value = o.value.as_ref().unwrap();
++                let valid = match r.kind.as_str() {
++                    "metadata" => {
++                        value.get("isDirectory").and_then(Value::as_bool).is_some()
++                            && value.get("isFile").and_then(Value::as_bool).is_some()
++                            && value.get("isSymlink").and_then(Value::as_bool).is_some()
++                            && value.get("length").and_then(Value::as_u64).is_some()
++                    }
++                    "canonicalize" => value
++                        .get("path")
++                        .and_then(Value::as_str)
++                        .is_some_and(|p| Path::new(p).is_absolute()),
++                    "read-bytes" => value
++                        .get("bytesBase64")
++                        .and_then(Value::as_str)
++                        .is_some_and(|b| STANDARD.decode(b).is_ok()),
++                    "directory" => {
++                        value.get("entries").and_then(Value::as_array).is_some_and(|entries| {
++                            let mut seen = BTreeSet::new();
++                            entries.iter().all(|entry| {
++                                let Some(name) = entry.get("name").and_then(Value::as_str) else {
++                                    return false;
++                                };
++                                let mut components = Path::new(name).components();
++                                matches!(components.next(), Some(std::path::Component::Normal(_)))
++                                    && components.next().is_none()
++                                    && seen.insert(name)
++                                    && entry.get("kind").and_then(Value::as_str).is_some_and(
++                                        |kind| {
++                                            matches!(
++                                                kind,
++                                                "file" | "directory" | "symlink" | "other"
++                                            )
++                                        },
++                                    )
++                            })
++                        })
++                    }
++                    _ => false,
++                };
++                if !valid {
++                    return Err("malformed captured generic value is not an I/O failure".into());
++                }
++            } else {
++                let error = o.error.as_ref().unwrap();
++                if !error.get("kind").and_then(Value::as_str).is_some_and(|k| {
++                    matches!(
++                        k,
++                        "not-found"
++                            | "permission-denied"
++                            | "not-directory"
++                            | "loop"
++                            | "invalid-data"
++                            | "other"
++                    )
++                }) || error.get("code").and_then(Value::as_str).is_none()
++                    || error.get("message").and_then(Value::as_str).is_none()
++                {
++                    return Err("malformed captured operational failure".into());
++                }
++            }
++            let key = (r.kind, r.path, r.follow_links);
++            if admitted.insert(key, o).is_some() {
++                return Err("duplicate captured generic operation".into());
++            }
++        }
++        Ok(Self {
++            rows: admitted,
++            missing: Mutex::new(BTreeSet::new()),
++            used: Mutex::new(BTreeSet::new()),
++        })
++    }
++
++    fn value(&self, kind: &str, path: &Path, follow: bool) -> io::Result<Value> {
++        let key = (kind.to_owned(), path.to_path_buf(), follow);
++        self.used.lock().unwrap().insert(key.clone());
++        let Some(row) = self.rows.get(&key) else {
++            self.missing.lock().unwrap().insert(key);
++            return Err(io::ErrorKind::WouldBlock.into());
++        };
++        if row.status == "error" {
++            let error = row.error.as_ref().unwrap();
++            let kind = match error.get("kind").and_then(Value::as_str) {
++                Some("not-found") => io::ErrorKind::NotFound,
++                Some("permission-denied") => io::ErrorKind::PermissionDenied,
++                Some("not-directory") => io::ErrorKind::NotADirectory,
++                Some("invalid-data") => io::ErrorKind::InvalidData,
++                _ => io::ErrorKind::Other,
++            };
++            let message =
++                error.get("message").and_then(Value::as_str).unwrap_or("captured I/O failure");
++            return Err(io::Error::new(kind, message.to_owned()));
++        }
++        Ok(row.value.as_ref().unwrap().clone())
++    }
++
++    fn requirements(&self) -> Vec<Requirement> {
++        self.missing
++            .lock()
++            .unwrap()
++            .iter()
++            .enumerate()
++            .map(|(i, (kind, path, follow))| Requirement {
++                id: format!("generic:{i}"),
++                kind: kind.clone(),
++                path: path.clone(),
++                follow_links: *follow,
++            })
++            .collect()
++    }
++}
++
++impl CapturedFileSystem for Capture {
++    fn metadata(&self, path: &Path, follow: bool) -> io::Result<CapturedMetadata> {
++        let value = self.value("metadata", path, follow)?;
++        let parse = || {
++            Some(CapturedMetadata {
++                is_dir: value.get("isDirectory")?.as_bool()?,
++                is_file: value.get("isFile")?.as_bool()?,
++                len: value.get("length")?.as_u64()?,
++            })
++        };
++        parse()
++            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid captured metadata"))
++    }
++    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
++        let value = self.value("read-bytes", path, false)?;
++        let bytes = value.get("bytesBase64").and_then(Value::as_str).ok_or_else(|| {
++            io::Error::new(io::ErrorKind::InvalidData, "invalid captured byte value")
++        })?;
++        STANDARD.decode(bytes).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
++    }
++    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
++        let value = self.value("canonicalize", path, false)?;
++        let path = value
++            .get("path")
++            .and_then(Value::as_str)
++            .map(PathBuf::from)
++            .filter(|p| p.is_absolute())
++            .ok_or_else(|| {
++                io::Error::new(io::ErrorKind::InvalidData, "invalid captured canonical identity")
++            })?;
++        Ok(path)
++    }
++}
++
++impl GenericCapture for Capture {
++    fn directory(&self, path: &Path) -> io::Result<Vec<CapturedDirectoryEntry>> {
++        let value = self.value("directory", path, false)?;
++        let entries = value.get("entries").and_then(Value::as_array).ok_or_else(|| {
++            io::Error::new(io::ErrorKind::InvalidData, "invalid captured directory")
++        })?;
++        entries
++            .iter()
++            .map(|e| {
++                let name = e.get("name").and_then(Value::as_str).ok_or_else(|| {
++                    io::Error::new(io::ErrorKind::InvalidData, "invalid captured directory name")
++                })?;
++                let kind = match e.get("kind").and_then(Value::as_str) {
++                    Some("file") => CapturedEntryKind::File,
++                    Some("directory") => CapturedEntryKind::Directory,
++                    Some("symlink") => CapturedEntryKind::Symlink,
++                    Some("other") => CapturedEntryKind::Other,
++                    _ => {
++                        return Err(io::Error::new(
++                            io::ErrorKind::InvalidData,
++                            "invalid captured directory entry kind",
++                        ));
++                    }
++                };
++                Ok(CapturedDirectoryEntry { name: name.into(), kind })
++            })
++            .collect()
++    }
++    fn assert_observations_complete(&self) -> io::Result<()> {
++        if self.missing.lock().unwrap().is_empty() {
++            Ok(())
++        } else {
++            Err(io::ErrorKind::WouldBlock.into())
++        }
++    }
++}
++
++trait ObservationCapture: GenericCapture {
++    fn requirements(&self) -> Vec<Requirement>;
++}
++impl ObservationCapture for Capture {
++    fn requirements(&self) -> Vec<Requirement> {
++        Capture::requirements(self)
++    }
++}
++
++pub struct MembershipOwner {
++    pub root: PathBuf,
++    pub config_key: (PathBuf, Value),
++    pub paths: BTreeSet<PathBuf>,
++}
++
++#[derive(Default)]
++pub struct DiscoveryFrames {
++    current: Option<DiscoveryFrame>,
++    next: u64,
++}
++struct DiscoveryFrame {
++    id: u64,
++    token: String,
++    root: PathBuf,
++    config_path: PathBuf,
++    config: Option<Value>,
++    config_bytes: Option<Vec<u8>>,
++    command_ignore_patterns: Vec<String>,
++    capture: Arc<Capture>,
++}
++impl DiscoveryFrames {
++    pub fn discover(
++        &mut self,
++        mut request: DiscoverRequest,
++    ) -> Result<(Value, Option<MembershipOwner>), String> {
++        if request.operation != "discover"
++            || request.token.is_empty()
++            || !request.root.is_absolute()
++        {
++            return Err("discovery requires an absolute root and captured token".into());
++        }
++        let (configuration, _) = super::parse_configuration(
++            &request.config_path,
++            request.config.clone(),
++            request.config_bytes.clone(),
++        )?;
++        super::admit_configuration(&configuration)?;
++        // Validate the complete delta before changing any retained cell. A frame
++        // owns exactly one actor/token/root/configuration/ignore operation stream.
++        let delta = Capture::admit(std::mem::take(&mut request.observations))?;
++        if let Some(id) = request.observation_frame {
++            let frame = self.current.as_mut().ok_or("unknown discovery observation frame")?;
++            if frame.id != id
++                || frame.token != request.token
++                || frame.root != request.root
++                || frame.config_path != request.config_path
++                || frame.config != request.config
++                || frame.config_bytes != request.config_bytes
++                || frame.command_ignore_patterns != request.command_ignore_patterns
++            {
++                return Err(
++                    "discovery frame changed its token/root/configuration/ignore owner".into()
++                );
++            }
++            if delta.rows.keys().any(|key| frame.capture.rows.contains_key(key)) {
++                return Err("discovery delta repeats an already owned observation".into());
++            }
++            let capture =
++                Arc::get_mut(&mut frame.capture).ok_or("discovery capture still has a borrower")?;
++            capture.rows.extend(delta.rows);
++            capture.missing.get_mut().unwrap().clear();
++        } else {
++            self.current = Some(DiscoveryFrame {
++                id: 0,
++                token: request.token.clone(),
++                root: request.root.clone(),
++                config_path: request.config_path.clone(),
++                config: request.config.clone(),
++                config_bytes: request.config_bytes.clone(),
++                command_ignore_patterns: request.command_ignore_patterns.clone(),
++                capture: Arc::new(delta),
++            });
++        }
++        let frame = self.current.as_mut().unwrap();
++        let (mut result, membership) = discover_with_capture(request, frame.capture.clone())?;
++        self.next = self.next.checked_add(1).ok_or("discovery frame sequence exhausted")?;
++        if self.next > 9_007_199_254_740_991 {
++            return Err("discovery frame exceeds JSON integer authority".into());
++        }
++        frame.id = self.next;
++        result["observationFrame"] = json!(frame.id);
++        Ok((result, membership))
++    }
++}
++
++pub fn discover_owned(
++    mut request: DiscoverRequest,
++) -> Result<(Value, Option<MembershipOwner>), String> {
++    if request.observation_frame.is_some() {
++        return Err("standalone discovery cannot borrow an actor frame".into());
++    }
++    let capture = Arc::new(Capture::admit(std::mem::take(&mut request.observations))?);
++    discover_with_capture(request, capture)
++}
++fn discover_with_capture(
++    request: DiscoverRequest,
++    capture: Arc<impl ObservationCapture + 'static>,
++) -> Result<(Value, Option<MembershipOwner>), String> {
++    if request.operation != "discover" || request.token.is_empty() || !request.root.is_absolute() {
++        return Err("discovery requires an absolute root and captured token".into());
++    }
++    let (config, config_input) =
++        super::parse_configuration(&request.config_path, request.config, request.config_bytes)?;
++    // Configuration capability is identical to the actual builtin lint runtime.
++    super::admit_configuration(&config)?;
++    let baseline = capture.metadata(&request.root.join("oxlint-suppressions.json"), true);
++    if capture.assert_observations_complete().is_ok() && baseline.is_ok() {
++        return Ok((
++            json!({"status":"residual", "token":request.token,
++            "engineVersion":env!("CARGO_PKG_VERSION"),
++            "residual":["Positive suppression baseline requires its original captured parser/diff owner."]}),
++            None,
++        ));
++    }
++    let discovered = discover(
++        capture.clone(),
++        &request.root,
++        &request.command_ignore_patterns,
++        LINTABLE_EXTENSIONS,
++    );
++    let missing = capture.requirements();
++    if !missing.is_empty() {
++        return Ok((
++            json!({"status":"requirements", "token":request.token,
++            "engineVersion":env!("CARGO_PKG_VERSION"), "requirements":missing}),
++            None,
++        ));
++    }
++    let discovered = discovered.map_err(|e| format!("captured generic discovery failed: {e}"))?;
++    let matcher = LintIgnoreMatcher::new(&config.ignore_patterns, config.dir().unwrap(), vec![]);
++    let paths: Vec<_> =
++        discovered.paths.into_iter().filter(|p| !matcher.should_ignore(p)).collect();
++    let owner = MembershipOwner {
++        root: request.root.clone(),
++        config_key: (request.config_path, config_input),
++        paths: paths.iter().cloned().collect(),
++    };
++    if owner.paths.len() != paths.len() {
++        return Err("generic traversal returned duplicate lexical source identity".into());
++    }
++    Ok((
++        json!({"status":"membership", "token":request.token, "root":request.root,
++        "engineVersion":env!("CARGO_PKG_VERSION"), "membershipQualified":true,
++        "paths":paths, "traversalErrors":discovered.traversal_errors.iter().map(|(p,k)|json!({"path":p,"kind":format!("{k:?}")})).collect::<Vec<_>>() }),
++        Some(owner),
++    ))
++}
++
++/// Bounded private experiment: unavailable I/O suspends the actual original
++/// stack. Original matcher caches never receive a speculative absence/error.
++#[derive(Default)]
++pub struct SuspendedDiscovery {
++    current: Option<SuspendedFrame>,
++    next: u64,
++}
++struct SuspendedFrame {
++    id: u64,
++    identity: Value,
++    capture: Arc<SuspendedCapture>,
++    thread: Option<std::thread::JoinHandle<()>>,
++}
++struct SuspendedState {
++    capture: Capture,
++    cancelled: bool,
++    completed: Option<Result<(Value, Option<MembershipOwner>), String>>,
++}
++struct SuspendedCapture {
++    state: Mutex<SuspendedState>,
++    wake: Condvar,
++}
++impl std::fmt::Debug for SuspendedCapture {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("SuspendedCapture")
++    }
++}
++impl SuspendedCapture {
++    fn call<T>(&self, mut operation: impl FnMut(&Capture) -> io::Result<T>) -> io::Result<T> {
++        let mut state = self.state.lock().unwrap();
++        loop {
++            if state.cancelled {
++                return Err(io::ErrorKind::Interrupted.into());
++            }
++            match operation(&state.capture) {
++                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
++                    self.wake.notify_all();
++                    state = self.wake.wait(state).unwrap();
++                }
++                result => return result,
++            }
++        }
++    }
++}
++impl CapturedFileSystem for SuspendedCapture {
++    fn metadata(&self, path: &Path, follow: bool) -> io::Result<CapturedMetadata> {
++        self.call(|c| c.metadata(path, follow))
++    }
++    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
++        self.call(|c| c.read(path))
++    }
++    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
++        self.call(|c| c.canonicalize(path))
++    }
++}
++impl GenericCapture for SuspendedCapture {
++    fn directory(&self, path: &Path) -> io::Result<Vec<CapturedDirectoryEntry>> {
++        self.call(|c| c.directory(path))
++    }
++    fn assert_observations_complete(&self) -> io::Result<()> {
++        self.call(|c| c.assert_observations_complete())
++    }
++}
++impl ObservationCapture for SuspendedCapture {
++    fn requirements(&self) -> Vec<Requirement> {
++        // An unowned operation cannot return to the original stack. Only the
++        // ordered actor's polling side can observe its suspended requirements.
++        vec![]
++    }
++}
++impl Drop for SuspendedFrame {
++    fn drop(&mut self) {
++        {
++            let mut state = self.capture.state.lock().unwrap();
++            state.cancelled = true;
++            self.capture.wake.notify_all();
++        }
++        if let Some(thread) = self.thread.take() {
++            let _ = thread.join();
++        }
++    }
++}
++impl SuspendedDiscovery {
++    pub fn discover(
++        &mut self,
++        mut request: DiscoverRequest,
++    ) -> Result<(Value, Option<MembershipOwner>), String> {
++        if request.operation != "discover-suspend"
++            || request.token.is_empty()
++            || !request.root.is_absolute()
++        {
++            return Err("invalid suspended discovery owner".into());
++        }
++        let identity = json!({"token":request.token,"root":request.root,"configPath":request.config_path,"config":request.config,"configBytes":request.config_bytes,"commandIgnorePatterns":request.command_ignore_patterns});
++        let delta = Capture::admit(std::mem::take(&mut request.observations))?;
++        if let Some(id) = request.observation_frame {
++            let frame = self.current.as_ref().ok_or("unknown suspended frame")?;
++            if id == 0 || frame.id != id || frame.identity != identity {
++                return Err(
++                    "suspended frame changed its token/root/configuration/ignore owner".into()
++                );
++            }
++            let mut state = frame.capture.state.lock().unwrap();
++            if delta.rows.keys().any(|key| state.capture.rows.contains_key(key)) {
++                return Err("suspended delta repeats owned observation".into());
++            }
++            state.capture.rows.extend(delta.rows);
++            state.capture.missing.get_mut().unwrap().clear();
++            frame.capture.wake.notify_all();
++        } else {
++            self.current = None;
++            let (config, _) = super::parse_configuration(
++                &request.config_path,
++                request.config.clone(),
++                request.config_bytes.clone(),
++            )?;
++            super::admit_configuration(&config)?;
++            let capture = Arc::new(SuspendedCapture {
++                state: Mutex::new(SuspendedState {
++                    capture: delta,
++                    cancelled: false,
++                    completed: None,
++                }),
++                wake: Condvar::new(),
++            });
++            let thread_capture = capture.clone();
++            request.operation = "discover".into();
++            let thread = std::thread::spawn(move || {
++                let completed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++                    discover_with_capture(request, thread_capture.clone())
++                }))
++                .unwrap_or_else(|_| Err("suspended original discovery panicked".into()));
++                let mut state = thread_capture.state.lock().unwrap();
++                state.completed = Some(completed);
++                thread_capture.wake.notify_all();
++            });
++            self.current = Some(SuspendedFrame { id: 0, identity, capture, thread: Some(thread) });
++        }
++        let frame = self.current.as_mut().unwrap();
++        let mut state = frame.capture.state.lock().unwrap();
++        let (mut result, membership) = loop {
++            if let Some(completed) = state.completed.take() {
++                break completed?;
++            }
++            let requirements = state.capture.requirements();
++            if !requirements.is_empty() {
++                break (
++                    json!({"status":"requirements","token":frame.identity["token"],"engineVersion":env!("CARGO_PKG_VERSION"),"requirements":requirements}),
++                    None,
++                );
++            }
++            state = frame.capture.wake.wait(state).unwrap();
++        };
++        self.next = self.next.checked_add(1).ok_or("suspended frame sequence exhausted")?;
++        frame.id = self.next;
++        result["observationFrame"] = json!(frame.id);
++        Ok((result, membership))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    fn frame_request(frame: Option<u64>, rows: Value) -> DiscoverRequest {
++        serde_json::from_value(json!({
++            "operation":"discover", "token":"capture", "root":"/captured/domain",
++            "configPath":"/captured/domain/.oxlintrc.json",
++            "config":{"categories":{"correctness":"off"}}, "commandIgnorePatterns":[],
++            "observations":rows, "observationFrame":frame,
++        }))
++        .unwrap()
++    }
++    fn metadata_row(path: &str) -> Value {
++        json!({"requirement":{"id":path,"kind":"metadata","path":path,"followLinks":true},"observation":{"id":path,"status":"known","value":{"isDirectory":true,"isFile":false,"isSymlink":false,"length":0}}})
++    }
++    #[test]
++    fn delta_frame_rejects_duplicate_and_stale_rows_without_mutating_ownership() {
++        let mut frames = DiscoveryFrames::default();
++        let (first, _) = frames.discover(frame_request(None, json!([]))).unwrap();
++        let first_id = first["observationFrame"].as_u64().unwrap();
++        let (second, _) = frames
++            .discover(frame_request(Some(first_id), json!([metadata_row("/captured/domain")])))
++            .unwrap();
++        let second_id = second["observationFrame"].as_u64().unwrap();
++        assert!(second_id > first_id);
++        assert!(frames.discover(frame_request(Some(first_id), json!([]))).is_err());
++        assert!(
++            frames
++                .discover(frame_request(Some(second_id), json!([metadata_row("/captured/domain")])))
++                .is_err()
++        );
++        assert_eq!(frames.current.as_ref().unwrap().id, second_id);
++        assert_eq!(frames.current.as_ref().unwrap().capture.rows.len(), 1);
++    }
++    #[test]
++    fn delta_frame_cannot_change_any_owner_coordinate() {
++        let mut frames = DiscoveryFrames::default();
++        let (first, _) = frames.discover(frame_request(None, json!([]))).unwrap();
++        let id = first["observationFrame"].as_u64().unwrap();
++        for field in ["token", "root", "configPath", "config", "commandIgnorePatterns"] {
++            let mut value = serde_json::to_value(json!({
++                "operation":"discover", "token":"capture", "root":"/captured/domain",
++                "configPath":"/captured/domain/.oxlintrc.json", "config":{"categories":{"correctness":"off"}},
++                "commandIgnorePatterns":[], "observations":[], "observationFrame":id,
++            })).unwrap();
++            value[field] = match field {
++                "config" => json!({}),
++                "commandIgnorePatterns" => json!(["ignored/**"]),
++                _ => json!("/other"),
++            };
++            let request = serde_json::from_value(value).unwrap();
++            assert!(frames.discover(request).is_err(), "{field}");
++        }
++        assert_eq!(frames.current.as_ref().unwrap().id, id);
++        assert!(frames.current.as_ref().unwrap().capture.rows.is_empty());
++    }
++    #[test]
++    fn delta_wave_is_atomic_and_new_token_or_actor_cannot_borrow_old_cells() {
++        let mut frames = DiscoveryFrames::default();
++        let (first, _) = frames.discover(frame_request(None, json!([]))).unwrap();
++        let id = first["observationFrame"].as_u64().unwrap();
++        let malformed = json!({"requirement":{"id":"bad","kind":"canonicalize","path":"/captured/bad"},"observation":{"id":"bad","status":"known","value":{"path":"relative"}}});
++        assert!(
++            frames
++                .discover(frame_request(
++                    Some(id),
++                    json!([metadata_row("/captured/domain"), malformed])
++                ))
++                .is_err()
++        );
++        assert!(frames.current.as_ref().unwrap().capture.rows.is_empty());
++        let (owned, _) = frames
++            .discover(frame_request(Some(id), json!([metadata_row("/captured/domain")])))
++            .unwrap();
++        let old = owned["observationFrame"].as_u64().unwrap();
++        assert!(DiscoveryFrames::default().discover(frame_request(Some(old), json!([]))).is_err());
++        let mut next = frame_request(None, json!([]));
++        next.token = "new-capture".into();
++        frames.discover(next).unwrap();
++        assert!(frames.current.as_ref().unwrap().capture.rows.is_empty());
++        assert!(frames.discover(frame_request(Some(old), json!([]))).is_err());
++    }
++    #[test]
++    fn unavailable_and_observed_absence_are_distinct() {
++        let empty = Capture::admit(vec![]).unwrap();
++        assert_eq!(
++            empty.metadata(Path::new("/captured/missing"), true).unwrap_err().kind(),
++            io::ErrorKind::WouldBlock
++        );
++        assert_eq!(empty.requirements().len(), 1);
++        let row = serde_json::from_value(json!({"requirement":{"id":"1","kind":"metadata","path":"/captured/missing","followLinks":true},"observation":{"id":"1","status":"error","error":{"kind":"not-found","code":"ENOENT","message":"actual captured absence"}}})).unwrap();
++        let known = Capture::admit(vec![row]).unwrap();
++        assert_eq!(
++            known.metadata(Path::new("/captured/missing"), true).unwrap_err().kind(),
++            io::ErrorKind::NotFound
++        );
++        assert!(known.requirements().is_empty());
++    }
++    #[test]
++    fn requirements_export_metadata_mode_only_when_observed() {
++        let capture = Capture::admit(vec![]).unwrap();
++        let _ = capture.read(Path::new("/captured/config"));
++        let _ = capture.metadata(Path::new("/captured/source"), true);
++        let requirements = serde_json::to_value(capture.requirements()).unwrap();
++        for row in requirements.as_array().unwrap() {
++            if row["kind"] == "metadata" {
++                assert_eq!(row["followLinks"], true);
++            } else {
++                assert!(row.get("followLinks").is_none());
++            }
++        }
++    }
++    #[test]
++    fn positive_baseline_is_a_residual_not_a_complete_membership() {
++        let request: DiscoverRequest = serde_json::from_value(json!({
++            "operation":"discover", "token":"capture", "root":"/captured/domain",
++            "configPath":"/captured/domain/.oxlintrc.json",
++            "config":{"categories":{"correctness":"off"}},
++            "commandIgnorePatterns":[],
++            "observations":[{"requirement":{"id":"baseline","kind":"metadata","path":"/captured/domain/oxlint-suppressions.json","followLinks":true},"observation":{"id":"baseline","status":"known","value":{"isDirectory":false,"isFile":true,"isSymlink":false,"length":2}}}]
++        })).unwrap();
++        let (result, owner) = discover_owned(request).unwrap();
++        assert_eq!(result["status"], "residual");
++        assert_eq!(result["token"], "capture");
++        assert!(owner.is_none());
++    }
++    #[test]
++    fn malformed_values_cannot_become_optional_io_failures() {
++        for (kind, value) in [
++            ("metadata", json!({"isDirectory":false,"isFile":true,"isSymlink":false,"length":-1})),
++            ("canonicalize", json!({"path":"relative"})),
++            ("read-bytes", json!({"bytesBase64":"not base64!"})),
++            ("directory", json!({"entries":[{"name":"../escape","kind":"file"}]})),
++        ] {
++            let row = serde_json::from_value(json!({"requirement":{"id":"1","kind":kind,"path":"/captured/value"},"observation":{"id":"1","status":"known","value":value}})).unwrap();
++            assert!(Capture::admit(vec![row]).is_err());
++        }
++    }
++}
++
++/// Private measured prototype only. All original walker filesystem requests
++/// are journaled before the original stack receives their result; ordinary
++/// client observations are forbidden. These receipts have no Go authority.
++#[derive(Debug)]
++struct JournalCapture {
++    capture: Mutex<Capture>,
++    go_owner: Option<Value>,
++    failure: Mutex<Option<String>>,
++    partial: Mutex<Vec<Value>>,
++}
++impl JournalCapture {
++    fn own<T>(
++        &self,
++        kind: &str,
++        path: &Path,
++        follow: bool,
++        operation: impl FnOnce() -> io::Result<Value>,
++        borrow: impl FnOnce(&Capture) -> io::Result<T>,
++    ) -> io::Result<T> {
++        let mut capture = self.capture.lock().unwrap();
++        let key = (kind.to_owned(), path.to_path_buf(), follow);
++        if !capture.rows.contains_key(&key) {
++            let id = format!("journal:{}", capture.rows.len());
++            let observation = if self.go_owner.is_some() && kind == "directory" {
++                self.go_probe(&id, kind, path, follow, None)?
++            } else {
++                match operation() {
++                    Ok(value) => {
++                        Observation { id, status: "known".into(), value: Some(value), error: None }
++                    }
++                    Err(error) => {
++                        if self.go_owner.is_some() {
++                            self.go_probe(&id, kind, path, follow, error.raw_os_error())?
++                        } else {
++                            let kind = match error.kind() {
++                                io::ErrorKind::NotFound => "not-found",
++                                io::ErrorKind::PermissionDenied => "permission-denied",
++                                io::ErrorKind::NotADirectory => "not-directory",
++                                io::ErrorKind::InvalidData => "invalid-data",
++                                _ => "other",
++                            };
++                            Observation {
++                                id,
++                                status: "error".into(),
++                                value: None,
++                                error: Some(
++                                    json!({"kind":kind,"code":error.raw_os_error().map(|n|n.to_string()).unwrap_or_else(||"RUST_IO".into()),"message":error.to_string()}),
++                                ),
++                            }
++                        }
++                    }
++                }
++            };
++            capture.rows.insert(key, observation);
++        }
++        borrow(&capture)
++    }
++    fn go_probe(
++        &self,
++        id: &str,
++        kind: &str,
++        path: &Path,
++        follow: bool,
++        errno: Option<i32>,
++    ) -> io::Result<Observation> {
++        use std::io::Write;
++        let owner = self.go_owner.as_ref().unwrap();
++        let requirement = Requirement {
++            id: id.into(),
++            kind: kind.into(),
++            path: path.into(),
++            follow_links: follow,
++        };
++        let result = (|| -> Result<Observation, String> {
++            let frame = json!({"status":"go-probe","owner":owner,"requirement":requirement,"attemptErrno":errno,"engineVersion":env!("CARGO_PKG_VERSION")});
++            {
++                let mut out = io::stdout().lock();
++                serde_json::to_writer(&mut out, &frame).map_err(|e| e.to_string())?;
++                writeln!(out).map_err(|e| e.to_string())?;
++                out.flush().map_err(|e| e.to_string())?;
++            }
++            let mut line = String::new();
++            if io::stdin().read_line(&mut line).map_err(|e| e.to_string())? == 0 {
++                return Err("Go producer channel closed".into());
++            }
++            #[derive(Deserialize)]
++            #[serde(deny_unknown_fields)]
++            struct Response {
++                operation: String,
++                owner: Value,
++                row: Row,
++            }
++            let response: Response = serde_json::from_str(&line).map_err(|e| e.to_string())?;
++            if response.operation != "probe-result"
++                || response.owner != *owner
++                || response.row.requirement != requirement
++            {
++                return Err("Go probe changed its private owner or operation".into());
++            }
++            let admitted = Capture::admit(vec![response.row])?;
++            Ok(admitted.rows.into_values().next().unwrap())
++        })();
++        result.map_err(|e| {
++            *self.failure.lock().unwrap() = Some(e.clone());
++            io::Error::new(io::ErrorKind::InvalidData, e)
++        })
++    }
++    fn journal(&self) -> Vec<Row> {
++        let capture = self.capture.lock().unwrap();
++        let mut rows: Vec<_> = capture
++            .rows
++            .iter()
++            .map(|((kind, path, follow), o)| Row {
++                requirement: Requirement {
++                    id: o.id.clone(),
++                    kind: kind.clone(),
++                    path: path.clone(),
++                    follow_links: *follow,
++                },
++                observation: o.clone(),
++            })
++            .collect();
++        rows.sort_by(|a, b| a.requirement.cmp(&b.requirement));
++        rows
++    }
++}
++impl CapturedFileSystem for JournalCapture {
++    fn metadata(&self, path: &Path, follow: bool) -> io::Result<CapturedMetadata> {
++        self.own("metadata",path,follow,|| {
++            let meta=if follow {std::fs::metadata(path)} else {std::fs::symlink_metadata(path)}?;
++            Ok(json!({"isDirectory":meta.is_dir(),"isFile":meta.is_file(),"isSymlink":meta.is_symlink(),"length":meta.len()}))
++        },|c|c.metadata(path,follow))
++    }
++    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
++        self.own(
++            "read-bytes",
++            path,
++            false,
++            || Ok(json!({"bytesBase64":STANDARD.encode(std::fs::read(path)?)})),
++            |c| c.read(path),
++        )
++    }
++    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
++        self.own(
++            "canonicalize",
++            path,
++            false,
++            || Ok(json!({"path":std::fs::canonicalize(path)?})),
++            |c| c.canonicalize(path),
++        )
++    }
++}
++impl GenericCapture for JournalCapture {
++    fn directory(&self, path: &Path) -> io::Result<Vec<CapturedDirectoryEntry>> {
++        self.own("directory",path,false,|| {
++            let mut entries=Vec::new();
++            for entry in std::fs::read_dir(path)? {
++                let entry=match entry {Ok(entry)=>entry, Err(error)=>{
++                    self.partial.lock().unwrap().push(json!({"path":path,"entries":entries,"kind":format!("{:?}",error.kind()),"code":error.raw_os_error(),"message":error.to_string()}));
++                    *self.failure.lock().unwrap()=Some("partial native directory enumeration is not bridgeable".into());return Err(error);
++                }};
++                let file_type=match entry.file_type() {Ok(t)=>t,Err(error)=>{
++                    self.partial.lock().unwrap().push(json!({"path":path,"entries":entries,"entry":entry.path(),"kind":format!("{:?}",error.kind()),"code":error.raw_os_error(),"message":error.to_string()}));
++                    *self.failure.lock().unwrap()=Some("native directory entry type is not bridgeable".into());return Err(error);
++                }};
++                let kind=if file_type.is_symlink() {"symlink"} else if file_type.is_dir() {"directory"} else if file_type.is_file() {"file"} else {"other"};
++                let name=entry.file_name().into_string().map_err(|_|io::Error::new(io::ErrorKind::InvalidData,"non UTF8 directory identity"))?;
++                entries.push(json!({"name":name,"kind":kind}));
++            }
++            entries.sort_by(|a,b|a["name"].as_str().cmp(&b["name"].as_str()));Ok(json!({"entries":entries}))
++        },|c|c.directory(path))
++    }
++    fn assert_observations_complete(&self) -> io::Result<()> {
++        if let Some(error) = self.failure.lock().unwrap().as_ref() {
++            return Err(io::Error::new(io::ErrorKind::InvalidData, error.clone()));
++        }
++        self.capture.lock().unwrap().assert_observations_complete()
++    }
++}
++impl ObservationCapture for JournalCapture {
++    fn requirements(&self) -> Vec<Requirement> {
++        vec![]
++    }
++}
++pub fn discover_journal(
++    mut request: DiscoverRequest,
++) -> Result<(Value, Option<MembershipOwner>), String> {
++    if request.operation != "discover-journal"
++        || !request.observations.is_empty()
++        || request.observation_frame.is_some()
++    {
++        return Err("journal owner forbids client observations or frames".into());
++    }
++    request.operation = "discover".into();
++    let capture = Arc::new(JournalCapture {
++        capture: Mutex::new(Capture::admit(vec![])?),
++        go_owner: None,
++        failure: Mutex::new(None),
++        partial: Mutex::new(vec![]),
++    });
++    let (mut output, owner) = discover_with_capture(request, capture.clone())?;
++    output["prototypeJournal"] = json!(capture.journal());
++    Ok((output, owner))
++}
++
++/// The Go-owned pipe is the only transport for operation fallbacks. Source
++/// bytes, original membership and original lint share this exact generation.
++pub fn discover_owned_lint(
++    worker: &mut super::Worker,
++    mut request: DiscoverRequest,
++) -> Result<Value, String> {
++    if request.operation != "discover-owned-lint"
++        || !request.observations.is_empty()
++        || request.observation_frame.is_some()
++    {
++        return Err("owned producer forbids client rows or frames".into());
++    }
++    let owner =
++        request.go_owner.take().ok_or("owned producer requires its private channel identity")?;
++    if !owner.is_object()
++        || owner.get("token").and_then(Value::as_str) != Some(request.token.as_str())
++    {
++        return Err("owned producer token differs".into());
++    }
++    let config = request.config.clone();
++    let config_bytes = request.config_bytes.clone();
++    let config_path = request.config_path.clone();
++    let root = request.root.clone();
++    let token = request.token.clone();
++    request.operation = "discover".into();
++    let capture = Arc::new(JournalCapture {
++        capture: Mutex::new(Capture::admit(vec![])?),
++        go_owner: Some(owner.clone()),
++        failure: Mutex::new(None),
++        partial: Mutex::new(vec![]),
++    });
++    let (membership, qualified) = discover_with_capture(request, capture.clone())?;
++    let qualified = qualified.ok_or("owned discovery lacks complete membership")?;
++    let paths: Vec<_> = qualified.paths.iter().cloned().collect();
++    let mut files = Vec::new();
++    for path in &paths {
++        let raw = capture.read(path).map_err(|e| e.to_string())?;
++        // Rust UTF8 matches the original fatal UTF8 decoder with ignoreBOM=true.
++        let source =
++            String::from_utf8(raw).map_err(|_| "original invalid UTF8 authority unavailable")?;
++        files.push(super::InputFile { path: path.clone(), content: Some(source), handle: None });
++    }
++    capture.assert_observations_complete().map_err(|e| e.to_string())?;
++    worker.memberships.retain(|_, old| old.root != root);
++    worker.memberships.insert(token.clone(), qualified);
++    let lint = super::lint(
++        worker,
++        super::Request {
++            operation: Some("lint".into()),
++            token: Some(token.clone()),
++            root,
++            config_path,
++            config,
++            config_bytes,
++            files,
++        },
++    )?;
++    Ok(
++        json!({"status":"owned-generic","owner":owner,"journalClosed":true,"token":token,"engineVersion":env!("CARGO_PKG_VERSION"),"membership":membership,"lint":lint,"journal":capture.journal()}),
++    )
++}
++
++// Native operational cells do not serialize through their own transport adapter.
++// The audit projection is produced once, after discovery/source capture. A joined
++// replay borrows immutable native successes and exact independently owned Go rows.
++type OwnedOperation = (String, PathBuf, bool);
++#[derive(Clone, Debug)]
++enum RawOwnedResult {
++    Metadata { directory: bool, file: bool, symlink: bool, length: u64 },
++    Bytes(Arc<Vec<u8>>),
++    Canonical(PathBuf),
++    Directory(Vec<CapturedDirectoryEntry>),
++    Failure { kind: io::ErrorKind, code: Option<i32>, message: String },
++}
++impl RawOwnedResult {
++    fn failure(error: io::Error) -> Self {
++        Self::Failure { kind: error.kind(), code: error.raw_os_error(), message: error.to_string() }
++    }
++    fn observation(&self, id: String) -> Observation {
++        let value = match self {
++            Self::Metadata { directory, file, symlink, length } => {
++                json!({"isDirectory":directory,"isFile":file,"isSymlink":symlink,"length":length})
++            }
++            Self::Bytes(bytes) => json!({"bytesBase64":STANDARD.encode(bytes.as_slice())}),
++            Self::Canonical(path) => json!({"path":path}),
++            Self::Directory(entries) => {
++                json!({"entries":entries.iter().map(|e|json!({"name":e.name.to_str().unwrap(),"kind":match e.kind {CapturedEntryKind::File=>"file",CapturedEntryKind::Directory=>"directory",CapturedEntryKind::Symlink=>"symlink",CapturedEntryKind::Other=>"other"}})).collect::<Vec<_>>()})
++            }
++            Self::Failure { kind, code, message } => {
++                let kind = match kind {
++                    io::ErrorKind::NotFound => "not-found",
++                    io::ErrorKind::PermissionDenied => "permission-denied",
++                    io::ErrorKind::NotADirectory => "not-directory",
++                    io::ErrorKind::InvalidData => "invalid-data",
++                    _ => "other",
++                };
++                return Observation {
++                    id,
++                    status: "error".into(),
++                    value: None,
++                    error: Some(
++                        json!({"kind":kind,"code":code.map(|n|n.to_string()).unwrap_or_else(||"RUST_IO".into()),"message":message}),
++                    ),
++                };
++            }
++        };
++        Observation { id, status: "known".into(), value: Some(value), error: None }
++    }
++    fn error(&self) -> Option<io::Error> {
++        match self {
++            Self::Failure { kind, message, .. } => Some(io::Error::new(*kind, message.clone())),
++            _ => None,
++        }
++    }
++}
++#[derive(Debug)]
++struct RawOwnedCell {
++    id: String,
++    result: RawOwnedResult,
++}
++#[derive(Debug)]
++struct TypedJournalCapture {
++    cells: Mutex<HashMap<OwnedOperation, RawOwnedCell>>,
++    used: Mutex<BTreeSet<OwnedOperation>>,
++    missing: Mutex<BTreeSet<OwnedOperation>>,
++    joined: Mutex<Option<Capture>>,
++    partial: Mutex<Vec<Value>>,
++    failure: Mutex<Option<String>>,
++}
++impl TypedJournalCapture {
++    fn new() -> Self {
++        Self {
++            cells: Mutex::new(HashMap::new()),
++            used: Mutex::new(BTreeSet::new()),
++            missing: Mutex::new(BTreeSet::new()),
++            joined: Mutex::new(None),
++            partial: Mutex::new(vec![]),
++            failure: Mutex::new(None),
++        }
++    }
++    fn call<T>(
++        &self,
++        kind: &str,
++        path: &Path,
++        follow: bool,
++        operation: impl FnOnce() -> io::Result<RawOwnedResult>,
++        native: impl FnOnce(RawOwnedResult) -> io::Result<T>,
++        go: impl FnOnce(&Capture) -> io::Result<T>,
++    ) -> io::Result<T> {
++        let key = (kind.to_owned(), path.to_path_buf(), follow);
++        self.used.lock().unwrap().insert(key.clone());
++        let joined = self.joined.lock().unwrap();
++        if let Some(go_rows) = joined.as_ref() {
++            if go_rows.rows.contains_key(&key) {
++                return go(go_rows);
++            }
++        }
++        let mut cells = self.cells.lock().unwrap();
++        if !cells.contains_key(&key) {
++            if joined.is_some() {
++                self.missing.lock().unwrap().insert(key);
++                return Err(io::ErrorKind::WouldBlock.into());
++            }
++            let id = format!("journal:{}", cells.len());
++            let result = operation().unwrap_or_else(RawOwnedResult::failure);
++            cells.insert(key.clone(), RawOwnedCell { id, result });
++        }
++        let result = cells.get(&key).unwrap().result.clone();
++        drop(cells);
++        drop(joined);
++        if let Some(error) = result.error() {
++            return Err(error);
++        }
++        native(result)
++    }
++    fn journal(&self) -> Vec<Row> {
++        let cells = self.cells.lock().unwrap();
++        let mut rows: Vec<_> = cells
++            .iter()
++            .map(|((kind, path, follow), c)| Row {
++                requirement: Requirement {
++                    id: c.id.clone(),
++                    kind: kind.clone(),
++                    path: path.clone(),
++                    follow_links: *follow,
++                },
++                observation: c.result.observation(c.id.clone()),
++            })
++            .collect();
++        rows.sort_by(|a, b| a.requirement.cmp(&b.requirement));
++        rows
++    }
++    fn join(&self, rows: Vec<Row>) -> Result<(), String> {
++        let replacements = Capture::admit(rows)?;
++        let cells = self.cells.lock().unwrap();
++        let expected: BTreeSet<_> = cells
++            .iter()
++            .filter(|(key, c)| {
++                key.0 == "directory" || matches!(c.result, RawOwnedResult::Failure { .. })
++            })
++            .map(|(key, _)| key.clone())
++            .collect();
++        if expected != replacements.rows.keys().cloned().collect() {
++            return Err("batch join lacks exact bridge operation closure".into());
++        }
++        for (key, row) in &replacements.rows {
++            let cell = cells.get(key).ok_or("batch join invented operation")?;
++            if cell.id != row.id {
++                return Err("batch join changed operation identity".into());
++            }
++        }
++        drop(cells);
++        let mut joined = self.joined.lock().unwrap();
++        if joined.is_some() {
++            return Err("batch already joined".into());
++        }
++        *joined = Some(replacements);
++        self.used.lock().unwrap().clear();
++        Ok(())
++    }
++}
++impl CapturedFileSystem for TypedJournalCapture {
++    fn metadata(&self, path: &Path, follow: bool) -> io::Result<CapturedMetadata> {
++        self.call(
++            "metadata",
++            path,
++            follow,
++            || {
++                let m =
++                    if follow { std::fs::metadata(path) } else { std::fs::symlink_metadata(path) }?;
++                Ok(RawOwnedResult::Metadata {
++                    directory: m.is_dir(),
++                    file: m.is_file(),
++                    symlink: m.is_symlink(),
++                    length: m.len(),
++                })
++            },
++            |r| match r {
++                RawOwnedResult::Metadata { directory, file, length, .. } => {
++                    Ok(CapturedMetadata { is_dir: directory, is_file: file, len: length })
++                }
++                _ => Err(io::ErrorKind::InvalidData.into()),
++            },
++            |c| c.metadata(path, follow),
++        )
++    }
++    fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
++        self.call(
++            "read-bytes",
++            path,
++            false,
++            || Ok(RawOwnedResult::Bytes(Arc::new(std::fs::read(path)?))),
++            |r| match r {
++                RawOwnedResult::Bytes(bytes) => Ok(bytes.as_ref().clone()),
++                _ => Err(io::ErrorKind::InvalidData.into()),
++            },
++            |c| c.read(path),
++        )
++    }
++    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf> {
++        self.call(
++            "canonicalize",
++            path,
++            false,
++            || Ok(RawOwnedResult::Canonical(std::fs::canonicalize(path)?)),
++            |r| match r {
++                RawOwnedResult::Canonical(p) => Ok(p),
++                _ => Err(io::ErrorKind::InvalidData.into()),
++            },
++            |c| c.canonicalize(path),
++        )
++    }
++}
++impl GenericCapture for TypedJournalCapture {
++    fn directory(&self, path: &Path) -> io::Result<Vec<CapturedDirectoryEntry>> {
++        self.call("directory",path,false,||{
++        let mut entries=vec![];
++        for entry in std::fs::read_dir(path)? {
++            let entry=match entry {Ok(entry)=>entry,Err(error)=>{self.partial.lock().unwrap().push(json!({"path":path,"entries":entries.iter().map(|e:&CapturedDirectoryEntry|json!({"name":e.name.to_str(),"kind":format!("{:?}",e.kind)})).collect::<Vec<_>>(),"kind":format!("{:?}",error.kind()),"code":error.raw_os_error(),"message":error.to_string()}));*self.failure.lock().unwrap()=Some("partial native directory is not bridgeable".into());return Err(error);}};
++            let file_type=match entry.file_type() {Ok(t)=>t,Err(error)=>{self.partial.lock().unwrap().push(json!({"path":path,"entries":entries.iter().map(|e:&CapturedDirectoryEntry|json!({"name":e.name.to_str(),"kind":format!("{:?}",e.kind)})).collect::<Vec<_>>(),"entry":entry.path(),"kind":format!("{:?}",error.kind()),"code":error.raw_os_error(),"message":error.to_string()}));*self.failure.lock().unwrap()=Some("native directory type gap is not bridgeable".into());return Err(error);}};
++            let name=entry.file_name();if name.to_str().is_none() {*self.failure.lock().unwrap()=Some("non UTF8 native directory identity is not bridgeable".into());return Err(io::Error::new(io::ErrorKind::InvalidData,"non UTF8 directory identity"));}
++            let kind=if file_type.is_symlink() {CapturedEntryKind::Symlink} else if file_type.is_dir() {CapturedEntryKind::Directory} else if file_type.is_file() {CapturedEntryKind::File} else {CapturedEntryKind::Other};entries.push(CapturedDirectoryEntry {name,kind});
++        }
++        entries.sort_by(|a,b|a.name.cmp(&b.name));Ok(RawOwnedResult::Directory(entries))
++    },|r|match r {RawOwnedResult::Directory(e)=>Ok(e),_=>Err(io::ErrorKind::InvalidData.into())},|c|c.directory(path))
++    }
++    fn assert_observations_complete(&self) -> io::Result<()> {
++        if let Some(e) = self.failure.lock().unwrap().as_ref() {
++            return Err(io::Error::new(io::ErrorKind::InvalidData, e.clone()));
++        }
++        if self.missing.lock().unwrap().is_empty() {
++            Ok(())
++        } else {
++            Err(io::ErrorKind::WouldBlock.into())
++        }
++    }
++}
++impl ObservationCapture for TypedJournalCapture {
++    fn requirements(&self) -> Vec<Requirement> {
++        self.missing
++            .lock()
++            .unwrap()
++            .iter()
++            .enumerate()
++            .map(|(i, (kind, path, follow))| Requirement {
++                id: format!("missing:{i}"),
++                kind: kind.clone(),
++                path: path.clone(),
++                follow_links: *follow,
++            })
++            .collect()
++    }
++}
++
++/// Draft rows stay private to this stack. Only the Go-owned channel can request
++/// a replay against actual Go errors/directories or discard the entire draft.
++pub fn discover_owned_batch(
++    worker: &mut super::Worker,
++    mut request: DiscoverRequest,
++) -> Result<Value, String> {
++    use std::io::Write;
++    if request.operation != "discover-owned-batch"
++        || !request.observations.is_empty()
++        || request.observation_frame.is_some()
++    {
++        return Err("owned batch forbids client rows or frames".into());
++    }
++    let owner =
++        request.go_owner.take().ok_or("owned batch requires its private channel identity")?;
++    if !owner.is_object()
++        || owner.get("token").and_then(Value::as_str) != Some(request.token.as_str())
++    {
++        return Err("owned batch token differs".into());
++    }
++    request.operation = "discover".into();
++    let capture = Arc::new(TypedJournalCapture::new());
++    let discovered = discover_with_capture(request.clone(), capture.clone());
++    let discovery_used = capture.used.lock().unwrap().clone();
++    let mut sources = HashMap::new();
++    let draft_error = match &discovered {
++        Ok((_, Some(qualified))) => qualified
++            .paths
++            .iter()
++            .try_for_each(|path| {
++                let bytes = capture.read(path).map_err(|e| e.to_string())?;
++                let text = String::from_utf8(bytes)
++                    .map_err(|_| "original invalid UTF8 authority unavailable".to_string())?;
++                sources.insert(path.clone(), text);
++                Ok(())
++            })
++            .err(),
++        Ok(_) => Some("draft discovery lacks qualified membership".into()),
++        Err(e) => Some(e.clone()),
++    };
++    let draft_error = draft_error.or_else(|| capture.failure.lock().unwrap().clone());
++    let journal = capture.journal();
++    #[derive(Serialize)]
++    #[serde(rename_all = "camelCase")]
++    struct Draft<'a> {
++        status: &'a str,
++        owner: &'a Value,
++        engine_version: &'a str,
++        token: &'a str,
++        journal_closed: bool,
++        journal: &'a [Row],
++        draft_error: &'a Option<String>,
++        partial_directories: Vec<Value>,
++    }
++    let cell_count = journal.len();
++    let draft = Draft {
++        status: "owned-draft",
++        owner: &owner,
++        engine_version: env!("CARGO_PKG_VERSION"),
++        token: &request.token,
++        journal_closed: false,
++        journal: &journal,
++        draft_error: &draft_error,
++        partial_directories: capture.partial.lock().unwrap().clone(),
++    };
++    {
++        let mut out = io::stdout().lock();
++        serde_json::to_writer(&mut out, &draft).map_err(|e| e.to_string())?;
++        writeln!(out).map_err(|e| e.to_string())?;
++        out.flush().map_err(|e| e.to_string())?;
++    }
++    drop(draft);
++    drop(journal);
++    let mut line = String::new();
++    if io::stdin().read_line(&mut line).map_err(|e| e.to_string())? == 0 {
++        return Err("Go batch channel closed".into());
++    }
++    #[derive(Deserialize)]
++    #[serde(deny_unknown_fields)]
++    struct Join {
++        operation: String,
++        owner: Value,
++        rows: Vec<Row>,
++        fallback: bool,
++    }
++    let join: Join = serde_json::from_str(&line).map_err(|e| e.to_string())?;
++    if join.operation != "reconcile" || join.owner != owner {
++        return Err("batch join changed private owner".into());
++    }
++    if join.fallback {
++        if !join.rows.is_empty() {
++            return Err("abandoned batch cannot retain staged rows".into());
++        }
++        request.operation = "discover-owned-lint".into();
++        request.go_owner = Some(owner);
++        return discover_owned_lint(worker, request);
++    }
++    if draft_error.is_some() {
++        return Err("failed native draft cannot be joined".into());
++    }
++    capture.join(join.rows)?;
++    let replay = capture.clone();
++    let (membership, qualified) = discover_with_capture(request.clone(), replay.clone())?;
++    let qualified = qualified.ok_or("batch replay lacks qualified membership")?;
++    if replay.used.lock().unwrap().clone() != discovery_used
++        || discovered.as_ref().unwrap().0 != membership
++    {
++        return Err("original batch traversal trace diverged".into());
++    }
++    let mut files = vec![];
++    for path in &qualified.paths {
++        files.push(super::InputFile {
++            path: path.clone(),
++            content: Some(sources.remove(path).ok_or("batch replay changed source identity")?),
++            handle: None,
++        });
++    }
++    if !sources.is_empty() {
++        return Err("batch retained unused source cells".into());
++    }
++    worker.memberships.retain(|_, old| old.root != request.root);
++    worker.memberships.insert(request.token.clone(), qualified);
++    let lint = super::lint(
++        worker,
++        super::Request {
++            operation: Some("lint".into()),
++            token: Some(request.token.clone()),
++            root: request.root,
++            config_path: request.config_path,
++            config: request.config,
++            config_bytes: request.config_bytes,
++            files,
++        },
++    )?;
++    Ok(
++        json!({"status":"owned-generic","owner":owner,"journalClosed":true,"journalRetained":true,"journalCount":cell_count,"token":request.token,"engineVersion":env!("CARGO_PKG_VERSION"),"membership":membership,"lint":lint,"journal":[]}),
++    )
++}
++
++#[cfg(test)]
++mod typed_owned_tests {
++    use super::*;
++    fn root() -> PathBuf {
++        let path = std::env::temp_dir().join(format!(
++            "astrale-typed-owned-{}-{}",
++            std::process::id(),
++            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
++        ));
++        std::fs::create_dir(&path).unwrap();
++        path
++    }
++    #[test]
++    fn raw_cell_owns_bytes_and_borrow_cannot_replace_capture() {
++        let root = root();
++        let path = root.join("source.ts");
++        std::fs::write(&path, b"const a=1").unwrap();
++        let capture = TypedJournalCapture::new();
++        let mut borrowed = capture.read(&path).unwrap();
++        borrowed[0] = b'X';
++        std::fs::write(&path, b"const a=2").unwrap();
++        assert_eq!(capture.read(&path).unwrap(), b"const a=1");
++        let journal = capture.journal();
++        assert_eq!(journal.len(), 1);
++        assert_eq!(
++            journal[0].observation.value.as_ref().unwrap()["bytesBase64"],
++            STANDARD.encode(b"const a=1")
++        );
++        capture.join(vec![]).unwrap();
++        let hidden = root.join("newly-ignored.ts");
++        std::fs::write(&hidden, b"const ignored=1").unwrap();
++        assert_eq!(capture.read(&hidden).unwrap_err().kind(), io::ErrorKind::WouldBlock);
++        assert_eq!(capture.cells.lock().unwrap().len(), 1);
++        assert_eq!(capture.requirements()[0].path, hidden);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn go_failure_is_consumed_without_rewriting_native_error() {
++        let root = root();
++        let path = root.join("missing.ts");
++        let capture = TypedJournalCapture::new();
++        let native_message = capture.read(&path).unwrap_err().to_string();
++        let mut rows = capture.journal();
++        assert_eq!(rows.len(), 1);
++        let go_message = format!("open {}: no such file or directory", path.display());
++        rows[0].observation.error =
++            Some(json!({"kind":"not-found","code":"ENOENT","message":go_message}));
++        capture.join(rows).unwrap();
++        assert_eq!(capture.read(&path).unwrap_err().to_string(), go_message);
++        assert_eq!(
++            capture.journal()[0].observation.error.as_ref().unwrap()["message"],
++            native_message
++        );
++        assert_ne!(native_message, go_message);
++        std::fs::remove_dir_all(root).unwrap();
++    }
++    #[test]
++    fn duplicate_or_invented_join_is_atomic_and_exact_closure_required() {
++        let root = root();
++        let path = root.join("missing.ts");
++        let capture = TypedJournalCapture::new();
++        let before = capture.read(&path).unwrap_err().to_string();
++        let row = capture.journal().remove(0);
++        assert!(capture.join(vec![]).is_err());
++        assert!(capture.join(vec![row.clone(), row.clone()]).is_err());
++        let mut wrong = row.clone();
++        wrong.requirement.path = root.join("unobserved.ts");
++        assert!(capture.join(vec![wrong]).is_err());
++        assert!(capture.joined.lock().unwrap().is_none());
++        assert_eq!(capture.read(&path).unwrap_err().to_string(), before);
++        let mut go = row;
++        go.observation.error =
++            Some(json!({"kind":"not-found","code":"ENOENT","message":"exact original Go outcome"}));
++        capture.join(vec![go]).unwrap();
++        assert!(capture.join(vec![]).is_err());
++        std::fs::remove_dir_all(root).unwrap();
++    }
++}
+diff --git a/crates/oxc_linter/examples/captured.rs b/crates/oxc_linter/examples/captured.rs
+new file mode 100644
+--- /dev/null
++++ b/crates/oxc_linter/examples/captured.rs
+@@ -0,0 +1,475 @@
++#![expect(clippy::print_stdout)]
++//! Local protocol experiment: the original linter and JSON reporter consume
++//! only source bytes supplied by the owner of a captured generation.
++use std::{
++    collections::HashMap,
++    ffi::OsStr,
++    io::{self, Write},
++    path::{Path, PathBuf},
++    sync::{
++        Arc,
++        atomic::{AtomicUsize, Ordering},
++        mpsc,
++    },
++    time::Instant,
++};
++
++use oxc_allocator::Allocator;
++use oxc_diagnostics::JSONReportHandler;
++use oxc_linter::{
++    ConfigStore, ConfigStoreBuilder, ExternalPluginStore, LintOptions, LintService,
++    LintServiceOptions, Linter, Oxlintrc, RuntimeFileSystem,
++};
++use serde::Deserialize;
++use serde_json::{Value, json};
++#[path = "captured/authority.rs"]
++mod authority;
++
++#[derive(Deserialize)]
++#[serde(rename_all = "camelCase", deny_unknown_fields)]
++struct Request {
++    operation: Option<String>,
++    token: Option<String>,
++    root: PathBuf,
++    config_path: PathBuf,
++    config: Option<Value>,
++    config_bytes: Option<Vec<u8>>,
++    files: Vec<InputFile>,
++}
++
++#[derive(Deserialize)]
++#[serde(deny_unknown_fields)]
++struct InputFile {
++    path: PathBuf,
++    content: Option<String>,
++    handle: Option<u64>,
++}
++
++struct CapturedFileSystem {
++    files: HashMap<PathBuf, Arc<str>>,
++    reads: AtomicUsize,
++}
++
++impl RuntimeFileSystem for CapturedFileSystem {
++    fn read_to_arena_str<'a>(&self, path: &Path, allocator: &'a Allocator) -> io::Result<&'a str> {
++        self.reads.fetch_add(1, Ordering::Relaxed);
++        let source = self.files.get(path).ok_or_else(|| {
++            io::Error::new(io::ErrorKind::NotFound, "source is outside the captured input domain")
++        })?;
++        Ok(allocator.alloc_str(source))
++    }
++
++    fn write_file(&self, _path: &Path, _content: &str) -> io::Result<()> {
++        Err(io::Error::new(io::ErrorKind::PermissionDenied, "captured lint input is immutable"))
++    }
++}
++
++#[derive(Default)]
++struct Worker {
++    roots: HashMap<PathBuf, RootCache>,
++    memberships: HashMap<String, authority::MembershipOwner>,
++    discovery_frames: authority::DiscoveryFrames,
++    suspended_discovery: authority::SuspendedDiscovery,
++    next_handle: u64,
++}
++
++#[derive(Default)]
++struct RootCache {
++    config: Option<(PathBuf, Value)>,
++    files: HashMap<PathBuf, OwnedFile>,
++}
++
++struct OwnedFile {
++    handle: u64,
++    source: Arc<str>,
++    diagnostics: Vec<Value>,
++}
++
++fn parse_configuration(
++    path: &Path,
++    data: Option<Value>,
++    bytes: Option<Vec<u8>>,
++) -> Result<(Oxlintrc, Value), String> {
++    if !path.is_absolute() {
++        return Err("configuration identity must be absolute".into());
++    }
++    let (mut config, config_input) = match (data, bytes) {
++        (Some(value), None) => {
++            let parsed = serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
++            (parsed, value)
++        }
++        (None, Some(bytes)) => {
++            let parsed =
++                Oxlintrc::from_captured_bytes(path, bytes.clone()).map_err(|e| e.to_string())?;
++            (parsed, json!({"capturedConfigBytes": bytes}))
++        }
++        _ => {
++            return Err("supply either admitted preset data or captured configuration bytes".into());
++        }
++    };
++    config.path = path.to_path_buf();
++    config.set_config_dir(path.parent().unwrap());
++    Ok((config, config_input))
++}
++
++fn admit_configuration(config: &Oxlintrc) -> Result<(), String> {
++    if !config.extends.is_empty() || config.external_plugins.as_ref().is_some_and(|p| !p.is_empty())
++    {
++        return Err("this experiment has no owner for extended configurations or JS plugins".into());
++    }
++    if config.options.type_aware == Some(true) || config.options.type_check == Some(true) {
++        return Err("this experiment has no owner for tsgolint observations".into());
++    }
++    if config.options.report_unused_disable_directives.is_some() {
++        return Err("this experiment has no captured unused-directive report owner".into());
++    }
++    if config.plugins.is_some_and(|p| p.contains(oxc_linter::LintPlugins::IMPORT)) {
++        return Err("this experiment has no captured module-resolution owner".into());
++    }
++    Ok(())
++}
++
++fn lint(worker: &mut Worker, request: Request) -> Result<Value, String> {
++    if request.operation.as_deref().is_some_and(|op| op != "lint") {
++        return Err("unknown captured lint operation".into());
++    }
++    let started = Instant::now();
++    if !request.root.is_absolute() || !request.config_path.is_absolute() {
++        return Err("root and configuration identity must be absolute".into());
++    }
++    let (mut config, config_input) =
++        parse_configuration(&request.config_path, request.config, request.config_bytes)?;
++    admit_configuration(&config)?;
++    config.path = request.config_path.clone();
++    let mut plugins = ExternalPluginStore::default();
++    let configuration =
++        ConfigStoreBuilder::from_closed_captured_oxlintrc(false, config, &mut plugins)
++            .map_err(|e| format!("{e:?}"))?
++            .build(&mut plugins)
++            .map_err(|e| format!("{e:?}"))?;
++    let store = ConfigStore::new(configuration, Default::default(), plugins);
++    if store.plugins().contains(oxc_linter::LintPlugins::IMPORT) {
++        return Err("this experiment has no captured module-resolution owner".into());
++    }
++    let number_of_rules = store.number_of_rules(false);
++    let service = LintService::new(
++        Linter::new(LintOptions::default(), store, None),
++        LintServiceOptions::new(request.root.as_path()),
++    );
++    let cached = worker.roots.get(&request.root);
++    let config_key = (request.config_path.clone(), config_input);
++    if let Some(token) = &request.token {
++        let membership = worker
++            .memberships
++            .get(token)
++            .ok_or("token has no qualified captured generic membership")?;
++        let paths: std::collections::BTreeSet<_> =
++            request.files.iter().map(|f| f.path.clone()).collect();
++        if membership.root != request.root
++            || membership.config_key != config_key
++            || membership.paths != paths
++            || paths.len() != request.files.len()
++        {
++            return Err("tokened lint changed owned root/configuration/membership".into());
++        }
++    }
++    let same_config = cached.is_some_and(|root| root.config.as_ref() == Some(&config_key));
++    let mut all_paths = Vec::new();
++    let mut paths = Vec::<Arc<OsStr>>::new();
++    let mut files = HashMap::new();
++    let mut retained_handles = HashMap::new();
++    let mut cached_diagnostics = HashMap::new();
++    let mut reused = 0;
++    for file in request.files {
++        if !file.path.is_absolute() || files.contains_key(&file.path) {
++            return Err("captured file identities must be absolute and unique".into());
++        }
++        let previous = cached.and_then(|root| root.files.get(&file.path));
++        let source: Arc<str> = match (file.content, file.handle) {
++            (Some(content), None) => Arc::from(content),
++            (None, Some(handle)) => {
++                let owner = previous.filter(|old| old.handle == handle).ok_or(
++                    "captured source handle is unknown, stale, or belongs to another path/root",
++                )?;
++                Arc::clone(&owner.source)
++            }
++            _ => {
++                return Err(
++                    "supply either owned source bytes or a previously issued source handle".into(),
++                );
++            }
++        };
++        let same_source = previous.is_some_and(|old| old.source.as_ref() == source.as_ref());
++        if same_source {
++            let old = previous.unwrap();
++            retained_handles.insert(file.path.clone(), old.handle);
++            if same_config {
++                cached_diagnostics.insert(file.path.clone(), old.diagnostics.clone());
++                reused += 1;
++            }
++        }
++        if !same_source || !same_config {
++            paths.push(Arc::from(file.path.as_os_str()));
++        }
++        all_paths.push(file.path.clone());
++        files.insert(file.path, source);
++    }
++    let number_of_files = all_paths.len();
++    let evaluated_files = paths.len();
++    let file_system = CapturedFileSystem { files, reads: AtomicUsize::new(0) };
++    let (sender, receiver) = mpsc::channel();
++    service.run_captured_sources(&file_system, paths, &sender);
++    drop(sender);
++    let handler = JSONReportHandler::new();
++    let mut fresh_diagnostics: HashMap<PathBuf, Vec<Value>> = HashMap::new();
++    for batch in receiver {
++        for error in batch {
++            let mut rendered = String::new();
++            handler.render_report(&mut rendered, error.as_ref()).map_err(|e| e.to_string())?;
++            let diagnostic = serde_json::from_str::<Value>(&rendered).map_err(|e| e.to_string())?;
++            let filename = diagnostic
++                .get("filename")
++                .and_then(Value::as_str)
++                .ok_or("diagnostic has no captured source identity; cannot cache its projection")?;
++            let path = request.root.join(filename);
++            if !file_system.files.contains_key(&path) {
++                return Err("diagnostic source is outside the captured input domain".into());
++            }
++            fresh_diagnostics.entry(path).or_default().push(diagnostic);
++        }
++    }
++    let mut diagnostics = Vec::new();
++    let mut handles = Vec::new();
++    let mut published_files = HashMap::new();
++    // Commit only after the whole request has been admitted and evaluated.
++    // Evicted membership cannot subsequently be revived by a stale handle.
++    for path in all_paths {
++        let per_file = cached_diagnostics
++            .remove(&path)
++            .unwrap_or_else(|| fresh_diagnostics.remove(&path).unwrap_or_default());
++        diagnostics.extend(per_file.iter().cloned());
++        let handle = if let Some(handle) = retained_handles.remove(&path) {
++            handle
++        } else {
++            worker.next_handle =
++                worker.next_handle.checked_add(1).ok_or("source handle space exhausted")?;
++            worker.next_handle
++        };
++        handles.push(json!({"path": path, "handle": handle}));
++        published_files.insert(
++            path.clone(),
++            OwnedFile {
++                handle,
++                source: Arc::clone(file_system.files.get(&path).unwrap()),
++                diagnostics: per_file,
++            },
++        );
++    }
++    worker
++        .roots
++        .insert(request.root, RootCache { config: Some(config_key), files: published_files });
++    Ok(json!({
++        "output": {"diagnostics": diagnostics, "number_of_files": number_of_files,
++                   "number_of_rules": number_of_rules},
++        "captureReads": file_system.reads.load(Ordering::Relaxed),
++        "evaluatedFiles": evaluated_files,
++        "reusedDecisions": reused,
++        "fileHandles": handles,
++        "elapsedMs": started.elapsed().as_secs_f64() * 1000.0,
++        "token": request.token,
++        "membershipQualified": request.token.is_some(),
++        "complete": false,
++        "engineVersion": env!("CARGO_PKG_VERSION"),
++        "premises": "Caller supplies admitted generic membership and closed builtin configuration; import resolution, JS plugins, tsgolint and suppression-file baselines are unqualified."
++    }))
++}
++
++fn main() -> io::Result<()> {
++    let stdin = io::stdin();
++    let mut stdout = io::stdout();
++    let mut worker = Worker::default();
++    loop {
++        let mut line = String::new();
++        if stdin.read_line(&mut line)? == 0 {
++            break;
++        }
++        let result =
++            serde_json::from_str::<Value>(&line).map_err(|e| e.to_string()).and_then(|value| {
++                if value.get("operation").and_then(Value::as_str) == Some("discover-owned-batch") {
++                    let request = serde_json::from_value(value).map_err(|e| e.to_string())?;
++                    authority::discover_owned_batch(&mut worker, request)
++                } else if value.get("operation").and_then(Value::as_str)
++                    == Some("discover-owned-lint")
++                {
++                    let request = serde_json::from_value(value).map_err(|e| e.to_string())?;
++                    authority::discover_owned_lint(&mut worker, request)
++                } else if matches!(
++                    value.get("operation").and_then(Value::as_str),
++                    Some("discover" | "discover-suspend" | "discover-journal")
++                ) {
++                    let suspend =
++                        value.get("operation").and_then(Value::as_str) == Some("discover-suspend");
++                    let journal =
++                        value.get("operation").and_then(Value::as_str) == Some("discover-journal");
++                    let request: authority::DiscoverRequest =
++                        serde_json::from_value(value).map_err(|e| e.to_string())?;
++                    let token = request.token.clone();
++                    let (result, membership) = if journal {
++                        authority::discover_journal(request)?
++                    } else if suspend {
++                        worker.suspended_discovery.discover(request)?
++                    } else {
++                        worker.discovery_frames.discover(request)?
++                    };
++                    if let Some(owner) = membership {
++                        worker.memberships.retain(|_, old| old.root != owner.root);
++                        worker.memberships.insert(token, owner);
++                    }
++                    Ok(result)
++                } else {
++                    serde_json::from_value::<Request>(value)
++                        .map_err(|e| e.to_string())
++                        .and_then(|request| lint(&mut worker, request))
++                }
++            });
++        let output = match result {
++            Ok(value) => value,
++            Err(error) => json!({"error": error, "complete": false}),
++        };
++        serde_json::to_writer(&mut stdout, &output)?;
++        writeln!(stdout)?;
++        stdout.flush()?;
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn request(files: Value, config: Value) -> Request {
++        serde_json::from_value(json!({
++            "root": "/captured/domain", "configPath": "/captured/domain/.oxlintrc.json",
++            "config": config, "files": files,
++        }))
++        .unwrap()
++    }
++
++    fn config() -> Value {
++        json!({"categories": {"correctness": "off"}, "rules": {"no-debugger": "error"}})
++    }
++
++    #[test]
++    fn cached_bytes_own_decisions_and_configuration_invalidates() {
++        let mut worker = Worker::default();
++        let first = lint(
++            &mut worker,
++            request(
++                json!([
++                    {"path": "/captured/domain/a.ts", "content": "debugger;export {};"},
++                    {"path": "/captured/domain/b.ts", "content": "export const b = 1;"},
++                ]),
++                config(),
++            ),
++        )
++        .unwrap();
++        assert_eq!(first["output"]["diagnostics"].as_array().unwrap().len(), 1);
++        let handles = first["fileHandles"].clone();
++        let second = lint(&mut worker, request(handles.clone(), config())).unwrap();
++        assert_eq!(first["output"], second["output"]);
++        assert_eq!(second["captureReads"], 0);
++        assert_eq!(second["reusedDecisions"], 2);
++        let changed = lint(
++            &mut worker,
++            request(
++                json!([
++                    handles[0], {"path": "/captured/domain/b.ts", "content": "debugger;export {};"},
++                ]),
++                config(),
++            ),
++        )
++        .unwrap();
++        assert_eq!(changed["evaluatedFiles"], 1);
++        assert_eq!(changed["reusedDecisions"], 1);
++        let different_config =
++            json!({"categories": {"correctness": "off"}, "rules": {"no-debugger": "off"}});
++        let cleared =
++            lint(&mut worker, request(changed["fileHandles"].clone(), different_config)).unwrap();
++        assert_eq!(cleared["evaluatedFiles"], 2);
++        assert!(cleared["output"]["diagnostics"].as_array().unwrap().is_empty());
++    }
++
++    #[test]
++    fn rejected_identity_is_atomic_and_removed_handles_cannot_revive() {
++        let mut worker = Worker::default();
++        let first = lint(
++            &mut worker,
++            request(
++                json!([
++                    {"path": "/captured/domain/a.ts", "content": "debugger;export {};"},
++                ]),
++                config(),
++            ),
++        )
++        .unwrap();
++        let handle = first["fileHandles"][0]["handle"].clone();
++        assert!(
++            lint(
++                &mut worker,
++                request(
++                    json!([
++                        {"path": "/captured/domain/b.ts", "handle": handle},
++                    ]),
++                    config()
++                )
++            )
++            .is_err()
++        );
++        let retained = lint(&mut worker, request(first["fileHandles"].clone(), config())).unwrap();
++        assert_eq!(retained["evaluatedFiles"], 0);
++        lint(&mut worker, request(json!([]), config())).unwrap();
++        assert!(lint(&mut worker, request(first["fileHandles"].clone(), config())).is_err());
++    }
++
++    #[test]
++    fn unavailable_authorities_cannot_publish_or_mutate_cached_inputs() {
++        let mut worker = Worker::default();
++        for config in [
++            json!({"plugins": ["import"]}),
++            json!({"extends": ["./base.json"]}),
++            json!({"options": {"typeAware": true}}),
++            json!({"options": {"reportUnusedDisableDirectives": "warn"}}),
++        ] {
++            assert!(lint(&mut worker, request(json!([]), config)).is_err());
++            assert!(worker.roots.is_empty());
++        }
++    }
++
++    #[test]
++    fn tokened_membership_cannot_change_root_config_or_paths() {
++        let mut worker = Worker::default();
++        let root = PathBuf::from("/captured/domain");
++        worker.memberships.insert(
++            "capture".into(),
++            authority::MembershipOwner {
++                root: root.clone(),
++                config_key: (root.join(".oxlintrc.json"), config()),
++                paths: [root.join("a.ts")].into_iter().collect(),
++            },
++        );
++        let mut exact =
++            request(json!([{"path":"/captured/domain/a.ts","content":"export {};"}]), config());
++        exact.token = Some("capture".into());
++        exact.operation = Some("lint".into());
++        assert_eq!(lint(&mut worker, exact).unwrap()["membershipQualified"], true);
++        for value in [
++            json!({"token":"unknown","root":"/captured/domain","configPath":"/captured/domain/.oxlintrc.json","config":config(),"files":[]}),
++            json!({"token":"capture","root":"/other","configPath":"/captured/domain/.oxlintrc.json","config":config(),"files":[]}),
++            json!({"token":"capture","root":"/captured/domain","configPath":"/captured/domain/other.json","config":config(),"files":[]}),
++            json!({"token":"capture","root":"/captured/domain","configPath":"/captured/domain/.oxlintrc.json","config":config(),"files":[]}),
++        ] {
++            assert!(lint(&mut worker, serde_json::from_value(value).unwrap()).is_err());
++        }
++        assert_eq!(worker.roots[&root].files.len(), 1);
++    }
++}
+diff --git a/crates/oxc_linter/src/config/config_builder.rs b/crates/oxc_linter/src/config/config_builder.rs
+--- a/crates/oxc_linter/src/config/config_builder.rs
++++ b/crates/oxc_linter/src/config/config_builder.rs
+@@ -104,6 +104,35 @@
+         external_plugin_store: &mut ExternalPluginStore,
+         workspace_uri: Option<&str>,
+     ) -> Result<Self, ConfigBuilderError> {
++        Self::from_oxlintrc_inner(
++            start_empty,
++            oxlintrc,
++            external_linter,
++            external_plugin_store,
++            workspace_uri,
++            false,
++        )
++    }
++
++    /// Build a closed builtin config without any filesystem operations. Captured
++    /// path anchoring is already owned by Oxlintrc::from_captured_bytes.
++    /// Extends and JS plugins are deliberately not silently accepted here.
++    pub fn from_closed_captured_oxlintrc(
++        start_empty: bool,
++        oxlintrc: Oxlintrc,
++        external_plugin_store: &mut ExternalPluginStore,
++    ) -> Result<Self, ConfigBuilderError> {
++        Self::from_oxlintrc_inner(start_empty, oxlintrc, None, external_plugin_store, None, true)
++    }
++
++    fn from_oxlintrc_inner(
++        start_empty: bool,
++        oxlintrc: Oxlintrc,
++        external_linter: Option<&ExternalLinter>,
++        external_plugin_store: &mut ExternalPluginStore,
++        workspace_uri: Option<&str>,
++        captured_closed: bool,
++    ) -> Result<Self, ConfigBuilderError> {
+         // TODO: this can be cached to avoid re-computing the same oxlintrc
+         fn is_relative_plugin_specifier(specifier: &str) -> bool {
+             specifier == "."
+@@ -148,17 +177,32 @@
+             config: Oxlintrc,
+             in_object_extends: bool,
+             config_stack: &mut Vec<PathBuf>,
++            captured_closed: bool,
+         ) -> Result<(Oxlintrc, Vec<PathBuf>), ConfigBuilderError> {
++            if captured_closed
++                && (!config.extends.is_empty()
++                    || !config.extends_configs.is_empty()
++                    || config.external_plugins.as_ref().is_some_and(|p| !p.is_empty())
++                    || config
++                        .overrides
++                        .iter()
++                        .any(|o| o.external_plugins.as_ref().is_some_and(|p| !p.is_empty())))
++            {
++                return Err(ConfigBuilderError::UnsupportedNamedConfig {
++                    name: "Captured config requires an owner for extends or JS plugins".to_string(),
++                });
++            }
+             if in_object_extends {
+                 check_no_relative_js_plugins_in_extends(&config)?;
+             }
+ 
+             let path = config.path.clone();
+             if path.as_os_str().is_empty() {
+-                return resolve_oxlintrc_config_extends(config, config_stack);
+-            }
+-
+-            let canonical_path = path.canonicalize().unwrap_or(path);
++                return resolve_oxlintrc_config_extends(config, config_stack, captured_closed);
++            }
++
++            let canonical_path =
++                if captured_closed { path } else { path.canonicalize().unwrap_or(path) };
+             if let Some(cycle_start) = config_stack.iter().position(|path| path == &canonical_path)
+             {
+                 let mut cycle = config_stack[cycle_start..].to_vec();
+@@ -168,7 +212,7 @@
+             }
+ 
+             config_stack.push(canonical_path);
+-            let result = resolve_oxlintrc_config_extends(config, config_stack);
++            let result = resolve_oxlintrc_config_extends(config, config_stack, captured_closed);
+             config_stack.pop();
+             result
+         }
+@@ -176,6 +220,7 @@
+         fn resolve_oxlintrc_config_extends(
+             config: Oxlintrc,
+             config_stack: &mut Vec<PathBuf>,
++            captured_closed: bool,
+         ) -> Result<(Oxlintrc, Vec<PathBuf>), ConfigBuilderError> {
+             let config_path = config.path.clone();
+             let root_path = config_path.parent();
+@@ -186,7 +231,8 @@
+             let mut oxlintrc = config;
+ 
+             for config in extends_configs.into_iter().rev() {
+-                let (extends, extends_paths) = resolve_oxlintrc_config(config, true, config_stack)?;
++                let (extends, extends_paths) =
++                    resolve_oxlintrc_config(config, true, config_stack, captured_closed)?;
+                 oxlintrc = oxlintrc.merge(extends);
+                 extended_paths.extend(extends_paths);
+             }
+@@ -216,8 +262,12 @@
+ 
+                 extended_paths.push(path.clone());
+ 
+-                let (extends, extends_paths) =
+-                    resolve_oxlintrc_config(extends_oxlintrc, false, config_stack)?;
++                let (extends, extends_paths) = resolve_oxlintrc_config(
++                    extends_oxlintrc,
++                    false,
++                    config_stack,
++                    captured_closed,
++                )?;
+ 
+                 oxlintrc = oxlintrc.merge(extends);
+                 extended_paths.extend(extends_paths);
+@@ -228,7 +278,8 @@
+ 
+         validate_ignore_patterns(&oxlintrc)?;
+ 
+-        let (oxlintrc, extended_paths) = resolve_oxlintrc_config(oxlintrc, false, &mut Vec::new())?;
++        let (oxlintrc, extended_paths) =
++            resolve_oxlintrc_config(oxlintrc, false, &mut Vec::new(), captured_closed)?;
+ 
+         // Collect external plugins from both base config and overrides
+         let mut external_plugins: FxHashSet<&ExternalPluginEntry> = FxHashSet::default();
+diff --git a/crates/oxc_linter/src/config/oxlintrc.rs b/crates/oxc_linter/src/config/oxlintrc.rs
+--- a/crates/oxc_linter/src/config/oxlintrc.rs
++++ b/crates/oxc_linter/src/config/oxlintrc.rs
+@@ -317,13 +317,33 @@
+     ///
+     /// * Parse Failure
+     pub fn from_file(path: &Path) -> Result<Self, OxcDiagnostic> {
+-        let mut string = read_to_string(path).map_err(|e| {
++        let string = read_to_string(path).map_err(|e| {
+             OxcDiagnostic::error(format!(
+                 "Failed to parse config {} with error {e:?}",
+                 path.display()
+             ))
+         })?;
+ 
++        Self::from_owned_string(path, string)
++    }
++
++    /// Parse captured bytes with exactly the original file-config parser and path
++    /// anchoring. The capture owner retains original read failures separately.
++    pub fn from_captured_bytes(path: &Path, bytes: Vec<u8>) -> Result<Self, OxcDiagnostic> {
++        let string = String::from_utf8(bytes).map_err(|_| {
++            OxcDiagnostic::error(format!(
++                "Failed to parse config {} with error {:?}",
++                path.display(),
++                std::io::Error::new(
++                    std::io::ErrorKind::InvalidData,
++                    "stream did not contain valid UTF-8"
++                )
++            ))
++        })?;
++        Self::from_owned_string(path, string)
++    }
++
++    fn from_owned_string(path: &Path, mut string: String) -> Result<Self, OxcDiagnostic> {
+         // jsonc support
+         json_strip_comments::strip(&mut string).map_err(|err| {
+             OxcDiagnostic::error(format!("Failed to parse jsonc file {}: {err:?}", path.display()))
+@@ -933,3 +953,98 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod captured_config_tests {
++    struct Temp(std::path::PathBuf);
++    impl Temp {
++        fn new() -> Self {
++            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
++            let path = std::env::temp_dir().join(format!(
++                "captured-oxlint-config-{}-{}",
++                std::process::id(),
++                NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
++            ));
++            std::fs::create_dir(&path).unwrap();
++            Self(path)
++        }
++        fn path(&self) -> &std::path::Path {
++            &self.0
++        }
++    }
++    impl Drop for Temp {
++        fn drop(&mut self) {
++            let _ = std::fs::remove_dir_all(&self.0);
++        }
++    }
++
++    use super::Oxlintrc;
++    use crate::{ConfigStoreBuilder, ExternalPluginStore};
++    #[test]
++    fn captured_bytes_share_original_parser_errors_and_path_anchoring() {
++        let dir = Temp::new();
++        let path = dir.path().join(".oxlintrc.jsonc");
++        for bytes in [
++            br#"{"rules":{"no-console":"warn"},"overrides":[{"files":["*.test.ts"],"rules":{"no-console":"off"}}]}"#.as_slice(),
++            b"\xef\xbb\xbf{\"rules\":{\"no-console\":\"warn\"}}",
++            b"{/*comment*/\"rules\":{\"no-console\":\"warn\"},}",
++            b"{\"ignorePatterns\":[\"../outside\"]}",
++            b"{\"rules\":{\"no-console\":\"invented\"}}",b"[]",b"not json",b"{\"unknown\":1}",b"\xff",
++        ] {
++            std::fs::write(&path,bytes).unwrap();
++            let disk=Oxlintrc::from_file(&path);let captured=Oxlintrc::from_captured_bytes(&path,bytes.to_vec());
++            match (disk,captured) {
++                (Ok(disk),Ok(captured))=>assert_eq!(serde_json::to_value(disk).unwrap(),serde_json::to_value(captured).unwrap()),
++                (Err(disk),Err(captured))=>assert_eq!(format!("{disk:?}"),format!("{captured:?}")),
++                (left,right)=>panic!("captured parser diverged: {left:?}, {right:?}"),
++            }
++        }
++    }
++    #[test]
++    fn closed_builder_retains_original_configuration_after_live_removal() {
++        let dir = Temp::new();
++        let path = dir.path().join(".oxlintrc.json");
++        let bytes=br#"{"rules":{"no-console":"warn","eqeqeq":["error","always"]},"overrides":[{"files":["*.test.ts"],"rules":{"no-console":"off"}}]}"#;
++        std::fs::write(&path, bytes).unwrap();
++        let mut plugins = ExternalPluginStore::default();
++        let original = ConfigStoreBuilder::from_oxlintrc(
++            false,
++            Oxlintrc::from_file(&path).unwrap(),
++            None,
++            &mut plugins,
++            None,
++        )
++        .unwrap();
++        std::fs::remove_dir_all(dir.path()).unwrap();
++        let captured = ConfigStoreBuilder::from_closed_captured_oxlintrc(
++            false,
++            Oxlintrc::from_captured_bytes(&path, bytes.to_vec()).unwrap(),
++            &mut plugins,
++        )
++        .unwrap();
++        assert_eq!(format!("{original:?}"), format!("{captured:?}"));
++        assert!(captured.build(&mut plugins).is_ok());
++    }
++    #[test]
++    fn missing_extended_or_external_owner_is_not_silently_empty() {
++        for text in [
++            r#"{"extends":["./missing.json"]}"#,
++            r#"{"jsPlugins":["./plugin.js"]}"#,
++            r#"{"overrides":[{"files":["*.ts"],"jsPlugins":["./plugin.js"]}]}"#,
++        ] {
++            let config = Oxlintrc::from_captured_bytes(
++                std::path::Path::new("/captured/config.json"),
++                text.as_bytes().to_vec(),
++            )
++            .unwrap();
++            assert!(
++                ConfigStoreBuilder::from_closed_captured_oxlintrc(
++                    false,
++                    config,
++                    &mut ExternalPluginStore::default()
++                )
++                .is_err()
++            );
++        }
++    }
++}
+diff --git a/crates/oxc_linter/src/service/mod.rs b/crates/oxc_linter/src/service/mod.rs
+--- a/crates/oxc_linter/src/service/mod.rs
++++ b/crates/oxc_linter/src/service/mod.rs
+@@ -97,6 +97,19 @@
+         self.runtime.run_source(file_system, paths)
+     }
+ 
++    /// Run the normal diagnostic path against an owned source snapshot without
++    /// a suppression-file baseline. This does not write sources or resolve
++    /// configuration; those inputs must already belong to the caller.
++    pub fn run_captured_sources(
++        &self,
++        file_system: &(dyn RuntimeFileSystem + Sync + Send),
++        paths: Vec<Arc<OsStr>>,
++        tx_error: &DiagnosticSender,
++    ) {
++        let diff_manager = Arc::new(DiffManager::new(Default::default(), false, false, false));
++        self.runtime.run::<false>(file_system, paths, tx_error, &diff_manager, None);
++    }
++
+     pub fn collect_parse_diagnostics(
+         &self,
+         file_system: &(dyn RuntimeFileSystem + Sync + Send),
+diff --git a/vendor/ignore/Cargo.toml b/vendor/ignore/Cargo.toml
+--- a/vendor/ignore/Cargo.toml
++++ b/vendor/ignore/Cargo.toml
+@@ -99,3 +99,5 @@
+ 
+ [target."cfg(windows)".dependencies.winapi-util]
+ version = "0.1.2"
++
++[workspace]
+diff --git a/vendor/ignore/src/captured.rs b/vendor/ignore/src/captured.rs
+new file mode 100644
+--- /dev/null
++++ b/vendor/ignore/src/captured.rs
+@@ -0,0 +1,53 @@
++//! Captured I/O authority for the unchanged hierarchical ignore matcher.
++//! Returning `WouldBlock` denotes an observation not yet admitted by the capture
++//! owner. The owner must collect this requirement and retry on the same capture;
++//! it must never publish a matcher answer while such requirements remain.
++use std::{
++    fmt::Debug,
++    io,
++    path::{Path, PathBuf},
++    sync::Arc,
++};
++
++#[derive(Clone, Copy, Debug)]
++/// Followed or unfollowed metadata admitted by one capture.
++pub struct CapturedMetadata {
++    /// Whether the observed entry is a directory.
++    pub is_dir: bool,
++    /// Whether the observed entry is a regular file.
++    pub is_file: bool,
++    /// Observed file size in bytes.
++    pub len: u64,
++}
++
++/// All operations refer to one immutable captured filesystem. Errors are owned
++/// observations too; a missing table entry must not be turned into `NotFound`.
++pub trait CapturedFileSystem: Debug + Send + Sync {
++    /// Observe followed or unfollowed metadata, including failures.
++    fn metadata(&self, path: &Path, follow_links: bool) -> io::Result<CapturedMetadata>;
++    /// Read admitted bytes; absence and read failures remain distinct.
++    fn read(&self, path: &Path) -> io::Result<Vec<u8>>;
++    /// Resolve the canonical identity using admitted link topology.
++    fn canonicalize(&self, path: &Path) -> io::Result<PathBuf>;
++}
++pub(crate) type Authority = Option<Arc<dyn CapturedFileSystem>>;
++pub(crate) fn metadata(fs: &Authority, path: &Path, follow: bool) -> io::Result<CapturedMetadata> {
++    if let Some(fs) = fs {
++        return fs.metadata(path, follow);
++    }
++    let m = if follow { path.metadata()? } else { path.symlink_metadata()? };
++    Ok(CapturedMetadata { is_dir: m.is_dir(), is_file: m.is_file(), len: m.len() })
++}
++pub(crate) fn exists(fs: &Authority, path: &Path) -> bool {
++    metadata(fs, path, true).is_ok()
++}
++pub(crate) fn canonicalize(fs: &Authority, path: &Path) -> io::Result<PathBuf> {
++    if let Some(fs) = fs { fs.canonicalize(path) } else { path.canonicalize() }
++}
++pub(crate) fn reader(fs: &Authority, path: &Path) -> io::Result<Box<dyn io::BufRead>> {
++    if let Some(fs) = fs {
++        Ok(Box::new(io::Cursor::new(fs.read(path)?)))
++    } else {
++        Ok(Box::new(io::BufReader::new(std::fs::File::open(path)?)))
++    }
++}
+diff --git a/vendor/ignore/src/dir.rs b/vendor/ignore/src/dir.rs
+--- a/vendor/ignore/src/dir.rs
++++ b/vendor/ignore/src/dir.rs
+@@ -16,13 +16,14 @@
+ use std::{
+     collections::HashMap,
+     ffi::{OsStr, OsString},
+-    fs::{self, File, FileType},
++    fs::{self},
+     io::{self, BufRead},
+     path::{Path, PathBuf},
+     sync::{Arc, RwLock, Weak},
+ };
+ 
+ use crate::{
++    captured,
+     gitignore::{self, Gitignore, GitignoreBuilder},
+     overrides::{self, Override},
+     pathutil::{is_hidden_entry, strip_prefix},
+@@ -113,6 +114,7 @@
+ 
+ #[derive(Clone, Debug)]
+ struct IgnoreInner {
++    captured_fs: captured::Authority,
+     /// A map of all existing directories that have already been
+     /// compiled into matchers.
+     ///
+@@ -166,6 +168,8 @@
+ }
+ 
+ impl Ignore {
++    pub(crate) fn metadata(&self, path: &Path, follow: bool) -> io::Result<captured::CapturedMetadata> { captured::metadata(&self.inner.captured_fs, path, follow) }
++
+     /// Return the directory path of this matcher.
+     #[cfg(test)]
+     pub(crate) fn path(&self) -> &Path {
+@@ -205,7 +209,7 @@
+         if !self.is_root() {
+             panic!("Ignore::add_parents called on non-root matcher");
+         }
+-        let absolute_base = match path.as_ref().canonicalize() {
++        let absolute_base = match captured::canonicalize(&self.inner.captured_fs, path.as_ref()) {
+             Ok(path) => Arc::new(path),
+             Err(_) => {
+                 // There's not much we can do here, so just return our
+@@ -240,7 +244,7 @@
+             igtmp.is_absolute_parent = true;
+             igtmp.has_git =
+                 if self.inner.opts.require_git && self.inner.opts.git_ignore {
+-                    parent.join(".git").exists() || parent.join(".jj").exists()
++                    captured::exists(&self.inner.captured_fs, &parent.join(".git")) || captured::exists(&self.inner.captured_fs, &parent.join(".jj"))
+                 } else {
+                     false
+                 };
+@@ -347,13 +351,13 @@
+         let git_type = if check_vcs_dir
+             && ignore_files_list.is_none_or(|i| i.has_git_dir)
+         {
+-            dir.join(".git").metadata().ok().map(|md| md.file_type())
++            captured::metadata(&self.inner.captured_fs, &dir.join(".git"), true).ok().map(|md| md.is_file)
+         } else {
+             None
+         };
+         let has_jj = check_vcs_dir
+             && ignore_files_list.is_none_or(|i| i.has_jj_dir)
+-            && dir.join(".jj").exists();
++            && captured::exists(&self.inner.captured_fs, &dir.join(".jj"));
+         let has_git = check_vcs_dir && (git_type.is_some() || has_jj);
+ 
+         let mut errs = PartialErrorBuilder::default();
+@@ -383,6 +387,7 @@
+                     &dir,
+                     &custom_ignore_names,
+                     self.inner.opts.ignore_case_insensitive,
++                    &self.inner.captured_fs,
+                 );
+                 errs.maybe_push(err);
+                 m
+@@ -398,6 +403,7 @@
+                 &dir,
+                 &[".ignore"],
+                 self.inner.opts.ignore_case_insensitive,
++                    &self.inner.captured_fs,
+             );
+             errs.maybe_push(err);
+             m
+@@ -412,6 +418,7 @@
+                 &dir,
+                 &[".gitignore"],
+                 self.inner.opts.ignore_case_insensitive,
++                    &self.inner.captured_fs,
+             );
+             errs.maybe_push(err);
+             m
+@@ -422,13 +429,14 @@
+         {
+             Gitignore::empty()
+         } else {
+-            match resolve_git_commondir(dir, git_type) {
++            match resolve_git_commondir(dir, git_type, &self.inner.captured_fs) {
+                 Ok(git_dir) => {
+                     let (m, err) = create_gitignore(
+                         &dir,
+                         &git_dir,
+                         &["info/exclude"],
+                         self.inner.opts.ignore_case_insensitive,
++                    &self.inner.captured_fs,
+                     );
+                     errs.maybe_push(err);
+                     m
+@@ -440,6 +448,7 @@
+             }
+         };
+         let ig = IgnoreInner {
++            captured_fs: self.inner.captured_fs.clone(),
+             compiled: self.inner.compiled.clone(),
+             dir: dir.to_path_buf(),
+             overrides: self.inner.overrides.clone(),
+@@ -751,6 +760,7 @@
+ /// A builder for creating an Ignore matcher.
+ #[derive(Clone, Debug)]
+ pub(crate) struct IgnoreBuilder {
++    captured_fs: captured::Authority,
+     /// The root directory path for this ignore matcher.
+     dir: PathBuf,
+     /// An override matcher (default is empty).
+@@ -776,6 +786,11 @@
+ }
+ 
+ impl IgnoreBuilder {
++    pub(crate) fn captured_file_system(&mut self, fs: std::sync::Arc<dyn captured::CapturedFileSystem>) -> io::Result<()> {
++        if self.opts.git_global { return Err(io::Error::new(io::ErrorKind::Unsupported, "global ignore must be disabled before captured matchers")); }
++        self.captured_fs = Some(fs); Ok(())
++    }
++
+     /// Create a new builder for an `Ignore` matcher.
+     ///
+     /// It is likely a bug to use this without also calling `current_dir()`
+@@ -783,6 +798,7 @@
+     /// abstraction and it's annoying to update tests.
+     pub(crate) fn new() -> IgnoreBuilder {
+         IgnoreBuilder {
++            captured_fs: None,
+             dir: Path::new("").to_path_buf(),
+             overrides: Arc::new(Override::empty()),
+             types: Arc::new(Types::empty()),
+@@ -838,6 +854,7 @@
+ 
+         Ignore {
+             inner: Arc::new(IgnoreInner {
++                captured_fs: self.captured_fs.clone(),
+                 compiled: Arc::new(RwLock::new(HashMap::new())),
+                 dir: self.dir.clone(),
+                 overrides: self.overrides.clone(),
+@@ -1018,6 +1035,7 @@
+     dir_for_ignorefile: &Path,
+     names: &[T],
+     case_insensitive: bool,
++    fs: &captured::Authority,
+ ) -> (Gitignore, Option<Error>) {
+     let mut builder = GitignoreBuilder::new(dir);
+     let mut errs = PartialErrorBuilder::default();
+@@ -1036,8 +1054,8 @@
+         // makes sense on Windows.
+         //
+         // For more details: https://github.com/BurntSushi/ripgrep/pull/1381
+-        if cfg!(windows) || gipath.exists() {
+-            errs.maybe_push_ignore_io(builder.add(gipath));
++        if cfg!(windows) || captured::exists(fs, &gipath) {
++            errs.maybe_push_ignore_io(builder.add_reader(&gipath, captured::reader(fs, &gipath)));
+         }
+     }
+     let gi = match builder.build() {
+@@ -1060,15 +1078,16 @@
+ /// Some I/O errors are ignored.
+ fn resolve_git_commondir(
+     dir: &Path,
+-    git_type: Option<FileType>,
++    git_type: Option<bool>,
++    fs: &captured::Authority,
+ ) -> Result<PathBuf, Option<Error>> {
+     let git_dir_path = || dir.join(".git");
+     let git_dir = git_dir_path();
+-    if !git_type.map_or(false, |ft| ft.is_file()) {
++    if !git_type.unwrap_or(false) {
+         return Ok(git_dir);
+     }
+-    let file = match File::open(git_dir) {
+-        Ok(file) => io::BufReader::new(file),
++    let file = match captured::reader(fs, &git_dir) {
++        Ok(file) => file,
+         Err(err) => {
+             return Err(Some(Error::Io(err).with_path(git_dir_path())));
+         }
+@@ -1085,8 +1104,8 @@
+     }
+     let real_git_dir = PathBuf::from(&dot_git_line["gitdir: ".len()..]);
+     let git_commondir_file = || real_git_dir.join("commondir");
+-    let file = match File::open(git_commondir_file()) {
+-        Ok(file) => io::BufReader::new(file),
++    let file = match captured::reader(fs, &git_commondir_file()) {
++        Ok(file) => file,
+         Err(_) => return Err(None),
+     };
+     let commondir_line = match file.lines().next() {
+diff --git a/vendor/ignore/src/gitignore.rs b/vendor/ignore/src/gitignore.rs
+--- a/vendor/ignore/src/gitignore.rs
++++ b/vendor/ignore/src/gitignore.rs
+@@ -404,12 +404,12 @@
+     /// all other valid globs will still be added.
+     pub fn add<P: AsRef<Path>>(&mut self, path: P) -> Option<Error> {
+         let path = path.as_ref();
+-        let file = match File::open(path) {
+-            Err(err) => return Some(Error::Io(err).with_path(path)),
+-            Ok(file) => file,
+-        };
++        self.add_reader(path, File::open(path).map(|file| Box::new(BufReader::new(file)) as Box<dyn std::io::BufRead>))
++    }
++
++    pub(crate) fn add_reader(&mut self, path: &Path, reader: std::io::Result<Box<dyn std::io::BufRead>>) -> Option<Error> {
++        let rdr = match reader { Ok(reader) => reader, Err(err) => return Some(Error::Io(err).with_path(path)) };
+         log::debug!("opened gitignore file: {}", path.display());
+-        let rdr = BufReader::new(file);
+         let mut errs = PartialErrorBuilder::default();
+         for (i, line) in rdr.lines().enumerate() {
+             let lineno = (i + 1) as u64;
+diff --git a/vendor/ignore/src/incremental.rs b/vendor/ignore/src/incremental.rs
+--- a/vendor/ignore/src/incremental.rs
++++ b/vendor/ignore/src/incremental.rs
+@@ -274,13 +274,12 @@
+             && let Some(max_filesize) = self.options.max_filesize
+         {
+             let path = self.root().join(relative);
+-            let result = if self.options.follow_links {
+-                path.metadata()
+-            } else {
+-                path.symlink_metadata()
++            let result = match self.ignore {
++                RootIgnore::Loaded(ref ignore) | RootIgnore::Unloaded(ref ignore) => ignore.metadata(&path, self.options.follow_links),
++                _ => unreachable!(),
+             };
+             match result {
+-                Ok(md) if md.len() > max_filesize => {
++                Ok(md) if md.len > max_filesize => {
+                     return IncrementalMatch::ignore();
+                 }
+                 Ok(_) => {}
+@@ -419,7 +418,7 @@
+             RootIgnore::Loaded(ref ignore) => return Some(ignore.clone()),
+             RootIgnore::NotDirectory | RootIgnore::Stdin => return None,
+         };
+-        if !self.root.is_dir() {
++        if !ignore.metadata(&self.root, true).is_ok_and(|m| m.is_dir) {
+             self.ignore = RootIgnore::NotDirectory;
+             return None;
+         }
+diff --git a/vendor/ignore/src/lib.rs b/vendor/ignore/src/lib.rs
+--- a/vendor/ignore/src/lib.rs
++++ b/vendor/ignore/src/lib.rs
+@@ -58,6 +58,7 @@
+ mod dir;
+ pub mod gitignore;
+ mod incremental;
++pub mod captured;
+ pub mod overrides;
+ mod pathutil;
+ pub mod types;
+diff --git a/vendor/ignore/src/walk.rs b/vendor/ignore/src/walk.rs
+--- a/vendor/ignore/src/walk.rs
++++ b/vendor/ignore/src/walk.rs
+@@ -672,6 +672,15 @@
+     ///
+     /// Matchers built together share the builder's base ignore configuration
+     /// and compiled parent matchers.
++    /// Build original hierarchical matchers using one immutable input authority.
++    /// Directory traversal remains caller-owned; global gitignore must be disabled.
++    pub fn build_captured_matchers(&self, fs: Arc<dyn crate::captured::CapturedFileSystem>) -> std::io::Result<Vec<IncrementalIgnore>> {
++        let mut builder = self.clone();
++        builder.ig_builder.captured_file_system(fs)?;
++        Ok(builder.build_matchers())
++    }
++
++    /// Build original incremental matchers.
+     pub fn build_matchers(&self) -> Vec<IncrementalIgnore> {
+         let ignore = self.build_ignore();
+         let options = IncrementalIgnoreOptions {

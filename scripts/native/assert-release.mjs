@@ -8,11 +8,13 @@ import {
   PROTOCOL_VERSION,
   assertArtifact,
   assertArtifactManifest,
+  assertOxlintSources,
   assertRegularExecutable,
   assertToolchain,
   digestFile,
   readJson,
   stableJson,
+  oxlintEligible,
 } from './shared.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
@@ -43,15 +45,16 @@ if (
 ) {
   throw new Error('Codegraph must select public npm distribution.')
 }
-assertToolchain(release.toolchain)
+assertToolchain(release.toolchain, { requireOxlint: true })
 
 const optional = packageManifest.optionalDependencies ?? {}
 const targets = Object.keys(NATIVE_TARGETS)
 if (Object.keys(release.artifacts ?? {}).sort().join('\0') !== [...targets].sort().join('\0')) {
   throw new Error(`Native release must contain exactly: ${targets.join(', ')}.`)
 }
+assertOxlintSources(release.artifacts)
 for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
-  const artifact = assertArtifact(release.artifacts[target], target, packageVersion)
+  const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: oxlintEligible(target) })
   const dependency = optional[expected.package]
   if (dependency !== packageVersion && dependency !== `workspace:${packageVersion}` && dependency !== 'workspace:*') {
     throw new Error(`${expected.package} must be an exact-version optional dependency.`)
@@ -87,12 +90,20 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
     throw new Error(`${expected.package} executable does not match the root release manifest.`)
   }
+  if (artifact.oxlint) {
+    const oxlint = resolve(packageRoot, artifact.oxlint.executable)
+    await assertRegularExecutable(oxlint, target)
+    const oxlintDigest = await digestFile(oxlint)
+    if (oxlintDigest.bytes !== artifact.oxlint.bytes || oxlintDigest.sha256 !== artifact.oxlint.sha256) {
+      throw new Error(`${expected.package} codegraph-oxlint does not match the root release manifest.`)
+    }
+  }
   await access(resolve(packageRoot, 'LICENSE'))
   await access(resolve(packageRoot, 'THIRD_PARTY_NOTICES.md'))
 }
 
 const notices = await readFile(resolve(root, 'THIRD_PARTY_NOTICES.md'), 'utf8')
-for (const required of ['ttsc', 'TypeScript-Go', 'Go toolchain']) {
+for (const required of ['ttsc', 'TypeScript-Go', 'Go toolchain', 'Oxlint']) {
   if (!notices.includes(required)) throw new Error(`Third-party notices omit ${required}.`)
 }
 process.stdout.write(stableJson({ packageVersion, sourceRevision: release.sourceRevision, targets }))

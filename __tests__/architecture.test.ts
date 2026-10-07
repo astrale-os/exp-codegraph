@@ -3,10 +3,28 @@ import { dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
+import { fixture } from './fixture.ts'
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const excluded = new Set(['__tests__', 'dist', 'node_modules'])
+const excluded = new Set(['__tests__', '.cache', 'dist', 'node_modules'])
 
 describe('module architecture', () => {
+  it('checks owned sources and specifications without traversing build caches', async () => {
+    const project = await fixture({
+      'analysis/index.ts': "export * from './runtime.ts'\n",
+      'analysis/runtime.ts': 'export const value = 1\n',
+      'analysis/.spec/laws.ts': 'export const law = true\n',
+      '.cache/oxlint/source-worker/apps/oxfmt/index.ts': 'const upstream = 1\n',
+      'analysis/.cache/generated.ts': 'const generated = 1\n',
+    })
+    try {
+      expect((await sourceFiles(project.root)).map((file) => portable(relative(project.root, file))))
+        .toEqual(['analysis/.spec/laws.ts', 'analysis/index.ts', 'analysis/runtime.ts'])
+    } finally {
+      await project.remove()
+    }
+  })
+
   it('keeps the root surface and barrel files structural', async () => {
     const entries = await readdir(root, { withFileTypes: true })
     const rootModules = entries

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFile as execFileCallback } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -7,6 +8,8 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import { assertNpmConsumerLock } from '../../../scripts/native/admit-packages.mjs'
+import { assertOxlintArtifact, oxlintEligible } from '../../../scripts/native/shared.mjs'
+import { qualifyOwnedGeneric } from './owned-generic.mjs'
 
 const execFile = promisify(execFileCallback)
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
@@ -86,7 +89,8 @@ try {
     (path) =>
       path.endsWith('.map') ||
       path.includes('/analysis/typescript/native/') ||
-      path.includes('/analysis/typescript/ttsc/') ||
+      path.includes('/analysis/typescript/ttsc/') || path.includes('/analysis/oxlint/') ||
+      /(?:^|\/)(?:Cargo\.toml|Cargo\.lock|rust-toolchain\.toml)$/u.test(path) || path.endsWith('.rs') ||
       /(?:^|\/)(?:go(?:\.exe)?|go\.mod|go\.sum)$/u.test(path) ||
       path.endsWith('.go'),
   )
@@ -104,14 +108,43 @@ try {
   assert.equal(native.origin, 'package')
   assert.equal(native.target, target)
   const installedNative = resolve(native.command, '../..')
+  const release = JSON.parse(await readFile(join(installed, 'native-release.json'), 'utf8'))
+  const oxlint = release.artifacts[target].oxlint
+  let ownedGeneric
+  if (process.argv.includes('--require-oxlint') && oxlintEligible(target)) assert(oxlint, 'New POSIX native packages require codegraph-oxlint.')
+  if (!oxlintEligible(target)) {
+    assert.equal(oxlint, undefined, 'Windows must not advertise an unqualified captured worker.')
+    await assert.rejects(() => typescript.resolvePackagedNativeOxlint(), { code: 'NATIVE_OXLINT_UNAVAILABLE' })
+    ownedGeneric = { status: 'unavailable', reason: 'Windows captured runtime is not qualified; original SDK recovery remains required.' }
+  }
+  if (oxlint) {
+    assertOxlintArtifact(oxlint, target)
+    const nativeWorker = await typescript.resolvePackagedNativeOxlint()
+    assert.equal(nativeWorker.origin, 'package')
+    assert.equal(nativeWorker.target, target)
+    assert.equal(nativeWorker.packageVersion, rootManifest.version)
+    assert.equal(nativeWorker.sha256, oxlint.sha256)
+    assert.equal(nativeWorker.bytes, oxlint.bytes)
+    assert.equal(nativeWorker.engineVersion, oxlint.engineVersion)
+    assert.equal(nativeWorker.protocolVersion, oxlint.protocolVersion)
+    assert.deepEqual(nativeWorker.source, oxlint.source)
+    const worker = join(installedNative, oxlint.executable)
+    assert.equal(nativeWorker.command, await realpath(worker))
+    const bytes = await readFile(worker)
+    assert.equal(bytes.length, oxlint.bytes)
+    assert.equal(createHash('sha256').update(bytes).digest('hex'), oxlint.sha256)
+    assert((await stat(worker)).isFile())
+    if (process.platform !== 'win32') assert((await stat(worker)).mode & 0o111)
+  }
   const nativeFiles = (await filesUnder(installedNative)).map((path) => path.slice(installedNative.length + 1))
   assert.deepEqual(nativeFiles.sort(), [
     'LICENSE',
     'THIRD_PARTY_NOTICES.md',
     target === 'win32-x64' ? 'bin/codegraph-native.exe' : 'bin/codegraph-native',
+    ...(oxlint ? [oxlint.executable] : []),
     'manifest.json',
     'package.json',
-  ])
+  ].sort())
 
 
 
@@ -181,9 +214,14 @@ try {
   }
 
   await qualifyResidentProject(typescript, join(temporary, 'resident'))
+  if (oxlint && process.platform !== 'win32') {
+    const decisions = await import(pathToFileURL(join(installed, 'dist/analysis/native/index.js')).href)
+    ownedGeneric = await qualifyOwnedGeneric({ decisions, worker: oxlint,
+      root: join(temporary, 'owned-generic'), repositoryRoot })
+  }
 
   process.stdout.write(
-    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: npmVersion ? 'npmjs' : 'packed-artifact' })}\n`,
+    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: npmVersion ? 'npmjs' : 'packed-artifact', ownedGeneric })}\n`,
   )
 } finally {
   await rm(temporary, { recursive: true, force: true })

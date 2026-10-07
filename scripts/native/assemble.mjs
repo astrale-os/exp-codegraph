@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, lstat, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import {
@@ -8,11 +8,13 @@ import {
   NATIVE_TARGETS,
   PROTOCOL_VERSION,
   assertArtifactManifest,
+  assertOxlintSources,
   assertRegularExecutable,
   assertToolchain,
   digestFile,
   readJson,
   stableJson,
+  oxlintEligible,
 } from './shared.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
@@ -26,6 +28,7 @@ if (typeof packageVersion !== 'string' || !packageVersion.trim()) {
 
 const artifacts = {}
 let releaseToolchain
+let releaseOxlintToolchain
 let sourceRevision
 for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   const sourceRoot = resolve(input, target)
@@ -43,7 +46,7 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   ) {
     throw new Error(`${target} build provenance is invalid or dirty.`)
   }
-  const toolchain = assertToolchain(build.toolchain)
+  const { oxlint: workerToolchain, ...toolchain } = assertToolchain(build.toolchain, { requireOxlint: oxlintEligible(target) })
   if (releaseToolchain && stableJson(releaseToolchain) !== stableJson(toolchain)) {
     throw new Error(`${target} compiler toolchain differs from the release matrix.`)
   }
@@ -51,25 +54,34 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     throw new Error(`${target} was built from ${build.source.revision}, expected ${sourceRevision}.`)
   }
   releaseToolchain ??= toolchain
+  if (workerToolchain) {
+    if (releaseOxlintToolchain && stableJson(releaseOxlintToolchain) !== stableJson(workerToolchain)) {
+      throw new Error(`${target} Oxlint toolchain differs from the release matrix.`)
+    }
+    releaseOxlintToolchain ??= workerToolchain
+  }
   sourceRevision ??= build.source.revision
 
   const sourceManifest = await readJson(resolve(sourceRoot, 'manifest.json'))
-  const artifact = assertArtifactManifest(sourceManifest, target, packageVersion)
+  const artifact = assertArtifactManifest(sourceManifest, target, packageVersion, { requireOxlint: oxlintEligible(target) })
   if (stableJson(artifact) !== stableJson(build.artifact)) {
     throw new Error(`${target} build and package manifests disagree.`)
   }
-  const sourceExecutable = resolve(sourceRoot, artifact.executable)
-  await chmod(sourceExecutable, 0o755)
-  await assertRegularExecutable(sourceExecutable, target)
-  const digest = await digestFile(sourceExecutable)
-  if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
-    throw new Error(`${target} artifact bytes differ from its build manifest.`)
-  }
-
   const packageRoot = resolve(root, 'native-packages', target)
-  const destination = resolve(packageRoot, expected.executable)
-  await mkdir(dirname(destination), { recursive: true })
-  await copyFile(sourceExecutable, destination)
+  await stageExecutable(
+    resolve(sourceRoot, artifact.executable),
+    resolve(packageRoot, expected.executable),
+    artifact,
+    target,
+  )
+  if (artifact.oxlint) {
+    await stageExecutable(
+      resolve(sourceRoot, artifact.oxlint.executable),
+      resolve(packageRoot, artifact.oxlint.executable),
+      artifact.oxlint,
+      target,
+    )
+  }
   await copyFile(resolve(root, 'LICENSE'), resolve(packageRoot, 'LICENSE'))
   await copyFile(
     resolve(root, 'THIRD_PARTY_NOTICES.md'),
@@ -91,6 +103,7 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   artifacts[target] = artifact
 }
 
+assertOxlintSources(artifacts)
 await writeFile(
   resolve(root, 'native-release.json'),
   stableJson({
@@ -99,7 +112,7 @@ await writeFile(
     packageVersion,
     protocolVersion: PROTOCOL_VERSION,
     sourceRevision,
-    toolchain: releaseToolchain,
+    toolchain: { ...releaseToolchain, oxlint: releaseOxlintToolchain },
     artifacts,
   }),
 )
@@ -113,4 +126,24 @@ function argument(name) {
   const value = process.argv[index + 1]
   if (!value || value.startsWith('--')) throw new Error(`${name} requires a value.`)
   return value
+}
+
+// GitHub artifact transport keeps content, but not executable mode. Authenticate
+// downloaded bytes first and normalize only the owned package staging copy.
+async function stageExecutable(source, destination, artifact, target) {
+  if (!(await lstat(source)).isFile()) {
+    throw new Error(`${target} downloaded artifact is not a regular file: ${source}`)
+  }
+  const digest = await digestFile(source)
+  if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
+    throw new Error(`${target} ${artifact.executable} bytes differ from its build manifest.`)
+  }
+  await mkdir(dirname(destination), { recursive: true })
+  await copyFile(source, destination)
+  await chmod(destination, 0o755)
+  await assertRegularExecutable(destination, target)
+  const staged = await digestFile(destination)
+  if (staged.bytes !== artifact.bytes || staged.sha256 !== artifact.sha256) {
+    throw new Error(`${target} staged ${artifact.executable} bytes differ from its build manifest.`)
+  }
 }

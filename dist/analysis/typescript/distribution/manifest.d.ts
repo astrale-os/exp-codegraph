@@ -13,3 +13,5 @@ export interface NativeArtifactPackageManifest {
 export declare function readNativeReleaseManifest(path: string, packageVersion: string, target: string): Promise<NativeAnalysisReleaseManifest>;
 export declare function admitNativeArtifactPackageManifest(input: unknown, expected: NativeAnalysisArtifact, packageVersion: string): NativeArtifactPackageManifest;
 export declare function currentNativeAnalysisTarget(): string;
+/** Admit only the companion capability; Go consumers do not consume its metadata. */
+export declare function admitNativeOxlintPackageManifest(input: NativeArtifactPackageManifest, expected: NativeAnalysisArtifact): NonNullable<NativeAnalysisArtifact["oxlint"]>;

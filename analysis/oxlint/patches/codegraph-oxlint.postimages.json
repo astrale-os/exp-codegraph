@@ -1,0 +1,167 @@
+{
+  "version": 1,
+  "postimages": [
+    {
+      "path": "Cargo.lock",
+      "bytes": 105522,
+      "sha256": "ab8bcaf81198a83fc5584a5c7cc922d7ca3769fb4e886b66174a6a55b41a9a54",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": true,
+      "upstreamSha256": "3be6dbc7b73d8d38f131845fca3708deddafd858ce9af576e7994915ef3d0434"
+    },
+    {
+      "path": "Cargo.toml",
+      "bytes": 17019,
+      "sha256": "6d8b9a6b79e281e0aa81378bfaccd07cf530fe03b58e13eda9d22c0399224424",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": true,
+      "upstreamSha256": "a9bdfe74e24948ee34915d91866be6e82a7ab038d38deed8119c11cd5f93b2f9"
+    },
+    {
+      "path": "capture-authority/Cargo.toml",
+      "bytes": 219,
+      "sha256": "5c5dc5fecb26b7e76f8506e5f0631ca0fd99250d8f305b8840e78a70f1d3a9d1",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": false,
+      "upstreamSha256": null
+    },
+    {
+      "path": "capture-authority/src/lib.rs",
+      "bytes": 7514,
+      "sha256": "1ded0ea3c9fc864b78d8f6186f02fbacba7660dbee26c1152888c3e3aa9f11ca",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": false,
+      "upstreamSha256": null
+    },
+    {
+      "path": "capture-authority/tests/discovery.rs",
+      "bytes": 9809,
+      "sha256": "20bcf547d2b5d2c64b7a5e26e943e0158b55c5ab9b3ad0f96b1d2b6ce28d74ae",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": false,
+      "upstreamSha256": null
+    },
+    {
+      "path": "crates/oxc_linter/Cargo.toml",
+      "bytes": 2881,
+      "sha256": "42040a27873d9229dcbae2725a47040a433017cc332b2588b79964eb37e71e64",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": true,
+      "upstreamSha256": "4735f230ac17d7e68bfe8db52e9abcd5c9bb61305113a77cfc181488489df15b"
+    },
+    {
+      "path": "crates/oxc_linter/examples/captured/authority.rs",
+      "bytes": 62446,
+      "sha256": "ecd5d27224f64b7c02b2987ba8d705000b9e93d4189c8490128fdc86292137a4",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": false,
+      "upstreamSha256": null
+    },
+    {
+      "path": "crates/oxc_linter/examples/captured.rs",
+      "bytes": 19167,
+      "sha256": "db7b44e622c39dfcabb933f012aceb2e783db8003a5edcb22f869a22686117f0",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": false,
+      "upstreamSha256": null
+    },
+    {
+      "path": "crates/oxc_linter/src/config/config_builder.rs",
+      "bytes": 71470,
+      "sha256": "f5fb6136e979b27c8f7da590d780f2effe7ceda91867a39a0d7b4a1336125b0b",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": true,
+      "upstreamSha256": "0add8de542d83894649076b4e105bde70bc910ae959da07cd530ce34d6e89444"
+    },
+    {
+      "path": "crates/oxc_linter/src/config/oxlintrc.rs",
+      "bytes": 40596,
+      "sha256": "3225c4b012131fd95023ee9cec44773822b6867a8a537492da3a1fe41bc96590",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": true,
+      "upstreamSha256": "21ac7f253864dbcabea2ce8d35d3bc72af4d81fc8477a01189dd56140ad9c1aa"
+    },
+    {
+      "path": "crates/oxc_linter/src/service/mod.rs",
+      "bytes": 3720,
+      "sha256": "20bda3b3a110256bb8e6affecf75ee25a8a79c5eab24858527474c188260a408",
+      "mode": 420,
+      "baseAuthority": "oxc:0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
+      "upstreamExists": true,
+      "upstreamSha256": "0f711b2533f76563bca0f209ac97fb57d29a58846498818ac8b497f4df237b4f"
+    },
+    {
+      "path": "vendor/ignore/Cargo.toml",
+      "bytes": 2159,
+      "sha256": "70c4699029e4497ac3142471b565b05da735d1b702f7c0e62df1386d2ca24cf3",
+      "mode": 420,
+      "baseAuthority": "ignore-0.4.33.crate",
+      "upstreamExists": true,
+      "upstreamSha256": "c25c13e927507584b2902292d31caf0435a6f2c8abf8bfa21fa0830cb750c168"
+    },
+    {
+      "path": "vendor/ignore/src/captured.rs",
+      "bytes": 2281,
+      "sha256": "7ec9bb1669c8ac65e8c5a7f152c74ae0093374ed45bdcb9534e04d5bdde38b11",
+      "mode": 420,
+      "baseAuthority": "ignore-0.4.33.crate",
+      "upstreamExists": false,
+      "upstreamSha256": null
+    },
+    {
+      "path": "vendor/ignore/src/dir.rs",
+      "bytes": 59532,
+      "sha256": "de8b03c1301a9d42ef09888980d1e3dd4b06593d85b77d500e140df8d792c11f",
+      "mode": 420,
+      "baseAuthority": "ignore-0.4.33.crate",
+      "upstreamExists": true,
+      "upstreamSha256": "e2ad00e37e22433feb6f06795e4a7aea6af2a4e06f44f6f56e171377e42f56f3"
+    },
+    {
+      "path": "vendor/ignore/src/gitignore.rs",
+      "bytes": 32503,
+      "sha256": "03b0e936f020e3f85b285873adaa50ba3e996eb55c0c539680744b0a4cc813e7",
+      "mode": 420,
+      "baseAuthority": "ignore-0.4.33.crate",
+      "upstreamExists": true,
+      "upstreamSha256": "e7e4eb6e4a490bf67c4ae422c9cd89978607e20d3e65b52a886afd9bd500471b"
+    },
+    {
+      "path": "vendor/ignore/src/incremental.rs",
+      "bytes": 48203,
+      "sha256": "1ba2a85c4c72823897d0b779cc0b512c50a11414cdc4e92f0cec4d107bc01c04",
+      "mode": 420,
+      "baseAuthority": "ignore-0.4.33.crate",
+      "upstreamExists": true,
+      "upstreamSha256": "50ab6709241f88dd110e095db174e0018ff0c48697b21f4db049e8cdbabdca67"
+    },
+    {
+      "path": "vendor/ignore/src/lib.rs",
+      "bytes": 18646,
+      "sha256": "eb43cda6225ddf606d7bd07e208cb49ac549d57c20563528be38b26e2e261521",
+      "mode": 420,
+      "baseAuthority": "ignore-0.4.33.crate",
+      "upstreamExists": true,
+      "upstreamSha256": "89cb2cbdd479ae4a8cf5ea0bbea4cad72b6833a6dfb95008e8f51b185b44aafc"
+    },
+    {
+      "path": "vendor/ignore/src/walk.rs",
+      "bytes": 93930,
+      "sha256": "aa1ef5ef61690cbfd44542577d7a31a2db0f41896291b24d6ea0bdfa4ee7953c",
+      "mode": 420,
+      "baseAuthority": "ignore-0.4.33.crate",
+      "upstreamExists": true,
+      "upstreamSha256": "a81c751dc22763d8efda6fb88fd77c0e03c42fb17538a94497a5737ba8b4b919"
+    }
+  ]
+}

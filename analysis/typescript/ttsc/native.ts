@@ -5,6 +5,7 @@ import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 import { TtscCompiler } from 'ttsc'
+import type { NativeOxlintArtifact } from '../distribution/model.ts'
 
 export const QUALIFIED_TTSC_VERSION = '0.25.0' as const
 
@@ -19,6 +20,8 @@ export interface TtscNativeAnalysisOptions {
   readonly binary?: string
   /** Environment additions passed only to ttsc's compiler/plugin processes. */
   readonly environment?: NodeJS.ProcessEnv
+  /** Build-time identity of the companion just built and hashed by the release builder. */
+  readonly ownedOxlint?: NativeOxlintArtifact
 }
 
 export interface ResolvedTtscNativeAnalysis {
@@ -36,16 +39,17 @@ export function resolveTtscNativeAnalysis(
 ): Promise<ResolvedTtscNativeAnalysis> {
   const root = resolve(options.root)
   const binary = options.binary ? resolve(options.binary) : undefined
+  const environment = nativeBuildEnvironment(options)
   const key = JSON.stringify({
     root,
     config: options.config,
     cacheDirectory: options.cacheDirectory ? resolve(options.cacheDirectory) : undefined,
     binary,
-    environment: canonicalEnvironment(options.environment),
+    environment: canonicalEnvironment(environment),
   })
   const existing = prepared.get(key)
   if (existing) return existing
-  const pending = prepare({ ...options, root, ...(binary ? { binary } : {}) })
+  const pending = prepare({ ...options, root, environment, ...(binary ? { binary } : {}) })
   prepared.set(key, pending)
   void pending.catch(() => prepared.delete(key))
   return pending
@@ -117,6 +121,29 @@ function canonicalEnvironment(
   return environment
     ? Object.entries(environment).sort(([left], [right]) => left.localeCompare(right))
     : undefined
+}
+
+function nativeBuildEnvironment(options: TtscNativeAnalysisOptions): NodeJS.ProcessEnv | undefined {
+  const worker = options.ownedOxlint
+  if (!worker) return options.environment
+  if (options.binary) throw new Error('A companion identity cannot be linked into an explicit native binary.')
+  if (!/^[a-f0-9]{64}$/u.test(worker.sha256) || !Number.isSafeInteger(worker.bytes) ||
+    worker.bytes <= 0 || worker.engineVersion !== '1.81.0' || worker.protocolVersion !== 1) {
+    throw new Error('The companion worker has no qualified build identity.')
+  }
+  const inheritedFlags = options.environment?.GOFLAGS ?? process.env.GOFLAGS ?? ''
+  // One linker invocation owns the companion identity; a second -ldflags flag
+  // would silently replace its values. Other ordinary Go flags are retained.
+  if (/(?:^|\s|["'])-ldflags(?:=|\s|["']|$)/u.test(inheritedFlags)) {
+    throw new Error('The companion release builder must own Go linker flags.')
+  }
+  const linker = [
+    `-X=main.governanceOwnedArtifactSHA=${worker.sha256}`,
+    `-X=main.governanceOwnedArtifactBytes=${worker.bytes}`,
+    `-X=main.governanceOwnedEngineVersion=${worker.engineVersion}`,
+    `-X=main.governanceOwnedProtocolVersion=${worker.protocolVersion}`,
+  ].join(' ')
+  return { ...options.environment, GOFLAGS: `${inheritedFlags} "-ldflags=${linker}"`.trim() }
 }
 
 function digest(value: Uint8Array): string {

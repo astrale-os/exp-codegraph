@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import { resolveNativeToolchain } from './toolchain.mjs'
+import { buildOxlint } from './build-oxlint.mjs'
 import { resolveTtscNativeAnalysis } from '../../analysis/typescript/ttsc/native.ts'
 import {
   NATIVE_ARTIFACT_FORMAT,
@@ -13,6 +14,7 @@ import {
   digestFile,
   readJson,
   stableJson,
+  oxlintEligible,
 } from './shared.mjs'
 
 const execFile = promisify(execFileCallback)
@@ -29,11 +31,13 @@ if (requestedTarget && requestedTarget !== target) {
 const cacheDirectory = resolve(argument('--cache-directory') ?? resolve(root, '.cache/ttsc'))
 const packageManifest = await readJson(resolve(root, 'package.json'))
 const packageVersion = requiredString(packageManifest.version, 'package version')
+const oxlint = oxlintEligible(target) ? await buildOxlint({ root, target, output }) : undefined
 
 const native = await resolveTtscNativeAnalysis({
   root,
   config: 'tsconfig.json',
   cacheDirectory,
+  ...(oxlint ? { ownedOxlint: oxlint.artifact } : {}),
   ...(process.platform === 'linux' ? { environment: { CGO_ENABLED: '0' } } : {}),
 })
 const executable = resolve(output, expected.executable)
@@ -46,8 +50,9 @@ const artifact = {
   package: expected.package,
   executable: expected.executable,
   ...digest,
+  ...(oxlint ? { oxlint: oxlint.artifact } : {}),
 }
-const toolchain = await readToolchain()
+const toolchain = { ...await readToolchain(), ...(oxlint ? { oxlint: oxlint.toolchain } : {}) }
 const source = await sourceIdentity()
 const manifest = {
   format: NATIVE_ARTIFACT_FORMAT,
