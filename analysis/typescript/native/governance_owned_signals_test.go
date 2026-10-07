@@ -87,7 +87,7 @@ func TestOwnedSessionSignalPreservesOriginalTermination(t *testing.T) {
 					t.Fatal(err)
 				}
 				if err = json.Unmarshal(line, &ready); err != nil {
-					t.Fatal(err)
+					t.Fatalf("signal helper readiness JSON: %v; raw line=%q", err, line)
 				}
 				if ready.Controller != cmd.Process.Pid || (mode == "managed" && ready.Producer == 0) {
 					t.Fatal("physical process identity missing")

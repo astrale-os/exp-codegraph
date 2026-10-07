@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -37,6 +38,87 @@ func ownedArtifactTestBytes(t *testing.T) []byte {
 	}
 	return raw
 }
+
+// Exercise each publication phase with the actual qualified fixture, without
+// starting Rust, so a platform failure reports its original operation error.
+func TestOwnedArtifactStagedPublication(t *testing.T) {
+	raw := ownedArtifactTestBytes(t)
+	store := ownedArtifactTestStore(t)
+	if err := os.MkdirAll(store, 0700); err != nil {
+		t.Fatalf("store mkdir: %v", err)
+	}
+	staging, err := os.MkdirTemp(store, "publishing-")
+	if err != nil {
+		t.Fatalf("staging mkdir: %v", err)
+	}
+	stagedPath := filepath.Join(staging, governanceOwnedArtifactName)
+	if err := os.WriteFile(stagedPath, raw, 0500); err != nil {
+		t.Fatalf("write %q: %v", stagedPath, err)
+	}
+	if err := os.Chmod(staging, 0500); err != nil {
+		t.Fatalf("chmod %q: %v", staging, err)
+	}
+	staged, err := governanceOpenOwnedArtifact(stagedPath, raw)
+	if err != nil {
+		t.Fatalf("staged-open %q: %v", stagedPath, err)
+	}
+	original := staged.fileInfo
+	staged.close()
+	capsule := filepath.Join(store, governanceOwnedArtifactSHA)
+	if err := os.Rename(staging, capsule); err != nil {
+		t.Fatalf("rename %q to %q: %v", staging, capsule, err)
+	}
+	published, err := governanceOpenOwnedArtifact(filepath.Join(capsule, governanceOwnedArtifactName), raw)
+	if err != nil {
+		t.Fatalf("published-open %q: %v", capsule, err)
+	}
+	defer published.close()
+	if !os.SameFile(original, published.fileInfo) || !published.verify() {
+		t.Fatal("publication changed the verified inode or bytes")
+	}
+}
+
+func TestOwnedArtifactRejectionInspection(t *testing.T) {
+	// Opening is intentionally independent of the build-qualified byte gate;
+	// small actual filesystem fixtures exercise the rejection diagnostic itself.
+	store := ownedArtifactTestStore(t)
+	capsule := filepath.Join(store, "fixture")
+	if err := os.MkdirAll(capsule, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(capsule, "worker")
+	if err := os.WriteFile(path, []byte("abc"), 0500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(capsule, 0500); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := governanceOpenOwnedArtifact(path, []byte("abx"))
+	if lease != nil || err == nil {
+		t.Fatal("different bytes were admitted")
+	}
+	for _, detail := range []string{"failure inspection after rejection", "sameFile=true", "readAtCount=3 expectedCount=3 firstDifferenceOrUnreadOffset=2", "readAtError=<nil>"} {
+		if !strings.Contains(err.Error(), detail) {
+			t.Fatalf("missing %q in %v", detail, err)
+		}
+	}
+	lease, err = governanceOpenOwnedArtifact(path, []byte("abc"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lease.close()
+	if err := lease.file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if lease.verify() {
+		t.Fatal("closed file was admitted")
+	}
+	inspection := lease.rejectionInspection()
+	if !errors.Is(inspection, os.ErrClosed) || !strings.Contains(inspection.Error(), "readAtCount=0 expectedCount=3 firstDifferenceOrUnreadOffset=0") {
+		t.Fatalf("original read error or count missing: %v", inspection)
+	}
+}
+
 func TestOwnedArtifactReusesInodeWithFreshPhysicalProcesses(t *testing.T) {
 	raw := ownedArtifactTestBytes(t)
 	store := ownedArtifactTestStore(t)

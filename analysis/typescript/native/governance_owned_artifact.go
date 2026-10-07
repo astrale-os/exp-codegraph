@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -70,6 +71,44 @@ func (l *governanceOwnedArtifactLease) verifyOwner() bool {
 	}
 	return true
 }
+
+// This read-only inspection runs only after verification rejected the lease.
+// These later observations explain a rejection, not an atomic failure cause.
+func (l *governanceOwnedArtifactLease) rejectionInspection() error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	details := []string{fmt.Sprintf("closed=%t", l.closed)}
+	for _, entry := range []struct {
+		path string
+		info os.FileInfo
+	}{{l.path, l.fileInfo}, {filepath.Dir(l.path), l.directoryInfo}, {l.storePath, l.storeInfo}, {l.ownerPath, l.ownerInfo}} {
+		current, err := os.Lstat(entry.path)
+		if err != nil {
+			details = append(details, fmt.Sprintf("path=%q lstat=%v", entry.path, err))
+			continue
+		}
+		details = append(details, fmt.Sprintf("path=%q mode=%s size=%d mtime=%s sameFile=%t expectedMode=%s expectedSize=%d expectedMtime=%s", entry.path, current.Mode(), current.Size(), current.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z"), os.SameFile(current, entry.info), entry.info.Mode(), entry.info.Size(), entry.info.ModTime().UTC().Format("2006-01-02T15:04:05.999999999Z")))
+	}
+	if len(l.verifyBuf) != len(l.expected) {
+		l.verifyBuf = make([]byte, len(l.expected))
+	}
+	n, err := l.file.ReadAt(l.verifyBuf, 0)
+	firstMismatch := -1
+	for i := 0; i < n; i++ {
+		if l.verifyBuf[i] != l.expected[i] {
+			firstMismatch = i
+			break
+		}
+	}
+	if firstMismatch == -1 && n < len(l.expected) {
+		firstMismatch = n
+	}
+	details = append(details, fmt.Sprintf("readAtCount=%d expectedCount=%d firstDifferenceOrUnreadOffset=%d", n, len(l.expected), firstMismatch))
+	if err != nil {
+		return fmt.Errorf("failure inspection after rejection: %s; readAt: %w", strings.Join(details, "; "), err)
+	}
+	return fmt.Errorf("failure inspection after rejection: %s; readAtError=<nil>", strings.Join(details, "; "))
+}
 func governanceOpenOwnedArtifact(path string, artifact []byte) (*governanceOwnedArtifactLease, error) {
 	before, err := os.Lstat(path)
 	if err != nil {
@@ -87,12 +126,18 @@ func governanceOpenOwnedArtifact(path string, artifact []byte) (*governanceOwned
 	}
 	storePath := filepath.Dir(filepath.Dir(path))
 	storeInfo, err := os.Lstat(storePath)
-	if err != nil || !storeInfo.IsDir() || storeInfo.Mode().Perm() != 0700 {
+	if err != nil {
+		return nil, fmt.Errorf("private artifact store lstat: %w", err)
+	}
+	if !storeInfo.IsDir() || storeInfo.Mode().Perm() != 0700 {
 		return nil, fmt.Errorf("private artifact store is not isolated")
 	}
 	ownerPath := filepath.Dir(storePath)
 	ownerInfo, err := os.Lstat(ownerPath)
-	if err != nil || !ownerInfo.IsDir() {
+	if err != nil {
+		return nil, fmt.Errorf("private artifact store owner lstat: %w", err)
+	}
+	if !ownerInfo.IsDir() {
 		return nil, fmt.Errorf("private artifact store owner is not a directory")
 	}
 	file, err := os.Open(path)
@@ -100,14 +145,19 @@ func governanceOpenOwnedArtifact(path string, artifact []byte) (*governanceOwned
 		return nil, err
 	}
 	current, err := file.Stat()
-	if err != nil || !os.SameFile(before, current) {
+	if err != nil {
+		file.Close()
+		return nil, fmt.Errorf("private artifact open file stat: %w", err)
+	}
+	if !os.SameFile(before, current) {
 		file.Close()
 		return nil, fmt.Errorf("private artifact inode changed while acquiring")
 	}
 	lease := &governanceOwnedArtifactLease{path: path, file: file, fileInfo: current, directoryInfo: directory, storePath: storePath, storeInfo: storeInfo, ownerPath: ownerPath, ownerInfo: ownerInfo, expected: append([]byte(nil), artifact...)}
 	if !lease.verify() {
+		inspection := lease.rejectionInspection()
 		lease.close()
-		return nil, fmt.Errorf("private artifact bytes or inode differ")
+		return nil, fmt.Errorf("private artifact bytes or inode differ: %w", inspection)
 	}
 	return lease, nil
 }
@@ -125,9 +175,12 @@ func governanceAcquireOwnedArtifact(artifact []byte, store string) (*governanceO
 	}
 	capsule := filepath.Join(store, governanceOwnedArtifactSHA)
 	path := filepath.Join(capsule, governanceOwnedArtifactName)
+	var lastFailure error
 	for attempt := 0; attempt < 8; attempt++ {
 		if lease, err := governanceOpenOwnedArtifact(path, artifact); err == nil {
 			return lease, nil
+		} else {
+			lastFailure = fmt.Errorf("attempt %d current-open %q: %w", attempt+1, path, err)
 		}
 		if _, err := os.Lstat(capsule); err == nil {
 			// Atomic retirement cannot affect a child already mapped from this inode.
@@ -146,6 +199,8 @@ func governanceAcquireOwnedArtifact(artifact []byte, store string) (*governanceO
 					// Includes symlinks: remove this entry, never the target.
 					os.Remove(retired)
 				}
+			} else {
+				lastFailure = fmt.Errorf("attempt %d retirement-rename %q to %q: %w", attempt+1, capsule, retired, err)
 			}
 			continue
 		} else if !os.IsNotExist(err) {
@@ -156,10 +211,13 @@ func governanceAcquireOwnedArtifact(artifact []byte, store string) (*governanceO
 			return nil, err
 		}
 		stagedPath := filepath.Join(staging, governanceOwnedArtifactName)
+		phase := "write"
 		if err = os.WriteFile(stagedPath, artifact, 0500); err == nil {
+			phase = "chmod"
 			err = os.Chmod(staging, 0500)
 		}
 		if err == nil {
+			phase = "staged-open"
 			var lease *governanceOwnedArtifactLease
 			lease, err = governanceOpenOwnedArtifact(stagedPath, artifact)
 			if lease != nil {
@@ -167,15 +225,17 @@ func governanceAcquireOwnedArtifact(artifact []byte, store string) (*governanceO
 			}
 		}
 		if err == nil {
+			phase = "rename"
 			err = os.Rename(staging, capsule)
 		}
 		if err != nil {
+			lastFailure = fmt.Errorf("attempt %d %s staged=%q capsule=%q: %w", attempt+1, phase, stagedPath, capsule, err)
 			os.Chmod(staging, 0700)
 			os.RemoveAll(staging)
 			continue
 		}
 	}
-	return nil, fmt.Errorf("private artifact publication did not converge")
+	return nil, fmt.Errorf("private artifact publication did not converge after 8 attempts: %w", lastFailure)
 }
 
 // The immutable package supplies actual bytes. The user's runtime cache owns
