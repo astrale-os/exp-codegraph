@@ -459,6 +459,7 @@ function checkRequest(command: CheckCommand): string {
     select: sortedUnique(command.select),
     requireCompleteLayout: command.requireCompleteLayout,
     requireExactLayout: command.requireExactLayout,
+    requireLawEvidence: command.requireLawEvidence,
     outputFormat: command.format,
     quiet: command.quiet,
   })
@@ -470,6 +471,7 @@ function checkFamily(command: CheckCommand): string {
     exclude: sortedUnique(command.exclude),
     requireCompleteLayout: command.requireCompleteLayout,
     requireExactLayout: command.requireExactLayout,
+    requireLawEvidence: command.requireLawEvidence,
     quiet: command.quiet,
   })
 }

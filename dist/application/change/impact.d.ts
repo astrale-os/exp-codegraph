@@ -7,6 +7,13 @@ import type { SpecificationChangeOptions, SpecificationImpact, SpecificationImpa
  * repository, inspect the file system, or mutate the supplied snapshots.
  */
 export declare function createSpecificationImpactIndex(specifications: readonly SpecificationSnapshot[]): SpecificationImpactIndex;
+/**
+ * Repository files one specification cites as evidence: attached test files and code anchors.
+ *
+ * They are qualification inputs of the citing owner wherever they live, including inside the
+ * directory of a deeper specified module.
+ */
+export declare function specificationEvidenceInputs(specification: Pick<SpecificationSnapshot, 'root' | 'laws' | 'states'>): readonly string[];
 /** Resolve one path directly against a corpus without retaining an index. */
 export declare function computeSpecificationImpact(specifications: readonly SpecificationSnapshot[], path: string, options?: SpecificationChangeOptions): SpecificationImpact;
 /** Resolve one path against an existing index. */

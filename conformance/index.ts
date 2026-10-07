@@ -28,6 +28,7 @@ export {
   MODULE_TEST_EVIDENCE_PROFILE_ID,
   createModuleTestEvidenceConformanceProfile,
 } from './module/test-evidence.ts'
+export type { ModuleTestEvidenceConformanceOptions } from './module/test-evidence.ts'
 export {
   SPECIFICATION_VALIDITY_PROFILE_ID,
   createSpecificationValidityConformanceProfile,

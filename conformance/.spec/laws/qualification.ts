@@ -29,3 +29,15 @@ export const CONFORMANCE_EXPLICIT_BINDING_AUTHORITY = defineLaw({
   statement:
     'Module surface qualification consumes one exact compiler binding from the authoritative specification namespace to the implementation entrypoint; it never substitutes an independently reconstructed implementation declaration graph or a legacy native fallback.',
 })
+
+export const CONFORMANCE_LAW_EVIDENCE_OPT_IN = defineLaw({
+  id: 'CONFORMANCE-LAW-EVIDENCE-OPT-IN',
+  statement:
+    'A law with neither a test reference nor a code anchor fails qualification only when law evidence is explicitly required; the default profile neither evaluates nor reports that rule.',
+  tests: [
+    {
+      file: '../__tests__/code-anchor.test.ts',
+      id: 'CONFORMANCE-LAW-EVIDENCE-OPT-IN',
+    },
+  ],
+})

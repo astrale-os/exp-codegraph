@@ -1,3 +1,4 @@
+import { capabilityReferenceSources } from '../../specification/index.js';
 import { applicationSelectionOwners } from '../selection/index.js';
 /** Resolve a manifest-owned focused selection and its exact support closure without decoding owners. */
 export function projectedApplicationCheckpointSources(owners, projection) {
@@ -36,6 +37,7 @@ export function applicationCheckpointSpecificationDependencies(specification, co
                 specification.module.internal,
                 ...specification.module.ports,
             ].flatMap((resource) => resource?.model?.dependencies.map(({ file }) => file) ?? []),
+            ...capabilityReferenceSources(specification),
         ].filter((source) => source !== specification.source && corpusSources.has(source)))]
         .sort((left, right) => left.localeCompare(right));
 }

@@ -71,11 +71,12 @@ export function createSpecificationImpactIndex(
     }
     for (const resource of specification.laws) {
       addTextResource(ownership, pendingEdges, owner, resource)
-      addTestEvidenceInputs(ownership, owner, specification.root, resource.definitions)
     }
     for (const resource of specification.states) {
       addTextResource(ownership, pendingEdges, owner, resource)
-      addTestEvidenceInputs(ownership, owner, specification.root, resource.definitions)
+    }
+    for (const source of specificationEvidenceInputs(specification)) {
+      addOwnership(ownership, owner, source)
     }
     addTextResource(ownership, pendingEdges, owner, specification.limits)
     addTextResource(ownership, pendingEdges, owner, specification.layout)
@@ -173,21 +174,35 @@ export function createSpecificationImpactIndex(
   })
 }
 
-function addTestEvidenceInputs(
-  ownership: Map<string, Set<SpecificationOwner>>,
-  owner: SpecificationOwner,
-  moduleRoot: string,
-  definitions: readonly { readonly tests?: readonly { readonly file: string }[] }[],
-): void {
-  for (const definition of definitions) {
-    for (const reference of definition.tests ?? []) {
-      const source = testEvidenceSource(moduleRoot, reference.file)
-      if (source) addOwnership(ownership, owner, source)
+/**
+ * Repository files one specification cites as evidence: attached test files and code anchors.
+ *
+ * They are qualification inputs of the citing owner wherever they live, including inside the
+ * directory of a deeper specified module.
+ */
+export function specificationEvidenceInputs(
+  specification: Pick<SpecificationSnapshot, 'root' | 'laws' | 'states'>,
+): readonly string[] {
+  const sources = new Set<string>()
+  const add = (references: readonly { readonly file: string }[] | undefined): void => {
+    for (const reference of references ?? []) {
+      const source = evidenceSource(specification.root, reference.file)
+      if (source) sources.add(source)
     }
   }
+  for (const resource of specification.laws) {
+    for (const definition of resource.definitions) {
+      add(definition.tests)
+      add(definition.code)
+    }
+  }
+  for (const resource of specification.states) {
+    for (const definition of resource.definitions) add(definition.tests)
+  }
+  return [...sources]
 }
 
-function testEvidenceSource(moduleRoot: string, reference: string): string | undefined {
+function evidenceSource(moduleRoot: string, reference: string): string | undefined {
   if (reference.startsWith('/') || /^[A-Za-z]:/u.test(reference) || reference.includes('\\')) {
     return
   }

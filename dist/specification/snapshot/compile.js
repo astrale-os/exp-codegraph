@@ -6,6 +6,7 @@ import { inventoryModuleFiles } from '../module/inventory.js';
 import { deduplicateDiagnostics, loadAuthoredLayout, loadCodeDeclaration, loadCodeResource, loadCodeResources, loadDescriptors, loadExamples, loadPackagePatterns, loadPackages, loadPorts, loadSchemas, moduleTitle, normativeResourceRevision, portable, revisionOf, } from './resources.js';
 import { validateModuleSemantics } from '../module/semantics.js';
 import { analyzeModuleTypeScript } from '../module/typescript.js';
+import { resolveCapabilityReferences } from './capability-reference.js';
 import { loadSpecificationPackageAuthority } from './package-authority.js';
 /** Compile only authored normative meaning; observation and qualification are separate consumers. */
 export async function compileSpecificationSnapshot(root, specDirectory) {
@@ -38,6 +39,7 @@ export async function compileSpecificationSnapshot(root, specDirectory) {
     ]);
     const typeScript = await analyzeModuleTypeScript(root, inventory);
     const packageAuthority = await loadSpecificationPackageAuthority(root, moduleRoot, inventory);
+    const capabilityReferenceDiagnostics = await resolveCapabilityReferences(root, moduleRoot, capabilities.resources);
     diagnostics.push(...api.diagnostics, ...(internal?.diagnostics ?? []), ...schemas.diagnostics, ...ports.diagnostics, ...capabilities.diagnostics, ...flows.diagnostics, ...laws.diagnostics, ...states.diagnostics, ...(limits?.diagnostics ?? []), ...(layout?.diagnostics ?? []), ...examples.diagnostics, ...benchmarks.diagnostics, ...packages.diagnostics, ...packagePatterns.diagnostics, ...packageAuthority.diagnostics, ...(code?.diagnostics ?? []), ...typeScript.diagnostics, ...duplicatePortNameDiagnostics(ports.resources, source), ...validateModuleSemantics({
         capabilities: capabilities.resources,
         laws: laws.resources,
@@ -45,7 +47,7 @@ export async function compileSpecificationSnapshot(root, specDirectory) {
         schemas: schemas.resources,
         packages: packages.resources,
         packagePatterns: packagePatterns.resources,
-    }));
+    }), ...capabilityReferenceDiagnostics);
     const authoredLaws = laws.resources.map((resource) => ({
         ...resource,
         definitions: resource.definitions.map(({ testEvidence: _evidence, ...definition }) => definition),

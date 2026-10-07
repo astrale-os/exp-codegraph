@@ -2,7 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { compileSpecificationSnapshots } from '../../specification/index.js';
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.js';
-import { createSpecificationImpactIndex } from './impact.js';
+import { createSpecificationImpactIndex, specificationEvidenceInputs } from './impact.js';
 /** Prove that a partial request corpus cannot gain or lose normative owners or dependency edges. */
 export function canRetainPartialSpecificationCorpus(previous, changes) {
     if (!changes.length || changes.some((change) => change.kind !== 'change'))
@@ -42,7 +42,15 @@ export async function refreshSpecificationCorpus(root, directories, previous, in
                 normativeSpecificationInputs(specificationsBySource.get(owner)).has(source));
         const refreshedOwners = normative
             ? impact.refreshedOwners
-            : deepestSpecificationOwners(impact.directOwners, specificationsBySource);
+            : [
+                ...deepestSpecificationOwners(impact.directOwners, specificationsBySource),
+                // A cited test or anchored file re-qualifies its citing owner at any depth.
+                ...impact.directOwners.filter((owner) => {
+                    const specification = specificationsBySource.get(owner);
+                    return (specification !== undefined &&
+                        specificationEvidenceInputs(specification).includes(source));
+                }),
+            ];
         for (const owner of refreshedOwners) {
             impactedOwners.add(owner);
             if (normative)

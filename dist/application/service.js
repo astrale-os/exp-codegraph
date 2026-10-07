@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 import { deriveAnalysisId } from '../analysis/index.js';
 import { dispatchAnalysisTelemetry } from '../analysis/profiling/dispatch.js';
-import { MODULE_LAYOUT_PROFILE_ID, createModuleLayoutConformanceProfile, createTypeSpecConformanceProfiles, planConformance, qualifySpecifications, rebindQualificationSnapshot, } from '../conformance/index.js';
+import { createModuleLayoutConformanceProfile, createModuleTestEvidenceConformanceProfile, createTypeSpecConformanceProfiles, planConformance, qualifySpecifications, rebindQualificationSnapshot, } from '../conformance/index.js';
 import { createRepositoryPathOwnershipGrouping, createRepositorySourceService, defaultRepositoryStatisticsGroupings, inventoryRepository, refreshRepositoryStatistics, } from '../repository/index.js';
 import { withOperationSnapshot } from '../source/operation-snapshot.js';
 import { compileSpecificationSnapshots } from '../specification/index.js';
@@ -807,7 +807,11 @@ function qualificationMatchesPlan(qualification, plan) {
     if (qualification.profiles.length !== plan.ordered.length ||
         qualification.profiles.some((profile, index) => {
             const expected = plan.ordered[index]?.manifest;
-            return !expected || profile.id !== expected.id || profile.version !== expected.version;
+            return (!expected ||
+                profile.id !== expected.id ||
+                profile.version !== expected.version ||
+                // A required rule changes what a profile evaluates without changing its identity.
+                !sameOrderedStrings(profile.rules.map((rule) => rule.rule), expected.rules));
         })) {
         return false;
     }
@@ -880,6 +884,7 @@ function applicationRefreshKey(options) {
         includeDependents: options.includeDependents === true,
         requireCompleteLayout: options.requireCompleteLayout === true,
         requireExactLayout: options.requireExactLayout === true,
+        requireLawEvidence: options.requireLawEvidence === true,
         requestedProfiles: sortedUnique(options.requestedProfiles ?? []),
         compilerAnalysis: options.compilerAnalysis !== false,
         moduleBindings: options.moduleBindings === true,
@@ -967,14 +972,18 @@ function applicationCheckpointProjection(root, options, capabilities) {
     }
 }
 function applicationProfiles(profiles, options) {
-    if (!options.requireCompleteLayout && !options.requireExactLayout)
-        return profiles;
-    const layout = createModuleLayoutConformanceProfile({
-        requireComplete: Boolean(options.requireCompleteLayout || options.requireExactLayout),
-        requireExact: Boolean(options.requireExactLayout),
-    });
-    const replaced = profiles.map((profile) => profile.manifest.id === MODULE_LAYOUT_PROFILE_ID ? layout : profile);
-    return replaced.some((profile) => profile.manifest.id === MODULE_LAYOUT_PROFILE_ID)
-        ? replaced
-        : [...replaced, layout];
+    const required = [];
+    if (options.requireCompleteLayout || options.requireExactLayout) {
+        required.push(createModuleLayoutConformanceProfile({
+            requireComplete: Boolean(options.requireCompleteLayout || options.requireExactLayout),
+            requireExact: Boolean(options.requireExactLayout),
+        }));
+    }
+    if (options.requireLawEvidence) {
+        required.push(createModuleTestEvidenceConformanceProfile({ requireLawEvidence: true }));
+    }
+    return required.reduce((installed, replacement) => {
+        const replaced = installed.map((profile) => profile.manifest.id === replacement.manifest.id ? replacement : profile);
+        return replaced.includes(replacement) ? replaced : [...replaced, replacement];
+    }, profiles);
 }

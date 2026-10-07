@@ -15,3 +15,5 @@ export type ChangedSpecificationScope = {
 };
 /** Resolve committed and local Git changes into their nearest specification owners. */
 export declare function changedSpecificationScope(root: string, requestedBase?: string): Promise<ChangedSpecificationScope>;
+/** Re-express workspace-relative changed files against the catalog root; files outside it drop. */
+export declare function catalogChangedFiles(root: string, files: readonly string[]): Promise<readonly string[]>;

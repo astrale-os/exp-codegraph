@@ -120,7 +120,7 @@ strict no-emit and public-API-only checks. Context documents cannot include norm
 | `internal.d.ts` | internal architectural vocabulary required by the specification |
 | `schemas/` | portable runtime value representations |
 | `ports/` | behavior required from external substitutable providers |
-| `capabilities/` | stable names for independently meaningful abilities |
+| `capabilities/` | stable names for independently meaningful abilities and the laws that realize them |
 | `flows/` | irreducible semantic orchestration |
 | `laws/` | falsifiable semantic truths beyond the type system |
 | `states/` | legal lifecycle transition topology |
@@ -191,6 +191,44 @@ export const MUT_FAIL_UNCHANGED = defineLaw({
 Literal descriptor fields are closed, duplicate semantic identifiers are rejected across the
 module, and benchmark capability references must resolve.
 
+### Capability derivation
+
+A capability may cite the laws that realize it and the capabilities that compose it:
+
+```ts
+import { defineCapability } from '@astrale-os/codegraph/authoring'
+
+export const RUNTIME_STARTS = defineCapability({
+  id: 'RUNTIME-STARTS',
+  statement: 'The runtime reaches a serving state from persisted input.',
+  laws: ['RUNTIME-ORDERED', { module: 'boot', id: 'BOOT-INPUT-BEFORE-DURABLE' }],
+  capabilities: [{ module: 'boot/journal', id: 'JOURNAL-REPLAYS' }],
+})
+```
+
+A string names an identifier declared by the citing module. `{ module, id }` names an identifier
+declared by a strict descendant module: `module` is a POSIX path relative to the citing module
+root, without a leading `./` or `/` and without a `.` or `..` segment, and it must own a
+`.spec/api.d.ts`. Citations therefore only descend: the catalog root cites
+`{ module: 'runtime/boot', id: 'BOOT-INPUT-BEFORE-DURABLE' }`, while `runtime` cites the same law as
+`{ module: 'boot', id: 'BOOT-INPUT-BEFORE-DURABLE' }`.
+
+Entries of `laws` must resolve to laws and entries of `capabilities` to capabilities. An unresolved
+citation, a module that is not a specified strict descendant, a repeated entry, and a capability
+that reaches itself through `capabilities` are errors. Descendant descriptors are parsed, never
+imported or executed.
+
+Every capability has a derived status:
+
+| Status | Meaning |
+| --- | --- |
+| `declared` | it cites nothing |
+| `held` | every cited law has at least one active attached test and every cited capability is `held` |
+| `partial` | anything else |
+
+`skip` and `todo` declarations are not active. The status is reported by `cg check` and is never a
+diagnostic: a `partial` capability does not fail the check.
+
 ### State topology
 
 The transition relation is the single source of truth:
@@ -257,6 +295,31 @@ Attached evidence is focused feedback, not the full suite: `pnpm test` remains a
 local and CI qualification. Omitting `tests` is valid and is shown as no test attached. For finite
 state machines, conformance tests can additionally enumerate `transitionsOf` and
 `illegalTransitionsOf` against an implementation-specific harness.
+
+### Code anchors
+
+A law that no test can attach to names the implementation it constrains instead:
+
+```ts
+export const RESOLVER_VALIDATES_BEFORE_INSTALL = defineLaw({
+  id: 'RESOLVER-VALIDATES-BEFORE-INSTALL',
+  statement: 'A local artifact is validated against its bundle before it is installed.',
+  code: [
+    { file: 'src/resolver.ts', symbol: 'Resolver.resolve' },
+    { file: 'proofs/Resolver.lean' },
+  ],
+})
+```
+
+`file` follows the same path rules as `tests[].file`: it is relative to the owning module and must
+stay inside the catalog root. Without `symbol`, the file must exist, whatever its extension. With
+`symbol`, the file must be JavaScript or TypeScript and must declare that name at its top level, or,
+for `Class.member`, that member in a top-level class. Resolution is syntactic like test evidence:
+the anchored file is parsed, never imported or executed. An anchor that does not resolve is an
+error; a resolved anchor states where the law lives and claims nothing about its truth.
+
+A law may carry tests, anchors, both, or neither. `--require-law-evidence` makes a law with neither
+a test reference nor a code anchor an error.
 
 ## TypeScript composition and dependency direction
 
@@ -504,8 +567,8 @@ stays acyclic without giving up compiler-project or content caches.
 
 ```sh
 cg init [module-directory]
-cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--format <text|json>] [--no-cache]
-cg changed [root] [base] [--scope-only] [--no-cache]
+cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--require-law-evidence] [--format <text|json>] [--no-cache]
+cg changed [root] [base] [--require-law-evidence] [--scope-only] [--no-cache]
 cg test [module-path]... [--root <directory>] [--no-cache]
 cg test changed [base] [--root <directory>] [--no-cache]
 cg verify [root] [--select <relative-path>]... [--require-pass] [--details]
@@ -513,8 +576,9 @@ cg dev [root] [--port 4173] [--open] [--verify] [--no-cache]
 ```
 
 `--select` is repeatable and is resolved from the command root. It quickly checks only matched
-convention modules, their transitive public-contract dependencies, and relevant TypeScript project
-evidence. Catalog-wide package and schema authority remains the full `check` gate. An unavailable
+convention modules, their transitive public-contract dependencies, the descendant modules their
+capabilities cite, and relevant TypeScript project evidence. Catalog-wide package and schema
+authority remains the full `check` gate. An unavailable
 support contract is reported once as the causal dependency failure instead of cascading
 declaration mismatches through every selected consumer. When a declared dependency is actually
 missing from the installed package tree, verification likewise emits one
@@ -528,8 +592,9 @@ named module. Passing a module directory as the command root instead creates a g
 catalog and is appropriate only when that directory owns its TypeScript project.
 
 `changed` discovers committed branch changes plus staged, unstaged, and untracked work, maps them
-to the nearest convention modules, and includes their public-contract consumers plus the dependency
-support needed to typecheck that affected closure. Its base defaults to
+to the nearest convention modules, and includes their public-contract consumers, the modules whose
+capabilities cite them directly, plus the dependency support needed to typecheck that affected
+closure. Its base defaults to
 `GITHUB_BASE_REF` or `SPEC_BASE`, then the nearest remote branch already contained by `HEAD`; this
 avoids comparing a long-lived branch against an unrelated remote default. Pass a base as the second
 positional argument only when repository ancestry cannot express the intended target. The resolved
@@ -541,6 +606,29 @@ fast affected structural and type feedback. Repository-specific wrappers may app
 global checks such as stale version-reference validation. This local path is advisory: the
 unselected full `check`, including catalog-wide schema and package authority, remains the CI
 qualification gate.
+
+After the scope, `changed` prints an impact section that relates the changed files to the
+specification, at file granularity:
+
+```text
+Impact: 2 laws, 2 capabilities, 1 module without a law.
+  law runtime#RUNTIME-ORDERED: code runtime/src/order.ts changed
+  law runtime/boot#BOOT-INPUT-BEFORE-DURABLE: test runtime/boot/__tests__/boot.test.ts changed
+  capability runtime#RUNTIME-STARTS: cites law runtime#RUNTIME-ORDERED, law runtime/boot#BOOT-INPUT-BEFORE-DURABLE
+  capability .#KERNEL-BOOTS: cites capability runtime#RUNTIME-STARTS
+  module runtime/query: no law, 2 changed source files (runtime/query/src/cost.ts, +1 more)
+```
+
+A law is listed when one of its attached test files or code anchor files changed, with each file as
+the reason. A capability is listed when it cites a listed law, directly or through other
+capabilities; direct citers come first. A module is listed when it owns a changed JavaScript or
+TypeScript source file outside `.spec/`, `.history/`, and test material while declaring no law at
+all. Identifiers are written `<module root>#<id>`, with `.` for the catalog root.
+
+The section is computed on demand from capability and law descriptors alone: nothing is stored
+between runs, no contract is compiled, and it is therefore also printed under `--scope-only` and
+when the scope falls back to the full catalog. It names what to re-read; it is informational and
+never changes the exit status.
 
 `test` resolves the same module paths without `--select` ceremony. With no paths it runs all active
 attached evidence; with positional paths it runs those modules; `test changed` runs direct changed
@@ -557,6 +645,12 @@ occurrences. Use `cg check --format json` for one versioned, machine-readable re
 diagnostic groups retain every distinct pointer and stderr remains empty for an ordinary completed
 check. Argument and operational failures still use the normal CLI error channel and exit status.
 
+The report's `capabilities` member carries the derived status of every checked capability as
+`{ module, id, source, status }`, with the three counts; a `partial` entry also lists as `blocking`
+the cited laws without an active test and the cited capabilities that are not held. Text output
+summarizes the same counts in one `Capabilities:` line before the final summary whenever the
+checked scope declares a capability.
+
 Verification groups failing obligations by specification, profile, and diagnostic code by default;
 passing profiles and serialized expected/actual type graphs stay out of routine output. Add
 `--details` to the same command when the complete comparison evidence is needed.
@@ -565,6 +659,10 @@ passing profiles and serialized expected/actual type graphs stay out of routine 
 requires selected module layouts to use `exact: true`; exact layouts implicitly govern the complete
 module root. This provides a focused migration gate without forcing unrelated sparse layouts to
 migrate in the same change.
+
+`--require-law-evidence`, accepted by `check` and `changed`, requires every law of the checked
+modules to carry at least one test reference or one code anchor, so that no law is attached to
+nothing observable. It is off by default.
 
 `check` discovers both profiles, validates and composes every artifact, checks package and schema
 catalog authority, and reports stable source diagnostics.

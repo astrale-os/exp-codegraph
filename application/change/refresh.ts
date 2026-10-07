@@ -6,7 +6,7 @@ import type { SpecificationSnapshot } from '../../specification/index.ts'
 
 import { compileSpecificationSnapshots } from '../../specification/index.ts'
 import { TYPE_SPEC_APPLICATION_LIMITS } from '../limits.ts'
-import { createSpecificationImpactIndex } from './impact.ts'
+import { createSpecificationImpactIndex, specificationEvidenceInputs } from './impact.ts'
 
 export interface RepositoryInventoryChange {
   readonly path: string
@@ -75,7 +75,17 @@ export async function refreshSpecificationCorpus(
       )
     const refreshedOwners = normative
       ? impact.refreshedOwners
-      : deepestSpecificationOwners(impact.directOwners, specificationsBySource)
+      : [
+          ...deepestSpecificationOwners(impact.directOwners, specificationsBySource),
+          // A cited test or anchored file re-qualifies its citing owner at any depth.
+          ...impact.directOwners.filter((owner) => {
+            const specification = specificationsBySource.get(owner)
+            return (
+              specification !== undefined &&
+              specificationEvidenceInputs(specification).includes(source)
+            )
+          }),
+        ]
     for (const owner of refreshedOwners) {
       impactedOwners.add(owner)
       if (normative) compilationOwners.add(owner)

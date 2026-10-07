@@ -1,7 +1,9 @@
 import { MODULE_TEST_EVIDENCE_PROFILE_ID, SPECIFICATION_VALIDITY_PROFILE_ID, } from '../conformance/index.js';
 import { USAGE } from './parse.js';
+import { capabilityReport, capabilitySummary, } from './capability.js';
 import { createCliCheckReport, encodeCliCheckReport, groupDiagnostics, } from './check-report.js';
 import { CHECK_SEMANTIC_PLAN, } from './semantic-pack/model.js';
+import { impactIsEmpty, printLawImpact } from './impact.js';
 import { createDevStartupProgress } from './progress.js';
 import { printQualificationProfile, printQualificationRule, printQualificationSummary, qualificationDiagnostics, } from './qualification-report.js';
 import { printDiagnostic, printDiagnosticGroup } from './report.js';
@@ -44,12 +46,17 @@ export async function runCommand(command, services, output, portableCheckpoint) 
         : undefined;
     if (changed?.kind === 'none') {
         output.out(`No specification-affecting changes found against ${changed.base}.`);
+        if (command.name === 'changed')
+            await reportLawImpact(command, services, output, changed);
         return { exitCode: 0 };
     }
     if (changed)
         reportChangedScope(output, changed, command.quiet);
-    if (command.name === 'changed' && command.scopeOnly)
-        return { exitCode: 0 };
+    if (command.name === 'changed') {
+        await reportLawImpact(command, services, output, changed);
+        if (command.scopeOnly)
+            return { exitCode: 0 };
+    }
     const cache = 'cache' in command ? command.cache : true;
     const application = await services.createApplication(command.root, cache, portableCheckpoint);
     let reader;
@@ -58,8 +65,11 @@ export async function runCommand(command, services, output, portableCheckpoint) 
         const snapshot = refreshed.snapshot;
         const diagnostics = applicationDiagnostics(snapshot);
         if (command.name === 'check' || command.name === 'changed') {
+            reader = await application.open(snapshot.id);
+            const capabilities = await capabilityReport(reader);
             if (command.name === 'check') {
                 return reportCheckResult(output, command, snapshot, {
+                    capabilities,
                     ...(snapshot.selection.kind === 'full' && refreshed.checkProjection
                         ? {
                             catalog: {
@@ -87,10 +97,7 @@ export async function runCommand(command, services, output, portableCheckpoint) 
             const groups = groupDiagnostics(diagnostics);
             for (const diagnostic of groups)
                 printDiagnosticGroup(output, diagnostic);
-            reportCheck(output, command, changed, snapshot, {
-                causes: groups.length,
-                occurrences: diagnosticOccurrenceCount(groups),
-            });
+            reportCheck(output, command, changed, snapshot, { causes: groups.length, occurrences: diagnosticOccurrenceCount(groups) }, capabilities);
             return { exitCode: applicationFailed(snapshot, diagnostics) ? 1 : 0 };
         }
         if (command.name === 'test') {
@@ -145,7 +152,7 @@ export async function runCommand(command, services, output, portableCheckpoint) 
 export function reportCheckResult(output, command, snapshot, options = {}) {
     const diagnostics = applicationDiagnostics(snapshot);
     const qualificationFailed = snapshot.qualifications.some((value) => value.status !== 'pass');
-    reportCheckOutput(output, command, snapshot, groupDiagnostics(diagnostics), qualificationFailed);
+    reportCheckOutput(output, command, snapshot, groupDiagnostics(diagnostics), qualificationFailed, options.capabilities);
     return {
         exitCode: diagnostics.length > 0 || qualificationFailed ? 1 : 0,
         check: {
@@ -168,7 +175,7 @@ export function reportProjectedCheckResult(output, command, snapshot, diagnostic
         },
     };
 }
-function reportCheckOutput(output, command, snapshot, diagnostics, qualificationFailed) {
+function reportCheckOutput(output, command, snapshot, diagnostics, qualificationFailed, capabilities) {
     if (command.format === 'json') {
         output.out(encodeCliCheckReport(createCliCheckReport({
             repository: snapshot.repository,
@@ -178,15 +185,13 @@ function reportCheckOutput(output, command, snapshot, diagnostics, qualification
             specificationSources: snapshot.specifications.map((value) => value.source),
             diagnostics,
             qualificationFailed,
+            ...(capabilities ? { capabilities } : {}),
         })));
         return;
     }
     for (const diagnostic of diagnostics)
         printDiagnosticGroup(output, diagnostic);
-    reportCheck(output, command, undefined, snapshot, {
-        causes: diagnostics.length,
-        occurrences: diagnosticOccurrenceCount(diagnostics),
-    });
+    reportCheck(output, command, undefined, snapshot, { causes: diagnostics.length, occurrences: diagnosticOccurrenceCount(diagnostics) }, capabilities);
 }
 function diagnosticOccurrenceCount(diagnostics) {
     return diagnostics.reduce((total, value) => total + value.pointers.length, 0);
@@ -228,6 +233,7 @@ function refreshOptions(command, changed) {
             includeDependents: command.name === 'changed',
             requireCompleteLayout: command.requireCompleteLayout,
             requireExactLayout: command.name === 'check' && command.requireExactLayout,
+            requireLawEvidence: command.requireLawEvidence,
         };
     }
     if (command.name === 'test') {
@@ -260,7 +266,10 @@ function applicationDiagnostics(snapshot) {
 function applicationFailed(snapshot, diagnostics) {
     return diagnostics.length > 0 || snapshot.qualifications.some((value) => value.status !== 'pass');
 }
-function reportCheck(output, command, changed, snapshot, diagnostics) {
+function reportCheck(output, command, changed, snapshot, diagnostics, capabilities) {
+    const derived = capabilities && capabilitySummary(capabilities);
+    if (derived)
+        output.out(derived);
     const selected = selectedSpecificationSources(snapshot);
     const support = snapshot.selection.kind === 'focused' ? snapshot.selection.support.length : 0;
     const checked = snapshot.selection.kind === 'focused'
@@ -331,6 +340,26 @@ function reportChangedScope(output, changed, quiet) {
         const shown = changed.triggers.slice(0, 3);
         const remaining = changed.triggers.length - shown.length;
         output.out(`Full catalog scope triggered by ${shown.join(', ')}${remaining ? ` (+${remaining} more)` : ''}.`);
+    }
+}
+/**
+ * Print which laws, capabilities, and law-less modules a change set touches.
+ *
+ * The section is informational: it is derived from descriptors alone, before any check runs, and
+ * neither its content nor a failure to compute it can change the exit status.
+ */
+async function reportLawImpact(command, services, output, changed) {
+    if (!changed.files.length)
+        return;
+    try {
+        const impact = await services.changedLawImpact(command.root, changed.files, command.exclude);
+        // Without an affected specification there is no scope to annotate unless a law is touched.
+        if (changed.kind === 'none' && impactIsEmpty(impact))
+            return;
+        printLawImpact(output, impact);
+    }
+    catch (error) {
+        output.out(`Impact unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
 }
 function deduplicateDiagnostics(values) {

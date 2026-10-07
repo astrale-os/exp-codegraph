@@ -74,6 +74,17 @@ export async function changedSpecificationScope(
   return { kind: 'selected', files, base, targets: [...targets].sort(compare) }
 }
 
+/** Re-express workspace-relative changed files against the catalog root; files outside it drop. */
+export async function catalogChangedFiles(
+  root: string,
+  files: readonly string[],
+): Promise<readonly string[]> {
+  const prefix = await git(root, ['rev-parse', '--show-prefix'])
+  return files.flatMap((file) =>
+    file.startsWith(prefix) && file.length > prefix.length ? [file.slice(prefix.length)] : [],
+  )
+}
+
 async function defaultBase(root: string): Promise<string> {
   const environmentBase = process.env.GITHUB_BASE_REF || process.env.SPEC_BASE
   const currentBranch = await optionalGit(root, ['branch', '--show-current'])
