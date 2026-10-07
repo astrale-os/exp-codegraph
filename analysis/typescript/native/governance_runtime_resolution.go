@@ -150,11 +150,8 @@ func (owner *governanceRuntimeAuthority) Resolve(path, specifier, export string)
 		result.Reason = "runtime helper source not captured"
 		return result
 	}
-	if stableSymbolName(symbol) != export {
-		result.Reason = "local runtime reexport/renaming requires demanded binding adapter"
-		return result
-	}
 	result.Path = logical
+	result.Target = declaration
 	return result
 }
 

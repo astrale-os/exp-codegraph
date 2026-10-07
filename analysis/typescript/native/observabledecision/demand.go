@@ -36,9 +36,13 @@ type GlobalValueObservation struct {
 type Resolution struct {
 	Unavailable bool
 	Path        string
-	Origin      *Origin
-	Reads       []SemanticRead
-	Reason      string
+	// Target is the actual local value declaration certified by the captured
+	// compiler's export lookup. It belongs to Path's captured SourceFile; its
+	// local spelling and export modifier need not match the requested export.
+	Target *ast.Node
+	Origin *Origin
+	Reads  []SemanticRead
+	Reason string
 }
 type EffectRequest struct {
 	Path, Operation string
@@ -367,6 +371,23 @@ func (r *demandRun) imported(owner, specifier, export string) demandValue {
 	target := r.file(resolution.Path)
 	if target == nil {
 		return demandUnknown("captured resolved module unavailable")
+	}
+	if resolution.Target != nil {
+		declaration := resolution.Target
+		if ast.GetSourceFileOfNode(declaration) != target.file.Source {
+			return demandUnknown("resolved declaration belongs to another capture")
+		}
+		switch declaration.Kind {
+		case ast.KindFunctionDeclaration:
+			return demandValue{kind: "function", node: declaration, module: resolution.Path}
+		case ast.KindVariableDeclaration:
+			if !ast.IsConst(declaration) {
+				return demandUnknown("mutable export requires effect refinement")
+			}
+			return r.eval(resolution.Path, declaration.AsVariableDeclaration().Initializer, nil)
+		default:
+			return demandUnknown("unsupported local export declaration")
+		}
 	}
 	b, ok := target.bindings[export]
 	if !ok || !b.exported {
