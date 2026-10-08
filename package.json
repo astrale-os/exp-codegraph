@@ -17,6 +17,7 @@
     "README.md",
     "THIRD_PARTY_NOTICES.md",
     "native-release.json",
+    "native-artifacts",
     "*.ts",
     "analysis",
     "application",
@@ -92,8 +93,15 @@
   },
   "publishConfig": {
     "access": "public",
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://registry.npmjs.org/",
+    "executableFiles": [
+      "./native-artifacts/darwin-arm64/bin/codegraph-native",
+      "./native-artifacts/darwin-arm64/bin/codegraph-oxlint",
+      "./native-artifacts/linux-x64/bin/codegraph-native",
+      "./native-artifacts/linux-x64/bin/codegraph-oxlint"
+    ]
   },
+  "preferUnplugged": true,
   "scripts": {
     "prebuild": "node scripts/clean-dist.mjs",
     "build": "tsgo -p tsconfig.build.json",
@@ -140,13 +148,6 @@
     "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "ttsc": "0.25.0",
     "vitest": "^4.1.10"
-  },
-  "optionalDependencies": {
-    "@astrale-os/codegraph-native-darwin-arm64": "workspace:*",
-    "@astrale-os/codegraph-native-darwin-x64": "workspace:*",
-    "@astrale-os/codegraph-native-linux-arm64": "workspace:*",
-    "@astrale-os/codegraph-native-linux-x64": "workspace:*",
-    "@astrale-os/codegraph-native-win32-x64": "workspace:*"
   },
   "engines": {
     "node": ">=22.13 <23 || >=24 <25 || >=26 <27"

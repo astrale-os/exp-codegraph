@@ -11,45 +11,15 @@ export const OXLINT_PROTOCOL_VERSION = 1
 
 export function oxlintExecutable(target) {
   if (!NATIVE_TARGETS[target]) throw new Error(`Unsupported native target ${target}.`)
-  return target === 'win32-x64' ? 'bin/codegraph-oxlint.exe' : 'bin/codegraph-oxlint'
+  return 'bin/codegraph-oxlint'
 }
 
-export function oxlintEligible(target) {
-  if (!NATIVE_TARGETS[target]) throw new Error(`Unsupported native target ${target}.`)
-  return target !== 'win32-x64'
-}
+/** Each target's executables live in this directory of the one published package. */
+export const NATIVE_ARTIFACT_DIRECTORY = 'native-artifacts'
 
 export const NATIVE_TARGETS = Object.freeze({
-  'darwin-arm64': Object.freeze({
-    package: '@astrale-os/codegraph-native-darwin-arm64',
-    os: 'darwin',
-    cpu: 'arm64',
-    executable: 'bin/codegraph-native',
-  }),
-  'darwin-x64': Object.freeze({
-    package: '@astrale-os/codegraph-native-darwin-x64',
-    os: 'darwin',
-    cpu: 'x64',
-    executable: 'bin/codegraph-native',
-  }),
-  'linux-arm64': Object.freeze({
-    package: '@astrale-os/codegraph-native-linux-arm64',
-    os: 'linux',
-    cpu: 'arm64',
-    executable: 'bin/codegraph-native',
-  }),
-  'linux-x64': Object.freeze({
-    package: '@astrale-os/codegraph-native-linux-x64',
-    os: 'linux',
-    cpu: 'x64',
-    executable: 'bin/codegraph-native',
-  }),
-  'win32-x64': Object.freeze({
-    package: '@astrale-os/codegraph-native-win32-x64',
-    os: 'win32',
-    cpu: 'x64',
-    executable: 'bin/codegraph-native.exe',
-  }),
+  'darwin-arm64': Object.freeze({ executable: 'bin/codegraph-native' }),
+  'linux-x64': Object.freeze({ executable: 'bin/codegraph-native' }),
 })
 
 export async function readJson(path) {
@@ -67,7 +37,7 @@ export async function digestFile(path) {
 export async function assertRegularExecutable(path, target) {
   const metadata = await stat(path)
   if (!metadata.isFile()) throw new Error(`${target} artifact is not a regular file: ${path}`)
-  if (NATIVE_TARGETS[target]?.os !== 'win32' && (metadata.mode & 0o111) === 0) {
+  if ((metadata.mode & 0o111) === 0) {
     throw new Error(`${target} artifact is not executable: ${path}`)
   }
 }
@@ -80,7 +50,6 @@ export function assertArtifact(value, target, packageVersion, { requireOxlint = 
     typeof value !== 'object' ||
     Array.isArray(value) ||
     value.target !== target ||
-    value.package !== expected.package ||
     value.executable !== expected.executable ||
     !Number.isSafeInteger(value.bytes) ||
     value.bytes < 1 ||
@@ -96,7 +65,6 @@ export function assertArtifact(value, target, packageVersion, { requireOxlint = 
 
 export function assertOxlintArtifact(value, target) {
   if (
-    !oxlintEligible(target) ||
     !value || typeof value !== 'object' || Array.isArray(value) ||
     value.executable !== oxlintExecutable(target) ||
     !Number.isSafeInteger(value.bytes) || value.bytes < 1 ||
@@ -128,10 +96,6 @@ export function assertArtifactManifest(value, target, packageVersion, options) {
 export function assertOxlintSources(artifacts) {
   let source
   for (const [target, artifact] of Object.entries(artifacts)) {
-    if (!oxlintEligible(target)) {
-      if (artifact.oxlint !== undefined) throw new Error(`${target} must not advertise an unqualified codegraph-oxlint runtime.`)
-      continue
-    }
     const worker = assertOxlintArtifact(artifact.oxlint, target)
     const current = stableJson(worker.source)
     if (source !== undefined && source !== current) {

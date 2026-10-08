@@ -81,32 +81,6 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@24.13.3)(vite@8.2.1(@types/node@24.13.3)(yaml@2.9.0))
-    optionalDependencies:
-      '@astrale-os/codegraph-native-darwin-arm64':
-        specifier: workspace:*
-        version: link:native-packages/darwin-arm64
-      '@astrale-os/codegraph-native-darwin-x64':
-        specifier: workspace:*
-        version: link:native-packages/darwin-x64
-      '@astrale-os/codegraph-native-linux-arm64':
-        specifier: workspace:*
-        version: link:native-packages/linux-arm64
-      '@astrale-os/codegraph-native-linux-x64':
-        specifier: workspace:*
-        version: link:native-packages/linux-x64
-      '@astrale-os/codegraph-native-win32-x64':
-        specifier: workspace:*
-        version: link:native-packages/win32-x64
-
-  native-packages/darwin-arm64: {}
-
-  native-packages/darwin-x64: {}
-
-  native-packages/linux-arm64: {}
-
-  native-packages/linux-x64: {}
-
-  native-packages/win32-x64: {}
 
 packages:
 

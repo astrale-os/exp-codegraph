@@ -120,18 +120,13 @@ describe('packed release artifact', () => {
       dependencies: Record<string, string>
       devDependencies: Record<string, string>
       files: string[]
-      optionalDependencies: Record<string, string>
+      optionalDependencies?: Record<string, string>
     }
     expect(manifest.dependencies).not.toHaveProperty('ttsc')
     expect(manifest.devDependencies.ttsc).toBe('0.25.0')
     expect(manifest.files).toContain('!dist/**/*.map')
-    expect(Object.keys(manifest.optionalDependencies).sort()).toEqual([
-      '@astrale-os/codegraph-native-darwin-arm64',
-      '@astrale-os/codegraph-native-darwin-x64',
-      '@astrale-os/codegraph-native-linux-arm64',
-      '@astrale-os/codegraph-native-linux-x64',
-      '@astrale-os/codegraph-native-win32-x64',
-    ])
+    expect(manifest.optionalDependencies).toBeUndefined()
+    expect(manifest.files).toContain('native-artifacts')
 
     const root = await mkdtemp(join(tmpdir(), 'codegraph-production-files-'))
     temporary.push(root)

@@ -47,26 +47,26 @@ jobs:
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git merge-base --is-ancestor "$EXPECTED_SHA" origin/main
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFICATION_RUN_ID" > "$RUNNER_TEMP/qualification.json"
-      - name: Download the already qualified package cohort
+      - name: Download the already qualified package
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: codegraph-release
           path: release
           run-id: ${{ inputs.qualification-run-id }}
           github-token: ${{ github.token }}
-      - name: Admit source, executable digests and existing npm versions
+      - name: Admit source, executable digests and an existing npm version
         id: packages
         run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --qualification-run "$RUNNER_TEMP/qualification.json" --npm-preflight --github-output "$GITHUB_OUTPUT"
-      - name: Publish the exact prepared archives using Trusted Publishing
+      - name: Publish the exact prepared archive using Trusted Publishing
         uses: astrale-os/config/.github/actions/publish/packages@8e2e2abd0320be0c2f64033916519ab3b66c7dd7
         with:
-          dirs: native-packages/darwin-arm64 native-packages/darwin-x64 native-packages/linux-arm64 native-packages/linux-x64 native-packages/win32-x64 .
+          dirs: .
           mirror-public-packages: 'false'
           install-command: 'true'
           build-command: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --npm-preflight
           tarballs-json: ${{ steps.packages.outputs.tarballs-json }}
           prerelease-tag: auto
-      - name: Verify every immutable npm archive
+      - name: Verify the immutable npm archive
         run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --npm-published
       - name: Qualify a root-only npm consumer
         env:

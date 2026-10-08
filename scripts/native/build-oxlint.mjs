@@ -7,16 +7,12 @@ import { promisify } from 'node:util'
 import {
   assertOxlintArtifact, digestFile, NATIVE_TARGETS, OXLINT_ENGINE_VERSION,
   OXLINT_PROTOCOL_VERSION, oxlintExecutable, readJson, stableJson, within,
-  oxlintEligible,
 } from './shared.mjs'
 
 const execFile = promisify(execFileCallback)
 const triples = {
   'darwin-arm64': 'aarch64-apple-darwin',
-  'darwin-x64': 'x86_64-apple-darwin',
-  'linux-arm64': 'aarch64-unknown-linux-gnu',
   'linux-x64': 'x86_64-unknown-linux-gnu',
-  'win32-x64': 'x86_64-pc-windows-msvc',
 }
 
 export async function readOxlintRecipe(root) {
@@ -48,7 +44,6 @@ export async function prepareOxlintToolchain(root) {
   const { recipe } = await readOxlintRecipe(root)
   const target = `${process.platform}-${process.arch}`
   const triple = triples[target]
-  if (!oxlintEligible(target)) throw new Error('The captured Oxlint runtime is not qualified for this target.')
   if (!triple) throw new Error('Unsupported codegraph-oxlint build target.')
   await execFile('rustup', ['toolchain', 'install', recipe.rustToolchain, '--profile', 'minimal'])
   await execFile('rustup', ['target', 'add', '--toolchain', recipe.rustToolchain, triple])
@@ -56,7 +51,7 @@ export async function prepareOxlintToolchain(root) {
 
 /** Build from pinned source; never accept a caller-supplied precompiled worker. */
 export async function buildOxlint({ root, target, output, cacheDirectory }) {
-  if (!NATIVE_TARGETS[target] || !oxlintEligible(target) || target !== `${process.platform}-${process.arch}`) {
+  if (!NATIVE_TARGETS[target] || target !== `${process.platform}-${process.arch}`) {
     throw new Error(`codegraph-oxlint must be built on its actual native target: ${target}.`)
   }
   const { recipe, patch } = await readOxlintRecipe(root)
@@ -128,8 +123,7 @@ export async function buildOxlint({ root, target, output, cacheDirectory }) {
     await run('cargo', [...cargoArgs, 'build', ...nativeArgs, '--package', recipe.package,
       `--${recipe.artifactKind}`, recipe.binary], { env: environment })
     const original = resolve(environment.CARGO_TARGET_DIR, triples[target], 'release',
-      ...(recipe.artifactKind === 'example' ? ['examples'] : []),
-      recipe.binary + (target === 'win32-x64' ? '.exe' : ''))
+      ...(recipe.artifactKind === 'example' ? ['examples'] : []), recipe.binary)
     const executable = oxlintExecutable(target)
     const destination = resolve(output, executable)
     await mkdir(dirname(destination), { recursive: true })

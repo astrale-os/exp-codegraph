@@ -1,10 +1,3 @@
-packages:
-  - 'native-packages/*'
-
-# This checkout links the owned native packaging units for local builds.
-# GitHub artifact qualification installs packed tarballs in an isolated directory.
-linkWorkspacePackages: true
-preferWorkspacePackages: true
 strictPeerDependencies: true
 
 # Block direct and transitive releases younger than seven days. Astrale packages

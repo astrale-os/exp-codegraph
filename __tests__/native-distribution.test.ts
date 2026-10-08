@@ -13,14 +13,8 @@ import {
 const packageRoot = resolve(import.meta.dirname, '..')
 const packageVersion = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
   .version as string
-const target = `${process.platform}-${process.arch}` as keyof typeof targets
-const targets = {
-  'darwin-arm64': '@astrale-os/codegraph-native-darwin-arm64',
-  'darwin-x64': '@astrale-os/codegraph-native-darwin-x64',
-  'linux-arm64': '@astrale-os/codegraph-native-linux-arm64',
-  'linux-x64': '@astrale-os/codegraph-native-linux-x64',
-  'win32-x64': '@astrale-os/codegraph-native-win32-x64',
-} as const
+const target = `${process.platform}-${process.arch}`
+const targets = ['darwin-arm64', 'linux-x64']
 
 describe('native analysis distribution', () => {
   it('admits an explicit application-controlled executable without ttsc or a release artifact', async () => {
@@ -41,17 +35,26 @@ describe('native analysis distribution', () => {
     })
   })
 
-  it('fails closed with the exact missing platform package', async () => {
-    await withPackagedFixture({ install: false }, async (fixture) => {
+  it('fails closed on a target the release does not deliver', async () => {
+    await withPackagedFixture({ released: false }, async (fixture) => {
       await expect(fixture.resolve()).rejects.toMatchObject({
-        code: 'NATIVE_PACKAGE_MISSING',
+        code: 'NATIVE_TARGET_UNSUPPORTED',
         target,
       })
     })
   }, 30_000)
 
-  it('accepts a property-order-independent exact artifact manifest', async () => {
-    await withPackagedFixture({ reversedArtifact: true }, async (fixture) => {
+  it('fails closed when the released executable is absent from the package', async () => {
+    await withPackagedFixture({ install: false }, async (fixture) => {
+      await expect(fixture.resolve()).rejects.toMatchObject({
+        code: 'NATIVE_ARTIFACT_INVALID',
+        target,
+      })
+    })
+  }, 30_000)
+
+  it('admits the executable delivered inside the package', async () => {
+    await withPackagedFixture({}, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({
         command: fixture.binary,
         origin: 'package',
@@ -61,8 +64,8 @@ describe('native analysis distribution', () => {
     })
   }, 30_000)
 
-  it.skipIf(process.platform === 'win32')('admits the package-bound worker independently of the Go analyzer', async () => {
-    await withPackagedFixture({ oxlint: true, reversedArtifact: true }, async (fixture) => {
+  it('admits the package-bound worker independently of the Go analyzer', async () => {
+    await withPackagedFixture({ oxlint: true }, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({ command: fixture.binary, origin: 'package' })
       await expect(fixture.resolveOxlint()).resolves.toMatchObject({
         command: fixture.worker, origin: 'package', target, packageVersion,
@@ -72,8 +75,8 @@ describe('native analysis distribution', () => {
     })
   }, 30_000)
 
-  for (const workerFailure of ['missing', 'bytes', 'source'] as const) {
-    it.skipIf(process.platform === 'win32')(`keeps Go usable while independently rejecting ${workerFailure} worker authority`, async () => {
+  for (const workerFailure of ['missing', 'bytes', 'descriptor'] as const) {
+    it(`keeps Go usable while independently rejecting ${workerFailure} worker authority`, async () => {
       await withPackagedFixture({ oxlint: true, workerFailure }, async (fixture) => {
         await expect(fixture.resolve()).resolves.toMatchObject({ command: fixture.binary, origin: 'package' })
         await expect(fixture.resolveOxlint()).rejects.toMatchObject({
@@ -83,27 +86,14 @@ describe('native analysis distribution', () => {
     }, 30_000)
   }
 
-  it.skipIf(process.platform !== 'win32')('rejects advertising a Windows worker while preserving its Go capability', async () => {
-    await withPackagedFixture({ oxlint: true }, async (fixture) => {
-      await expect(fixture.resolve()).resolves.toMatchObject({ origin: 'package' })
-      await expect(fixture.resolveOxlint()).rejects.toMatchObject({ code: 'NATIVE_ARTIFACT_INVALID' })
-    })
-  }, 30_000)
-
-  it('keeps historical Go-only packages usable without admitting a worker', async () => {
+  it('keeps historical Go-only releases usable without admitting a worker', async () => {
     await withPackagedFixture({}, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({ origin: 'package' })
       await expect(fixture.resolveOxlint()).rejects.toMatchObject({ code: 'NATIVE_OXLINT_UNAVAILABLE' })
     })
   }, 30_000)
 
-  it('rejects platform package version and executable digest drift', async () => {
-    await withPackagedFixture({ childVersion: '0.0.0-invalid-fixture' }, async (version) => {
-      await expect(version.resolve()).rejects.toMatchObject({
-        code: 'NATIVE_PACKAGE_VERSION_MISMATCH',
-      })
-    })
-
+  it('rejects executable digest drift', async () => {
     await withPackagedFixture({ corruptDigest: true }, async (digest) => {
       await expect(digest.resolve()).rejects.toMatchObject({
         code: 'NATIVE_ARTIFACT_DIGEST_MISMATCH',
@@ -111,7 +101,7 @@ describe('native analysis distribution', () => {
     })
   }, 30_000)
 
-  it('rejects an executable symlink escaping its package', async () => {
+  it('rejects an executable symlink escaping its artifact directory', async () => {
     await withPackagedFixture({ escapingSymlink: true }, async (fixture) => {
       await expect(fixture.resolve()).rejects.toMatchObject({ code: 'NATIVE_ARTIFACT_INVALID' })
     })
@@ -142,13 +132,12 @@ interface PackagedFixture {
 // five-second resolver performance assertion. Each fixture owns its whole async
 // lifetime: a runner timeout cannot remove files while cp is still creating them.
 async function withPackagedFixture(options: {
+  readonly released?: boolean
   readonly install?: boolean
-  readonly childVersion?: string
   readonly corruptDigest?: boolean
   readonly escapingSymlink?: boolean
-  readonly reversedArtifact?: boolean
   readonly oxlint?: boolean
-  readonly workerFailure?: 'missing' | 'bytes' | 'source'
+  readonly workerFailure?: 'missing' | 'bytes' | 'descriptor'
 }, check: (fixture: PackagedFixture) => Promise<void>): Promise<void> {
   await withDirectory('codegraph-packaged-native-', async (root) => {
     await check(await packagedFixture(root, options))
@@ -165,22 +154,21 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
     join(root, 'package.json'),
     JSON.stringify({ name: '@astrale-os/codegraph', version: packageVersion, type: 'module' }),
   )
-  const packageName = targets[target]
-  if (!packageName) throw new Error(`Unsupported native distribution test target ${target}.`)
-  const executable = process.platform === 'win32' ? 'bin/codegraph-native.exe' : 'bin/codegraph-native'
-  const packageDirectory = join(root, 'node_modules', ...packageName.split('/'))
-  const binary = join(packageDirectory, executable)
+  if (!targets.includes(target)) throw new Error(`Unsupported native distribution test target ${target}.`)
+  const executable = 'bin/codegraph-native'
+  const artifactDirectory = join(root, 'native-artifacts', target)
+  const binary = join(artifactDirectory, executable)
   const outside = join(root, 'outside')
   const bytes = Buffer.from('packaged native fixture\n')
   const workerBytes = Buffer.from('packaged worker admission fixture\n')
-  const workerExecutable = process.platform === 'win32' ? 'bin/codegraph-oxlint.exe' : 'bin/codegraph-oxlint'
-  const worker = join(packageDirectory, workerExecutable)
+  const workerExecutable = 'bin/codegraph-oxlint'
+  const worker = join(artifactDirectory, workerExecutable)
   await mkdir(dirname(binary), { recursive: true })
   if (options.escapingSymlink) {
     await writeFile(outside, bytes)
     await chmod(outside, 0o755)
     await symlink(outside, binary)
-  } else {
+  } else if (options.install !== false) {
     await writeFile(binary, bytes)
     await chmod(binary, 0o755)
   }
@@ -190,7 +178,6 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
   }
   const artifact = {
     target,
-    package: packageName,
     executable,
     bytes: bytes.byteLength,
     sha256: options.corruptDigest
@@ -199,7 +186,7 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
     ...(options.oxlint ? { oxlint: {
       executable: workerExecutable, bytes: workerBytes.length,
       sha256: createHash('sha256').update(workerBytes).digest('hex'),
-      engineVersion: '1.81.0', protocolVersion: 1,
+      engineVersion: options.workerFailure === 'descriptor' ? '1.78.0' : '1.81.0', protocolVersion: 1,
       source: { revision: '3'.repeat(40), patchSha256: '4'.repeat(64) },
     } } : {}),
   }
@@ -212,41 +199,14 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
       protocolVersion: 1,
       sourceRevision: '1'.repeat(40),
       toolchain: { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture' },
-      artifacts: { [target]: artifact },
+      artifacts: options.released === false ? {} : { [target]: artifact },
     }),
   )
-  if (options.install !== false) {
-    await writeFile(
-      join(packageDirectory, 'package.json'),
-      JSON.stringify({
-        name: packageName,
-        version: options.childVersion ?? packageVersion,
-        type: 'module',
-        exports: { './manifest.json': './manifest.json', './package.json': './package.json' },
-      }),
-    )
-    let manifestArtifact = options.reversedArtifact
-      ? Object.fromEntries(Object.entries(artifact).reverse())
-      : artifact
-    if (options.workerFailure === 'source') manifestArtifact = {
-      ...manifestArtifact, oxlint: { ...artifact.oxlint!, source: { ...artifact.oxlint!.source, patchSha256: '5'.repeat(64) } },
-    }
-    await writeFile(
-      join(packageDirectory, 'manifest.json'),
-      JSON.stringify({
-        format: 'astrale.codegraph.native-artifact',
-        version: 1,
-        packageVersion,
-        protocolVersion: 1,
-        artifact: manifestArtifact,
-      }),
-    )
-  }
   const module = await import(
     `${pathToFileURL(join(root, 'dist/analysis/typescript/distribution/index.js')).href}?fixture=${Date.now()}-${Math.random()}`
   ) as { resolvePackagedNativeAnalysis(): Promise<unknown>; resolvePackagedNativeOxlint(): Promise<unknown> }
   const canonical = await import('node:fs/promises')
-  return { binary: await canonical.realpath(binary),
+  return { binary: options.install === false ? binary : await canonical.realpath(binary),
     worker: options.oxlint && options.workerFailure !== 'missing' ? await canonical.realpath(worker) : worker,
     resolve: module.resolvePackagedNativeAnalysis, resolveOxlint: module.resolvePackagedNativeOxlint }
 }

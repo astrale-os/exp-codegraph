@@ -35,7 +35,7 @@ export const MAINTAINABILITY_SCOPE: MaintainabilityScope = Object.freeze({
     '__tests__',
     'dist',
     'node_modules',
-    'native-packages',
+    'native-artifacts',
     'qualification',
     'scripts',
     '.history',

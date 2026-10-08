@@ -9,24 +9,14 @@ import type {
 import { NativeAnalysisDistributionError } from "./model.ts";
 
 export const NATIVE_RELEASE_FORMAT = "astrale.codegraph.native-release" as const;
-export const NATIVE_ARTIFACT_FORMAT = "astrale.codegraph.native-artifact" as const;
 
-export const NATIVE_ARTIFACT_PACKAGES: Readonly<Record<NativeAnalysisTarget, string>> =
-  Object.freeze({
-    "darwin-arm64": "@astrale-os/codegraph-native-darwin-arm64",
-    "darwin-x64": "@astrale-os/codegraph-native-darwin-x64",
-    "linux-arm64": "@astrale-os/codegraph-native-linux-arm64",
-    "linux-x64": "@astrale-os/codegraph-native-linux-x64",
-    "win32-x64": "@astrale-os/codegraph-native-win32-x64",
-  });
+/** Each target's executables live in this directory of the one published package. */
+export const NATIVE_ARTIFACT_DIRECTORY = "native-artifacts" as const;
 
-export interface NativeArtifactPackageManifest {
-  readonly format: typeof NATIVE_ARTIFACT_FORMAT;
-  readonly version: 1;
-  readonly packageVersion: string;
-  readonly protocolVersion: typeof NATIVE_ANALYSIS_PROTOCOL_VERSION;
-  readonly artifact: NativeAnalysisArtifact;
-}
+const NATIVE_ANALYSIS_TARGETS: readonly NativeAnalysisTarget[] = Object.freeze([
+  "darwin-arm64",
+  "linux-x64",
+]);
 
 export async function readNativeReleaseManifest(
   path: string,
@@ -63,7 +53,7 @@ export async function readNativeReleaseManifest(
   }
   const artifacts = value.artifacts as Readonly<Record<string, unknown>>;
   for (const [key, artifact] of Object.entries(artifacts)) {
-    if (!isTarget(key) || !validArtifact(artifact, key, NATIVE_ARTIFACT_PACKAGES[key])) {
+    if (!isTarget(key) || !validArtifact(artifact, key)) {
       throw new NativeAnalysisDistributionError(
         "NATIVE_RELEASE_MANIFEST_INVALID",
         `Codegraph native release manifest contains an invalid ${key} artifact.`,
@@ -74,49 +64,14 @@ export async function readNativeReleaseManifest(
   return input as NativeAnalysisReleaseManifest;
 }
 
-export function admitNativeArtifactPackageManifest(
-  input: unknown,
-  expected: NativeAnalysisArtifact,
-  packageVersion: string,
-): NativeArtifactPackageManifest {
-  const value = record(input);
-  if (
-    value.format !== NATIVE_ARTIFACT_FORMAT ||
-    value.version !== 1 ||
-    value.packageVersion !== packageVersion ||
-    value.protocolVersion !== NATIVE_ANALYSIS_PROTOCOL_VERSION ||
-    !validArtifact(value.artifact, expected.target, expected.package) ||
-    !sameArtifact(value.artifact, expected)
-  ) {
-    throw new NativeAnalysisDistributionError(
-      "NATIVE_ARTIFACT_INVALID",
-      `Native artifact package manifest is invalid for ${expected.target}.`,
-      expected.target,
-    );
-  }
-  return input as NativeArtifactPackageManifest;
-}
-
-function sameArtifact(input: unknown, expected: NativeAnalysisArtifact): boolean {
-  const value = record(input);
-  return (
-    value.target === expected.target &&
-    value.package === expected.package &&
-    value.executable === expected.executable &&
-    value.bytes === expected.bytes &&
-    value.sha256 === expected.sha256
-  );
-}
-
 export function currentNativeAnalysisTarget(): string {
   return `${process.platform}-${process.arch}`;
 }
 
-function validArtifact(input: unknown, target: string, packageName: string): boolean {
+function validArtifact(input: unknown, target: string): boolean {
   const value = record(input);
   return (
     value.target === target &&
-    value.package === packageName &&
     typeof value.executable === "string" &&
     portableArtifactPath(value.executable) &&
     Number.isSafeInteger(value.bytes) &&
@@ -127,45 +82,31 @@ function validArtifact(input: unknown, target: string, packageName: string): boo
 }
 
 /** Admit only the companion capability; Go consumers do not consume its metadata. */
-export function admitNativeOxlintPackageManifest(
-  input: NativeArtifactPackageManifest,
+export function admitNativeOxlintArtifact(
   expected: NativeAnalysisArtifact,
 ): NonNullable<NativeAnalysisArtifact["oxlint"]> {
   if (!expected.oxlint) {
     throw new NativeAnalysisDistributionError("NATIVE_OXLINT_UNAVAILABLE",
       `Codegraph has no packaged Oxlint worker for ${expected.target}.`, expected.target);
   }
-  if (!validOxlint(expected.oxlint, expected.target) ||
-    !validOxlint(input.artifact.oxlint, expected.target) ||
-    !sameOxlint(input.artifact.oxlint, expected.oxlint)) {
+  if (!validOxlint(expected.oxlint)) {
     throw new NativeAnalysisDistributionError("NATIVE_ARTIFACT_INVALID",
-      `Oxlint worker manifests disagree for ${expected.target}.`, expected.target);
+      `Oxlint worker descriptor is invalid for ${expected.target}.`, expected.target);
   }
   return expected.oxlint;
 }
 
-function validOxlint(input: unknown, target: string): boolean {
+function validOxlint(input: unknown): boolean {
   const value = record(input);
   const source = record(value.source);
   return (
-    target !== "win32-x64" &&
-    value.executable === `bin/codegraph-oxlint${target === "win32-x64" ? ".exe" : ""}` &&
+    value.executable === "bin/codegraph-oxlint" &&
     Number.isSafeInteger(value.bytes) && (value.bytes as number) > 0 &&
     typeof value.sha256 === "string" && /^[a-f0-9]{64}$/u.test(value.sha256) &&
     value.engineVersion === "1.81.0" && value.protocolVersion === 1 &&
     typeof source.revision === "string" && /^[a-f0-9]{40}$/u.test(source.revision) &&
     typeof source.patchSha256 === "string" && /^[a-f0-9]{64}$/u.test(source.patchSha256)
   );
-}
-
-function sameOxlint(input: unknown, expected: NativeAnalysisArtifact["oxlint"]): boolean {
-  if (input === undefined || expected === undefined) return input === expected;
-  const value = record(input);
-  const source = record(value.source);
-  return value.executable === expected.executable && value.bytes === expected.bytes &&
-    value.sha256 === expected.sha256 && value.engineVersion === expected.engineVersion &&
-    value.protocolVersion === expected.protocolVersion &&
-    source.revision === expected.source.revision && source.patchSha256 === expected.source.patchSha256;
 }
 
 function portableArtifactPath(value: string): boolean {
@@ -193,5 +134,5 @@ function record(value: unknown): Readonly<Record<string, unknown>> {
 }
 
 function isTarget(value: string): value is NativeAnalysisTarget {
-  return Object.hasOwn(NATIVE_ARTIFACT_PACKAGES, value);
+  return (NATIVE_ANALYSIS_TARGETS as readonly string[]).includes(value);
 }

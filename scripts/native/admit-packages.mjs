@@ -7,13 +7,13 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import {
-  NATIVE_RELEASE_FORMAT, NATIVE_TARGETS, PROTOCOL_VERSION,
-  assertArtifactManifest, assertOxlintSources, assertToolchain, stableJson,
-  oxlintEligible,
+  NATIVE_ARTIFACT_DIRECTORY, NATIVE_RELEASE_FORMAT, NATIVE_TARGETS, PROTOCOL_VERSION,
+  assertArtifact, assertOxlintSources, assertToolchain, stableJson,
 } from './shared.mjs'
 
 const execFile = promisify(execFileCallback)
 const npmRegistry = 'https://registry.npmjs.org/'
+const packageName = '@astrale-os/codegraph'
 const repositoryUrl = 'git+https://github.com/astrale-os/exp-codegraph.git'
 const maximumArchiveBytes = 256 * 1024 * 1024
 
@@ -30,20 +30,18 @@ export function admitQualificationRun(run, sourceRevision, repository) {
 }
 
 /** Admit existing qualified bytes; never build, rewrite, repack or publish them. */
-export async function admitReleasePackages(directory, sourceRevision, version) {
+export async function admitReleasePackage(directory, sourceRevision, version) {
   assert.match(sourceRevision, /^[a-f0-9]{40}$/u)
   assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u)
-  const units = [
-    ...Object.entries(NATIVE_TARGETS).map(([target, artifact]) => ({
-      directory: `native-packages/${target}`, name: artifact.package, target,
-    })),
-    { directory: '.', name: '@astrale-os/codegraph' },
-  ]
-  const expectedFiles = units.map(({ name }) => archiveName(name, version)).sort()
-  const files = (await readdir(directory)).filter((name) => name.endsWith('.tgz')).sort()
-  assert.deepEqual(files, expectedFiles, 'Release must contain exactly the six expected archives.')
-  const rootArchive = resolve(directory, archiveName('@astrale-os/codegraph', version))
-  const release = await archiveJson(rootArchive, 'native-release.json')
+  const files = (await readdir(directory)).filter((name) => name.endsWith('.tgz'))
+  assert.deepEqual(files, [archiveName(packageName, version)], 'Release must contain exactly the Codegraph archive.')
+  const archive = resolve(directory, files[0])
+  assert((await stat(archive)).size <= maximumArchiveBytes, 'Archive exceeds the release admission bound.')
+  const manifest = await archiveJson(archive, 'package.json')
+  assertPublicManifest(manifest, packageName, version)
+  assert.equal(manifest.optionalDependencies, undefined, 'Native artifacts must travel inside the package.')
+  assert.equal(manifest.dependencies?.ttsc, undefined)
+  const release = await archiveJson(archive, 'native-release.json')
   assert.equal(release.format, NATIVE_RELEASE_FORMAT)
   assert.equal(release.version, 1)
   assert.equal(release.packageVersion, version)
@@ -52,64 +50,41 @@ export async function admitReleasePackages(directory, sourceRevision, version) {
   assertToolchain(release.toolchain, { requireOxlint: true })
   assert.deepEqual(Object.keys(release.artifacts).sort(), Object.keys(NATIVE_TARGETS).sort())
   assertOxlintSources(release.artifacts)
-  const notices = await Promise.all(['LICENSE', 'THIRD_PARTY_NOTICES.md'].map(async (member) => ({
-    member, bytes: await archiveMember(rootArchive, member),
-  })))
-  assert(notices.every(({ bytes }) => bytes.length > 0), 'Release license notices are empty.')
-  const packages = []
-  for (const unit of units) {
-    const archive = resolve(directory, archiveName(unit.name, version))
-    const manifest = await archiveJson(archive, 'package.json')
-    assertPublicManifest(manifest, unit.name, version)
-    if (unit.target) {
-      for (const { member, bytes } of notices) {
-        assert((await archiveMember(archive, member)).equals(bytes), `${unit.name} ${member} differs from the root release.`)
-      }
-      const expected = NATIVE_TARGETS[unit.target]
-      assert.deepEqual(manifest.os, [expected.os])
-      assert.deepEqual(manifest.cpu, [expected.cpu])
-      const artifact = assertArtifactManifest(await archiveJson(archive, 'manifest.json'), unit.target, version, { requireOxlint: oxlintEligible(unit.target) })
-      assert.equal(stableJson(artifact), stableJson(release.artifacts[unit.target]))
-      const binary = await archiveMember(archive, expected.executable)
-      assert.equal(binary.length, artifact.bytes, `${unit.name} executable size differs.`)
-      assert.equal(hash(binary, 'sha256'), artifact.sha256, `${unit.name} executable digest differs.`)
-      if (artifact.oxlint) {
-        const oxlint = await archiveMember(archive, artifact.oxlint.executable)
-        assert.equal(oxlint.length, artifact.oxlint.bytes, `${unit.name} codegraph-oxlint size differs.`)
-        assert.equal(hash(oxlint, 'sha256'), artifact.oxlint.sha256, `${unit.name} codegraph-oxlint digest differs.`)
-      }
-    } else {
-      assert.deepEqual(manifest.optionalDependencies, Object.fromEntries(
-        Object.values(NATIVE_TARGETS).map(({ package: name }) => [name, version]),
-      ), 'Packed native dependencies must be exact registry versions.')
-      assert.equal(manifest.dependencies?.ttsc, undefined)
-    }
-    assert((await stat(archive)).size <= maximumArchiveBytes, 'Archive exceeds the release admission bound.')
-    const bytes = await readFile(archive)
-    packages.push({
-      ...unit, version, archive, bytes: bytes.length, sha256: hash(bytes, 'sha256'),
-      integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
-    })
+  for (const member of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+    assert((await archiveMember(archive, member)).length > 0, 'Release license notices are empty.')
   }
-  return { sourceRevision, version, packages, tarballs: Object.fromEntries(
-    packages.map((unit) => [unit.directory, unit.archive]),
-  ) }
+  const delivered = []
+  for (const target of Object.keys(NATIVE_TARGETS)) {
+    const artifact = assertArtifact(release.artifacts[target], target, version, { requireOxlint: true })
+    for (const executable of [artifact, artifact.oxlint]) {
+      const member = `${NATIVE_ARTIFACT_DIRECTORY}/${target}/${executable.executable}`
+      const bytes = await archiveMember(archive, member)
+      assert.equal(bytes.length, executable.bytes, `${member} size differs.`)
+      assert.equal(hash(bytes, 'sha256'), executable.sha256, `${member} digest differs.`)
+      delivered.push(member)
+    }
+  }
+  assert.deepEqual(await archiveMembers(archive, NATIVE_ARTIFACT_DIRECTORY), delivered.sort(),
+    'Archive must deliver exactly the qualified native executables.')
+  const bytes = await readFile(archive)
+  return { sourceRevision, version, tarballs: { '.': archive }, package: {
+    name: packageName, version, archive, bytes: bytes.length, sha256: hash(bytes, 'sha256'),
+    integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+  } }
 }
 
-/** Existing immutable versions must match before an ordered publisher can resume. */
-export async function admitRegistryVersions(packages, { allowMissing, fetcher = fetch }) {
-  for (const unit of packages) {
-    const response = await fetcher(`${npmRegistry}${encodeURIComponent(unit.name)}/${unit.version}`, {
-      signal: AbortSignal.timeout(30_000),
-    })
-    if (allowMissing && response.status === 404) continue
-    assert(response.ok, `Cannot verify npm ${unit.name}@${unit.version}: HTTP ${response.status}.`)
-    const published = await response.json()
-    assert.equal(published.name, unit.name)
-    assert.equal(published.version, unit.version)
-    assert.equal(published.dist?.integrity, unit.integrity, `npm ${unit.name}@${unit.version} has different immutable bytes.`)
-    assert.equal(new URL(published.dist.tarball).origin, new URL(npmRegistry).origin)
-  }
+/** An existing immutable version must match before the publisher can resume. */
+export async function admitRegistryVersion(unit, { allowMissing, fetcher = fetch }) {
+  const response = await fetcher(`${npmRegistry}${encodeURIComponent(unit.name)}/${unit.version}`, {
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (allowMissing && response.status === 404) return
+  assert(response.ok, `Cannot verify npm ${unit.name}@${unit.version}: HTTP ${response.status}.`)
+  const published = await response.json()
+  assert.equal(published.name, unit.name)
+  assert.equal(published.version, unit.version)
+  assert.equal(published.dist?.integrity, unit.integrity, `npm ${unit.name}@${unit.version} has different immutable bytes.`)
+  assert.equal(new URL(published.dist.tarball).origin, new URL(npmRegistry).origin)
 }
 
 function assertPublicManifest(manifest, name, version) {
@@ -129,6 +104,12 @@ async function archiveMember(archive, member) {
     encoding: 'buffer', maxBuffer: maximumArchiveBytes,
   })).stdout
 }
+async function archiveMembers(archive, directory) {
+  const { stdout } = await execFile('tar', ['-tf', archive], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  const prefix = `package/${directory}/`
+  return stdout.split('\n').filter((member) => member.startsWith(prefix) && !member.endsWith('/'))
+    .map((member) => member.slice('package/'.length)).sort()
+}
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const argument = (name) => {
@@ -147,9 +128,9 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   if (runPath) admitQualificationRun(
     JSON.parse(await readFile(runPath, 'utf8')), sourceRevision, process.env.GITHUB_REPOSITORY,
   )
-  const admitted = await admitReleasePackages(resolve(directory), sourceRevision, version)
-  if (process.argv.includes('--npm-preflight')) await admitRegistryVersions(admitted.packages, { allowMissing: true })
-  if (process.argv.includes('--npm-published')) await admitRegistryVersions(admitted.packages, { allowMissing: false })
+  const admitted = await admitReleasePackage(resolve(directory), sourceRevision, version)
+  if (process.argv.includes('--npm-preflight')) await admitRegistryVersion(admitted.package, { allowMissing: true })
+  if (process.argv.includes('--npm-published')) await admitRegistryVersion(admitted.package, { allowMissing: false })
   const output = argument('--github-output')
   if (output) await appendFile(output, `tarballs-json=${JSON.stringify(admitted.tarballs)}\nversion=${version}\n`)
   process.stdout.write(stableJson(admitted))

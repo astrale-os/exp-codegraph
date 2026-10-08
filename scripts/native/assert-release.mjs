@@ -1,20 +1,18 @@
-import { access, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import {
-  NATIVE_ARTIFACT_FORMAT,
+  NATIVE_ARTIFACT_DIRECTORY,
   NATIVE_RELEASE_FORMAT,
   NATIVE_TARGETS,
   PROTOCOL_VERSION,
   assertArtifact,
-  assertArtifactManifest,
   assertOxlintSources,
   assertRegularExecutable,
   assertToolchain,
   digestFile,
   readJson,
   stableJson,
-  oxlintEligible,
 } from './shared.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
@@ -45,61 +43,35 @@ if (
 ) {
   throw new Error('Codegraph must select public npm distribution.')
 }
+if (
+  packageManifest.optionalDependencies !== undefined ||
+  !packageManifest.files?.includes(NATIVE_ARTIFACT_DIRECTORY)
+) {
+  throw new Error('Codegraph must deliver its native artifacts inside its one package.')
+}
 assertToolchain(release.toolchain, { requireOxlint: true })
 
-const optional = packageManifest.optionalDependencies ?? {}
 const targets = Object.keys(NATIVE_TARGETS)
 if (Object.keys(release.artifacts ?? {}).sort().join('\0') !== [...targets].sort().join('\0')) {
   throw new Error(`Native release must contain exactly: ${targets.join(', ')}.`)
 }
 assertOxlintSources(release.artifacts)
-for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
-  const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: oxlintEligible(target) })
-  const dependency = optional[expected.package]
-  if (dependency !== packageVersion && dependency !== `workspace:${packageVersion}` && dependency !== 'workspace:*') {
-    throw new Error(`${expected.package} must be an exact-version optional dependency.`)
-  }
-  const packageRoot = resolve(root, 'native-packages', target)
-  const child = await readJson(resolve(packageRoot, 'package.json'))
-  if (
-    child.name !== expected.package ||
-    child.version !== packageVersion ||
-    child.private === true ||
-    child.publishConfig?.access !== 'public' ||
-    child.publishConfig?.registry !== 'https://registry.npmjs.org/' ||
-    child.repository?.url !== 'git+https://github.com/astrale-os/exp-codegraph.git' ||
-    stableJson(child.os) !== stableJson([expected.os]) ||
-    stableJson(child.cpu) !== stableJson([expected.cpu]) ||
-    child.main !== undefined ||
-    child.bin !== undefined ||
-    child.scripts !== undefined ||
-    child.dependencies !== undefined ||
-    child.optionalDependencies !== undefined ||
-    child.peerDependencies !== undefined
-  ) {
-    throw new Error(`${expected.package} is not an opaque exact-target artifact package.`)
-  }
-  const manifest = await readJson(resolve(packageRoot, 'manifest.json'))
-  const packaged = assertArtifactManifest(manifest, target, packageVersion)
-  if (manifest.format !== NATIVE_ARTIFACT_FORMAT || stableJson(packaged) !== stableJson(artifact)) {
-    throw new Error(`${expected.package} does not match the root release manifest.`)
-  }
-  const executable = resolve(packageRoot, artifact.executable)
-  await assertRegularExecutable(executable, target)
-  const digest = await digestFile(executable)
-  if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
-    throw new Error(`${expected.package} executable does not match the root release manifest.`)
-  }
-  if (artifact.oxlint) {
-    const oxlint = resolve(packageRoot, artifact.oxlint.executable)
-    await assertRegularExecutable(oxlint, target)
-    const oxlintDigest = await digestFile(oxlint)
-    if (oxlintDigest.bytes !== artifact.oxlint.bytes || oxlintDigest.sha256 !== artifact.oxlint.sha256) {
-      throw new Error(`${expected.package} codegraph-oxlint does not match the root release manifest.`)
+for (const target of targets) {
+  const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: true })
+  const artifactRoot = resolve(root, NATIVE_ARTIFACT_DIRECTORY, target)
+  for (const delivered of [artifact, artifact.oxlint]) {
+    // pnpm pack marks only bin entries and these declared files as executable.
+    const packed = `./${NATIVE_ARTIFACT_DIRECTORY}/${target}/${delivered.executable}`
+    if (!packageManifest.publishConfig.executableFiles?.includes(packed)) {
+      throw new Error(`${packed} is not declared in publishConfig.executableFiles.`)
+    }
+    const executable = resolve(artifactRoot, delivered.executable)
+    await assertRegularExecutable(executable, target)
+    const digest = await digestFile(executable)
+    if (digest.bytes !== delivered.bytes || digest.sha256 !== delivered.sha256) {
+      throw new Error(`${target} ${delivered.executable} does not match the release manifest.`)
     }
   }
-  await access(resolve(packageRoot, 'LICENSE'))
-  await access(resolve(packageRoot, 'THIRD_PARTY_NOTICES.md'))
 }
 
 const notices = await readFile(resolve(root, 'THIRD_PARTY_NOTICES.md'), 'utf8')

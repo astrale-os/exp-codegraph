@@ -7,9 +7,9 @@ import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
-  admitQualificationRun, admitRegistryVersions, admitReleasePackages, assertNpmConsumerLock,
+  admitQualificationRun, admitRegistryVersion, admitReleasePackage, assertNpmConsumerLock,
 } from '../scripts/native/admit-packages.mjs'
-import { assertArtifact, assertOxlintArtifact, NATIVE_TARGETS, oxlintEligible, oxlintExecutable } from '../scripts/native/shared.mjs'
+import { assertArtifact, assertOxlintArtifact, NATIVE_TARGETS, oxlintExecutable } from '../scripts/native/shared.mjs'
 
 const execFile = promisify(execFileCallback)
 const temporary: string[] = []
@@ -19,34 +19,28 @@ const repository = 'astrale-os/exp-codegraph'
 afterEach(async () => { await Promise.all(temporary.splice(0).map((root) => rm(root, { recursive: true, force: true }))) })
 
 describe('qualified release archive admission', () => {
-  it('binds six real archives and native executable bytes to the qualified source', async () => {
+  it('binds the one real archive and every native executable to the qualified source', async () => {
     const directory = await releaseFixture()
-    const release = await admitReleasePackages(directory, revision, version)
-    expect(release.packages).toHaveLength(6)
-    expect(release.packages.at(-1)?.name).toBe('@astrale-os/codegraph')
-    expect(Object.keys(release.tarballs)).toEqual([...Object.keys(NATIVE_TARGETS).map((target) => `native-packages/${target}`), '.'])
-    expect(release.packages.every((unit: { integrity: string }) => unit.integrity.startsWith('sha512-'))).toBe(true)
-    await expect(admitReleasePackages(directory, '2'.repeat(40), version)).rejects.toThrow('source revision')
+    const release = await admitReleasePackage(directory, revision, version)
+    expect(release.package.name).toBe('@astrale-os/codegraph')
+    expect(release.package.integrity.startsWith('sha512-')).toBe(true)
+    expect(release.tarballs).toEqual({ '.': release.package.archive })
+    await expect(admitReleasePackage(directory, '2'.repeat(40), version)).rejects.toThrow('source revision')
   })
 
-  it.each(['binary', 'dependency', 'version', 'oxlint', 'missing-oxlint', 'oxlint-source', 'notices'] as const)('rejects a torn %s publication cohort before publishing', async (corruption) => {
-    await expect(admitReleasePackages(await releaseFixture(corruption), revision, version)).rejects.toThrow()
+  it.each(['binary', 'dependency', 'version', 'oxlint', 'missing-oxlint', 'oxlint-source', 'notices', 'stray', 'second-archive'] as const)('rejects a torn %s publication before publishing', async (corruption) => {
+    await expect(admitReleasePackage(await releaseFixture(corruption), revision, version)).rejects.toThrow()
   })
 
   it('reads historical Go-only artifacts but requires a worker for a new release', () => {
     const target = 'darwin-arm64'
-    const artifact = { target, package: NATIVE_TARGETS[target].package,
-      executable: NATIVE_TARGETS[target].executable, bytes: 1, sha256: '0'.repeat(64) }
+    const artifact = { target, executable: NATIVE_TARGETS[target].executable, bytes: 1, sha256: '0'.repeat(64) }
     expect(() => assertArtifact(artifact, target, version)).not.toThrow()
     expect(() => assertArtifact(artifact, target, version, { requireOxlint: true })).toThrow('no qualified')
   })
 
   it.each(Object.keys(NATIVE_TARGETS))('binds the worker filename, engine, protocol and source for %s', (target) => {
     const descriptor = oxlintDescriptor(target, Buffer.from('schema fixture'))
-    if (!oxlintEligible(target)) {
-      expect(() => assertOxlintArtifact(descriptor, target)).toThrow()
-      return
-    }
     expect(() => assertOxlintArtifact(descriptor, target)).not.toThrow()
     for (const changed of [
       { executable: '../codegraph-oxlint' }, { executable: 'bin/captured-owned-oxlint-1.81.0' },
@@ -70,16 +64,16 @@ describe('qualified release archive admission', () => {
   })
 
   it('resumes only byte-identical npm versions and keeps missing versions explicit', async () => {
-    const units = [{ name: '@astrale-os/codegraph', version, integrity: 'sha512-qualified' }]
+    const unit = { name: '@astrale-os/codegraph', version, integrity: 'sha512-qualified' }
     const metadata = (integrity: string) => new Response(JSON.stringify({
-      name: units[0]!.name, version, dist: {
+      name: unit.name, version, dist: {
         integrity, tarball: 'https://registry.npmjs.org/@astrale-os/codegraph/-/codegraph-0.1.0.tgz',
       },
     }))
-    await expect(admitRegistryVersions(units, { allowMissing: true, fetcher: async () => new Response('', { status: 404 }) })).resolves.toBeUndefined()
-    await expect(admitRegistryVersions(units, { allowMissing: false, fetcher: async () => new Response('', { status: 404 }) })).rejects.toThrow('HTTP 404')
-    await expect(admitRegistryVersions(units, { allowMissing: true, fetcher: async () => metadata('sha512-other') })).rejects.toThrow('immutable bytes')
-    await expect(admitRegistryVersions(units, { allowMissing: false, fetcher: async () => metadata('sha512-qualified') })).resolves.toBeUndefined()
+    await expect(admitRegistryVersion(unit, { allowMissing: true, fetcher: async () => new Response('', { status: 404 }) })).resolves.toBeUndefined()
+    await expect(admitRegistryVersion(unit, { allowMissing: false, fetcher: async () => new Response('', { status: 404 }) })).rejects.toThrow('HTTP 404')
+    await expect(admitRegistryVersion(unit, { allowMissing: true, fetcher: async () => metadata('sha512-other') })).rejects.toThrow('immutable bytes')
+    await expect(admitRegistryVersion(unit, { allowMissing: false, fetcher: async () => metadata('sha512-qualified') })).resolves.toBeUndefined()
   })
 
   it('rejects local and alternate-registry closure masquerading as npm qualification', () => {
@@ -98,7 +92,6 @@ describe('downloaded native artifact assembly', () => {
     await execFile(process.execPath, ['scripts/native/assemble.mjs', '--input', fixture.input], { cwd: fixture.root })
     const release = JSON.parse(await readFile(join(fixture.root, 'native-release.json'), 'utf8'))
     expect(Object.keys(release.artifacts)).toEqual(Object.keys(NATIVE_TARGETS))
-    expect(release.artifacts['win32-x64'].oxlint).toBeUndefined()
     for (const file of fixture.files) {
       expect(await readFile(file.source)).toEqual(file.bytes)
       expect((await stat(file.source)).mode & 0o777).toBe(0o644)
@@ -147,23 +140,18 @@ async function assemblyFixture() {
     await copyFile(new URL(`../scripts/native/${name}`, import.meta.url), join(scripts, name))
   }
   await writeFile(join(root, 'package.json'), JSON.stringify({ version, type: 'module' }))
-  await writeFile(join(root, 'LICENSE'), 'assembly license fixture\n')
-  await writeFile(join(root, 'THIRD_PARTY_NOTICES.md'), 'assembly notices fixture\n')
   const files: { source: string, destination: string, bytes: Buffer, sha256: string }[] = []
   for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     const bytes = Buffer.from(`assembly fixture ${target} Go`)
     const workerBytes = Buffer.from(`assembly fixture ${target} worker`)
     const worker = oxlintDescriptor(target, workerBytes)
-    const artifact = { target, package: expected.package, executable: expected.executable,
-      bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
-      ...(oxlintEligible(target) ? { oxlint: worker } : {}),
+    const artifact = { target, executable: expected.executable,
+      bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), oxlint: worker,
     }
     const source = join(input, target)
-    const destination = join(root, 'native-packages', target)
-    await mkdir(destination, { recursive: true })
-    await writeFile(join(destination, 'package.json'), JSON.stringify(publicManifest(expected.package)))
+    const destination = join(root, 'native-artifacts', target)
     const toolchain = { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture',
-      ...(oxlintEligible(target) ? { oxlint: { rustc: 'fixture', cargo: 'fixture', cargoLockSha256: '5'.repeat(64) } } : {}),
+      oxlint: { rustc: 'fixture', cargo: 'fixture', cargoLockSha256: '5'.repeat(64) },
     }
     await mkdir(source, { recursive: true })
     await writeFile(join(source, 'manifest.json'), JSON.stringify({
@@ -173,8 +161,7 @@ async function assemblyFixture() {
       format: 'astrale.codegraph.native-build', version: 1, packageVersion: version, protocolVersion: 1,
       source: { revision, dirty: false }, toolchain, artifact,
     }))
-    for (const record of [{ descriptor: artifact, bytes },
-      ...(oxlintEligible(target) ? [{ descriptor: worker, bytes: workerBytes }] : [])]) {
+    for (const record of [{ descriptor: artifact, bytes }, { descriptor: worker, bytes: workerBytes }]) {
       const path = join(source, record.descriptor.executable)
       await mkdir(join(path, '..'), { recursive: true })
       await writeFile(path, record.bytes)
@@ -186,45 +173,37 @@ async function assemblyFixture() {
   return { root, input, files }
 }
 
-async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' | 'oxlint' | 'missing-oxlint' | 'oxlint-source' | 'notices') {
+async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' | 'oxlint' | 'missing-oxlint' | 'oxlint-source' | 'notices' | 'stray' | 'second-archive') {
   const root = await mkdtemp(join(tmpdir(), 'codegraph-release-admission-'))
   temporary.push(root)
   const output = join(root, 'archives')
   await mkdir(output)
   const artifacts: Record<string, unknown> = {}
+  const executables: Record<string, Buffer> = {}
   for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     const bytes = Buffer.from(`qualified ${target} executable`)
     const workerBytes = Buffer.from(`archive admission fixture ${target} worker`)
     const oxlint = oxlintDescriptor(target, workerBytes)
     if (corruption === 'oxlint-source' && target === 'linux-x64') oxlint.source.patchSha256 = '6'.repeat(64)
-    const artifact = {
-      target, package: expected.package, executable: expected.executable,
+    artifacts[target] = {
+      target, executable: expected.executable,
       bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
-      ...(oxlintEligible(target) && !(corruption === 'missing-oxlint' && target === 'linux-x64') ? { oxlint } : {}),
+      ...(corruption === 'missing-oxlint' && target === 'linux-x64' ? {} : { oxlint }),
     }
-    artifacts[target] = artifact
-    await packFixture(root, output, expected.package, {
-      'LICENSE': Buffer.from('release license fixture\n'),
-      'THIRD_PARTY_NOTICES.md': Buffer.from(corruption === 'notices' && target === 'linux-x64'
-        ? 'torn notices fixture\n' : 'release third-party notices fixture\n'),
-      'package.json': { ...publicManifest(expected.package), os: [expected.os], cpu: [expected.cpu],
-        ...(corruption === 'version' && target === 'linux-x64' ? { version: '0.0.0' } : {}),
-      },
-      'manifest.json': {
-        format: 'astrale.codegraph.native-artifact', version: 1, packageVersion: version,
-        protocolVersion: 1, artifact,
-      },
-      [expected.executable]: corruption === 'binary' && target === 'win32-x64' ? Buffer.from('changed') : bytes,
-      ...(oxlintEligible(target) ? { [oxlint.executable]: corruption === 'oxlint' && target === 'linux-x64' ? Buffer.from('changed') : workerBytes } : {}),
-    })
+    executables[`native-artifacts/${target}/${expected.executable}`] =
+      corruption === 'binary' && target === 'darwin-arm64' ? Buffer.from('changed') : bytes
+    executables[`native-artifacts/${target}/${oxlint.executable}`] =
+      corruption === 'oxlint' && target === 'linux-x64' ? Buffer.from('changed') : workerBytes
   }
+  if (corruption === 'stray') executables['native-artifacts/linux-arm64/bin/codegraph-native'] = Buffer.from('unqualified')
   await packFixture(root, output, '@astrale-os/codegraph', {
     'LICENSE': Buffer.from('release license fixture\n'),
-    'THIRD_PARTY_NOTICES.md': Buffer.from('release third-party notices fixture\n'),
+    'THIRD_PARTY_NOTICES.md': Buffer.from(corruption === 'notices' ? '' : 'release third-party notices fixture\n'),
     'package.json': {
       ...publicManifest('@astrale-os/codegraph'),
-      optionalDependencies: Object.fromEntries(Object.values(NATIVE_TARGETS).map(({ package: name }) =>
-        [name, corruption === 'dependency' ? 'workspace:*' : version])),
+      ...(corruption === 'version' ? { version: '0.0.0' } : {}),
+      ...(corruption === 'dependency'
+        ? { optionalDependencies: { '@astrale-os/codegraph-native-linux-x64': version } } : {}),
     },
     'native-release.json': {
       format: 'astrale.codegraph.native-release', version: 1, packageVersion: version,
@@ -232,7 +211,11 @@ async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' |
       toolchain: { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture',
         oxlint: { rustc: 'fixture', cargo: 'fixture', cargoLockSha256: '5'.repeat(64) } },
     },
+    ...executables,
   })
+  if (corruption === 'second-archive') {
+    await packFixture(root, output, '@astrale-os/codegraph-native-linux-x64', { 'package.json': {} })
+  }
   return output
 }
 
