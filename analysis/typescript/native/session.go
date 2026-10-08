@@ -589,7 +589,7 @@ func (a *analyzer) extract(
 		})
 	}
 	if a.projection.sourceOwned() {
-		sourceShards, err := x.sourceShards(files, selected, a.telemetry, requestID)
+		sourceShards, err := x.sourceShards(a.session.Program(), files, selected, a.telemetry, requestID)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -656,7 +656,7 @@ func shardSourceOwner(shard factShard) string {
 	if shard.Namespace == sourceNamespace {
 		return shard.Facts[0].Subject
 	}
-	if shard.Namespace != symbolNamespace && shard.Namespace != occurrenceNamespace && shard.Namespace != bodyNamespace {
+	if shard.Namespace != symbolNamespace && shard.Namespace != occurrenceNamespace && shard.Namespace != structureNamespace && shard.Namespace != bodyNamespace {
 		return ""
 	}
 	for _, entry := range shard.Facts {
@@ -907,6 +907,7 @@ func admitCapabilities(requested []string) ([]string, error) {
 		supported[capability] = true
 	}
 	supported[bodyDemandNamespace] = true
+	supported[structureNamespace] = true
 	for _, capability := range requested {
 		if !supported[capability] {
 			return nil, protocolError("CAPABILITY_UNSUPPORTED", fmt.Sprintf("Native capability %q is unsupported.", capability))

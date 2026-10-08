@@ -11,6 +11,8 @@ import { createValueEvaluatorFactory } from '../value/symbolic/engine.js';
 import { ValueResolutionCache } from '../value/symbolic/cache.js';
 import { ValueIndexOwner } from '../value/symbolic/owner.js';
 import { SemanticComputationCache } from './compute.js';
+import { StructuralIndexOwner } from '../structure/owner.js';
+import { createTypeScriptStructuralReader } from '../structure/reader.js';
 /** Open a headless project using the installed native analyzer and a caller-local memory store. */
 export async function openTypeScriptProject(options) {
     if (options.sessions && options.binary)
@@ -52,6 +54,7 @@ class ResidentProject {
     #values = new ValueResolutionCache();
     #computations = new SemanticComputationCache(this.#values);
     #index = new ValueIndexOwner();
+    #structure = new StructuralIndexOwner();
     constructor(descriptor, sessions, store, ownsStore) {
         this.#descriptor = descriptor;
         this.#sessions = sessions;
@@ -65,6 +68,7 @@ class ResidentProject {
             commit: async (transaction, options) => {
                 await store.commit(transaction, options);
                 this.#index.committed(transaction);
+                this.#structure.committed(transaction);
                 this.#computations.committed(transaction.next);
                 this.#pending.push(transaction);
                 let sourcesByShard = this.#sourceShards.get(transaction.next.universe);
@@ -154,14 +158,26 @@ class ResidentProject {
                 throw new Error('TypeScript project is disposed.');
             }
             const index = this.#index.acquire(query);
+            const structural = this.#structure.acquire(query);
             const makeEvaluator = createValueEvaluatorFactory(query, this.#values, index.load);
             const evaluators = new Map();
             let disposed = false;
+            let structuralReader;
             const lifetime = new AbortController();
             const snapshot = Object.freeze({
                 generation: query.generation,
                 query,
                 facts: createTypeScriptFactReader(query),
+                structure: async () => {
+                    if (disposed)
+                        throw new Error('TypeScript project snapshot is disposed.');
+                    return structuralReader ??= createTypeScriptStructuralReader(structural.load, {
+                        signal: AbortSignal.any([lifetime.signal, this.#lifetime.signal]),
+                        check: () => { if (disposed)
+                            throw new Error('TypeScript project snapshot is disposed.'); },
+                        selection: () => { },
+                    });
+                },
                 calls: (options = {}) => disposed
                     ? Promise.reject(new Error('TypeScript project snapshot is disposed.'))
                     : makeEvaluator.calls(options),
@@ -187,7 +203,7 @@ class ResidentProject {
                     if (disposed)
                         throw new Error('TypeScript project snapshot is disposed.');
                 }, options.signal ? AbortSignal.any([options.signal, lifetime.signal, this.#lifetime.signal])
-                    : AbortSignal.any([lifetime.signal, this.#lifetime.signal])),
+                    : AbortSignal.any([lifetime.signal, this.#lifetime.signal]), structural.load),
                 dispose: async () => {
                     if (disposed)
                         return;
@@ -196,7 +212,10 @@ class ResidentProject {
                     this.#readers.delete(snapshot);
                     evaluators.clear();
                     makeEvaluator.dispose();
+                    structuralReader?.dispose();
+                    structuralReader = undefined;
                     index.release();
+                    structural.release();
                     await query.dispose();
                     await this.collectSourceShards();
                 },
@@ -213,6 +232,7 @@ class ResidentProject {
         this.#computations.close();
         this.#values.close();
         this.#index.close();
+        this.#structure.close();
         this.#lifetime.abort(new Error('TypeScript project is disposed.'));
         this.#closing = (async () => {
             // Stop a running native request before awaiting queued work, then release its pinned evidence.

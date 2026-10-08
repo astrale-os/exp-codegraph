@@ -2,6 +2,7 @@ import type { Fact } from '../../facts/index.ts';
 import type { FactFilter, PageRequest } from '../../query/index.ts';
 import type { TypeScriptBodyFacts, TypeScriptBodyDemandFacts } from '../model.ts';
 import type { ObservedDeclaration } from '../surface/index.ts';
+import type { TypeScriptStructureFact } from '../structure/model.ts';
 import type { TypeScriptDiagnosticFact, TypeScriptModuleFact, TypeScriptOccurrenceFact, TypeScriptProjectFact, TypeScriptSourceFact, TypeScriptSymbolFact } from '../model.ts';
 export declare const TYPESCRIPT_FACT_NAMESPACES: Readonly<{
     readonly project: 'typescript.project';
@@ -9,13 +10,14 @@ export declare const TYPESCRIPT_FACT_NAMESPACES: Readonly<{
     readonly source: 'typescript.source';
     readonly symbol: 'typescript.symbol';
     readonly occurrence: 'typescript.occurrence';
+    readonly structure: 'typescript.structure';
     readonly body: 'typescript.body';
     readonly 'body-demand': 'typescript.body-demand';
     readonly module: 'astrale.typescript.module';
     readonly declaration: 'astrale.typescript.module';
 }>;
 /** Native projectors callers may request; declaration facts are module support, not a projector. */
-export declare const TYPESCRIPT_ANALYSIS_CAPABILITIES: readonly ["typescript.project", "typescript.diagnostic", "typescript.source", "typescript.symbol", "typescript.occurrence", "typescript.body", "typescript.body-demand", "astrale.typescript.module"];
+export declare const TYPESCRIPT_ANALYSIS_CAPABILITIES: readonly ["typescript.project", "typescript.diagnostic", "typescript.source", "typescript.symbol", "typescript.occurrence", "typescript.structure", "typescript.body", "typescript.body-demand", "astrale.typescript.module"];
 export interface TypeScriptDeclarationFact {
     readonly declaration: ObservedDeclaration;
 }
@@ -33,6 +35,7 @@ export interface TypeScriptFactPayloadByKind {
     readonly source: TypeScriptSourceFact;
     readonly symbol: TypeScriptSymbolFact;
     readonly occurrence: TypeScriptOccurrenceFact;
+    readonly structure: TypeScriptStructureFact;
     readonly body: TypeScriptBodyFacts;
     readonly 'body-demand': TypeScriptBodyDemandFacts;
     readonly module: TypeScriptModuleFact;

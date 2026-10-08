@@ -6,6 +6,7 @@ import type { SourceId } from '../../identity/index.ts'
 import type { TypeScriptFactReader } from '../facts/index.ts'
 import type { TypeScriptCallInventory, TypeScriptCallQuery } from '../body/index.ts'
 import type { BoundedValueEvaluator, BoundedValueEvaluatorOptions } from '../value/index.ts'
+import type { TypeScriptStructuralReader } from '../structure/model.ts'
 
 export interface TypeScriptProjectOptions {
   readonly root: string
@@ -26,6 +27,8 @@ export interface TypeScriptProjectSnapshot {
   readonly facts: TypeScriptFactReader
   /** Generic extensions consume the same pinned evidence as the typed reader. */
   readonly query: AnalysisQuery
+  /** Static references and file dependencies; requires typescript.structure capability. */
+  structure(): Promise<TypeScriptStructuralReader>
   /** Indexed call inventory. Selection precedes site projection, including unresolved calls. */
   calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
   /** Shares one index; evaluator reuse requires the same call model and effective budget. */
@@ -45,6 +48,7 @@ export interface TypeScriptProjectSnapshot {
 
 /** Tracked semantic reads, with the computation's cancellation and lifetime. */
 export interface TypeScriptSemanticReader {
+  structure(): Promise<TypeScriptStructuralReader>
   calls(options?: TypeScriptCallQuery): Promise<TypeScriptCallInventory>
   values<Atom = never>(options?: Omit<BoundedValueEvaluatorOptions<Atom>, 'query'>): Promise<BoundedValueEvaluator<Atom>>
 }

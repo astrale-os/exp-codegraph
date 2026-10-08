@@ -58,7 +58,8 @@ when displaying evidence from an older pinned snapshot.
 
 For repeated lint runs, put the semantic observation in a stable callback and pass every
 variable parameter through `input`. `snapshot.compute()` tracks the callback's call
-selections and value reads, including absent reads and already cached proofs.
+selections, structural selections and value reads, including absent reads and already cached proofs.
+For API references and file dependencies, [structural reads](typescript-structure.md) work without loading body facts.
 
 ```ts
 import {

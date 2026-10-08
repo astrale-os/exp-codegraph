@@ -1,12 +1,12 @@
 # Public API
 
-[Product overview and examples](../README.md) · [TypeScript values](typescript-values.md) · [Module contracts](module-contracts.md)
+[Product overview and examples](../README.md) · [Structural inspection](typescript-structure.md) · [TypeScript values](typescript-values.md) · [Module contracts](module-contracts.md)
 
 This inventory covers every named export of the package’s eleven code entrypoints. Runtime exports appear first; type-only exports are folded below each entry. For signatures and methods, open the linked source interface. `@astrale-os/codegraph/package.json` also exposes package metadata.
 
 ## Reader methods
 
-The main inspection interfaces: [project and snapshots](../analysis/typescript/project/model.ts), [call inventory](../analysis/typescript/body/types.ts), [value evaluation](../analysis/typescript/value/model.ts), [typed facts](../analysis/typescript/facts/model.ts), [generic queries and stores](../analysis/query/model.ts).
+The main inspection interfaces: [project and snapshots](../analysis/typescript/project/model.ts), [structural navigation](../analysis/typescript/structure/model.ts), [call inventory](../analysis/typescript/body/types.ts), [value evaluation](../analysis/typescript/value/model.ts), [typed facts](../analysis/typescript/facts/model.ts), [generic queries and stores](../analysis/query/model.ts).
 
 ```text
 project.refresh({ changed?, changes?, discover?, invalidate?, bodyDemand?, signal? })
@@ -14,10 +14,18 @@ project.open(generation?)
 project.dispose()
 
 snapshot.generation · snapshot.facts · snapshot.query
+snapshot.structure()
 snapshot.calls({ paths?, sources?, signal? })
 snapshot.values({ call?, limits? })
 snapshot.compute(observe, input, { signal? })
 snapshot.dispose()
+
+structure.exports({ path, signal? })
+structure.references({ target, paths?, includeDeclarations?, signal? })
+structure.dependencies({ paths?, signal? })
+structure.dependents({ path, transitive?, signal? })
+target: { path, name } · { symbol } · { origin }
+compute read: structure() · calls(options?) · values(options?)
 
 values.value(occurrence).property(name).invoke().resolve({ limits?, signal? })
 values.evaluate(occurrence, { signal? })
@@ -155,16 +163,23 @@ TypeScriptCallQuery
 TypeScriptCallSite
 TypeScriptComputation
 TypeScriptDeclarationFact
+TypeScriptDependencyInventory
+TypeScriptDependent
+TypeScriptDependentInventory
 TypeScriptDependencyFact
 TypeScriptDependencyOccurrence
 TypeScriptDiagnosticFact
 TypeScriptErrorCodeFact
+TypeScriptExport
+TypeScriptExportInventory
 TypeScriptFact
 TypeScriptFactFilter
 TypeScriptFactKind
 TypeScriptFactPage
 TypeScriptFactPayloadByKind
 TypeScriptFactReader
+TypeScriptFileDependency
+TypeScriptFileDependencyKind
 TypeScriptFunctionHeader
 TypeScriptModuleDeclarationReference
 TypeScriptModuleFact
@@ -179,8 +194,18 @@ TypeScriptProjectRefresh
 TypeScriptProjectSnapshot
 TypeScriptProjectUpdate
 TypeScriptRefreshResult
+TypeScriptReference
+TypeScriptReferenceInventory
+TypeScriptReferenceKind
+TypeScriptReferenceQuery
+TypeScriptReferenceTarget
 TypeScriptSemanticReader
 TypeScriptSourceFact
+TypeScriptStructuralInventory
+TypeScriptStructuralReader
+TypeScriptStructuralScope
+TypeScriptStructuralSymbol
+TypeScriptStructureFact
 TypeScriptSymbolFact
 TypeScriptSymbolOrigin
 ValueResult
