@@ -10,6 +10,7 @@ import type {
   TypeScriptSymbolFact,
 } from '../../.spec/api.js'
 import type { ObservedDeclaration } from '../../surface/.spec/api.js'
+import type { TypeScriptStructureFact } from '../../structure/.spec/api.js'
 
 export const TYPESCRIPT_FACT_NAMESPACES: Readonly<{
   project: 'typescript.project'
@@ -18,6 +19,7 @@ export const TYPESCRIPT_FACT_NAMESPACES: Readonly<{
   symbol: 'typescript.symbol'
   occurrence: 'typescript.occurrence'
   body: 'typescript.body'
+  structure: 'typescript.structure'
   module: 'astrale.typescript.module'
   declaration: 'astrale.typescript.module'
 }>
@@ -30,6 +32,7 @@ export const TYPESCRIPT_ANALYSIS_CAPABILITIES: readonly [
   'typescript.symbol',
   'typescript.occurrence',
   'typescript.body',
+  'typescript.structure',
   'astrale.typescript.module',
 ]
 
@@ -57,6 +60,7 @@ export interface TypeScriptFactPayloadByKind {
   readonly symbol: TypeScriptSymbolFact
   readonly occurrence: TypeScriptOccurrenceFact
   readonly body: TypeScriptBodyFacts
+  readonly structure: TypeScriptStructureFact
   readonly module: TypeScriptModuleFact
   readonly declaration: TypeScriptDeclarationFact
 }

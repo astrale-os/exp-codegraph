@@ -30,6 +30,35 @@ console.log({
 
 Calls include unresolved sites. Coverage is `complete`, `partial` or `unavailable`.
 
+<details>
+<summary>Find API references and module dependents without extracting bodies</summary>
+
+```ts
+await using navigation = await openTypeScriptProject({
+  root: '.', capabilities: ['typescript.source', 'typescript.structure'],
+})
+await navigation.refresh()
+await using snapshot = await navigation.open()
+const structure = await snapshot.structure()
+
+console.log(await structure.references({
+  target: { path: 'src/api.ts', name: 'route' },
+}))
+console.log(await structure.dependents({ path: 'src/api.ts', transitive: true }))
+```
+
+```text
+structure.exports({ path })
+structure.references({ target, paths?, includeDeclarations?, signal? })
+structure.dependencies({ paths?, signal? })
+structure.dependents({ path, transitive?, signal? })
+target: { path, name } · { symbol } · { origin }
+```
+
+Aliases resolve to their compiler symbol. Results retain revision-specific locations, contributing facts and explicit coverage. The scope is loaded project-owned sources, excluding `.d.ts`; computed requests stay uncertain. [Structural inspection and tracked reuse](docs/typescript-structure.md).
+
+</details>
+
 ### Follow values through helpers and closures
 
 For a project using a library such as `@acme/http`:
@@ -140,7 +169,7 @@ snapshot.facts.factsById(kind, ids)
 snapshot.facts.export(kind, filter?)
 snapshot.facts.exportAll(filter?)
 
-fact kinds: project · diagnostic · source · symbol · occurrence · body
+fact kinds: project · diagnostic · source · symbol · occurrence · structure · body
             body-demand · module · declaration
 
 body: occurrences · relations · blocks · edges · definitions · calls · summary
@@ -148,7 +177,7 @@ call: target · targetOrigin · signature · receiver · typeArguments
       arguments · bindings · callbacks · dynamic
 ```
 
-Source, symbol, occurrence and body capabilities are enabled by default. Other facts need explicit capabilities. Module surfaces, dependencies and types also need module boundary descriptors; a `tsconfig.json` alone does not declare those boundaries.
+Source, symbol, occurrence and body capabilities are enabled by default. Other facts need explicit capabilities. Structural references and file dependencies use `typescript.structure`; logical module surfaces, dependencies and types use module boundary descriptors.
 
 [Project options](analysis/typescript/project/model.ts) · [Fact readers and payloads](analysis/typescript/facts/model.ts) · [Calls and body IR](analysis/typescript/body/types.ts) · [Module descriptors](analysis/protocol/model.ts).
 

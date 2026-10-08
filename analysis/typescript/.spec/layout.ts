@@ -14,6 +14,7 @@ export default defineLayout({
     'project/',
     'refresh.optimization.ts',
     'service.ts',
+    'structure/',
     'surface/',
     'ttsc/',
     'universe-transaction.ts',

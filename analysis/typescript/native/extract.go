@@ -19,6 +19,7 @@ const (
 	sourceNamespace      = "typescript.source"
 	symbolNamespace      = "typescript.symbol"
 	occurrenceNamespace  = "typescript.occurrence"
+	structureNamespace   = "typescript.structure"
 	bodyNamespace        = "typescript.body"
 	moduleNamespace      = "astrale.typescript.module"
 	declarationNamespace = moduleNamespace
@@ -130,7 +131,7 @@ func extractProgram(root, universe string, program *driver.Program, modules []mo
 		})
 	}
 	if plan.sourceOwned() {
-		sourceShards, err := x.sourceShards(files, selected, telemetry, requestID)
+		sourceShards, err := x.sourceShards(program, files, selected, telemetry, requestID)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -234,6 +235,7 @@ func prepareExtractor(
 // sourceShards projects the source-owned namespaces for selected physical
 // files. A nil selection denotes the complete owned compiler universe.
 func (x *extractor) sourceShards(
+	program *driver.Program,
 	files []*shimast.SourceFile,
 	selected map[string]bool,
 	telemetry *nativeTelemetry,
@@ -308,6 +310,18 @@ func (x *extractor) sourceShards(
 			}
 		}
 		telemetry.record(requestID, "projection.occurrences", phase, map[string]any{"sources": selectedCount})
+	}
+	if x.plan.structure {
+		phase := time.Now()
+		for _, file := range files {
+			if selected != nil && !selected[file.FileName()] {
+				continue
+			}
+			if record, ok := x.sources[file.FileName()]; ok {
+				shards = append(shards, x.structureShard(program, file, record))
+			}
+		}
+		telemetry.record(requestID, "projection.structure", phase, map[string]any{"sources": selectedCount})
 	}
 	if x.plan.bodies {
 		phase := time.Now()

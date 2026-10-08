@@ -237,3 +237,4 @@ export type {
 } from '../surface/.spec/api.js'
 
 export * from '../project/.spec/api.js'
+export type * from '../structure/.spec/api.js'

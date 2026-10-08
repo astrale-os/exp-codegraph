@@ -46,6 +46,9 @@ export function validateTypeScriptFactPayload(
       if (!span(value.span)) diagnostics.push('span:invalid')
       optionalString(value, 'target', diagnostics)
       break
+    case 'structure':
+      validateStructure(value, diagnostics)
+      break
     case 'body':
       validateBody(value, diagnostics)
       break
@@ -62,6 +65,42 @@ export function validateTypeScriptFactPayload(
       break
   }
   return [...new Set(diagnostics)].sort()
+}
+
+function validateStructure(value: Record<string, unknown>, diagnostics: string[]): void {
+  for (const key of ['source', 'revision', 'logicalPath', 'textDigest']) requireString(value, key, diagnostics)
+  requireArray(value, 'symbols', diagnostics, (item) => record(item)
+    && string(item.symbol) && string(item.name) && Array.isArray(item.declarations)
+    && item.declarations.every(span) && typeof item.generationScoped === 'boolean'
+    && (item.origin === undefined || record(item.origin) && string(item.origin.package)
+      && string(item.origin.file) && strings(item.origin.path)))
+  requireArray(value, 'exports', diagnostics, (item) => record(item)
+    && string(item.name) && string(item.symbol) && typeof item.typeOnly === 'boolean')
+  const range = (item: Record<string, unknown>) => Number.isSafeInteger(item.start)
+    && Number.isSafeInteger(item.end) && (item.start as number) >= 0 && (item.end as number) > (item.start as number)
+  requireArray(value, 'references', diagnostics, (item) => record(item) && range(item)
+    && ['import', 'export', 'value', 'type', 'declaration'].includes(String(item.kind))
+    && optionalStringValue(item.symbol) && optionalStringValue(item.binding))
+  requireArray(value, 'dependencies', diagnostics, (item) => record(item) && range(item)
+    && ['import', 'export', 'import-type', 'dynamic', 'require'].includes(String(item.kind))
+    && typeof item.typeOnly === 'boolean' && (item.specifier === undefined || typeof item.specifier === 'string')
+    && optionalStringValue(item.targetPath))
+  if (!record(value.completeness) || !['exports', 'references', 'dependencies'].every((kind) =>
+    completeness((value.completeness as Record<string, unknown>)[kind]))) diagnostics.push('completeness:invalid')
+  if (record(value.completeness)) {
+    const coverage = value.completeness
+    if (record(coverage.references) && coverage.references.kind === 'complete' && Array.isArray(value.references)
+      && value.references.some((item) => record(item) && item.symbol === undefined)) diagnostics.push('references:complete-unresolved')
+    if (record(coverage.dependencies) && coverage.dependencies.kind === 'complete' && Array.isArray(value.dependencies)
+      && value.dependencies.some((item) => record(item) && item.targetPath === undefined)) diagnostics.push('dependencies:complete-unresolved')
+  }
+  if (Array.isArray(value.symbols) && Array.isArray(value.exports) && Array.isArray(value.references)) {
+    const symbols = new Set(value.symbols.filter(record).map((symbol) => symbol.symbol))
+    if (symbols.size !== value.symbols.length) diagnostics.push('symbols:duplicate')
+    for (const item of [...value.exports, ...value.references]) {
+      if (record(item) && item.symbol !== undefined && !symbols.has(item.symbol)) diagnostics.push('symbol:missing')
+    }
+  }
 }
 
 function validateBody(value: Record<string, unknown>, diagnostics: string[]): void {
