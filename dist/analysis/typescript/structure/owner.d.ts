@@ -1,6 +1,6 @@
 import { type Completeness } from '../../facts/index.ts';
 import type { FactTransaction } from '../../generation/index.ts';
-import type { FactId, SymbolId } from '../../identity/index.ts';
+import type { FactId, SourceId, SymbolId } from '../../identity/index.ts';
 import type { AnalysisQuery, CapabilityStatus } from '../../query/index.ts';
 import { type TypeScriptFact } from '../facts/index.ts';
 import { ValueIndexTable } from '../value/symbolic/table.ts';
@@ -24,6 +24,7 @@ export declare const structuralKey: {
     paths: string;
     capability: string;
     file: (path: string) => string;
+    source: (source: SourceId) => string;
     path: (path: string) => string;
     references: (symbol: SymbolId, path?: string) => string;
     incoming: (path: string) => string;
@@ -35,11 +36,12 @@ export declare class StructuralIndex {
     readonly revision: StructuralRevision;
     readonly facts: ValueIndexTable<FactId, File>;
     readonly files: ValueIndexTable<string, File>;
+    readonly sources: ValueIndexTable<SourceId, File>;
     readonly references: ValueIndexTable<SymbolId, ValueIndexTable<string, readonly ReferenceEntry[]>>;
     readonly incoming: ValueIndexTable<string, ValueIndexTable<string, readonly DependencyEntry[]>>;
     readonly capability: Completeness;
     readonly accounted: ValueIndexTable<string, number>;
-    constructor(facts?: ValueIndexTable<FactId, File>, files?: ValueIndexTable<string, File>, references?: ValueIndexTable<SymbolId, ValueIndexTable<string, readonly ReferenceEntry[]>>, incoming?: ValueIndexTable<string, ValueIndexTable<string, readonly DependencyEntry[]>>, capability?: Completeness, revision?: StructuralRevision, accounted?: ValueIndexTable<string, number>);
+    constructor(facts?: ValueIndexTable<FactId, File>, files?: ValueIndexTable<string, File>, references?: ValueIndexTable<SymbolId, ValueIndexTable<string, readonly ReferenceEntry[]>>, incoming?: ValueIndexTable<string, ValueIndexTable<string, readonly DependencyEntry[]>>, capability?: Completeness, revision?: StructuralRevision, accounted?: ValueIndexTable<string, number>, sources?: ValueIndexTable<SourceId, File>);
     update(upserts: readonly File[], deletes: readonly FactId[], capabilities: readonly CapabilityStatus[]): StructuralIndex;
 }
 /** Retains the current graph and explicitly pinned readers, never an unbounded revision chain. */

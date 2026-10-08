@@ -8,10 +8,12 @@
     "rootDir": "../../.."
   },
   "include": [
-    "consumer.ts", "oracle.ts", "qualify.ts", "repeat-edits.ts",
+    "consumer.ts", "oracle.ts", "qualify.ts", "repeat-edits.ts", "navigation-consumer.ts", "navigation-oracle.ts",
     "../../../__tests__/typescript-structural-inspection.test.ts",
     "../../../__tests__/typescript-structural-compute.test.ts",
-    "../../../__tests__/typescript-structural-storage.test.ts"
+    "../../../__tests__/typescript-structural-storage.test.ts",
+    "../../../__tests__/typescript-structural-navigation.test.ts",
+    "../../../__tests__/typescript-structural-navigation-unit.test.ts"
   ],
   "exclude": ["fixtures"]
 }
