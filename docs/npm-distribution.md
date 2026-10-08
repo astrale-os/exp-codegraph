@@ -3,8 +3,9 @@
 Codegraph is distributed as one public npm package, `@astrale-os/codegraph`. This replaces the
 GitHub-only policy introduced by [d51572d](https://github.com/astrale-os/exp-codegraph/commit/d51572dae7b110e9c3293751655731499a01d2c0),
 whose contract said the packages “are not published to npm or GitHub Packages”, and the earlier
-proposal of one root package plus five platform packages. No version is published yet. Opening a
-PR or running qualification does not publish anything; `publish.yml` has only a manual trigger.
+proposal of one root package plus five platform packages. Version 0.1.0 was published on
+2026-10-08. Opening a PR or running qualification does not publish anything; `publish.yml` has
+only a manual trigger.
 
 The reason for npm distribution is the SDK's npm-only dependency closure. A public SDK package
 cannot resolve a private GitHub Actions artifact using an ordinary exact npm dependency. Workspace
@@ -65,30 +66,29 @@ then installs only the exact version from npm, rejects local/GitHub/alternate-re
 sources, checks the source revision, executes the native analyzer, and exercises resident facts,
 bounded values, edits, no-ops and an old pinned reader.
 
-## Activation and first publication
+## First publication and later versions
 
-The package name returned HTTP 404 from npm's public registry on 2026-10-08. No package, Trusted
-Publisher, secret or repository setting was created.
+npm attaches a Trusted Publisher only to a package that already exists, so the first version was
+an owner operation. On 2026-10-08 a package owner published `0.1.0` from the qualified archive of
+main revision `58d0d03` (native workflow run 37849119930), then configured Trusted Publishing for
+organization `astrale-os`, repository `exp-codegraph`, workflow filename `publish.yml`, with direct
+`npm publish` allowed because Config uses it. `publish.yml` run 37854179694 then admitted the
+published version with identical archive integrity, published nothing, and qualified the npm
+consumer. That version carries no provenance attestation.
 
-npm attaches a Trusted Publisher only to a package that already exists, so the first version is an
-owner operation: a package owner publishes the qualified archive of a successful main run, then
-configures Trusted Publishing for the package. The GitHub coordinates are organization
-`astrale-os`, repository `exp-codegraph`, workflow filename `publish.yml`. Config uses direct
-`npm publish`, so that action must be allowed by the Trusted Publisher. The workflow runs on a
-GitHub-hosted runner and requests OIDC permission only in its publication job. See the official
-[npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/).
-The workflow does not manufacture a placeholder publication or fall back to credentials when trust
-is unavailable.
+Later versions are published by the workflow: once the complete main qualification is green, an
+authorized owner manually selects the exact main SHA and native workflow run. A push or merge
+alone never triggers publication. The workflow runs on a GitHub-hosted runner, requests OIDC
+permission only in its publication job, and does not fall back to credentials when trust is
+unavailable. Its OIDC publication path has not run yet, because `0.1.0` was admitted as already
+published. See the official [npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/).
+The workflow's outputs and npm consumer must pass before downstream manifests are switched to the
+exact registry version.
 
-Once those prerequisites and the complete main qualification are satisfied, an authorized owner
-can manually select the exact main SHA and native workflow run. A push or merge alone never
-triggers publication. The workflow's outputs and npm consumer must pass before downstream
-manifests are switched to the exact registry version.
+## Integrating an unpublished revision
 
-## Honest integration before activation
-
-A temporary SDK or Kernel checkout can install the genuine qualified `.tgz` file and run its own
-loop. Its local `file:` lock is artifact evidence and stays local. A release manifest and npm-only
-lock must be generated against an actually published Codegraph version. Do not replace archive
-lock entries with invented npm URLs or integrities. Until the package exists and the npm consumer
-passes, a registry dependency change remains a draft dependency.
+Consumers depend on an exact published version. To try a revision that is not published, a
+temporary checkout can install the genuine qualified `.tgz` file of its main run and run its own
+loop. Its local `file:` lock is artifact evidence and stays local. Do not replace archive lock
+entries with invented npm URLs or integrities; a release manifest and npm-only lock must be
+generated against an actually published Codegraph version.
