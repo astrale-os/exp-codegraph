@@ -6,7 +6,7 @@
 
 ## Inspect a project
 
-Use an existing `tsconfig.json`. No `.spec/` required. [Install the qualified package](docs/github-artifacts.md#install-in-an-existing-project).
+Use an existing `tsconfig.json`. No `.spec/` required. Install with `pnpm add @astrale-os/codegraph`.
 
 ```ts
 import { openTypeScriptProject } from '@astrale-os/codegraph/analysis/typescript'
