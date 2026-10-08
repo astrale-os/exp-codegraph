@@ -20,6 +20,7 @@ snapshot.values({ call?, limits? })
 snapshot.compute(observe, input, { signal? })
 snapshot.dispose()
 
+structure.symbolAt({ path, offset, revision?, signal? })
 structure.exports({ path, signal? })
 structure.references({ target, paths?, includeDeclarations?, signal? })
 structure.dependencies({ paths?, signal? })
@@ -181,6 +182,7 @@ TypeScriptFactReader
 TypeScriptFileDependency
 TypeScriptFileDependencyKind
 TypeScriptFunctionHeader
+TypeScriptLocatedSymbol
 TypeScriptModuleDeclarationReference
 TypeScriptModuleFact
 TypeScriptModuleRouting
@@ -201,13 +203,17 @@ TypeScriptReferenceQuery
 TypeScriptReferenceTarget
 TypeScriptSemanticReader
 TypeScriptSourceFact
+TypeScriptSourcePosition
 TypeScriptStructuralInventory
 TypeScriptStructuralReader
 TypeScriptStructuralScope
 TypeScriptStructuralSymbol
 TypeScriptStructureFact
+TypeScriptSymbolAtInventory
+TypeScriptSymbolDeclaration
 TypeScriptSymbolFact
 TypeScriptSymbolOrigin
+TypeScriptSymbolSite
 ValueResult
 ```
 

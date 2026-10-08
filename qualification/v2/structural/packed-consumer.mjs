@@ -29,7 +29,15 @@ try {
   await writeFile(join(root, 'package.json'), JSON.stringify({ type: 'module' }))
   await cp(join(import.meta.dirname, 'fixtures/no-spec'), join(root, 'project'), { recursive: true })
   await writeFile(join(root, 'consumer.ts'), `import { openTypeScriptProject, type TypeScriptSemanticReader } from '@astrale-os/codegraph/analysis/typescript'
-const inspect = async (read: TypeScriptSemanticReader) => (await read.structure()).references({ target: { path: 'api.ts', name: 'api' } })
+import { readVerifiedSourceText } from '@astrale-os/codegraph/analysis'
+const inspect = async (read: TypeScriptSemanticReader) => {
+  const structure = await read.structure()
+  const selected = await structure.symbolAt({ path: 'consumer.ts', offset: 120 })
+  if (selected.source) void readVerifiedSourceText(selected.source, { read: async () => '' })
+  return { selected, uses: await structure.references({ target: {
+    path: 'consumer.ts', offset: 120, revision: selected.source?.revision,
+  } }) }
+}
 void openTypeScriptProject
 void inspect
 `)
@@ -40,7 +48,7 @@ void inspect
   const declarations = await execute(join(dependencyRoot, '.bin/tsgo'), ['--noEmit', '-p', join(root, 'tsconfig.json')], { cwd: root })
   if (declarations.stdout.trim() || declarations.stderr.trim()) throw new Error(`Unexpected declaration-check output: ${declarations.stdout}${declarations.stderr}`)
   await writeFile(join(root, 'consumer.mjs'), `import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { openTypeScriptProject } from '@astrale-os/codegraph/analysis/typescript'
 
@@ -57,6 +65,18 @@ try {
   assert.equal(refs.references.length, 9)
   assert.equal(refs.target.kind, 'resolved')
   assert(refs.evidence.length > 0)
+  const consumerText = await readFile(join(root, 'consumer.ts'), 'utf8')
+  const position = { path: 'consumer.ts', offset: consumerText.indexOf('invoke(options') }
+  assert(position.offset >= 0)
+  const selected = await structure.symbolAt(position)
+  assert.equal(selected.target.kind, 'resolved')
+  assert.equal(selected.sites.length, 1)
+  assert.equal(selected.symbols[0].name, 'api')
+  assert.equal(selected.symbols[0].declarations[0].path, 'api.ts')
+  assert.equal(selected.source.logicalPath, 'consumer.ts')
+  const positionalUses = await structure.references({ target: { ...position, revision: selected.source.revision } })
+  assert.deepEqual(positionalUses.references, refs.references)
+  assert.deepEqual(positionalUses.target, refs.target)
   for (const ref of refs.references) {
     assert.match(ref.span.source, /^source:/)
     assert.match(ref.span.revision, /^source-revision:/)
@@ -85,7 +105,7 @@ try {
   const cold = await fresh.open()
   snapshots.push(cold)
   assert.deepEqual(await cold.compute(observe, 'empty.ts'), changed)
-  console.log(JSON.stringify({ references: refs.references.length, dependencies: edges.dependencies.length, exports: 2, trackedAbsenceInvalidated: true, pinnedSnapshotPreserved: true, coldEquality: true }))
+  console.log(JSON.stringify({ references: refs.references.length, dependencies: edges.dependencies.length, exports: 2, positionalNavigation: true, trackedAbsenceInvalidated: true, pinnedSnapshotPreserved: true, coldEquality: true }))
 } finally {
   await Promise.all(snapshots.map(snapshot => snapshot.dispose()))
   await fresh?.dispose()

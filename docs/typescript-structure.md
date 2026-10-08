@@ -22,10 +22,39 @@ const affected = await structure.dependents({ path: 'src/api.ts', transitive: tr
 
 The export selector is resolved again in each snapshot, so a barrel can change its target without changing the consumer's query. Import aliases, explicit re-export aliases, namespace properties, shorthand properties and type references resolve to canonical compiler symbols.
 
+## Start from a cursor or diagnostic
+
+```ts
+const position = { path: 'src/routes.ts', offset: 120 } // Zero-based UTF-16 offset.
+const selected = await structure.symbolAt(position)
+console.log(selected.target, selected.source)
+for (const symbol of selected.symbols) {
+  console.log(symbol.name, symbol.origin, symbol.declarations) // [{ path, span }]
+}
+const usages = await structure.references({ target: position })
+```
+
+Positions select compiler bindings, including local helpers, parameters and private members. Identical names in different scopes select different symbols. Declaration spans cover the full canonical declaration node; overloads and merged declarations retain every represented declaration.
+
+```ts
+// If the editor captured the position from an earlier read, supply its revision.
+const pinnedPosition = { ...position, revision: selected.source!.revision }
+const checked = await structure.symbolAt(pinnedPosition)
+// target: resolved { symbols[] } · missing · unavailable
+//         stale { expectedRevision, actualRevision }
+```
+
+`source` is the existing `SourceTextExpectation`, usable with [`readVerifiedSourceText`](../analysis/source/verify.ts). A revision mismatch returns `stale`, empty sites/symbols and unavailable coverage; it never resolves the same offset against different text. Without an expected revision, the offset selects this snapshot's source. Earlier snapshots remain pinned.
+
+`sites` contains the narrowest represented symbolic tokens whose half-open span contains the offset. An imported alias selects its canonical declaration. In `object[key]`, the position on `key` selects the variable; the computed property itself remains uncertain. Tied tokens retain every candidate, and distinct candidate identities report partial coverage.
+
+The projection represents identifiers, private identifiers and literal element-access keys. Whitespace, comments, module-request strings and string/numeric property declaration names are not symbolic sites in this projection. `missing` means no represented site at that position, and does not establish that the compiler has no symbol there. A resolved external or `.d.ts` symbol can have an `origin` with empty owned `declarations`; its definition is outside this inventory.
+
 ## Read the result
 
 ```text
 exports:      exports[]     + completeness + scope + evidence
+symbolAt:     symbols[]     + sites[] + source? + target + completeness + scope + evidence
 references:   references[]  + target       + completeness + scope + evidence
 dependencies: dependencies[]              + completeness + scope + evidence
 dependents:   dependents[]                 + completeness + scope + evidence
@@ -34,7 +63,7 @@ reference: symbol · kind · binding? · path · span
 dependency: path · span · kind · typeOnly · specifier? · targetPath?
 dependent: path · via[] (one deterministic shortest observed dependency route)
 span: source · revision · start · end (UTF-16 offsets)
-target: resolved { symbols[] } · missing · unavailable
+target: resolved { symbols[] } · missing · unavailable · stale { expectedRevision, actualRevision }
 completeness: complete · partial { reasons[] } · unavailable { reasons[] }
 scope: paths[] · declarationFiles: false · externalSources: false
 ```
@@ -76,11 +105,12 @@ Earlier snapshots stay pinned. Dispose snapshots when finished; the project reta
 
 ```text
 snapshot.structure() · read.structure()
+structure.symbolAt({ path, offset, revision?, signal? })
 structure.exports({ path, signal? })
 structure.references({ target, paths?, includeDeclarations?, signal? })
 structure.dependencies({ paths?, signal? })
 structure.dependents({ path, transitive?, signal? })
-target: { path, name } · { symbol } · { origin: { package, file, path } }
+target: { path, offset, revision? } · { path, name } · { symbol } · { origin: { package, file, path } }
 ```
 
 [Exact types](../analysis/typescript/structure/model.ts) · [Qualification consumer and independent oracle](../qualification/v2/structural/README.md) · [All exports](public-api.md).

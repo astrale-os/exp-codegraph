@@ -65,11 +65,18 @@ export interface TypeScriptExportInventory extends TypeScriptStructuralInventory
 export type TypeScriptReferenceTarget = {
     readonly path: string;
     readonly name: string;
-} | {
+} | TypeScriptSourcePosition | {
     readonly symbol: SymbolId;
 } | {
     readonly origin: TypeScriptSymbolOrigin;
 };
+/** A zero-based UTF-16 position in a pinned source. End offsets are exclusive. */
+export interface TypeScriptSourcePosition {
+    readonly path: string;
+    readonly offset: number;
+    /** Reject a cursor captured from a different source revision. */
+    readonly revision?: SourceRevisionId;
+}
 export interface TypeScriptReferenceQuery {
     readonly target: TypeScriptReferenceTarget;
     readonly paths?: readonly string[];
@@ -93,7 +100,29 @@ export interface TypeScriptReferenceInventory extends TypeScriptStructuralInvent
         readonly kind: 'missing';
     } | {
         readonly kind: 'unavailable';
+    } | {
+        readonly kind: 'stale';
+        readonly expectedRevision: SourceRevisionId;
+        readonly actualRevision: SourceRevisionId;
     };
+}
+/** The full canonical declaration node in a loaded non-declaration source. */
+export interface TypeScriptSymbolDeclaration {
+    readonly path: string;
+    readonly span: SourceSpan;
+}
+export interface TypeScriptLocatedSymbol extends Omit<TypeScriptStructuralSymbol, 'declarations'> {
+    readonly declarations: readonly TypeScriptSymbolDeclaration[];
+}
+/** An authored token, including unresolved tokens in an incomplete inventory. */
+export interface TypeScriptSymbolSite extends Omit<TypeScriptReference, 'symbol'> {
+    readonly symbol?: SymbolId;
+}
+export interface TypeScriptSymbolAtInventory extends TypeScriptStructuralInventory {
+    readonly source?: Pick<TypeScriptStructureFact, 'source' | 'revision' | 'logicalPath' | 'textDigest'>;
+    readonly target: TypeScriptReferenceInventory['target'];
+    readonly sites: readonly TypeScriptSymbolSite[];
+    readonly symbols: readonly TypeScriptLocatedSymbol[];
 }
 export interface TypeScriptFileDependency {
     readonly path: string;
@@ -115,6 +144,10 @@ export interface TypeScriptDependentInventory extends TypeScriptStructuralInvent
     readonly dependents: readonly TypeScriptDependent[];
 }
 export interface TypeScriptStructuralReader {
+    /** Resolve the narrowest represented symbolic tokens at a source position. */
+    symbolAt(options: TypeScriptSourcePosition & {
+        readonly signal?: AbortSignal;
+    }): Promise<TypeScriptSymbolAtInventory>;
     exports(options: {
         readonly path: string;
         readonly signal?: AbortSignal;

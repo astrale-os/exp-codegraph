@@ -31,6 +31,15 @@ The durable regression suite is
 qualification consumer has its own typecheck configuration at
 `qualification/v2/structural/tsconfig.json`.
 
+`navigation-consumer.ts` starts with a source position from a cursor or diagnostic.
+It obtains canonical symbols, owned declaration locations and references without
+parsing source or maintaining a symbol index. `navigation-oracle.ts` independently
+uses the TypeScript checker to compare private and shadowed bindings, aliases,
+shorthand properties, namespace/literal access and all overload declarations.
+The durable navigation suites also qualify UTF-16 bounds, stale cursor revisions,
+structure-only capability, old snapshots, missing-source joins and incremental
+answers equal to fresh analysis. [Navigation qualification](NAVIGATION.md).
+
 Real-project calibration can copy the existing
 `domains/services/utils/http-readiness/{accept,index}.ts` files into a temporary
 file project. These files have no external imports and exercise an actual API

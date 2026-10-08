@@ -1,6 +1,6 @@
 import { type Completeness } from '../../facts/index.ts'
 import type { FactTransaction } from '../../generation/index.ts'
-import type { AnalysisGenerationId, FactId, FactShardKey, SymbolId } from '../../identity/index.ts'
+import type { AnalysisGenerationId, FactId, FactShardKey, SourceId, SymbolId } from '../../identity/index.ts'
 import { stableJson } from '../../identity/model.ts'
 import type { AnalysisQuery, CapabilityStatus } from '../../query/index.ts'
 import { createTypeScriptFactReader, type TypeScriptFact } from '../facts/index.ts'
@@ -20,6 +20,7 @@ const complete: Completeness = { kind: 'complete' }
 export const structuralKey = {
   paths: 'paths', capability: 'capability',
   file: (path: string) => `file:${JSON.stringify(path)}`,
+  source: (source: SourceId) => `source:${JSON.stringify(source)}`,
   path: (path: string) => `path:${JSON.stringify(path)}`,
   references: (symbol: SymbolId, path?: string) => `references:${JSON.stringify([symbol, path ?? null])}`,
   incoming: (path: string) => `incoming:${JSON.stringify(path)}`,
@@ -32,6 +33,7 @@ export class StructuralIndex {
   readonly revision: StructuralRevision
   readonly facts: ValueIndexTable<FactId, File>
   readonly files: ValueIndexTable<string, File>
+  readonly sources: ValueIndexTable<SourceId, File>
   readonly references: ValueIndexTable<SymbolId, ValueIndexTable<string, readonly ReferenceEntry[]>>
   readonly incoming: ValueIndexTable<string, ValueIndexTable<string, readonly DependencyEntry[]>>
   readonly capability: Completeness
@@ -41,26 +43,39 @@ export class StructuralIndex {
     files: ValueIndexTable<string, File> = new ValueIndexTable(),
     references: ValueIndexTable<SymbolId, ValueIndexTable<string, readonly ReferenceEntry[]>> = new ValueIndexTable(),
     incoming: ValueIndexTable<string, ValueIndexTable<string, readonly DependencyEntry[]>> = new ValueIndexTable(),
-    capability: Completeness = complete, revision?: StructuralRevision, accounted: ValueIndexTable<string, number> = new ValueIndexTable()) {
+    capability: Completeness = complete, revision?: StructuralRevision, accounted: ValueIndexTable<string, number> = new ValueIndexTable(),
+    sources: ValueIndexTable<SourceId, File> = new ValueIndexTable()) {
     this.facts = facts; this.files = files; this.references = references; this.incoming = incoming
+    this.sources = sources
     this.capability = capability; this.accounted = accounted
     this.revision = revision ?? { token: {}, selection: 'typescript.structure/v1', changed: new Set() }
   }
 
   update(upserts: readonly File[], deletes: readonly FactId[], capabilities: readonly CapabilityStatus[]): StructuralIndex {
     const facts = this.facts.edit(), files = this.files.edit(), references = this.references.edit(), incoming = this.incoming.edit()
-    const accounted = this.accounted.edit()
+    const accounted = this.accounted.edit(), sources = this.sources.edit()
     const affected = new Set<string>(), changed = new Set<string>(), removed = new Set(deletes)
-    const additions = new Map<string, File>()
+    const additions = new Map<string, File>(), identities = new Map<SourceId, File>()
     for (const id of deletes) {
       const before = facts.get(id)
       if (before) { affected.add(before.payload.logicalPath); facts.delete(id) }
+    }
+    // Fact IDs can be reused by a provider. Retire their old contribution even
+    // when a replacement moves to another logical path or source identity.
+    for (const fact of upserts) {
+      const before = this.facts.get(fact.id)
+      if (before) { removed.add(before.id); affected.add(before.payload.logicalPath) }
     }
     for (const fact of upserts) {
       const path = fact.payload.logicalPath
       if (additions.has(path) && additions.get(path)!.id !== fact.id) throw new Error(`Duplicate structural source ownership: ${path}`)
       const old = this.files.get(path)
       if (old && old.id !== fact.id && !removed.has(old.id)) throw new Error(`Duplicate structural source ownership: ${path}`)
+      const identity = fact.payload.source, duplicate = identities.get(identity), owner = this.sources.get(identity)
+      if (duplicate && duplicate.payload.logicalPath !== path || owner && owner.payload.logicalPath !== path && !removed.has(owner.id)) {
+        throw new Error(`Duplicate structural source identity: ${identity}`)
+      }
+      identities.set(identity, fact)
       additions.set(path, fact); affected.add(path); facts.set(fact.id, fact)
     }
     for (const path of affected) {
@@ -68,6 +83,11 @@ export class StructuralIndex {
       const after = additions.get(path) ?? (before && !removed.has(before.id) ? before : undefined)
       if (before === after) continue
       changed.add(structuralKey.file(path))
+      if (before) {
+        changed.add(structuralKey.source(before.payload.source))
+        if (sources.get(before.payload.source) === before) sources.delete(before.payload.source)
+      }
+      if (after) { sources.set(after.payload.source, after); changed.add(structuralKey.source(after.payload.source)) }
       if (!before || !after) { changed.add(structuralKey.path(path)); changed.add(structuralKey.paths) }
       for (const kind of ['exports', 'references', 'dependencies'] as const) {
         if (stableJson(before?.payload.completeness[kind]) !== stableJson(after?.payload.completeness[kind])) {
@@ -121,7 +141,7 @@ export class StructuralIndex {
     const capability = residualCapability(capabilities, nextAccounted)
     if (stableJson(this.capability) !== stableJson(capability)) changed.add(structuralKey.capability)
     return new StructuralIndex(facts.finish(), files.finish(), references.finish(), incoming.finish(), capability,
-      { token: {}, parent: this.revision.token, selection: 'typescript.structure/v1', changed }, nextAccounted)
+      { token: {}, parent: this.revision.token, selection: 'typescript.structure/v1', changed }, nextAccounted, sources.finish())
   }
 }
 

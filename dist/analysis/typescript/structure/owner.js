@@ -6,6 +6,7 @@ const complete = { kind: 'complete' };
 export const structuralKey = {
     paths: 'paths', capability: 'capability',
     file: (path) => `file:${JSON.stringify(path)}`,
+    source: (source) => `source:${JSON.stringify(source)}`,
     path: (path) => `path:${JSON.stringify(path)}`,
     references: (symbol, path) => `references:${JSON.stringify([symbol, path ?? null])}`,
     incoming: (path) => `incoming:${JSON.stringify(path)}`,
@@ -17,29 +18,40 @@ export class StructuralIndex {
     revision;
     facts;
     files;
+    sources;
     references;
     incoming;
     capability;
     accounted;
-    constructor(facts = new ValueIndexTable(), files = new ValueIndexTable(), references = new ValueIndexTable(), incoming = new ValueIndexTable(), capability = complete, revision, accounted = new ValueIndexTable()) {
+    constructor(facts = new ValueIndexTable(), files = new ValueIndexTable(), references = new ValueIndexTable(), incoming = new ValueIndexTable(), capability = complete, revision, accounted = new ValueIndexTable(), sources = new ValueIndexTable()) {
         this.facts = facts;
         this.files = files;
         this.references = references;
         this.incoming = incoming;
+        this.sources = sources;
         this.capability = capability;
         this.accounted = accounted;
         this.revision = revision ?? { token: {}, selection: 'typescript.structure/v1', changed: new Set() };
     }
     update(upserts, deletes, capabilities) {
         const facts = this.facts.edit(), files = this.files.edit(), references = this.references.edit(), incoming = this.incoming.edit();
-        const accounted = this.accounted.edit();
+        const accounted = this.accounted.edit(), sources = this.sources.edit();
         const affected = new Set(), changed = new Set(), removed = new Set(deletes);
-        const additions = new Map();
+        const additions = new Map(), identities = new Map();
         for (const id of deletes) {
             const before = facts.get(id);
             if (before) {
                 affected.add(before.payload.logicalPath);
                 facts.delete(id);
+            }
+        }
+        // Fact IDs can be reused by a provider. Retire their old contribution even
+        // when a replacement moves to another logical path or source identity.
+        for (const fact of upserts) {
+            const before = this.facts.get(fact.id);
+            if (before) {
+                removed.add(before.id);
+                affected.add(before.payload.logicalPath);
             }
         }
         for (const fact of upserts) {
@@ -49,6 +61,11 @@ export class StructuralIndex {
             const old = this.files.get(path);
             if (old && old.id !== fact.id && !removed.has(old.id))
                 throw new Error(`Duplicate structural source ownership: ${path}`);
+            const identity = fact.payload.source, duplicate = identities.get(identity), owner = this.sources.get(identity);
+            if (duplicate && duplicate.payload.logicalPath !== path || owner && owner.payload.logicalPath !== path && !removed.has(owner.id)) {
+                throw new Error(`Duplicate structural source identity: ${identity}`);
+            }
+            identities.set(identity, fact);
             additions.set(path, fact);
             affected.add(path);
             facts.set(fact.id, fact);
@@ -59,6 +76,15 @@ export class StructuralIndex {
             if (before === after)
                 continue;
             changed.add(structuralKey.file(path));
+            if (before) {
+                changed.add(structuralKey.source(before.payload.source));
+                if (sources.get(before.payload.source) === before)
+                    sources.delete(before.payload.source);
+            }
+            if (after) {
+                sources.set(after.payload.source, after);
+                changed.add(structuralKey.source(after.payload.source));
+            }
             if (!before || !after) {
                 changed.add(structuralKey.path(path));
                 changed.add(structuralKey.paths);
@@ -144,7 +170,7 @@ export class StructuralIndex {
         const capability = residualCapability(capabilities, nextAccounted);
         if (stableJson(this.capability) !== stableJson(capability))
             changed.add(structuralKey.capability);
-        return new StructuralIndex(facts.finish(), files.finish(), references.finish(), incoming.finish(), capability, { token: {}, parent: this.revision.token, selection: 'typescript.structure/v1', changed }, nextAccounted);
+        return new StructuralIndex(facts.finish(), files.finish(), references.finish(), incoming.finish(), capability, { token: {}, parent: this.revision.token, selection: 'typescript.structure/v1', changed }, nextAccounted, sources.finish());
     }
 }
 function residualCapability(capabilities, accounted) {

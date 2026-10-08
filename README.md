@@ -31,7 +31,7 @@ console.log({
 Calls include unresolved sites. Coverage is `complete`, `partial` or `unavailable`.
 
 <details>
-<summary>Find API references and module dependents without extracting bodies</summary>
+<summary>Navigate symbols, find usages and module dependents without extracting bodies</summary>
 
 ```ts
 await using navigation = await openTypeScriptProject({
@@ -41,6 +41,11 @@ await navigation.refresh()
 await using snapshot = await navigation.open()
 const structure = await snapshot.structure()
 
+// A cursor or diagnostic provides the file and its UTF-16 offset.
+const selected = await structure.symbolAt({ path: 'src/routes.ts', offset: 120 })
+console.log(selected.target, selected.symbols) // Canonical symbols + declaration files/spans.
+console.log(await structure.references({ target: { path: 'src/routes.ts', offset: 120 } }))
+
 console.log(await structure.references({
   target: { path: 'src/api.ts', name: 'route' },
 }))
@@ -48,14 +53,15 @@ console.log(await structure.dependents({ path: 'src/api.ts', transitive: true })
 ```
 
 ```text
+structure.symbolAt({ path, offset, revision?, signal? })
 structure.exports({ path })
 structure.references({ target, paths?, includeDeclarations?, signal? })
 structure.dependencies({ paths?, signal? })
 structure.dependents({ path, transitive?, signal? })
-target: { path, name } · { symbol } · { origin }
+target: { path, offset, revision? } · { path, name } · { symbol } · { origin }
 ```
 
-Aliases resolve to their compiler symbol. Results retain revision-specific locations, contributing facts and explicit coverage. The scope is loaded project-owned sources, excluding `.d.ts`; computed requests stay uncertain. [Structural inspection and tracked reuse](docs/typescript-structure.md).
+Aliases resolve to their compiler symbol; positions also select local and private bindings. Results retain revision-specific locations, contributing facts and explicit coverage. An expected `revision` rejects stale cursors. The scope is loaded project-owned sources, excluding `.d.ts`; computed requests stay uncertain. [Structural inspection, position semantics and tracked reuse](docs/typescript-structure.md).
 
 </details>
 
