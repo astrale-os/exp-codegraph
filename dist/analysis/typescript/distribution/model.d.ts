@@ -1,11 +1,11 @@
-export type NativeAnalysisTarget = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-x64';
+export type NativeAnalysisTarget = 'darwin-arm64' | 'linux-x64';
 export interface NativeAnalysisArtifact {
     readonly target: NativeAnalysisTarget;
-    readonly package: string;
+    /** Relative to this target's directory under the package's `native-artifacts`. */
     readonly executable: string;
     readonly bytes: number;
     readonly sha256: string;
-    /** Absent in historical packages built before the captured generic worker was distributed. */
+    /** Absent in historical releases built before the captured generic worker was distributed. */
     readonly oxlint?: NativeOxlintArtifact;
 }
 export interface NativeOxlintArtifact {
@@ -37,7 +37,7 @@ export interface NativeAnalysisReleaseManifest {
     };
     readonly artifacts: Readonly<Partial<Record<NativeAnalysisTarget, NativeAnalysisArtifact>>>;
 }
-export type NativeAnalysisDistributionErrorCode = 'NATIVE_RELEASE_MANIFEST_INVALID' | 'NATIVE_TARGET_UNSUPPORTED' | 'NATIVE_PACKAGE_MISSING' | 'NATIVE_PACKAGE_VERSION_MISMATCH' | 'NATIVE_ARTIFACT_INVALID' | 'NATIVE_ARTIFACT_DIGEST_MISMATCH' | 'NATIVE_ARTIFACT_NOT_EXECUTABLE' | 'NATIVE_OXLINT_UNAVAILABLE';
+export type NativeAnalysisDistributionErrorCode = 'NATIVE_RELEASE_MANIFEST_INVALID' | 'NATIVE_TARGET_UNSUPPORTED' | 'NATIVE_ARTIFACT_INVALID' | 'NATIVE_ARTIFACT_DIGEST_MISMATCH' | 'NATIVE_ARTIFACT_NOT_EXECUTABLE' | 'NATIVE_OXLINT_UNAVAILABLE';
 export declare class NativeAnalysisDistributionError extends Error {
     readonly name = "NativeAnalysisDistributionError";
     readonly code: NativeAnalysisDistributionErrorCode;

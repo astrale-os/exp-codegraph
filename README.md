@@ -357,4 +357,4 @@ encodeWorkspaceCheckpointJson · decodeWorkspaceCheckpointJson
 
 </details>
 
-Node 22 (≥22.13), 24 or 26. Native analysis: macOS/Linux x64 and arm64; Windows x64. [Installation and artifacts](docs/github-artifacts.md) · [Distribution](docs/npm-distribution.md).
+Node 22 (≥22.13), 24 or 26. Native analysis: macOS arm64 and Linux x64. [Installation and artifacts](docs/github-artifacts.md) · [Distribution](docs/npm-distribution.md).

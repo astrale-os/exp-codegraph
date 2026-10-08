@@ -4,8 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
 
 const root = resolve(import.meta.dirname, '..')
-const targets = ['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'win32-x64']
-const nativePackages = targets.map((target) => [target, `@astrale-os/codegraph-native-${target}`] as const)
+const targets = ['darwin-arm64', 'linux-x64']
 const manifest = async (path: string) => JSON.parse(await readFile(resolve(root, path), 'utf8'))
 const workflow = async (name: string) => parse(await readFile(resolve(root, '.github/workflows', name), 'utf8'))
 
@@ -17,21 +16,23 @@ describe('qualified npm distribution policy', () => {
     expect((await manifest('package.json')).files).toContain('!analysis/oxlint/**')
   })
 
-  it('keeps exactly six public npm packages aligned to the root version', async () => {
+  it('delivers every native target inside exactly one public npm package', async () => {
     const owner = await manifest('package.json')
-    expect(Object.keys(owner.optionalDependencies).sort()).toEqual(nativePackages.map(([, name]) => name).sort())
-    for (const [target, name] of nativePackages) {
-      expect(owner.optionalDependencies[name]).toBe('workspace:*')
-      expect(await manifest(`native-packages/${target}/package.json`)).toMatchObject({
-        name, version: owner.version, private: false,
-        publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
-        repository: { url: 'git+https://github.com/astrale-os/exp-codegraph.git' },
-      })
-    }
     expect(owner).toMatchObject({
-      name: '@astrale-os/codegraph', private: false,
+      name: '@astrale-os/codegraph', private: false, preferUnplugged: true,
       publishConfig: { access: 'public', registry: 'https://registry.npmjs.org/' },
+      repository: { url: 'git+https://github.com/astrale-os/exp-codegraph.git' },
     })
+    expect(owner.optionalDependencies).toBeUndefined()
+    expect(owner.files).toContain('native-artifacts')
+    // pnpm pack marks only bin entries and these declared files as executable.
+    expect(owner.publishConfig.executableFiles).toEqual(targets.flatMap((target) => [
+      `./native-artifacts/${target}/bin/codegraph-native`,
+      `./native-artifacts/${target}/bin/codegraph-oxlint`,
+    ]))
+    expect((await readdir(resolve(root, 'native-artifacts'))).sort()).toEqual(targets)
+    expect(Object.keys((await manifest('native-release.json')).artifacts).sort()).toEqual(targets)
+    expect(parse(await readFile(resolve(root, 'pnpm-workspace.yaml'), 'utf8')).packages).toBeUndefined()
   })
 
   it('publishes only a manually selected successful main qualification with no token fallback', async () => {
@@ -51,7 +52,7 @@ describe('qualified npm distribution policy', () => {
     expect(steps[publisher]).toMatchObject({
       uses: 'astrale-os/config/.github/actions/publish/packages@8e2e2abd0320be0c2f64033916519ab3b66c7dd7',
       with: {
-        dirs: [...targets.map((target) => `native-packages/${target}`), '.'].join(' '),
+        dirs: '.',
         'mirror-public-packages': 'false',
         'install-command': 'true',
         'tarballs-json': '${{ steps.packages.outputs.tarballs-json }}',
@@ -88,7 +89,13 @@ describe('qualified npm distribution policy', () => {
     expect(native.jobs.build.steps[builder].if).toBeUndefined()
     expect(upload).toBeGreaterThan(builder)
     const owned = native.jobs.build.steps.find((step: { run?: string }) => step.run?.includes('--owned-artifact'))
-    expect(owned?.if).toBe("matrix.target != 'win32-x64'")
+    expect(owned).toBeDefined()
+    expect(owned?.if).toBeUndefined()
+    expect(native.jobs['packed-consumer'].strategy.matrix.include.map((entry: { target: string }) => entry.target).sort())
+      .toEqual(['darwin-arm64', 'linux-x64', 'linux-x64', 'linux-x64', 'linux-x64'])
+    const pack = native.jobs.assemble.steps.find((step: { name?: string }) => step.name === 'Pack GitHub consumer artifact')
+    expect(pack?.run).toContain('pnpm pack --pack-destination release')
+    expect(pack?.run).not.toContain('native-packages')
     const consumer = native.jobs['packed-consumer'].steps.find((step: { run?: string }) => step.run?.includes('qualification/v2/release/packed-consumer.mjs'))
     expect(consumer?.run).toContain('--require-oxlint')
     expect(JSON.stringify(native)).not.toMatch(/id-token|workflow run publish|\/publish\//u)

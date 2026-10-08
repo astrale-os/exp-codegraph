@@ -2,7 +2,7 @@ import { chmod, copyFile, lstat, mkdir, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 
 import {
-  NATIVE_ARTIFACT_FORMAT,
+  NATIVE_ARTIFACT_DIRECTORY,
   NATIVE_BUILD_FORMAT,
   NATIVE_RELEASE_FORMAT,
   NATIVE_TARGETS,
@@ -14,7 +14,6 @@ import {
   digestFile,
   readJson,
   stableJson,
-  oxlintEligible,
 } from './shared.mjs'
 
 const root = resolve(import.meta.dirname, '../..')
@@ -46,7 +45,7 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   ) {
     throw new Error(`${target} build provenance is invalid or dirty.`)
   }
-  const { oxlint: workerToolchain, ...toolchain } = assertToolchain(build.toolchain, { requireOxlint: oxlintEligible(target) })
+  const { oxlint: workerToolchain, ...toolchain } = assertToolchain(build.toolchain, { requireOxlint: true })
   if (releaseToolchain && stableJson(releaseToolchain) !== stableJson(toolchain)) {
     throw new Error(`${target} compiler toolchain differs from the release matrix.`)
   }
@@ -54,52 +53,30 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     throw new Error(`${target} was built from ${build.source.revision}, expected ${sourceRevision}.`)
   }
   releaseToolchain ??= toolchain
-  if (workerToolchain) {
-    if (releaseOxlintToolchain && stableJson(releaseOxlintToolchain) !== stableJson(workerToolchain)) {
-      throw new Error(`${target} Oxlint toolchain differs from the release matrix.`)
-    }
-    releaseOxlintToolchain ??= workerToolchain
+  if (releaseOxlintToolchain && stableJson(releaseOxlintToolchain) !== stableJson(workerToolchain)) {
+    throw new Error(`${target} Oxlint toolchain differs from the release matrix.`)
   }
+  releaseOxlintToolchain ??= workerToolchain
   sourceRevision ??= build.source.revision
 
   const sourceManifest = await readJson(resolve(sourceRoot, 'manifest.json'))
-  const artifact = assertArtifactManifest(sourceManifest, target, packageVersion, { requireOxlint: oxlintEligible(target) })
+  const artifact = assertArtifactManifest(sourceManifest, target, packageVersion, { requireOxlint: true })
   if (stableJson(artifact) !== stableJson(build.artifact)) {
-    throw new Error(`${target} build and package manifests disagree.`)
+    throw new Error(`${target} build and artifact manifests disagree.`)
   }
-  const packageRoot = resolve(root, 'native-packages', target)
+  const artifactRoot = resolve(root, NATIVE_ARTIFACT_DIRECTORY, target)
   await stageExecutable(
     resolve(sourceRoot, artifact.executable),
-    resolve(packageRoot, expected.executable),
+    resolve(artifactRoot, expected.executable),
     artifact,
     target,
   )
-  if (artifact.oxlint) {
-    await stageExecutable(
-      resolve(sourceRoot, artifact.oxlint.executable),
-      resolve(packageRoot, artifact.oxlint.executable),
-      artifact.oxlint,
-      target,
-    )
-  }
-  await copyFile(resolve(root, 'LICENSE'), resolve(packageRoot, 'LICENSE'))
-  await copyFile(
-    resolve(root, 'THIRD_PARTY_NOTICES.md'),
-    resolve(packageRoot, 'THIRD_PARTY_NOTICES.md'),
+  await stageExecutable(
+    resolve(sourceRoot, artifact.oxlint.executable),
+    resolve(artifactRoot, artifact.oxlint.executable),
+    artifact.oxlint,
+    target,
   )
-  await writeFile(
-    resolve(packageRoot, 'manifest.json'),
-    stableJson({
-      format: NATIVE_ARTIFACT_FORMAT,
-      version: 1,
-      packageVersion,
-      protocolVersion: PROTOCOL_VERSION,
-      artifact,
-    }),
-  )
-  const child = await readJson(resolve(packageRoot, 'package.json'))
-  child.version = packageVersion
-  await writeFile(resolve(packageRoot, 'package.json'), stableJson(child))
   artifacts[target] = artifact
 }
 

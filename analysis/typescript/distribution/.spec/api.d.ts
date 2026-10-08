@@ -1,13 +1,8 @@
-export type NativeAnalysisTarget =
-  | 'darwin-arm64'
-  | 'darwin-x64'
-  | 'linux-arm64'
-  | 'linux-x64'
-  | 'win32-x64'
+export type NativeAnalysisTarget = 'darwin-arm64' | 'linux-x64'
 
 export interface NativeAnalysisArtifact {
   readonly target: NativeAnalysisTarget
-  readonly package: string
+  /** Relative to this target's directory under the package's `native-artifacts`. */
   readonly executable: string
   readonly bytes: number
   readonly sha256: string
@@ -48,8 +43,6 @@ export interface NativeAnalysisReleaseManifest {
 export type NativeAnalysisDistributionErrorCode =
   | 'NATIVE_RELEASE_MANIFEST_INVALID'
   | 'NATIVE_TARGET_UNSUPPORTED'
-  | 'NATIVE_PACKAGE_MISSING'
-  | 'NATIVE_PACKAGE_VERSION_MISMATCH'
   | 'NATIVE_ARTIFACT_INVALID'
   | 'NATIVE_ARTIFACT_DIGEST_MISMATCH'
   | 'NATIVE_ARTIFACT_NOT_EXECUTABLE'

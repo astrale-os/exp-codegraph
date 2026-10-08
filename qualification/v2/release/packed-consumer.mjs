@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 import { assertNpmConsumerLock } from '../../../scripts/native/admit-packages.mjs'
-import { assertOxlintArtifact, oxlintEligible } from '../../../scripts/native/shared.mjs'
+import { NATIVE_ARTIFACT_DIRECTORY, NATIVE_TARGETS, assertOxlintArtifact } from '../../../scripts/native/shared.mjs'
 import { qualifyOwnedGeneric } from './owned-generic.mjs'
 
 const execFile = promisify(execFileCallback)
@@ -31,18 +31,11 @@ const releaseAgeExclusions = [
   'bun-types@1.4.0',
 ]
 const target = `${process.platform}-${process.arch}`
-const supported = [
-  'darwin-arm64',
-  'darwin-x64',
-  'linux-arm64',
-  'linux-x64',
-  'win32-x64',
-]
-assert(supported.includes(target), `Unsupported packed-consumer target ${target}.`)
+assert(NATIVE_TARGETS[target], `Unsupported packed-consumer target ${target}.`)
 
 const temporary = await mkdtemp(join(tmpdir(), 'codegraph-packed-consumer-'))
 try {
-  const archives = releaseDirectory ? await releaseArchives(releaseDirectory) : []
+  const archive = releaseDirectory ? await releaseArchive(releaseDirectory) : undefined
   const consumer = join(temporary, 'consumer')
   await mkdir(consumer, { recursive: true })
   const dependencyEnvironment = await prepareConsumerPolicy(consumer)
@@ -62,13 +55,11 @@ try {
     '--prefer-offline',
     '--ignore-scripts',
     '--save-exact',
-    ...(releaseDirectory
-      ? archives.map((archive) => resolve(releaseDirectory, archive))
-      : [`@astrale-os/codegraph@${npmVersion}`]),
+    releaseDirectory ? resolve(releaseDirectory, archive) : `@astrale-os/codegraph@${npmVersion}`,
   ]
-  await installConsumer(pnpmArguments, repositoryRoot, dependencyEnvironment)
+  await execFile('pnpm', pnpmArguments, { cwd: repositoryRoot, env: dependencyEnvironment })
   const lock = await readFile(join(consumer, 'pnpm-lock.yaml'), 'utf8')
-  if (releaseDirectory) await assertPackedConsumerLock(lock, consumer, releaseDirectory, archives)
+  if (releaseDirectory) await assertPackedConsumerLock(lock, consumer, resolve(releaseDirectory, archive))
   else assertNpmConsumerLock(lock)
 
   const installed = join(consumer, 'node_modules/@astrale-os/codegraph')
@@ -82,6 +73,7 @@ try {
     assert.equal(release.sourceRevision, sourceRevision)
   }
   assert.equal(rootManifest.dependencies?.ttsc, undefined)
+  assert.equal(rootManifest.optionalDependencies, undefined)
   await assertMissing(join(consumer, 'node_modules/ttsc'))
   await assertMissing(join(consumer, 'node_modules/@ttsc'))
   const rootFiles = await filesUnder(installed)
@@ -107,16 +99,13 @@ try {
   const native = await typescript.resolvePackagedNativeAnalysis()
   assert.equal(native.origin, 'package')
   assert.equal(native.target, target)
-  const installedNative = resolve(native.command, '../..')
+  const installedNative = await realpath(join(installed, NATIVE_ARTIFACT_DIRECTORY))
+  assert.equal(resolve(native.command, '../..'), join(installedNative, target))
   const release = JSON.parse(await readFile(join(installed, 'native-release.json'), 'utf8'))
+  assert.deepEqual(Object.keys(release.artifacts).sort(), Object.keys(NATIVE_TARGETS).sort())
   const oxlint = release.artifacts[target].oxlint
   let ownedGeneric
-  if (process.argv.includes('--require-oxlint') && oxlintEligible(target)) assert(oxlint, 'New POSIX native packages require codegraph-oxlint.')
-  if (!oxlintEligible(target)) {
-    assert.equal(oxlint, undefined, 'Windows must not advertise an unqualified captured worker.')
-    await assert.rejects(() => typescript.resolvePackagedNativeOxlint(), { code: 'NATIVE_OXLINT_UNAVAILABLE' })
-    ownedGeneric = { status: 'unavailable', reason: 'Windows captured runtime is not qualified; original SDK recovery remains required.' }
-  }
+  if (process.argv.includes('--require-oxlint')) assert(oxlint, 'New native releases require codegraph-oxlint.')
   if (oxlint) {
     assertOxlintArtifact(oxlint, target)
     const nativeWorker = await typescript.resolvePackagedNativeOxlint()
@@ -128,23 +117,20 @@ try {
     assert.equal(nativeWorker.engineVersion, oxlint.engineVersion)
     assert.equal(nativeWorker.protocolVersion, oxlint.protocolVersion)
     assert.deepEqual(nativeWorker.source, oxlint.source)
-    const worker = join(installedNative, oxlint.executable)
+    const worker = join(installedNative, target, oxlint.executable)
     assert.equal(nativeWorker.command, await realpath(worker))
     const bytes = await readFile(worker)
     assert.equal(bytes.length, oxlint.bytes)
     assert.equal(createHash('sha256').update(bytes).digest('hex'), oxlint.sha256)
     assert((await stat(worker)).isFile())
-    if (process.platform !== 'win32') assert((await stat(worker)).mode & 0o111)
+    assert((await stat(worker)).mode & 0o111)
   }
+  // The one package delivers every released target and nothing else beside them.
   const nativeFiles = (await filesUnder(installedNative)).map((path) => path.slice(installedNative.length + 1))
-  assert.deepEqual(nativeFiles.sort(), [
-    'LICENSE',
-    'THIRD_PARTY_NOTICES.md',
-    target === 'win32-x64' ? 'bin/codegraph-native.exe' : 'bin/codegraph-native',
-    ...(oxlint ? [oxlint.executable] : []),
-    'manifest.json',
-    'package.json',
-  ].sort())
+  assert.deepEqual(nativeFiles.sort(), Object.entries(release.artifacts).flatMap(([name, artifact]) => [
+    `${name}/${artifact.executable}`,
+    ...(artifact.oxlint ? [`${name}/${artifact.oxlint.executable}`] : []),
+  ]).sort())
 
 
 
@@ -214,7 +200,7 @@ try {
   }
 
   await qualifyResidentProject(typescript, join(temporary, 'resident'))
-  if (oxlint && process.platform !== 'win32') {
+  if (oxlint) {
     const decisions = await import(pathToFileURL(join(installed, 'dist/analysis/native/index.js')).href)
     ownedGeneric = await qualifyOwnedGeneric({ decisions, worker: oxlint,
       root: join(temporary, 'owned-generic'), repositoryRoot })
@@ -270,14 +256,12 @@ async function prepareConsumerPolicy(consumer) {
   return neutralRegistryEnvironment(userConfig, globalConfig)
 }
 
-async function assertPackedConsumerLock(lock, consumer, releaseDirectory, archives) {
+async function assertPackedConsumerLock(lock, consumer, archive) {
   assert.doesNotMatch(
     lock,
     /(?:^|[\s'",[{])(?:workspace:|link:|portal:|patch:|git:|git\+|github\.com|npm\.pkg\.github\.com|overrides:)/mu,
   )
-  const allowed = new Set(
-    await Promise.all(archives.map((archive) => realpath(resolve(releaseDirectory, archive)))),
-  )
+  const qualified = await realpath(archive)
   const localTarballs = await Promise.all(
     [...lock.matchAll(/file:([^\s,}\]]+\.tgz)/gu)].map((match) =>
       realpath(match[1].startsWith('/') ? resolve(match[1]) : resolve(consumer, match[1])),
@@ -285,9 +269,8 @@ async function assertPackedConsumerLock(lock, consumer, releaseDirectory, archiv
   )
   assert(localTarballs.length > 0)
   for (const tarball of localTarballs) {
-    assert(allowed.has(tarball), `Packed consumer lock contains unqualified tarball ${tarball}.`)
+    assert.equal(tarball, qualified, `Packed consumer lock contains unqualified tarball ${tarball}.`)
   }
-  assert.deepEqual(new Set(localTarballs), allowed)
 }
 
 function neutralRegistryEnvironment(userConfig, globalConfig) {
@@ -311,10 +294,6 @@ function exactlyOne(files, pattern) {
   return matches[0]
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
-}
-
 async function filesUnder(directory) {
   const output = []
   for (const entry of await readdir(directory, { withFileTypes: true })) {
@@ -327,15 +306,6 @@ async function filesUnder(directory) {
 
 async function assertMissing(path) {
   await assert.rejects(stat(path), { code: 'ENOENT' })
-}
-
-async function installConsumer(arguments_, cwd, env) {
-  if (process.platform !== 'win32') return execFile('pnpm', arguments_, { cwd, env })
-  // Pass paths as JSON data: pnpm may be a .cmd shim, which execFile cannot execute on Windows.
-  return execFile('powershell.exe', [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
-    '$arguments = ConvertFrom-Json $env:CODEGRAPH_PNPM_ARGUMENTS; & pnpm @arguments; exit $LASTEXITCODE',
-  ], { cwd, env: { ...env, CODEGRAPH_PNPM_ARGUMENTS: JSON.stringify(arguments_) } })
 }
 
 async function qualifyResidentProject(typescript, root) {
@@ -366,11 +336,6 @@ async function qualifyResidentProject(typescript, root) {
   } finally { await project.dispose() }
 }
 
-async function releaseArchives(directory) {
-  const files = await readdir(directory)
-  const rootArchive = exactlyOne(files, /^astrale-os-codegraph-\d[^/]*\.tgz$/u)
-  const nativeArchives = supported.map((nativeTarget) => exactlyOne(files,
-    new RegExp(`^astrale-os-codegraph-native-${escapeRegExp(nativeTarget)}-\\d[^/]*\\.tgz$`, 'u'),
-  ))
-  return [rootArchive, ...nativeArchives]
+async function releaseArchive(directory) {
+  return exactlyOne(await readdir(directory), /^astrale-os-codegraph-\d[^/]*\.tgz$/u)
 }

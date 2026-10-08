@@ -13,7 +13,7 @@ on:
       - 'analysis/**'
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
-      - 'native-packages/**'
+      - 'native-artifacts/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -31,7 +31,7 @@ on:
       - 'analysis/**'
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
-      - 'native-packages/**'
+      - 'native-artifacts/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
@@ -56,14 +56,8 @@ jobs:
         include:
           - target: linux-x64
             runner: ubuntu-24.04
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-          - target: darwin-x64
-            runner: macos-15-intel
           - target: darwin-arm64
             runner: macos-15
-          - target: win32-x64
-            runner: windows-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -74,7 +68,6 @@ jobs:
         with:
           frozen-lockfile: 'true'
       - name: Prepare the pinned Rust toolchain
-        if: matrix.target != 'win32-x64'
         run: node scripts/native/build-oxlint.mjs --prepare-toolchain
       - name: Build exact native artifact
         run: pnpm native:build -- --target ${{ matrix.target }} --output .native-output/${{ matrix.target }}
@@ -84,14 +77,13 @@ jobs:
         if: matrix.target == 'darwin-arm64'
         run: pnpm native:test
       - name: Qualify the actual built Oxlint worker lifetime and captured I/O
-        if: matrix.target != 'win32-x64'
-        run: pnpm native:test -- --files-json '["."]' --options-json '["-run=TestOwned|TestPolicyLaneOwned"]' --owned-artifact .native-output/${{ matrix.target }}/bin/codegraph-oxlint${{ matrix.target == 'win32-x64' && '.exe' || '' }}
+        run: pnpm native:test -- --files-json '["."]' --options-json '["-run=TestOwned|TestPolicyLaneOwned"]' --owned-artifact .native-output/${{ matrix.target }}/bin/codegraph-oxlint
       - name: Qualify native semantics and extension boundary
-        run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
+        run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native
       - name: Qualify native regression and diagnostic transport
         run: pnpm exec vitest run __tests__/native-identity.test.ts __tests__/native-semantic-body.test.ts __tests__/typescript-normalized-facts.test.ts __tests__/typescript-value-semantics.test.ts __tests__/typescript-symbolic-values.test.ts __tests__/typescript-project.test.ts __tests__/native-distribution.test.ts --maxWorkers 1
         env:
-          CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
+          CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native
       - name: Upload qualified native artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -100,7 +92,7 @@ jobs:
           if-no-files-found: error
 
   assemble:
-    name: Assemble exact release manifests and packages
+    name: Assemble the exact release manifest and package
     needs: build
     runs-on: ubuntu-24.04
     steps:
@@ -123,9 +115,6 @@ jobs:
       - name: Pack GitHub consumer artifact
         run: |
           mkdir -p release
-          for target in darwin-arm64 darwin-x64 linux-arm64 linux-x64 win32-x64; do
-            npm pack ./native-packages/$target --pack-destination release
-          done
           pnpm pack --pack-destination release
       - name: Upload assembled GitHub artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -135,7 +124,7 @@ jobs:
           if-no-files-found: error
 
   packed-consumer:
-    name: Install and execute ${{ matrix.target }} packages (Node ${{ matrix.node-version }})
+    name: Install and execute the ${{ matrix.target }} package (Node ${{ matrix.node-version }})
     needs: assemble
     strategy:
       fail-fast: false
@@ -144,17 +133,8 @@ jobs:
           - target: linux-x64
             runner: ubuntu-24.04
             node-version: '26'
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-            node-version: '26'
-          - target: darwin-x64
-            runner: macos-15-intel
-            node-version: '26'
           - target: darwin-arm64
             runner: macos-15
-            node-version: '26'
-          - target: win32-x64
-            runner: windows-latest
             node-version: '26'
           - target: linux-x64
             runner: ubuntu-24.04
