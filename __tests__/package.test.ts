@@ -16,9 +16,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { DevOptions, RunningDevServer } from '../server/index.ts'
+import { artifactCacheRoot } from '../distribution/materialize.ts'
+import { buildViewerArchive } from '../scripts/viewer/archive.mjs'
 
 import { fixture, type Fixture } from './fixture.ts'
 
@@ -28,6 +30,7 @@ const temporary: string[] = []
 const fixtures: Fixture[] = []
 
 afterEach(async () => {
+  vi.unstubAllGlobals()
   await Promise.all(fixtures.splice(0).map((item) => item.remove()))
   await Promise.all(
     temporary.splice(0).map(async (path) => {
@@ -128,7 +131,9 @@ describe('packed release artifact', () => {
     expect(manifest.devDependencies.ttsc).toBe('0.25.0')
     expect(manifest.files).toContain('!dist/**/*.map')
     expect(manifest.optionalDependencies).toBeUndefined()
-    expect(manifest.files).toContain('native-artifacts')
+    expect(manifest.files).toContain('native-release.json')
+    expect(manifest.files).toContain('viewer-release.json')
+    expect(manifest.files).toContain('!dist/viewer/**')
 
     const root = await mkdtemp(join(tmpdir(), 'codegraph-production-files-'))
     temporary.push(root)
@@ -136,6 +141,7 @@ describe('packed release artifact', () => {
     await stagePublishedFiles(installed)
     await expect(stat(join(installed, 'analysis/typescript/native'))).rejects.toThrow()
     await expect(stat(join(installed, 'analysis/typescript/ttsc'))).rejects.toThrow()
+    await expect(stat(join(installed, 'dist/viewer'))).rejects.toThrow()
   })
 
   it('contains no compiler outputs orphaned by a source move or deletion', async () => {
@@ -163,7 +169,7 @@ describe('packed release artifact', () => {
     temporary.push(temporaryRoot)
     const consumer = join(temporaryRoot, 'consumer')
     const installed = join(consumer, 'node_modules/@astrale-os/codegraph')
-    await stagePublishedFiles(installed)
+    const viewer = await stagePublishedFiles(installed)
     await linkDependencies(consumer)
 
     const current = await fixture({
@@ -171,13 +177,21 @@ describe('packed release artifact', () => {
       'alpha/.spec/api.d.ts': 'export interface Alpha {}\n',
       'alpha/.spec/laws/alpha.ts':
         "import { defineLaw } from '@astrale-os/codegraph/authoring'\nexport const ALPHA_LAW = defineLaw({ id: 'ALPHA-LAW', statement: 'Alpha remains alpha.' })\n",
+      // Project lookalikes cannot select the package's source/HMR runtime.
+      'viewer/index.html': '<html>project viewer</html>',
+      'scripts/build-viewer.mjs': 'throw new Error("must not run")',
     })
     fixtures.push(current)
+
+    const cachePath = join(artifactCacheRoot('viewer'), `viewer-${viewer.header.sha256}.tar`)
+    const hadCachedViewer = await isFile(cachePath)
+    const noNetwork = join(temporaryRoot, 'no-network.mjs')
+    await writeFile(noNetwork, "globalThis.fetch = () => { throw new Error('Headless import attempted a download.') }\n")
 
     await chmod(installed, 0o555)
     try {
       const cli = join(installed, 'dist/cli.js')
-      const version = await run(process.execPath, [cli, '--version'])
+      const version = await run(process.execPath, ['--import', noNetwork, cli, '--version'])
       const packageVersion = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
         .version as string
       expect(version).toMatchObject({ stdout: `${packageVersion}\n`, stderr: '' })
@@ -201,7 +215,7 @@ describe('packed release artifact', () => {
         [
           '--input-type=module',
           '--eval',
-          "const [tooling,analysis,typescript,sqlite,repository,schema,specification,conformance] = await Promise.all([import('@astrale-os/codegraph'),import('@astrale-os/codegraph/analysis'),import('@astrale-os/codegraph/analysis/typescript'),import('@astrale-os/codegraph/analysis/sqlite'),import('@astrale-os/codegraph/repository'),import('@astrale-os/codegraph/schema'),import('@astrale-os/codegraph/specification'),import('@astrale-os/codegraph/conformance')]); process.stdout.write(String([tooling.createTypeSpecApplicationService,analysis.createMemoryAnalysisStore,typescript.createTypeScriptAnalysisService,sqlite.createSQLiteAnalysisStore,repository.inventoryRepository,schema.validateSchemaFile,specification.compileSpecificationSnapshot,conformance.qualifySpecification].every(value => typeof value === 'function')))",
+          "globalThis.fetch=()=>{throw new Error('Import attempted a download.')}; const [tooling,analysis,typescript,sqlite,repository,schema,specification,conformance] = await Promise.all([import('@astrale-os/codegraph'),import('@astrale-os/codegraph/analysis'),import('@astrale-os/codegraph/analysis/typescript'),import('@astrale-os/codegraph/analysis/sqlite'),import('@astrale-os/codegraph/repository'),import('@astrale-os/codegraph/schema'),import('@astrale-os/codegraph/specification'),import('@astrale-os/codegraph/conformance')]); process.stdout.write(String([tooling.createTypeSpecApplicationService,analysis.createMemoryAnalysisStore,typescript.createTypeScriptAnalysisService,sqlite.createSQLiteAnalysisStore,repository.inventoryRepository,schema.validateSchemaFile,specification.compileSpecificationSnapshot,conformance.qualifySpecification].every(value => typeof value === 'function')))",
         ],
         { cwd: consumer },
       )
@@ -217,16 +231,28 @@ describe('packed release artifact', () => {
       )
       expect(obsolete.stdout).toBe('compiler,catalog,verification,editing,server')
 
+      const assetURL = `https://github.com/astrale-os/exp-codegraph/releases/download/codegraph-v${viewer.header.packageVersion}-${viewer.header.sourceRevision}/${viewer.header.asset}`
+      const download = vi.fn(async (input: string | URL | Request) => {
+        expect(String(input)).toBe(assetURL)
+        const response = new Response(viewer.gzip)
+        Object.defineProperty(response, 'url', { value: assetURL })
+        return response
+      })
+      vi.stubGlobal('fetch', download)
       const devUrl = `${pathToFileURL(join(installed, 'dist/server/index.js')).href}?test=${Date.now()}`
       const { startDev } = (await import(devUrl)) as {
         startDev(options: DevOptions): Promise<RunningDevServer>
       }
+      expect(download).not.toHaveBeenCalled()
       const running = await startDev({ root: current.root, port: 0, cache: false })
+      expect(download).toHaveBeenCalledTimes(hadCachedViewer ? 0 : 1)
+      vi.unstubAllGlobals()
       try {
         expect(running.mode).toBe('embedded')
         const page = await fetch(running.url)
         expect(page.status).toBe(200)
         await page.text()
+        await expect(stat(join(installed, 'dist/viewer'))).rejects.toThrow()
 
         const live = await running.catalog()
         expect(live.index.specs[0]).toMatchObject({
@@ -237,19 +263,25 @@ describe('packed release artifact', () => {
         await running.close()
       }
     } finally {
+      vi.unstubAllGlobals()
+      if (!hadCachedViewer) await rm(cachePath, { force: true })
       await chmod(installed, 0o755)
     }
   }, 30_000)
 })
 
-async function stagePublishedFiles(target: string): Promise<void> {
+async function stagePublishedFiles(target: string) {
   const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')) as {
     files: string[]
+    version: string
   }
   await mkdir(target, { recursive: true })
   await cp(join(packageRoot, 'package.json'), join(target, 'package.json'))
 
   for (const entry of manifest.files.filter((value) => !value.startsWith('!'))) {
+    // This unit fixture supplies a controlled release header after staging. Real
+    // archived headers/assets are admitted separately by the installed-release gate.
+    if (entry === 'viewer-release.json') continue
     if (entry.startsWith('*.')) {
       const suffix = entry.slice(1)
       const matches = (await readdir(packageRoot)).filter((file) => file.endsWith(suffix))
@@ -262,6 +294,14 @@ async function stagePublishedFiles(target: string): Promise<void> {
     const excluded = entry.slice(1).replace(/\/\*\*$/u, '')
     await rm(join(target, excluded), { recursive: true, force: true })
   }
+  const bundle = await buildViewerArchive(join(packageRoot, 'dist/viewer'))
+  const sourceRevision = 'a'.repeat(40)
+  const header = { format: 'codegraph.viewer-release.v1', packageVersion: manifest.version, sourceRevision,
+    asset: `viewer-${sourceRevision}.tar.gz`, ...bundle.descriptor }
+  const native = JSON.parse(await readFile(join(target, 'native-release.json'), 'utf8'))
+  await writeFile(join(target, 'native-release.json'), JSON.stringify({ ...native, packageVersion: manifest.version, sourceRevision }))
+  await writeFile(join(target, 'viewer-release.json'), JSON.stringify(header))
+  return { header, gzip: bundle.gzip }
 }
 
 async function linkDependencies(consumer: string): Promise<void> {

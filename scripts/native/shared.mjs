@@ -15,7 +15,7 @@ export function oxlintExecutable(target) {
   return 'bin/codegraph-oxlint'
 }
 
-/** Each target's executables live in this directory of the one published package. */
+/** Historical embedded delivery root, retained for prior package admissions. */
 export const NATIVE_ARTIFACT_DIRECTORY = 'native-artifacts'
 
 export const NATIVE_TARGETS = Object.freeze({
@@ -45,7 +45,7 @@ export async function assertRegularExecutable(path, target) {
   }
 }
 
-export function assertArtifact(value, target, packageVersion, { requireOxlint = false } = {}) {
+export function assertArtifact(value, target, packageVersion, { requireOxlint = false, delivery, sourceRevision } = {}) {
   const expected = NATIVE_TARGETS[target]
   if (!expected) throw new Error(`Unsupported native target ${target}.`)
   if (
@@ -62,8 +62,11 @@ export function assertArtifact(value, target, packageVersion, { requireOxlint = 
     throw new Error(`${target} has an invalid native artifact record for ${packageVersion}.`)
   }
   assertCompression(value, target)
+  if (delivery !== undefined && delivery !== 'github-release') throw new Error('Unknown native artifact delivery.')
+  if (delivery === 'github-release') assertRemoteCompression(value, target, 'native', sourceRevision)
   if (value.oxlint !== undefined) assertOxlintArtifact(value.oxlint, target)
   else if (requireOxlint) throw new Error(`${target} has no qualified codegraph-oxlint artifact.`)
+  if (delivery === 'github-release' && value.oxlint !== undefined) assertRemoteCompression(value.oxlint, target, 'oxlint', sourceRevision)
   return value
 }
 
@@ -87,10 +90,22 @@ function assertCompression(artifact, target) {
   const value = artifact.compression
   if (value === undefined) return
   if (!value || typeof value !== 'object' || Array.isArray(value) ||
-    value.format !== 'gzip' || value.path !== `${artifact.executable}.gz` ||
-    !Number.isSafeInteger(value.bytes) || value.bytes < 1 ||
-    typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.sha256)) {
+    value.format !== 'gzip' || !Number.isSafeInteger(value.bytes) || value.bytes < 1 ||
+    typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.sha256) ||
+    typeof value.path !== 'string') {
     throw new Error(`${target} has an invalid compressed artifact descriptor.`)
+  }
+  const revision = value.path.match(/-([a-f0-9]{40})\.gz$/u)?.[1]
+  const feature = artifact.executable === 'bin/codegraph-oxlint' ? 'oxlint' : 'native'
+  if (value.path !== `${artifact.executable}.gz` && value.path !== nativeReleaseAssetName(target, feature, revision)) {
+    throw new Error(`${target} has an invalid compressed artifact descriptor.`)
+  }
+}
+
+function assertRemoteCompression(artifact, target, feature, sourceRevision) {
+  const expected = nativeReleaseAssetName(target, feature, sourceRevision)
+  if (!expected || artifact.compression?.path !== expected) {
+    throw new Error(`${target} ${feature} artifact is not bound to its remote release source.`)
   }
 }
 
@@ -166,4 +181,10 @@ function sortJson(value) {
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([key, entry]) => [key, sortJson(entry)]),
   )
+}
+
+/** Flat, source-bound public assets; platform selection remains in one npm manifest. */
+export function nativeReleaseAssetName(target, feature, sourceRevision) {
+  if (!NATIVE_TARGETS[target] || !['native', 'oxlint'].includes(feature) || !/^[a-f0-9]{40}$/u.test(sourceRevision ?? '')) return undefined
+  return `${feature}-${target}-${sourceRevision}.gz`
 }

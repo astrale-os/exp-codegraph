@@ -51,7 +51,7 @@ export interface ValueIndex {
   dependency(key: string): ValueDependency
 }
 
-interface Contribution<Value> { readonly owner: FactId; readonly value: Value }
+interface Contribution<Value> { readonly owner: FactId; readonly value: Value; readonly fingerprint?: string }
 type Slot<Value> = Contribution<Value> |
   { readonly owners: ReadonlyMap<FactId, Contribution<Value>>; readonly value: Value }
 
@@ -70,8 +70,8 @@ class Column<Key extends string, Value> implements ReadonlyMap<Key, Value> {
   fingerprint(key: Key, hashes: ValueIndexTable<FactId, string>): string | undefined {
     const slot = this.slots.get(key)
     if (!slot) return
-    return 'owner' in slot ? hashes.get(slot.owner)
-      : JSON.stringify([...slot.owners.keys()].sort().map((owner) => [owner, hashes.get(owner)]))
+    return 'owner' in slot ? slot.fingerprint ?? hashes.get(slot.owner)
+      : JSON.stringify([...slot.owners].sort(([left], [right]) => left.localeCompare(right)).map(([owner, contribution]) => [owner, contribution.fingerprint ?? hashes.get(owner)]))
   }
   evidence(key: Key, facts: ValueIndexTable<FactId, readonly FactId[]>): readonly FactId[] | undefined {
     const slot = this.slots.get(key)
@@ -114,8 +114,8 @@ class ColumnEdit<Key extends string, Value> {
     if (!owners.size) return
     return projectSlot({ owners }, project, merge)
   }
-  set(key: Key, owner: FactId, value: Value): void {
-    this.contribute(key, Object.freeze({ owner, value }))
+  set(key: Key, owner: FactId, value: Value, fingerprint?: string): void {
+    this.contribute(key, Object.freeze({ owner, value, ...(fingerprint ? { fingerprint } : {}) }))
   }
   contribute(key: Key, contribution: Contribution<Value>): void {
     this.assertActive()
@@ -160,6 +160,7 @@ class ColumnEdit<Key extends string, Value> {
 
 interface Alias { readonly from: SymbolId; readonly occurrence: OccurrenceId }
 interface Derived {
+  readonly authority?: readonly [Completeness, Completeness]
   readonly initializers: ReadonlyMap<SymbolId, readonly OccurrenceId[]>
   readonly mutations: ReadonlyMap<SymbolId, readonly OccurrenceId[]>
   readonly escapes: ReadonlyMap<SymbolId, readonly OccurrenceId[]>
@@ -439,7 +440,10 @@ export class IndexedValues implements ValueIndex {
       const separator = key.indexOf(':')
       const kind = key.slice(0, separator)
       const symbol = key.slice(separator + 1) as SymbolId
-      if (key === 'effects:inventory') fingerprint = inventory || effectCompleteness ? JSON.stringify([nextColumns.demands.fingerprint('global', nextHashes), effectCompleteness]) : undefined
+      // Whole-scope uncertainty stays authoritative. Individual effects retain
+      // their own canonical rows and occurrence witnesses below; unrelated
+      // headers do not change this completeness product.
+      if (key === 'effects:inventory') fingerprint = inventory || effectCompleteness ? JSON.stringify([!!inventory, effectCompleteness]) : undefined
       if (kind === 'initializers') {
         const values = nextColumns.initializers.get(symbol)
         if (values) {
@@ -476,7 +480,7 @@ export class IndexedValues implements ValueIndex {
     }
     // A contributor may change the effective call occurrence/callee without owning
     // any calls. Recover source buckets from each call owner's own occurrence.
-    if (!initial) for (const key of touched) if (key.startsWith('occurrence:')) {
+    if (!initial) for (const key of changedKeys) if (key.startsWith('occurrence:')) {
       const id = key.slice(11) as OccurrenceId
       callOwnerSources(this.#columns, id, siteSources)
       callOwnerSources(nextColumns, id, siteSources)
@@ -519,8 +523,8 @@ function callOwnerSources(columns: Columns, id: OccurrenceId, sources: Set<Sourc
 
 function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<string>, inputs: Set<string> | undefined): void {
   const owner = fact.id
-  const apply = <Key extends string, Value>(column: ColumnEdit<Key, Value>, key: Key, value: Value) => {
-    if (add) column.set(key, owner, value)
+  const apply = <Key extends string, Value>(column: ColumnEdit<Key, Value>, key: Key, value: Value, fingerprint?: string) => {
+    if (add) column.set(key, owner, value, fingerprint)
     else column.delete(key, owner)
   }
   if (fact.namespace === 'typescript.symbol') {
@@ -530,19 +534,21 @@ function primary(columns: Edits, fact: IndexedFact, add: boolean, touched: Set<s
   }
   if (fact.namespace === 'typescript.source') { apply(columns.sources, fact.payload.source, fact); return }
   if (fact.namespace === 'typescript.body-demand') {
+    const authority = [fact.completeness, fact.payload.completeness] as const
+    const cell = <Value>(value: Value) => canonicalCell(value, authority)
     apply(columns.demands, 'global', [fact])
     touched.add('effects:inventory')
     for (const member of fact.payload.owners) {
-      apply(columns.owners, member.owner, member); touched.add(`owner:${member.owner}`)
+      apply(columns.owners, member.owner, member, cell(member)); touched.add(`owner:${member.owner}`)
       if (member.header && fact.completeness.kind === 'complete' && fact.payload.completeness.kind === 'complete') {
         const header = Object.freeze({ ...member.header, span: Object.freeze({ ...member.header.span }),
           parameters: Object.freeze([...member.header.parameters]) })
-        apply(columns.headers, member.owner, header)
+        apply(columns.headers, member.owner, header, cell(header))
         touched.add(`header:${member.owner}`)
       }
     }
     for (const witness of fact.payload.witnesses) {
-      apply(columns.witnesses, witness.id, witness)
+      apply(columns.witnesses, witness.id, witness, cell(witness))
       touched.add(`occurrence:${witness.id}`); inputs?.add(`occurrence:${witness.id}`)
     }
     return
@@ -666,18 +672,18 @@ function derivedColumns(columns: Edits, owner: FactId, value: Derived, add: bool
     [columns.escapes, 'escape', value.escapes],
   ] as const) {
     for (const [key, items] of entries) {
-      if (add) column.set(key, owner, items)
+      if (add) column.set(key, owner, items, value.authority ? canonicalCell(items, value.authority) : undefined)
       else column.delete(key, owner)
       touched.add(`${prefix}:${key}`)
     }
   }
   for (const [key, items] of value.aliases) {
-    if (add) columns.aliases.set(key, owner, items)
+    if (add) columns.aliases.set(key, owner, items, value.authority ? canonicalCell(items, value.authority) : undefined)
     else columns.aliases.delete(key, owner)
     touched.add(`aliases:${key}`)
   }
   for (const [key, owners] of value.ordering) {
-    if (add) columns.ordering.set(key, owner, owners)
+    if (add) columns.ordering.set(key, owner, owners, value.authority ? canonicalCell(owners, value.authority) : undefined)
     else columns.ordering.delete(key, owner)
   }
   for (const key of value.inputs) {
@@ -690,6 +696,9 @@ function hashFact(fact: IndexedFact): string {
   const packed = fact.namespace === 'typescript.body' && projectPackedTypeScriptBody(fact)
   return createHash('sha256').update(JSON.stringify({ id: fact.id,
     ...(packed ? { physical: packed.record } : { payload: fact.payload }), completeness: fact.completeness })).digest('hex')
+}
+function canonicalCell(value: unknown, authority: readonly [Completeness, Completeness]): string {
+  return createHash('sha256').update(JSON.stringify([authority, value])).digest('hex')
 }
 function last<Value>(values: readonly Value[]): Value { return values.at(-1)! }
 function flatten<Value>(values: readonly (readonly Value[])[]): readonly Value[] { return values.flat() }
@@ -809,7 +818,8 @@ function deriveDemand(fact: Demand): Derived {
   const ordering = new Map<string, SymbolId[]>()
   for (const row of fact.payload.initializers) append(ordering, `initializers:${row.symbol}`, row.owner)
   for (const row of fact.payload.aliases) append(ordering, `aliases:${row.symbol}`, row.owner)
-  return { initializers, mutations, escapes, aliases, inputs: new Set(), ordering }
+  return { initializers, mutations, escapes, aliases, inputs: new Set(), ordering,
+    authority: [fact.completeness, fact.payload.completeness] }
 }
 
 const FUNCTION_SYNTAX = new Set(['ArrowFunction', 'FunctionExpression', 'FunctionDeclaration', 'MethodDeclaration'])

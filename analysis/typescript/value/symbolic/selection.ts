@@ -179,17 +179,26 @@ export class CallSelection {
     if (touched.size) changed?.add(callSelectionKey.all)
     if (unmapped !== this.unmapped) changed?.add(callSelectionKey.unmapped)
     if (this.#demands !== demands) {
-      // Recipe coverage belongs to the revision, including paths with zero calls.
+      // The full inventory remains revision-owned. A scoped inventory consumes
+      // its path's coverage, not every unrelated owner header in that certificate.
       changed?.add(callSelectionKey.all)
-      for (const inventory of [this.#demands, demands]) for (const fact of inventory ?? []) {
-        for (const entry of fact.payload.coverage) changed?.add(callSelectionKey.path(entry.path))
-        for (const owner of fact.payload.owners) {
-          changed?.add(callSelectionKey.source(owner.span.source))
-          for (const lookup of [before, after]) {
-            const path = lookup.sources.get(owner.span.source)?.payload.logicalPath
-            if (path !== undefined) changed?.add(callSelectionKey.path(path))
-          }
+      const coverage = (inventory: readonly Demand[] | undefined) => {
+        const result = new Map<string, Completeness>()
+        for (const fact of inventory ?? []) for (const entry of fact.payload.coverage) {
+          result.set(entry.path, combineCompleteness(result.get(entry.path), inventoryCompleteness(entry.completeness)))
         }
+        return result
+      }
+      const previousCoverage = coverage(this.#demands), nextCoverage = coverage(demands)
+      const changedPaths = new Set<string>()
+      for (const path of new Set([...previousCoverage.keys(), ...nextCoverage.keys()])) {
+        if (stableJson(previousCoverage.get(path)) !== stableJson(nextCoverage.get(path))) {
+          changedPaths.add(path)
+          changed?.add(callSelectionKey.path(path))
+        }
+      }
+      for (const lookup of [before, after]) for (const fact of lookup.sources.values()) {
+        if (changedPaths.has(fact.payload.logicalPath)) changed?.add(callSelectionKey.source(fact.payload.source))
       }
     }
     let completion: Completeness = { kind: 'complete' }

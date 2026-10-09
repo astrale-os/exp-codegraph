@@ -26,7 +26,6 @@ const runtimeRoots = [
   'cli',
   'compiler',
   'conformance',
-  'json-schema',
   'markdown',
   'reference',
   'repository',

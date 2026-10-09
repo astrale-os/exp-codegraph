@@ -39,7 +39,19 @@ export async function openTypeScriptProject(options: TypeScriptProjectOptions): 
       ...module, facades: [...module.facades], aliases: [...module.aliases], internals: [...module.internals],
     })) } : {}),
   }
-  return new ResidentProject(descriptor, sessions, options.store ?? createMemoryAnalysisStore({ maximumRetainedUniverses: 2 }), !options.store)
+  return createResidentTypeScriptProject(descriptor, sessions, options.store)
+}
+
+/** Internal projection join: the provider owns compilation; this owner owns only facts and readers. */
+export function createResidentTypeScriptProject(
+  descriptor: NativeProjectDescriptor, sessions: NativeAnalysisSessionFactory, store?: AnalysisStore,
+): ResidentProjectionProject {
+  return new ResidentProject(descriptor, sessions, store ?? createMemoryAnalysisStore({ maximumRetainedUniverses: 2 }), !store)
+}
+
+/** Internal provider replacement never bypasses normal refresh/commit/acknowledgement. */
+export interface ResidentProjectionProject extends TypeScriptProject {
+  replaceSession(descriptor: NativeProjectDescriptor, sessions: NativeAnalysisSessionFactory): Promise<void>
 }
 
 class ResidentProject implements TypeScriptProject {
@@ -52,8 +64,8 @@ class ResidentProject implements TypeScriptProject {
   #bodyDemand: NativeBodyDemand | undefined
   readonly #readers = new Set<TypeScriptProjectSnapshot>()
   readonly #lifetime = new AbortController()
-  readonly #descriptor: NativeProjectDescriptor
-  readonly #sessions: NativeAnalysisSessionFactory
+  #descriptor: NativeProjectDescriptor
+  #sessions: NativeAnalysisSessionFactory
   readonly #store: AnalysisStore
   readonly #ownsStore: boolean
   readonly #writer: AnalysisStore
@@ -100,6 +112,17 @@ class ResidentProject implements TypeScriptProject {
         }
       },
     }
+  }
+
+  replaceSession(descriptor: NativeProjectDescriptor, sessions: NativeAnalysisSessionFactory): Promise<void> {
+    const owned = { ...descriptor, capabilities: [...descriptor.capabilities] }
+    return this.enqueue(async () => {
+      const previous = this.#service
+      this.#service = undefined
+      await previous?.dispose()
+      this.#descriptor = owned
+      this.#sessions = sessions
+    })
   }
 
   refresh(options: TypeScriptProjectRefresh = {}): Promise<TypeScriptProjectUpdate> {

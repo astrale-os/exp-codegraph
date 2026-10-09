@@ -945,6 +945,17 @@ function validateRequest(request: NativeAnalysisRequest): void {
   }
 }
 
+/** Internal reuse by another transport carrying the same complete fact protocol. */
+export function admitNativeAnalysisResponse(input: unknown, codecs: readonly FactPayloadCodec[]): NativeAnalysisResponse {
+  const value = validateWireFrame(input, admitFactPayloadCodecs(codecs),
+    DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumTransactionBytes,
+    DEFAULT_PROCESS_NATIVE_ANALYSIS_LIMITS.maximumDecodedShardBytes)
+  if (value.kind === 'transaction-start' || value.kind === 'transaction-chunk' || value.kind === 'transaction-end') {
+    throw new TypeError('A captured projection must carry a complete response.')
+  }
+  return value
+}
+
 function validateWireFrame(
   input: unknown,
   payloadCodecs: FactPayloadCodecMap,

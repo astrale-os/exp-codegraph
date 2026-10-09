@@ -297,97 +297,21 @@ func (a *analyzer) refreshOnce(input request) (transaction *factTransaction, unc
 	}
 
 	materializationStarted := time.Now()
-	phase := time.Now()
-	sourceManifest, encodedSources, sourceBytes := nativeSourceManifestIdentity(nextUniverse, configuration, sources)
-	a.telemetry.record(input.ID, "transaction.source-manifest", phase, map[string]any{"sources": len(sources), "encodedSources": encodedSources, "hashedSourceBytes": sourceBytes})
-	phase = time.Now()
-	manifestByKey := make(map[string]factShardReference, len(base.manifest)+len(shards))
-	if hasBase && !selection.full {
-		for _, reference := range base.manifest {
-			if !replaced[reference.Key] {
-				manifestByKey[reference.Key] = reference
-			}
-		}
+	var publication generationState
+	transaction, publication, err = assembleProjectionTransaction(projectionPublication{
+		base: base, baseID: baseID, universe: nextUniverse, configuration: configuration,
+		capabilities: a.capabilities, shards: shards, sources: sources, replaced: replaced,
+		full: selection.full, telemetry: a.telemetry, requestID: input.ID, limits: input.RecordLimits,
+	})
+	if err != nil {
+		return nil, "", err
 	}
-	for _, shard := range shards {
-		reference := factShardReference{
-			Key: shard.Key, Digest: shard.Digest, Namespace: shard.Namespace,
-			SchemaVersion: shard.SchemaVersion, Facts: len(shard.Facts),
-		}
-		if hasBase && base.digests[shard.Key] == shard.Digest {
-			index := sort.Search(len(base.manifest), func(index int) bool { return base.manifest[index].Key >= shard.Key })
-			if index < len(base.manifest) && base.manifest[index].Key == shard.Key {
-				reference = base.manifest[index]
-			}
-		}
-		manifestByKey[shard.Key] = reference
-	}
-	manifest := make([]factShardReference, 0, len(manifestByKey))
-	digests := make(map[string]string, len(manifestByKey))
-	for _, reference := range manifestByKey {
-		manifest = append(manifest, reference)
-		digests[reference.Key] = reference.Digest
-	}
-	sort.Slice(manifest, func(i, j int) bool { return manifest[i].Key < manifest[j].Key })
-	a.telemetry.record(input.ID, "transaction.manifest", phase, map[string]any{"baseShards": len(base.manifest), "candidateShards": len(manifest), "projectedShards": len(shards)})
-	if hasBase && base.sourceManifest == sourceManifest && stableJSON(base.manifest) == stableJSON(manifest) {
+	if transaction == nil {
 		return nil, input.Base, nil
 	}
-
-	phase = time.Now()
-	producer := producerIdentity{
-		ID: deriveID("producer", "astrale.analysis.typescript.native", map[string]any{
-			"name": "ttsc-typescript-go", "version": producerVersion,
-			"protocolVersion": protocolVersion,
-		}),
-		Name: "ttsc-typescript-go", Version: producerVersion, ProtocolVersion: protocolVersion,
-	}
-	sequence := 1
-	if hasBase {
-		sequence = base.generation.Sequence + 1
-	}
-	generation := analysisGeneration{
-		Sequence: sequence, Universe: nextUniverse, Producer: producer,
-		SourceManifest: sourceManifest, Capabilities: a.capabilities,
-	}
-	generationID, encodedReferences, manifestBytes := nativeGenerationIdentity(generation, manifest)
-	generation.ID = generationID
-	a.telemetry.record(input.ID, "transaction.generation-identity", phase, map[string]any{"manifestShards": len(manifest), "encodedReferences": encodedReferences, "hashedReferenceBytes": manifestBytes})
-	phase = time.Now()
-	upserts := make([]factShard, 0, len(shards))
-	for _, shard := range shards {
-		if hasBase && base.digests[shard.Key] == shard.Digest {
-			continue
-		}
-		// Projection caches own sealed fact metadata. Re-emitting a retired
-		// shard must not rename facts in an earlier published transaction.
-		if shard.Facts != nil {
-			shard.Facts = append([]fact{}, shard.Facts...)
-		}
-		for index := range shard.Facts {
-			shard.Facts[index].Generation = generationID
-		}
-		upserts = append(upserts, shard)
-	}
-	deletes := []string{}
-	if hasBase {
-		for key := range base.digests {
-			if _, exists := digests[key]; !exists {
-				deletes = append(deletes, key)
-			}
-		}
-	}
-	sort.Slice(upserts, func(i, j int) bool { return upserts[i].Key < upserts[j].Key })
-	sort.Strings(deletes)
-	if input.RecordLimits != nil {
-		if err := validateSemanticShardBytes(upserts, input.RecordLimits.MaximumDecodedShardBytes, input.RecordLimits.MaximumTransactionBytes); err != nil {
-			return nil, "", err
-		}
-	}
-	transaction = &factTransaction{
-		ProtocolVersion: protocolVersion, Base: baseID, Next: generation,
-		Manifest: manifest, Upserts: upserts, Deletes: deletes,
-	}
+	generation, manifest, digests, sourceManifest := publication.generation, publication.manifest, publication.digests, publication.sourceManifest
+	generationID, upserts, deletes := generation.ID, transaction.Upserts, transaction.Deletes
+	phase := time.Now()
 	readBase := base.callableReads
 	if selection.full {
 		readBase = callableReadIndex{}

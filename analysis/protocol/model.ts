@@ -128,3 +128,30 @@ export interface NativeAnalysisSessionFactory {
     options?: { readonly signal?: AbortSignal },
   ): Promise<NativeAnalysisSession>
 }
+
+/** Exact capture identity for a fact provider borrowing an application-owned compiler. */
+export interface NativeCapturedAnalysisStamp {
+  readonly token: string
+  readonly generation: string
+  readonly sourceSnapshotDigest: string
+}
+
+export interface NativeCapturedAnalysisSource {
+  /** Negotiated with the actual producer, never inferred from JS method presence. */
+  readonly semanticReaderRevision?: 1
+  readonly openSemanticProjection?: (
+    stamp: NativeCapturedAnalysisStamp, options?: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] },
+  ) => Promise<NativeCapturedAnalysisPort>
+}
+
+/** Generic fact transport. The typed factory admits payload codecs before publication. */
+export interface NativeCapturedAnalysisPort {
+  readonly project: NativeProjectDescriptor
+  /** Session lifetime is distinct from this projection lease's lifetime. */
+  readonly ownerSignal: AbortSignal
+  readonly signal: AbortSignal
+  /** Register the fact owner once; producer disposal awaits its release. */
+  onOwnerDispose(dispose: () => Promise<void>): void
+  request(request: NativeAnalysisRequest, options?: { readonly signal?: AbortSignal }): Promise<unknown>
+  dispose(): Promise<void>
+}

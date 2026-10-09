@@ -320,9 +320,13 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
         }
         const nameId = links?.get('name') ?? (node.syntax === 'ShorthandPropertyAssignment' ? links?.get('child:0') : undefined)
         const nameNode = nameId && this.#index.occurrences.get(nameId)
-        const nameSymbol = nameNode?.symbol ?? (node.syntax === 'MethodDeclaration' ? node.symbol : undefined)
-        if (nameSymbol) this.depend(state, `symbol:${nameSymbol}`)
+        // A method's declaration symbol can have a synthesized name for an
+        // opaque computed key. Only its captured name witness proves a key.
+        const nameSymbol = nameNode?.symbol
         const directName = nameId && this.#index.direct.get(nameId)
+        // New bodies carry the compiler-owned name on their own occurrence.
+        // Retain the declaration fallback only for earlier fact providers.
+        if (!node.propertyName && nameSymbol) this.depend(state, `symbol:${nameSymbol}`)
         const name = node.propertyName || (nameSymbol && this.#index.symbols.get(nameSymbol)?.payload.name) ||
           (directName?.kind === 'known' && typeof directName.value === 'string' ? directName.value : undefined)
         if (!name) { properties.clear(); incomplete = true; continue }

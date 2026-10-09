@@ -123,6 +123,31 @@ export interface NativeAnalysisSessionFactory {
   ): Promise<NativeAnalysisSession>
 }
 
+/** Generic projection transport attached to one application-owned compiler capture. */
+export interface NativeCapturedAnalysisStamp {
+  readonly token: string
+  readonly generation: string
+  readonly sourceSnapshotDigest: string
+}
+
+export interface NativeCapturedAnalysisSource {
+  readonly semanticReaderRevision?: 1
+  openSemanticProjection?(
+    capture: NativeCapturedAnalysisStamp,
+    options?: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] },
+  ): Promise<NativeCapturedAnalysisPort>
+}
+
+export interface NativeCapturedAnalysisPort {
+  readonly project: NativeProjectDescriptor
+  /** Session lifetime: closing a projection lease does not dispose this owner. */
+  readonly ownerSignal: AbortSignal
+  readonly signal: AbortSignal
+  onOwnerDispose(dispose: () => Promise<void>): void
+  request(request: NativeAnalysisRequest, options?: { readonly signal?: AbortSignal }): Promise<unknown>
+  dispose(): Promise<void>
+}
+
 export interface ProcessNativeAnalysisSessionFactoryOptions {
   readonly command: string
   readonly arguments?: readonly string[]

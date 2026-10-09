@@ -22,6 +22,11 @@ afterEach(async () => {
 describe('headless V2 CLI', { timeout: 30_000 }, () => {
   it('parses check, changed, test, verify, init, and development workflows', () => {
     expect(parseCommand(['--version'], {})).toEqual({ name: 'version' })
+    expect(parseCommand(['preload'], {})).toEqual({ name: 'preload', generic: false, viewer: false })
+    expect(parseCommand(['preload', '--viewer', '--generic'], {})).toEqual({ name: 'preload', generic: true, viewer: true })
+    for (const args of [['preload', '.'], ['preload', '--all'], ['preload', '--viewer', '--viewer']]) {
+      expect(() => parseCommand(args, {})).toThrow('Usage:')
+    }
     expect(parseCommand(['check', '.', '--select', 'module'], {})).toMatchObject({
       name: 'check',
       select: ['module'],
