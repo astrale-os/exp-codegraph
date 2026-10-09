@@ -132,4 +132,38 @@ describe('qualified npm distribution policy', () => {
     expect(consumer?.run).toContain('--require-oxlint')
     expect(JSON.stringify(native)).not.toMatch(/id-token|workflow run publish|\/publish\//u)
   })
+
+  it('prepares a bounded external declaration toolchain before qualifying a Codegraph-only npm consumer', async () => {
+    const publish = await workflow('publish.yml')
+    const steps = publish.jobs.publish.steps
+    const prepare = steps.findIndex((step: { name?: string }) => step.name === 'Prepare isolated declaration qualification tools')
+    const qualifier = steps.findIndex((step: { run?: string }) => step.run?.includes('qualification/v2/release/packed-consumer.mjs'))
+    const publisher = steps.findIndex((step: { uses?: string }) => step.uses?.includes('/publish/packages@'))
+    expect(prepare).toBeGreaterThan(publisher)
+    expect(qualifier).toBeGreaterThan(prepare)
+    const source = steps[prepare].run as string
+    const tools = JSON.parse(source.match(/<<'JSON'\n([\s\S]+?)\nJSON/u)![1])
+    expect(tools).toEqual({
+      private: true,
+      dependencies: {
+        '@typescript/native-preview': '7.0.0-dev.20260707.2',
+        '@types/node': '24.13.3',
+      },
+      overrides: { 'undici-types': '7.18.2' },
+    })
+    expect(source).toContain('toolroot="$RUNNER_TEMP/codegraph-qualification-tooling"')
+    expect(source).toContain('npm install --prefix "$toolroot" --ignore-scripts --no-audit --no-fund')
+    // Keep the old qualified source usable without replacing its checkout or
+    // installing declarations/compiler packages beside the actual npm consumer.
+    expect(source).toContain('ln -s "$toolroot/node_modules/@typescript/native-preview" node_modules/@typescript/native-preview')
+    expect(source).toContain('ln -s "$toolroot/node_modules/@types/node" node_modules/@types/node')
+    expect(source).not.toMatch(/pnpm install|pnpm run build|npm run build|packed-consumer|@astrale-os\/codegraph/u)
+    expect(steps[qualifier].run).toContain('--npm-version "$CODEGRAPH_PACKAGE_VERSION"')
+    const consumerSource = await readFile(resolve(root, 'qualification/v2/release/packed-consumer.mjs'), 'utf8')
+    expect(consumerSource).toContain("createRequire(import.meta.url)")
+    expect(consumerSource).toContain("require.resolve('@typescript/native-preview/package.json')")
+    const consumerInstall = consumerSource.match(/const pnpmArguments = \[([\s\S]+?)\n  \]/u)![1]
+    expect(consumerInstall).toContain('`@astrale-os/codegraph@${npmVersion}`')
+    expect(consumerInstall).not.toMatch(/native-preview|@types\/node|undici-types/u)
+  })
 })
