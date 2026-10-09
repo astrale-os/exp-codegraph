@@ -3,7 +3,7 @@ import { execFile as execFileCallback } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
@@ -101,10 +101,17 @@ try {
   assert.equal(native.origin, 'package')
   assert.equal(native.target, target)
   const installedNative = await realpath(join(installed, NATIVE_ARTIFACT_DIRECTORY))
-  assert.equal(resolve(native.command, '../..'), join(installedNative, target))
+  assert(isAbsolute(native.command))
+  assert.equal((await typescript.resolvePackagedNativeAnalysis()).command, native.command,
+    'Repeated resolution must reuse the admitted content cache.')
   const release = JSON.parse(await readFile(join(installed, 'native-release.json'), 'utf8'))
   assert.deepEqual(Object.keys(release.artifacts).sort(), Object.keys(NATIVE_TARGETS).sort())
-  const oxlint = release.artifacts[target].oxlint
+  const analyzer = release.artifacts[target]
+  const originalNative = await readFile(native.command)
+  assert.equal(originalNative.length, analyzer.bytes)
+  assert.equal(createHash('sha256').update(originalNative).digest('hex'), analyzer.sha256)
+  if (analyzer.compression) await assertMissing(join(installedNative, target, analyzer.executable))
+  const oxlint = analyzer.oxlint
   let ownedGeneric = { status: 'unavailable', reason: 'NATIVE_OXLINT_UNAVAILABLE' }
   if (process.argv.includes('--require-oxlint')) {
     assert.equal(Boolean(oxlint), NATIVE_TARGETS[target].oxlint,
@@ -121,21 +128,21 @@ try {
     assert.equal(nativeWorker.engineVersion, oxlint.engineVersion)
     assert.equal(nativeWorker.protocolVersion, oxlint.protocolVersion)
     assert.deepEqual(nativeWorker.source, oxlint.source)
-    const worker = join(installedNative, target, oxlint.executable)
-    assert.equal(nativeWorker.command, await realpath(worker))
+    const worker = nativeWorker.command
+    assert.equal((await typescript.resolvePackagedNativeOxlint()).command, worker)
     const bytes = await readFile(worker)
     assert.equal(bytes.length, oxlint.bytes)
     assert.equal(createHash('sha256').update(bytes).digest('hex'), oxlint.sha256)
     assert((await stat(worker)).isFile())
-    assert((await stat(worker)).mode & 0o111)
+    if (process.platform !== 'win32') assert((await stat(worker)).mode & 0o111)
   } else {
     await assert.rejects(typescript.resolvePackagedNativeOxlint(), { code: 'NATIVE_OXLINT_UNAVAILABLE', target })
   }
   // The one package delivers every released target and nothing else beside them.
   const nativeFiles = (await filesUnder(installedNative)).map((path) => path.slice(installedNative.length + 1))
   assert.deepEqual(nativeFiles.sort(), Object.entries(release.artifacts).flatMap(([name, artifact]) => [
-    `${name}/${artifact.executable}`,
-    ...(artifact.oxlint ? [`${name}/${artifact.oxlint.executable}`] : []),
+    `${name}/${artifact.compression?.path ?? artifact.executable}`,
+    ...(artifact.oxlint ? [`${name}/${artifact.oxlint.compression?.path ?? artifact.oxlint.executable}`] : []),
   ]).sort())
 
 

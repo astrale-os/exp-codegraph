@@ -13,9 +13,9 @@ const request: NativeDecisionPrepareRequest = {
   options: {},
 };
 const transports: DecisionProcess[] = [];
-function service(code: string): DecisionProcess {
+function service(code: string, worker?: () => Promise<string | undefined>): DecisionProcess {
   const child = spawn(node, ["--input-type=module", "-e", code], { stdio: "pipe" });
-  const transport = new DecisionProcess(child);
+  const transport = new DecisionProcess(child, worker);
   transports.push(transport);
   return transport;
 }
@@ -85,6 +85,44 @@ describe("native decision transport source qualification", () => {
       params: { token: "capture-token", kind: "generic-engine", engine },
     });
   });
+  it("keeps old strict generic frames unchanged when no encoded addressing is required", async () => {
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',line=>{ const r=JSON.parse(line);
+        if(r.method==='capture-owned-generic' && 'artifactPath' in r.params) throw Error('unknown field');
+        console.log(JSON.stringify({id:r.id,result:r.params})); });`);
+    await transport.ready();
+    const input = { token: 'raw', configPath: '/raw/.oxlintrc.json', config: {}, commandIgnorePatterns: [] };
+    expect(await transport.captureOwnedGeneric(input)).toEqual(input);
+  });
+
+  it("materializes only at generic use and owns request bytes before the lazy yield", async () => {
+    let calls = 0;
+    let resolveWorker!: (path: string) => void;
+    const worker = () => { calls++; return new Promise<string>((resolve) => { resolveWorker = resolve; }); };
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)})); let genericSeen=false;
+      createInterface({input:process.stdin}).on('line',line=>{ const r=JSON.parse(line); if(r.method==='capture-owned-generic') genericSeen=true; if(r.method==='seal'&&!genericSeen) throw Error('overtaken'); console.log(JSON.stringify({id:r.id,result:r.params})); });`, worker);
+    await transport.ready();
+    await transport.prepare(request);
+    await transport.continue({ token: 'source-only', kind: 'source-open', generation: 'g', sourceSnapshotDigest: 's' });
+    expect(calls).toBe(0);
+    const input = { token: 'original', configPath: '/cache/.oxlintrc.json', config: { rules: {} }, commandIgnorePatterns: [] as string[] };
+    const pending = transport.captureOwnedGeneric(input);
+    const later = transport.seal({ token: 'later', reportDigest: 'digest' });
+    input.token = 'changed'; input.commandIgnorePatterns.push('changed');
+    resolveWorker('/cache/worker-sha');
+    expect(await pending).toEqual({ token: 'original', configPath: '/cache/.oxlintrc.json', config: { rules: {} }, commandIgnorePatterns: [], artifactPath: '/cache/worker-sha' });
+    expect(await later).toEqual({ token: 'later', reportDigest: 'digest' });
+    expect(calls).toBe(1);
+  });
+
+  it("keeps the unavailable Go-only worker's request shape unchanged", async () => {
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',line=>{ const r=JSON.parse(line); console.log(JSON.stringify({id:r.id,result:r.params})); });`, async () => undefined);
+    await transport.ready();
+    const input = { token: 'go-only', configPath: '/go/.oxlintrc.json', config: {}, commandIgnorePatterns: [] };
+    expect(await transport.captureOwnedGeneric(input)).toEqual(input);
+  });
+
   it("negotiates exact old unsupported command without masking unrelated native crash", async () => {
     const old = service(
       `process.stderr.write('astrale-typespec-v2-analysis: unknown command "decision-serve"\\n');process.exitCode=1;`,

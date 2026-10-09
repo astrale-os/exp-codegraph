@@ -27,6 +27,7 @@ try {
   const ownedIndex = process.argv.indexOf('--owned-artifact')
   const mandatory = new Map([
     'TestOwnedGenericArtifactAndProcessHaveDistinctLifetimes',
+    'TestOwnedGenericExplicitArtifactLocation',
     'TestPolicyLaneOwnedOriginalJournalRetainsIndependentFreshGuards',
   ].map((name) => [name, { ran: false, passed: false, rejected: false }]))
   if (ownedIndex >= 0) {

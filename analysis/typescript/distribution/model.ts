@@ -1,11 +1,20 @@
 export type NativeAnalysisTarget = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-x64'
 
+/** Storage encoding only; executable identity is always the original bytes and SHA. */
+export interface NativeArtifactCompression {
+  readonly format: 'gzip'
+  readonly path: string
+  readonly bytes: number
+  readonly sha256: string
+}
+
 export interface NativeAnalysisArtifact {
   readonly target: NativeAnalysisTarget
   /** Relative to this target's directory under the package's `native-artifacts`. */
   readonly executable: string
   readonly bytes: number
   readonly sha256: string
+  readonly compression?: NativeArtifactCompression
   /** Separate capability; absent on Go-only hosts and historical releases. */
   readonly oxlint?: NativeOxlintArtifact
 }
@@ -14,6 +23,7 @@ export interface NativeOxlintArtifact {
   readonly executable: string
   readonly bytes: number
   readonly sha256: string
+  readonly compression?: NativeArtifactCompression
   readonly engineVersion: '1.81.0'
   readonly protocolVersion: 1
   readonly source: {
@@ -72,7 +82,9 @@ export interface PackagedNativeAnalysisOptions {
 }
 
 export interface ResolvedPackagedNativeAnalysis {
+  /** Absolute admitted executable; encoded package assets live in the user cache. */
   readonly command: string
+  readonly compression?: NativeArtifactCompression
   readonly sha256: string
   readonly bytes: number
   readonly target: string

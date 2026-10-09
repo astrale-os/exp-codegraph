@@ -4,6 +4,7 @@ import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { gzipSync, gunzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
@@ -26,6 +27,15 @@ describe('qualified release archive admission', () => {
     expect(release.package.integrity.startsWith('sha512-')).toBe(true)
     expect(release.tarballs).toEqual({ '.': release.package.archive })
     await expect(admitReleasePackage(directory, '2'.repeat(40), version)).rejects.toThrow('source revision')
+  })
+
+  it('admits gzip storage while binding every decoded executable to its original identity', async () => {
+    const release = await admitReleasePackage(await releaseFixture(undefined, true), revision, version)
+    expect(release.package.name).toBe('@astrale-os/codegraph')
+  })
+
+  it.each(['binary', 'oxlint', 'stray', 'second-archive'] as const)('rejects torn compressed %s publication', async (kind) => {
+    await expect(admitReleasePackage(await releaseFixture(kind, true), revision, version)).rejects.toThrow()
   })
 
   it.each(['binary', 'dependency', 'version', 'oxlint', 'missing-oxlint', 'oxlint-source', 'notices', 'stray', 'second-archive'] as const)('rejects a torn %s publication before publishing', async (corruption) => {
@@ -93,7 +103,7 @@ describe('qualified release archive admission', () => {
 })
 
 describe('downloaded native artifact assembly', () => {
-  it.skipIf(process.platform === 'win32')('stages authenticated 0644 Go and workers as executable copies without changing downloads', async () => {
+  it.skipIf(process.platform === 'win32')('encodes authenticated Go and workers without changing downloads or duplicating originals', async () => {
     const fixture = await assemblyFixture()
     await execFile(process.execPath, ['scripts/native/assemble.mjs', '--input', fixture.input], { cwd: fixture.root })
     const release = JSON.parse(await readFile(join(fixture.root, 'native-release.json'), 'utf8'))
@@ -101,9 +111,14 @@ describe('downloaded native artifact assembly', () => {
     for (const file of fixture.files) {
       expect(await readFile(file.source)).toEqual(file.bytes)
       expect((await stat(file.source)).mode & 0o777).toBe(0o644)
-      expect(await readFile(file.destination)).toEqual(file.bytes)
-      expect((await stat(file.destination)).mode & 0o777).toBe(0o755)
-      expect(createHash('sha256').update(await readFile(file.destination)).digest('hex')).toBe(file.sha256)
+      const delivered = await readFile(`${file.destination}.gz`)
+      expect(gunzipSync(delivered)).toEqual(file.bytes)
+      expect((await stat(`${file.destination}.gz`)).mode & 0o777).toBe(0o644)
+      await expect(stat(file.destination)).rejects.toMatchObject({ code: 'ENOENT' })
+      const original = file.destination.includes('codegraph-oxlint') ? release.artifacts[file.target].oxlint : release.artifacts[file.target]
+      expect(original.sha256).toBe(file.sha256)
+      expect(original.compression.bytes).toBe(delivered.length)
+      expect(original.compression.sha256).toBe(createHash('sha256').update(delivered).digest('hex'))
     }
   })
 
@@ -142,11 +157,11 @@ async function assemblyFixture() {
   const input = join(root, 'downloads')
   const scripts = join(root, 'scripts/native')
   await mkdir(scripts, { recursive: true })
-  for (const name of ['assemble.mjs', 'shared.mjs']) {
+  for (const name of ['assemble.mjs', 'shared.mjs', 'compression.mjs']) {
     await copyFile(new URL(`../scripts/native/${name}`, import.meta.url), join(scripts, name))
   }
   await writeFile(join(root, 'package.json'), JSON.stringify({ version, type: 'module' }))
-  const files: { source: string, destination: string, bytes: Buffer, sha256: string }[] = []
+  const files: { source: string, destination: string, bytes: Buffer, sha256: string, target: string }[] = []
   for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     const bytes = Buffer.from(`assembly fixture ${target} Go`)
     const workerBytes = Buffer.from(`assembly fixture ${target} worker`)
@@ -173,13 +188,13 @@ async function assemblyFixture() {
       await writeFile(path, record.bytes)
       await chmod(path, 0o644)
       files.push({ source: path, destination: join(destination, record.descriptor.executable),
-        bytes: record.bytes, sha256: record.descriptor.sha256 })
+        bytes: record.bytes, sha256: record.descriptor.sha256, target })
     }
   }
   return { root, input, files }
 }
 
-async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' | 'oxlint' | 'missing-oxlint' | 'oxlint-source' | 'notices' | 'stray' | 'second-archive') {
+async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' | 'oxlint' | 'missing-oxlint' | 'oxlint-source' | 'notices' | 'stray' | 'second-archive', compressed = false) {
   const root = await mkdtemp(join(tmpdir(), 'codegraph-release-admission-'))
   temporary.push(root)
   const output = join(root, 'archives')
@@ -200,6 +215,19 @@ async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' |
       corruption === 'binary' && target === 'darwin-arm64' ? Buffer.from('changed') : bytes
     if (oxlint) executables[`native-artifacts/${target}/${oxlint.executable}`] =
       corruption === 'oxlint' && target === 'linux-x64' ? Buffer.from('changed') : workerBytes
+  }
+  if (compressed) {
+    for (const [target, unknownArtifact] of Object.entries(artifacts)) {
+      const artifact = unknownArtifact as { executable: string; compression?: unknown; oxlint?: { executable: string; compression?: unknown } }
+      for (const original of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
+        const path = `native-artifacts/${target}/${original.executable}`
+        const encoded = gzipSync(executables[path]!)
+        original.compression = { format: 'gzip', path: `${original.executable}.gz`, bytes: encoded.length,
+          sha256: createHash('sha256').update(encoded).digest('hex') }
+        delete executables[path]
+        executables[`${path}.gz`] = encoded
+      }
+    }
   }
   if (corruption === 'stray') executables['native-artifacts/linux-arm64/bin/unqualified'] = Buffer.from('unqualified')
   await packFixture(root, output, '@astrale-os/codegraph', {

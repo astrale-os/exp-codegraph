@@ -26,11 +26,8 @@ describe('qualified npm distribution policy', () => {
     })
     expect(owner.optionalDependencies).toBeUndefined()
     expect(owner.files).toContain('native-artifacts')
-    // pnpm pack marks only bin entries and these declared files as executable.
-    expect(owner.publishConfig.executableFiles).toEqual(Object.entries(NATIVE_TARGETS).flatMap(([target, artifact]) => [
-      `./native-artifacts/${target}/${artifact.executable}`,
-      ...(artifact.oxlint ? [`./native-artifacts/${target}/bin/codegraph-oxlint`] : []),
-    ]))
+    // Encoded payloads are not executable. Materialization restores admitted modes.
+    expect(owner.publishConfig.executableFiles).toEqual([])
     // The checked-in historical manifest retains genuine released bytes. The
     // assembly/admission gates require the complete current matrix before pack.
     const released = Object.keys((await manifest('native-release.json')).artifacts).sort()

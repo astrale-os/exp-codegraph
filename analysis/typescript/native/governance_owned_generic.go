@@ -173,6 +173,7 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 	started := time.Now()
 	var params struct {
 		Token                 string          `json:"token"`
+		ArtifactPath          string          `json:"artifactPath,omitempty"`
 		ConfigPath            string          `json:"configPath"`
 		Config                json.RawMessage `json:"config,omitempty"`
 		ConfigBytes           []int           `json:"configBytes,omitempty"`
@@ -196,11 +197,18 @@ func (session *governanceSession) captureOwnedGeneric(raw json.RawMessage) (any,
 	if !filepath.IsAbs(params.ConfigPath) || (len(params.Config) == 0) == (params.ConfigBytes == nil) {
 		return nil, fmt.Errorf("owned configuration lacks closed identity")
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return nil, err
+	// The path supplies location only. The four build-linked identities and the
+	// same capture still admit original bytes; old clients retain adjacency.
+	artifactPath := params.ArtifactPath
+	if artifactPath == "" {
+		executable, err := os.Executable()
+		if err != nil {
+			return nil, err
+		}
+		artifactPath = filepath.Join(filepath.Dir(executable), governanceOwnedArtifactName)
+	} else if !filepath.IsAbs(artifactPath) {
+		return nil, fmt.Errorf("owned worker artifact path must be absolute")
 	}
-	artifactPath := filepath.Join(filepath.Dir(executable), governanceOwnedArtifactName)
 	actualArtifact := capture.probe(governanceProbeRequest{ID: "owned-artifact", Kind: "content-digest", Path: artifactPath})
 	if actualArtifact.Status != "known" || capture.probeInconsistent {
 		return map[string]any{"status": "retry"}, nil

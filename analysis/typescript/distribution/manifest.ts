@@ -80,7 +80,8 @@ function validArtifact(input: unknown, target: string): boolean {
     Number.isSafeInteger(value.bytes) &&
     (value.bytes as number) > 0 &&
     typeof value.sha256 === "string" &&
-    /^[a-f0-9]{64}$/u.test(value.sha256)
+    /^[a-f0-9]{64}$/u.test(value.sha256) &&
+    validCompression(value.compression)
   );
 }
 
@@ -106,10 +107,20 @@ function validOxlint(input: unknown): boolean {
     value.executable === "bin/codegraph-oxlint" &&
     Number.isSafeInteger(value.bytes) && (value.bytes as number) > 0 &&
     typeof value.sha256 === "string" && /^[a-f0-9]{64}$/u.test(value.sha256) &&
+    validCompression(value.compression) &&
     value.engineVersion === "1.81.0" && value.protocolVersion === 1 &&
     typeof source.revision === "string" && /^[a-f0-9]{40}$/u.test(source.revision) &&
     typeof source.patchSha256 === "string" && /^[a-f0-9]{64}$/u.test(source.patchSha256)
   );
+}
+
+function validCompression(input: unknown): boolean {
+  if (input === undefined) return true // Historical raw releases remain readable.
+  const value = record(input)
+  return value.format === 'gzip' && typeof value.path === 'string' &&
+    portableArtifactPath(value.path) && Number.isSafeInteger(value.bytes) &&
+    (value.bytes as number) > 0 && typeof value.sha256 === 'string' &&
+    /^[a-f0-9]{64}$/u.test(value.sha256)
 }
 
 function portableArtifactPath(value: string): boolean {

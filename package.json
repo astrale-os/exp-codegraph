@@ -94,15 +94,7 @@
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/",
-    "executableFiles": [
-      "./native-artifacts/darwin-arm64/bin/codegraph-native",
-      "./native-artifacts/darwin-arm64/bin/codegraph-oxlint",
-      "./native-artifacts/darwin-x64/bin/codegraph-native",
-      "./native-artifacts/linux-arm64/bin/codegraph-native",
-      "./native-artifacts/linux-x64/bin/codegraph-native",
-      "./native-artifacts/linux-x64/bin/codegraph-oxlint",
-      "./native-artifacts/win32-x64/bin/codegraph-native.exe"
-    ]
+    "executableFiles": []
   },
   "preferUnplugged": true,
   "scripts": {
