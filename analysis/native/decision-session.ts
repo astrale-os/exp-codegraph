@@ -13,6 +13,7 @@ interface DecisionRequest {
   readonly reject: (error: unknown) => void;
   readonly signal?: AbortSignal;
   abort?: () => void;
+  artifactAbort?: AbortController;
   line?: string;
   state: "queued" | "active" | "settled";
 }
@@ -29,7 +30,10 @@ export async function openNativeDecisionSession(
   options: NativeDecisionProcessOptions,
 ): Promise<NativeDecisionSession> {
   if (options.signal?.aborted) throw cancelled(options.signal.reason);
-  const artifact = await resolvePackagedNativeAnalysis({ binary: options.binary });
+  const artifact = await resolvePackagedNativeAnalysis({ binary: options.binary, signal: options.signal }).catch((cause: unknown) => {
+    if (options.signal?.aborted) throw cancelled(options.signal.reason);
+    throw cause;
+  });
   if (options.signal?.aborted) throw cancelled(options.signal.reason);
   const child = spawn(artifact.command, ["decision-serve", "--cwd", options.root], {
     stdio: "pipe",
@@ -40,8 +44,8 @@ export async function openNativeDecisionSession(
   // Storage selects the addressing strategy, not a protocol revision. Qualified
   // gzip builds accept the optional explicit path; old raw binaries strictly
   // reject unknown request fields and must retain their original adjacency.
-  const transport = new DecisionProcess(child, artifact.compression ? async () =>
-    (await resolveOptionalPackagedNativeOxlint())?.command : undefined);
+  const transport = new DecisionProcess(child, artifact.compression ? async (signal) =>
+    (await resolveOptionalPackagedNativeOxlint({ signal }))?.command : undefined);
   await transport.ready(options.signal, options.handshakeTimeoutMs ?? 30_000);
   return transport;
 }
@@ -49,7 +53,7 @@ export async function openNativeDecisionSession(
 /** Exported for source-level transport qualification; production uses the asset resolver above. */
 export class DecisionProcess implements NativeDecisionSession {
   readonly #child: ChildProcessWithoutNullStreams;
-  readonly #ownedArtifactPath?: () => Promise<string | undefined>;
+  readonly #ownedArtifactPath?: (signal?: AbortSignal) => Promise<string | undefined>;
   readonly #hello: Promise<void>;
   readonly #exit: Promise<void>;
   #resolveHello!: () => void;
@@ -64,6 +68,7 @@ export class DecisionProcess implements NativeDecisionSession {
   readonly #queue: DecisionRequest[] = [];
   #pumpScheduled = false;
   #disposing?: Promise<void>;
+  readonly #artifactPreparations = new Set<Promise<void>>();
   #semanticReaderRevision?: 1;
   readonly #lifetime = new AbortController();
   readonly #ownerDisposers = new Set<() => Promise<void>>();
@@ -137,7 +142,7 @@ export class DecisionProcess implements NativeDecisionSession {
     catch (error) { this.#fail(error as Error); throw error; }
   }
 
-  constructor(child: ChildProcessWithoutNullStreams, ownedArtifactPath?: () => Promise<string | undefined>) {
+  constructor(child: ChildProcessWithoutNullStreams, ownedArtifactPath?: (signal?: AbortSignal) => Promise<string | undefined>) {
     this.#child = child;
     this.#ownedArtifactPath = ownedArtifactPath;
     this.#exit = new Promise((resolve) => child.once("close", () => resolve()));
@@ -220,13 +225,13 @@ export class DecisionProcess implements NativeDecisionSession {
     if (this.#disposing) return this.#disposing;
     this.#fail(new NativeDecisionServiceError("PROCESS", "Decision session disposed."));
     const timer = setTimeout(() => this.#child.kill("SIGKILL"), 2_000);
-    this.#disposing = Promise.all([this.#exit, this.#ownersClosing]).then(() => {}).finally(() => {
+    this.#disposing = Promise.all([this.#exit, ...this.#artifactPreparations]).then(() => this.#ownersClosing).then(() => undefined).finally(() => {
       clearTimeout(timer);
     });
     return this.#disposing;
   }
 
-  #request(method: string, params: unknown, signal?: AbortSignal, ownedArtifactPath?: () => Promise<string | undefined>): Promise<unknown> {
+  #request(method: string, params: unknown, signal?: AbortSignal, ownedArtifactPath?: (signal?: AbortSignal) => Promise<string | undefined>): Promise<unknown> {
     if (this.#closed || !this.#handshaken)
       return Promise.reject(
         new NativeDecisionServiceError("PROCESS", "Decision session is unavailable."),
@@ -255,17 +260,22 @@ export class DecisionProcess implements NativeDecisionSession {
           throw new NativeDecisionServiceError(
             "PROTOCOL", "Decision request exceeds its byte limit.",
           );
+        if (request.state !== "queued") return;
         if (ownedArtifactPath) {
           // Reserve FIFO and own serialized caller bytes before lazy extraction.
           // A later request cannot overtake this request while storage is prepared.
           const captured = JSON.parse(line) as { id: number; method: string; params: Record<string, unknown> };
-          void ownedArtifactPath().then((artifactPath) => {
+          request.artifactAbort = new AbortController();
+          const preparation = ownedArtifactPath(request.artifactAbort.signal).then((artifactPath) => {
+            request.artifactAbort = undefined;
             if (request.state !== "queued") return;
             const ready = artifactPath ? JSON.stringify({ ...captured, params: { ...captured.params, artifactPath } }) + "\n" : line;
             if (Buffer.byteLength(ready) > MAX_FRAME_BYTES) throw new NativeDecisionServiceError("PROTOCOL", "Decision request exceeds its byte limit.");
             request.line = ready;
             this.#pump();
-          }).catch((cause: unknown) => { if (request.state === "queued") this.#rejectQueued(request, cause); });
+          }).catch((cause: unknown) => { if (request.state === "queued") this.#rejectQueued(request, cause); })
+            .finally(() => this.#artifactPreparations.delete(preparation));
+          this.#artifactPreparations.add(preparation);
         } else if (request.state === "queued") request.line = line;
       } catch (cause) {
         if (request.state === "queued") this.#rejectQueued(request, cause);
@@ -276,6 +286,8 @@ export class DecisionProcess implements NativeDecisionSession {
 
   #settled(request: DecisionRequest): void {
     request.state = "settled";
+    request.artifactAbort?.abort();
+    request.artifactAbort = undefined;
     if (request.abort) request.signal?.removeEventListener("abort", request.abort);
   }
 

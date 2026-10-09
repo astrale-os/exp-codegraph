@@ -13,7 +13,7 @@ const request: NativeDecisionPrepareRequest = {
   options: {},
 };
 const transports: DecisionProcess[] = [];
-function service(code: string, worker?: () => Promise<string | undefined>): DecisionProcess {
+function service(code: string, worker?: (signal?: AbortSignal) => Promise<string | undefined>): DecisionProcess {
   const child = spawn(node, ["--input-type=module", "-e", code], { stdio: "pipe" });
   const transport = new DecisionProcess(child, worker);
   transports.push(transport);
@@ -192,6 +192,52 @@ describe("native decision transport source qualification", () => {
     expect(await pending).toEqual({ token: 'original', configPath: '/cache/.oxlintrc.json', config: { rules: {} }, commandIgnorePatterns: [], artifactPath: '/cache/worker-sha' });
     expect(await later).toEqual({ token: 'later', reportDigest: 'digest' });
     expect(calls).toBe(1);
+  });
+
+  it("rejects pre-cancelled generic work without starting its transfer", async () => {
+    let calls = 0;
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:r.params}));});`, async () => { calls++; return '/worker'; });
+    await transport.ready();
+    const abort = new AbortController(); abort.abort('before transfer');
+    await expect(transport.captureOwnedGeneric({ token: 'cancelled', configPath: '/config', config: {}, commandIgnorePatterns: [] }, abort.signal)).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(calls).toBe(0);
+    expect(await transport.seal({ token: 'live', reportDigest: 'digest' })).toEqual({ token: 'live', reportDigest: 'digest' });
+  });
+
+  it("cancels only a queued worker transfer and permits the following request and normal recovery", async () => {
+    let aborted = false, calls = 0;
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:r.params}));});`, (signal) => {
+      calls++;
+      if (calls !== 1) return Promise.resolve('/worker');
+      return new Promise((_resolve, reject) => signal!.addEventListener('abort', () => { aborted = true; reject(signal!.reason); }, { once: true }));
+    });
+    await transport.ready();
+    const abort = new AbortController();
+    const input = { token: 'cancelled', configPath: '/config', config: {}, commandIgnorePatterns: [] };
+    const transfer = transport.captureOwnedGeneric(input, abort.signal);
+    const failure = expect(transfer).rejects.toMatchObject({ code: 'CANCELLED' });
+    const following = transport.seal({ token: 'live', reportDigest: 'digest' });
+    abort.abort('during transfer');
+    await failure;
+    expect(aborted).toBe(true);
+    expect(await following).toEqual({ token: 'live', reportDigest: 'digest' });
+    expect(await transport.captureOwnedGeneric(input)).toEqual({ ...input, artifactPath: '/worker' });
+  });
+
+  it("disposes the owned worker transfer before closing and never sends its late native request", async () => {
+    let aborted = false, cleaned = false;
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',()=>process.exit(99));`, (signal) => new Promise((_resolve, reject) => {
+      signal!.addEventListener('abort', () => { aborted = true; setTimeout(() => { cleaned = true; reject(signal!.reason); }, 10); }, { once: true });
+    }));
+    await transport.ready();
+    const transfer = transport.captureOwnedGeneric({ token: 'closing', configPath: '/config', config: {}, commandIgnorePatterns: [] });
+    const failure = expect(transfer).rejects.toMatchObject({ code: 'PROCESS' });
+    await transport.dispose(); await failure;
+    expect(aborted).toBe(true); expect(cleaned).toBe(true);
+    await expect(transport.prepare(request)).rejects.toMatchObject({ code: 'PROCESS' });
   });
 
   it("keeps the unavailable Go-only worker's request shape unchanged", async () => {

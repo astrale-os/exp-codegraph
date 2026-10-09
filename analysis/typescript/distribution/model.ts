@@ -10,7 +10,7 @@ export interface NativeArtifactCompression {
 
 export interface NativeAnalysisArtifact {
   readonly target: NativeAnalysisTarget
-  /** Relative to this target's directory under the package's `native-artifacts`. */
+  /** Executable identity; historical embedded delivery uses this relative path. */
   readonly executable: string
   readonly bytes: number
   readonly sha256: string
@@ -38,6 +38,8 @@ export interface NativeAnalysisReleaseManifest {
   readonly packageVersion: string
   readonly protocolVersion: 1
   readonly sourceRevision: string
+  /** Absent in historical releases that carry encoded or raw files inside npm. */
+  readonly delivery?: 'github-release'
   readonly toolchain: {
     readonly ttsc: string
     readonly typescriptGo: string
@@ -58,6 +60,7 @@ export type NativeAnalysisDistributionErrorCode =
   | 'NATIVE_ARTIFACT_DIGEST_MISMATCH'
   | 'NATIVE_ARTIFACT_NOT_EXECUTABLE'
   | 'NATIVE_OXLINT_UNAVAILABLE'
+  | 'NATIVE_ARTIFACT_DOWNLOAD_FAILED'
 
 export class NativeAnalysisDistributionError extends Error {
   readonly name = 'NativeAnalysisDistributionError'
@@ -79,10 +82,11 @@ export class NativeAnalysisDistributionError extends Error {
 export interface PackagedNativeAnalysisOptions {
   /** Explicit application-controlled qualified executable. */
   readonly binary?: string
+  readonly signal?: AbortSignal
 }
 
 export interface ResolvedPackagedNativeAnalysis {
-  /** Absolute admitted executable; encoded package assets live in the user cache. */
+  /** Absolute admitted executable; encoded release assets live in the user cache. */
   readonly command: string
   readonly compression?: NativeArtifactCompression
   readonly sha256: string
@@ -98,4 +102,14 @@ export interface ResolvedPackagedNativeOxlint extends NativeOxlintArtifact {
   readonly target: string
   readonly packageVersion: string
   readonly origin: 'package'
+}
+
+export interface NativeArtifactPreloadOptions {
+  readonly generic?: boolean
+  readonly signal?: AbortSignal
+}
+
+export interface PreloadedNativeArtifacts {
+  readonly analysis: ResolvedPackagedNativeAnalysis
+  readonly generic?: ResolvedPackagedNativeOxlint
 }
