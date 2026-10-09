@@ -1,10 +1,10 @@
-import { lstat, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { encodeNativeExecutable } from './compression.mjs'
 
 import {
-  NATIVE_ARTIFACT_DIRECTORY,
+  nativeReleaseAssetName,
   NATIVE_BUILD_FORMAT,
   NATIVE_RELEASE_FORMAT,
   NATIVE_TARGETS,
@@ -19,6 +19,8 @@ import {
 
 const root = resolve(import.meta.dirname, '../..')
 const input = resolve(argument('--input') ?? resolve(root, '.native-input'))
+const assets = resolve(argument('--assets-dir') ?? resolve(root, '.native-release-assets'))
+await mkdir(assets, { recursive: true })
 const packageManifestPath = resolve(root, 'package.json')
 const packageManifest = await readJson(packageManifestPath)
 const packageVersion = packageManifest.version
@@ -65,29 +67,23 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   if (stableJson(artifact) !== stableJson(build.artifact)) {
     throw new Error(`${target} build and artifact manifests disagree.`)
   }
-  const artifactRoot = resolve(root, NATIVE_ARTIFACT_DIRECTORY, target)
-  const delivered = await stageExecutable(sourceRoot, artifactRoot, artifact, target)
+  const delivered = await stageExecutable(sourceRoot, assets, artifact, target, sourceRevision)
   artifacts[target] = {
     ...delivered,
-    ...(artifact.oxlint ? { oxlint: await stageExecutable(sourceRoot, artifactRoot, artifact.oxlint, target) } : {}),
+    ...(artifact.oxlint ? { oxlint: await stageExecutable(sourceRoot, assets, artifact.oxlint, target, sourceRevision) } : {}),
   }
 }
 
 assertOxlintSources(artifacts)
-await writeFile(
-  resolve(root, 'native-release.json'),
-  stableJson({
-    format: NATIVE_RELEASE_FORMAT,
-    version: 1,
-    packageVersion,
-    protocolVersion: PROTOCOL_VERSION,
-    sourceRevision,
-    toolchain: { ...releaseToolchain, oxlint: releaseOxlintToolchain },
-    artifacts,
-  }),
-)
+const release = stableJson({
+  format: NATIVE_RELEASE_FORMAT, version: 1, delivery: 'github-release', packageVersion,
+  protocolVersion: PROTOCOL_VERSION, sourceRevision,
+  toolchain: { ...releaseToolchain, oxlint: releaseOxlintToolchain }, artifacts,
+})
+await writeFile(resolve(root, 'native-release.json'), release)
+await writeFile(resolve(assets, 'native-release.json'), release)
 process.stdout.write(
-  stableJson({ packageVersion, sourceRevision, targets: Object.keys(artifacts).sort() }),
+  stableJson({ packageVersion, sourceRevision, assets, targets: Object.keys(artifacts).sort() }),
 )
 
 function argument(name) {
@@ -98,8 +94,8 @@ function argument(name) {
   return value
 }
 
-// Downloads retain original bytes and their provenance; only package copies are encoded.
-async function stageExecutable(sourceRoot, artifactRoot, artifact, target) {
+// Build artifacts retain original bytes/provenance; gzip files become external release assets.
+async function stageExecutable(sourceRoot, artifactRoot, artifact, target, sourceRevision) {
   if (artifact.compression) throw new Error(`${target} build output must contain original executable bytes.`)
   const source = resolve(sourceRoot, artifact.executable)
   if (!(await lstat(source)).isFile()) {
@@ -109,9 +105,9 @@ async function stageExecutable(sourceRoot, artifactRoot, artifact, target) {
   if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
     throw new Error(`${target} ${artifact.executable} bytes differ from its build manifest.`)
   }
-  const destination = resolve(artifactRoot, `${artifact.executable}.gz`)
+  const name = nativeReleaseAssetName(target, artifact.executable === 'bin/codegraph-oxlint' ? 'oxlint' : 'native', sourceRevision)
+  if (!name) throw new Error(`${target} has no source-bound release asset name.`)
+  const destination = resolve(artifactRoot, name)
   const delivered = await encodeNativeExecutable(source, destination, artifact)
-  // An earlier raw assembly must not leave a second copy in the one npm payload.
-  await rm(resolve(artifactRoot, artifact.executable), { force: true })
-  return delivered
+  return { ...delivered, compression: { ...delivered.compression, path: name } }
 }

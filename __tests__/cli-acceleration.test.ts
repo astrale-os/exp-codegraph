@@ -387,6 +387,7 @@ function testServices(
 ): CliServices {
   return {
     version: async () => 'fixture',
+    preloadArtifacts: async () => { throw new Error('unexpected preload') },
     initializeModule: async () => {
       throw new Error('unexpected init')
     },

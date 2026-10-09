@@ -13,12 +13,58 @@ const generation = deriveAnalysisId('generation', 'fragment-fallback', {})
 const source = (path: string) => deriveAnalysisId('source', 'fragment-fallback', path)
 const occurrence = (name: string) => deriveAnalysisId('occurrence', 'fragment-fallback', name)
 const span = (path: string, start = 0) => ({ source: source(path), revision: deriveAnalysisId('source-revision', 'fragment-fallback', path), start, end: start + 1 })
-function fact<Kind extends 'body' | 'source'>(kind: Kind, subject: string, payload: TypeScriptFact<Kind>['payload']): TypeScriptFact<Kind> {
+function fact<Kind extends 'body' | 'source' | 'symbol'>(kind: Kind, subject: string, payload: TypeScriptFact<Kind>['payload']): TypeScriptFact<Kind> {
   return { id: deriveAnalysisId('fact', 'fragment-fallback', { kind, subject }), generation,
     namespace: `typescript.${kind}`, schemaVersion: 1, kind, subject, completeness: { kind: 'complete' },
     provenance: { pass: deriveAnalysisId('pass', 'fragment-fallback', {}), passVersion: '1', evidence: [span('a.ts')], inputs: [] }, payload,
   } as TypeScriptFact<Kind>
 }
+
+it.each(['ordinary', '�computed'])('requires a method name witness instead of guessing from declaration name %s', async (name) => {
+  const object = occurrence(`object:${name}`), method = occurrence(`method:${name}`)
+  const symbol = deriveAnalysisId('symbol', 'fragment-fallback', name)
+  const nameFact = fact('symbol', symbol, { symbol, name, declarations: [span('a.ts')], generationScoped: false })
+  const projectSource = fact('source', source('a.ts'), { source: source('a.ts'), revision: span('a.ts').revision,
+    logicalPath: 'a.ts', textDigest: 'a', declaration: false, projectOwned: true })
+  const nodes: FunctionBodyIR['occurrences'] = [
+    { id: object, kind: 'expression', syntax: 'ObjectLiteralExpression', owner, span: span('a.ts') },
+    { id: method, kind: 'expression', syntax: 'MethodDeclaration', symbol, owner, span: span('a.ts', 1) },
+  ]
+  const logical = { ...body(nodes), relations: [{ parent: object, child: method, role: 'property:0' }] }
+  const supplied = fact('body', owner, { body: logical, values: {}, completeness: { kind: 'complete' } })
+  expect(validateTypeScriptFactPayload('body', supplied.payload)).toEqual([])
+  const facts = [supplied, nameFact, projectSource]
+  const index = IndexedValues.empty().update(facts, [], true)
+  const values = await createValueEvaluatorFactory(query(facts), undefined, async () => index)()
+  expect(await values.value(object).resolve()).toMatchObject({ kind: 'known', value: {
+    kind: 'object', complete: false, properties: [],
+  } })
+  expect(await values.value(object).property(name).resolve()).toMatchObject({ kind: 'unknown' })
+})
+
+it('retains the ordinary property-assignment name fallback for older fact providers', async () => {
+  const object = occurrence('legacy-object'), property = occurrence('legacy-property')
+  const name = occurrence('legacy-name'), initializer = occurrence('legacy-value')
+  const symbol = deriveAnalysisId('symbol', 'fragment-fallback', 'legacy')
+  const nodes: FunctionBodyIR['occurrences'] = [
+    { id: object, kind: 'expression', syntax: 'ObjectLiteralExpression', owner, span: span('a.ts') },
+    { id: property, kind: 'expression', syntax: 'PropertyAssignment', owner, span: span('a.ts', 1) },
+    { id: name, kind: 'expression', syntax: 'Identifier', symbol, owner, span: span('a.ts', 2) },
+    { id: initializer, kind: 'expression', syntax: 'StringLiteral', owner, span: span('a.ts', 3) },
+  ]
+  const supplied = fact('body', owner, { body: { ...body(nodes), relations: [
+    { parent: object, child: property, role: 'property:0' },
+    { parent: property, child: name, role: 'name' },
+    { parent: property, child: initializer, role: 'initializer' },
+  ] }, values: { [initializer]: { kind: 'known', value: 'retained', evidence: [] } }, completeness: { kind: 'complete' } })
+  expect(validateTypeScriptFactPayload('body', supplied.payload)).toEqual([])
+  const facts = [supplied, fact('symbol', symbol, { symbol, name: 'legacy', declarations: [span('a.ts')], generationScoped: false }),
+    fact('source', source('a.ts'), { source: source('a.ts'), revision: span('a.ts').revision,
+      logicalPath: 'a.ts', textDigest: 'a', declaration: false, projectOwned: true })]
+  const index = IndexedValues.empty().update(facts, [], true)
+  const values = await createValueEvaluatorFactory(query(facts), undefined, async () => index)()
+  expect(await values.value(object).property('legacy').resolve()).toMatchObject({ kind: 'known', value: { kind: 'literal', value: 'retained' } })
+})
 function body(nodes: FunctionBodyIR['occurrences']): FunctionBodyIR {
   return { function: owner, execution: 'sync', parameters: [], occurrences: nodes, relations: [],
     blocks: [{ id: 'entry', occurrences: nodes.map(node => node.id) }], edges: [], definitions: [], calls: [],

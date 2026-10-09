@@ -116,7 +116,8 @@ describe('module architecture', () => {
 
   it('keeps top-level contexts in the declared acyclic knowledge order', async () => {
     const allowed: Record<string, ReadonlySet<string>> = {
-      analysis: new Set(),
+      analysis: new Set(['distribution']),
+      distribution: new Set(),
       api: new Set(['analysis', 'source', 'typescript']),
       application: new Set([
         'analysis',
@@ -176,6 +177,7 @@ describe('module architecture', () => {
         'specification',
         'viewer-host',
         'workspace',
+        'distribution',
       ]),
       source: new Set(['reference']),
       specification: new Set([

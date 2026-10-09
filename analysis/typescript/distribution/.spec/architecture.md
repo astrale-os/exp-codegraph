@@ -1,25 +1,25 @@
 # Native analysis distribution
 
-This module owns artifact selection and admission, not compiler construction. The public Codegraph
-package reads its one immutable release manifest, selects the exact current OS/architecture artifact
-inside its own `native-artifacts` directory, and verifies package version, containment, file kind,
-executable mode, byte length, and SHA-256 before a process session can spawn it.
+This module owns platform selection and admission, not compiler construction. The single Codegraph
+npm package carries an immutable native release manifest. `delivery: "github-release"` selects only
+the requested current-host capability from the fixed public Codegraph repository release whose tag
+binds the package version and source revision. Five Go targets are represented: Darwin ARM64/x64,
+Linux ARM64/x64 and Windows x64. The generic worker is independently qualified on Darwin ARM64 and
+Linux x64 (GNU libc); unavailable companions do not invalidate the Go analyzer.
 
-Native artifacts are opaque executables delivered inside `@astrale-os/codegraph`; no other package
-carries them and they expose no JavaScript API. Compiler-near source and `ttsc` remain release
-inputs outside this runtime module. Resolution never downloads, compiles, searches `PATH`, or falls
-back from a missing/corrupt artifact.
+The common `distribution` owner streams encoded and decoded bytes through exact size and SHA-256
+admission into a unique staging file. Atomic publication leaves one content-addressed original file,
+without modifying the installed package or retaining encoded downloads. Healthy cache entries work
+offline. Failed, corrupt and cancelled transfers clean their own staging and are retryable; concurrent
+readers retain their admitted inode while a corrupt cache entry is replaced. No install hook, network
+compiler build, PATH search or alternate artifact fallback exists.
 
-The qualified targets are macOS on arm64 and Linux on x64. The package installs on every other
-platform, where packaged resolution fails with `NATIVE_TARGET_UNSUPPORTED`. The same packed project
-session, semantic facts and incremental refresh contract apply on each target. The Node runtime
-floor is 22.13, with the 24 and 26 release lines also supported.
+`preloadNativeArtifacts({ generic?, signal? })` prepares this host's requested capabilities before
+entering an offline environment. Importing the API does not download an artifact. Rust is resolved
+only when its capability is requested, and its exact worker version/source are independently admitted.
+An explicit application-controlled binary keeps its original addressing and admission semantics.
+Historical manifests without `delivery` continue to admit their embedded raw or compressed payloads.
 
-`resolvePackagedNativeOxlint` separately admits the captured generic worker against its own release
-descriptor, artifact directory containment, executable permissions and actual bytes. Missing or
-corrupt companions fail that capability without invalidating the Go analyzer, so callers can recover
-through their original analysis path. Historical Go-only manifests remain readable.
-
-The maintained worker targets the same two platforms (GNU libc on Linux). Worker distribution does
-not admit an SDK's original Oxlint bindings or presets; those remain independent consumer
-requirements. The SDK's initial captured qualification is Darwin ARM64 and Oxlint 1.81.0.
+Compiler-near source and `ttsc` remain release inputs outside this runtime module. The Node runtime
+floor is 22.13, with the 24 and 26 release lines supported. Worker distribution does not admit an SDK's
+original Oxlint bindings or presets; those remain independent consumer requirements.

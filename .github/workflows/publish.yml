@@ -54,9 +54,9 @@ jobs:
           path: release
           run-id: ${{ inputs.qualification-run-id }}
           github-token: ${{ github.token }}
-      - name: Admit source, executable digests and an existing npm version
+      - name: Admit source, public download assets and an existing npm version
         id: packages
-        run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --qualification-run "$RUNNER_TEMP/qualification.json" --npm-preflight --github-output "$GITHUB_OUTPUT"
+        run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --qualification-run "$RUNNER_TEMP/qualification.json" --remote-assets --npm-preflight --github-output "$GITHUB_OUTPUT"
       - name: Publish the exact prepared archive using Trusted Publishing
         uses: astrale-os/config/.github/actions/publish/packages@8e2e2abd0320be0c2f64033916519ab3b66c7dd7
         with:

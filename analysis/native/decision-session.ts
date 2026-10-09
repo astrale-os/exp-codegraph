@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { NativeDecisionServiceError, type NativeDecisionSession } from "./decision-model.ts";
 import { resolvePackagedNativeAnalysis, resolveOptionalPackagedNativeOxlint } from "../typescript/distribution/resolve.ts";
+import type { NativeCapturedAnalysisStamp, NativeCapturedAnalysisPort, NativeProjectDescriptor } from '../protocol/model.ts';
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -12,6 +13,7 @@ interface DecisionRequest {
   readonly reject: (error: unknown) => void;
   readonly signal?: AbortSignal;
   abort?: () => void;
+  artifactAbort?: AbortController;
   line?: string;
   state: "queued" | "active" | "settled";
 }
@@ -28,7 +30,10 @@ export async function openNativeDecisionSession(
   options: NativeDecisionProcessOptions,
 ): Promise<NativeDecisionSession> {
   if (options.signal?.aborted) throw cancelled(options.signal.reason);
-  const artifact = await resolvePackagedNativeAnalysis({ binary: options.binary });
+  const artifact = await resolvePackagedNativeAnalysis({ binary: options.binary, signal: options.signal }).catch((cause: unknown) => {
+    if (options.signal?.aborted) throw cancelled(options.signal.reason);
+    throw cause;
+  });
   if (options.signal?.aborted) throw cancelled(options.signal.reason);
   const child = spawn(artifact.command, ["decision-serve", "--cwd", options.root], {
     stdio: "pipe",
@@ -39,8 +44,8 @@ export async function openNativeDecisionSession(
   // Storage selects the addressing strategy, not a protocol revision. Qualified
   // gzip builds accept the optional explicit path; old raw binaries strictly
   // reject unknown request fields and must retain their original adjacency.
-  const transport = new DecisionProcess(child, artifact.compression ? async () =>
-    (await resolveOptionalPackagedNativeOxlint())?.command : undefined);
+  const transport = new DecisionProcess(child, artifact.compression ? async (signal) =>
+    (await resolveOptionalPackagedNativeOxlint({ signal }))?.command : undefined);
   await transport.ready(options.signal, options.handshakeTimeoutMs ?? 30_000);
   return transport;
 }
@@ -48,7 +53,7 @@ export async function openNativeDecisionSession(
 /** Exported for source-level transport qualification; production uses the asset resolver above. */
 export class DecisionProcess implements NativeDecisionSession {
   readonly #child: ChildProcessWithoutNullStreams;
-  readonly #ownedArtifactPath?: () => Promise<string | undefined>;
+  readonly #ownedArtifactPath?: (signal?: AbortSignal) => Promise<string | undefined>;
   readonly #hello: Promise<void>;
   readonly #exit: Promise<void>;
   #resolveHello!: () => void;
@@ -63,8 +68,81 @@ export class DecisionProcess implements NativeDecisionSession {
   readonly #queue: DecisionRequest[] = [];
   #pumpScheduled = false;
   #disposing?: Promise<void>;
+  readonly #artifactPreparations = new Set<Promise<void>>();
+  #semanticReaderRevision?: 1;
+  readonly #lifetime = new AbortController();
+  readonly #ownerDisposers = new Set<() => Promise<void>>();
+  #ownersClosing?: Promise<void>;
 
-  constructor(child: ChildProcessWithoutNullStreams, ownedArtifactPath?: () => Promise<string | undefined>) {
+  get semanticReaderRevision(): 1 | undefined { return this.#semanticReaderRevision; }
+
+  get openSemanticProjection(): NativeDecisionSession['openSemanticProjection'] {
+    return this.#semanticReaderRevision === 1 ? this.#openSemanticProjection : undefined;
+  }
+
+  readonly #openSemanticProjection = async (
+    input: NativeCapturedAnalysisStamp, options: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] } = {},
+  ): Promise<NativeCapturedAnalysisPort> => {
+    const stamp = Object.freeze({ token: input.token, generation: input.generation, sourceSnapshotDigest: input.sourceSnapshotDigest });
+    if (!stamp.token || !stamp.generation || !/^[a-f0-9]{64}$/.test(stamp.sourceSnapshotDigest)) {
+      throw new TypeError('Invalid captured semantic identity.');
+    }
+    const capabilities = Object.freeze([...new Set(options.capabilities ?? ['typescript.source', 'typescript.body-demand'])].sort());
+    if (capabilities.some((capability) => typeof capability !== 'string')) throw new TypeError('Invalid captured projection capabilities.');
+    const acquired = await this.#request('semantic-open', { ...stamp, capabilities }, options.signal);
+    const frame = this.#capturedFrame(acquired, stamp);
+    if (typeof frame.lease !== 'string' || !frame.lease) return this.#semanticProtocolFailure('Semantic acquisition omitted its lease.');
+    const descriptor = frame.project as Partial<NativeProjectDescriptor> | undefined;
+    if (!descriptor || typeof descriptor.root !== 'string' || typeof descriptor.config !== 'string' ||
+      !Array.isArray(descriptor.capabilities) || descriptor.capabilities.some((value: unknown) => typeof value !== 'string')) {
+      return this.#semanticProtocolFailure('Semantic acquisition omitted its project descriptor.');
+    }
+    const project = Object.freeze({ root: descriptor.root, config: descriptor.config,
+      capabilities: Object.freeze([...descriptor.capabilities]) });
+    if (project.capabilities.length !== capabilities.length || [...project.capabilities].sort().some((capability, index) => capability !== capabilities[index])) {
+      return this.#semanticProtocolFailure('Semantic acquisition changed its requested capabilities.');
+    }
+    const lease = frame.lease;
+    const lifetime = new AbortController();
+    const signal = AbortSignal.any([lifetime.signal, this.#lifetime.signal]);
+    let lastId = 0;
+    let closing: Promise<void> | undefined;
+    return Object.freeze({
+      signal, project, ownerSignal: this.#lifetime.signal,
+      onOwnerDispose: (dispose) => {
+        if (this.#closed) throw new NativeDecisionServiceError('PROCESS', 'Decision session is unavailable.');
+        this.#ownerDisposers.add(dispose);
+      },
+      request: async (request, options = {}) => {
+        signal.throwIfAborted();
+        lastId = Math.max(lastId, request.id);
+        const response = this.#capturedFrame(await this.#request('semantic-request', { ...stamp, lease, request },
+          options.signal ? AbortSignal.any([options.signal, signal]) : signal), stamp, lease);
+        return response.response;
+      },
+      dispose: () => {
+        if (closing) return closing;
+        lifetime.abort(new Error('Captured projection lease is disposed.'));
+        if (this.#closed) return closing = Promise.resolve();
+        closing = this.#request('semantic-request', { ...stamp, lease, request: { id: ++lastId, kind: 'dispose' } })
+          .then((value) => { this.#capturedFrame(value, stamp, lease); });
+        return closing;
+      },
+    } satisfies NativeCapturedAnalysisPort);
+  };
+
+  #semanticProtocolFailure(message: string): never {
+    const error = new NativeDecisionServiceError('PROTOCOL', message);
+    this.#fail(error);
+    throw error;
+  }
+
+  #capturedFrame(value: unknown, stamp: NativeCapturedAnalysisStamp, lease?: string): Record<string, unknown> {
+    try { return capturedFrame(value, stamp, lease); }
+    catch (error) { this.#fail(error as Error); throw error; }
+  }
+
+  constructor(child: ChildProcessWithoutNullStreams, ownedArtifactPath?: (signal?: AbortSignal) => Promise<string | undefined>) {
     this.#child = child;
     this.#ownedArtifactPath = ownedArtifactPath;
     this.#exit = new Promise((resolve) => child.once("close", () => resolve()));
@@ -147,13 +225,13 @@ export class DecisionProcess implements NativeDecisionSession {
     if (this.#disposing) return this.#disposing;
     this.#fail(new NativeDecisionServiceError("PROCESS", "Decision session disposed."));
     const timer = setTimeout(() => this.#child.kill("SIGKILL"), 2_000);
-    this.#disposing = this.#exit.finally(() => {
+    this.#disposing = Promise.all([this.#exit, ...this.#artifactPreparations]).then(() => this.#ownersClosing).then(() => undefined).finally(() => {
       clearTimeout(timer);
     });
     return this.#disposing;
   }
 
-  #request(method: string, params: unknown, signal?: AbortSignal, ownedArtifactPath?: () => Promise<string | undefined>): Promise<unknown> {
+  #request(method: string, params: unknown, signal?: AbortSignal, ownedArtifactPath?: (signal?: AbortSignal) => Promise<string | undefined>): Promise<unknown> {
     if (this.#closed || !this.#handshaken)
       return Promise.reject(
         new NativeDecisionServiceError("PROCESS", "Decision session is unavailable."),
@@ -182,17 +260,22 @@ export class DecisionProcess implements NativeDecisionSession {
           throw new NativeDecisionServiceError(
             "PROTOCOL", "Decision request exceeds its byte limit.",
           );
+        if (request.state !== "queued") return;
         if (ownedArtifactPath) {
           // Reserve FIFO and own serialized caller bytes before lazy extraction.
           // A later request cannot overtake this request while storage is prepared.
           const captured = JSON.parse(line) as { id: number; method: string; params: Record<string, unknown> };
-          void ownedArtifactPath().then((artifactPath) => {
+          request.artifactAbort = new AbortController();
+          const preparation = ownedArtifactPath(request.artifactAbort.signal).then((artifactPath) => {
+            request.artifactAbort = undefined;
             if (request.state !== "queued") return;
             const ready = artifactPath ? JSON.stringify({ ...captured, params: { ...captured.params, artifactPath } }) + "\n" : line;
             if (Buffer.byteLength(ready) > MAX_FRAME_BYTES) throw new NativeDecisionServiceError("PROTOCOL", "Decision request exceeds its byte limit.");
             request.line = ready;
             this.#pump();
-          }).catch((cause: unknown) => { if (request.state === "queued") this.#rejectQueued(request, cause); });
+          }).catch((cause: unknown) => { if (request.state === "queued") this.#rejectQueued(request, cause); })
+            .finally(() => this.#artifactPreparations.delete(preparation));
+          this.#artifactPreparations.add(preparation);
         } else if (request.state === "queued") request.line = line;
       } catch (cause) {
         if (request.state === "queued") this.#rejectQueued(request, cause);
@@ -203,6 +286,8 @@ export class DecisionProcess implements NativeDecisionSession {
 
   #settled(request: DecisionRequest): void {
     request.state = "settled";
+    request.artifactAbort?.abort();
+    request.artifactAbort = undefined;
     if (request.abort) request.signal?.removeEventListener("abort", request.abort);
   }
 
@@ -291,7 +376,8 @@ export class DecisionProcess implements NativeDecisionSession {
         if (
           frame.service !== "astrale.lint-decision" ||
           frame.protocol !== 1 ||
-          frame.contractRevision !== 1
+          frame.contractRevision !== 1 ||
+          (frame.semanticReaderRevision !== undefined && frame.semanticReaderRevision !== 1)
         ) {
           this.#fail(
             new NativeDecisionServiceError(
@@ -302,6 +388,7 @@ export class DecisionProcess implements NativeDecisionSession {
           return;
         }
         this.#handshaken = true;
+        this.#semanticReaderRevision = frame.semanticReaderRevision === 1 ? 1 : undefined;
         this.#resolveHello();
         continue;
       }
@@ -353,6 +440,12 @@ export class DecisionProcess implements NativeDecisionSession {
   #fail(error: Error): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#lifetime.abort(error);
+    this.#ownersClosing = Promise.all([...this.#ownerDisposers].map((dispose) => Promise.resolve().then(dispose))).then(() => {});
+    // Cancellation can precede an explicit dispose call. Keep cleanup handled;
+    // dispose still observes its exact result through ownersClosing.
+    void this.#ownersClosing.catch(() => {});
+    this.#ownerDisposers.clear();
     this.#rejectHello(error);
     if (this.#pending) {
       this.#settled(this.#pending);
@@ -367,6 +460,18 @@ export class DecisionProcess implements NativeDecisionSession {
     this.#chunks = [];
     this.#bytes = 0;
   }
+}
+
+function capturedFrame(value: unknown, stamp: NativeCapturedAnalysisStamp, lease?: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new NativeDecisionServiceError('PROTOCOL', 'Malformed semantic capture frame.');
+  }
+  const frame = value as Record<string, unknown>;
+  if (frame.token !== stamp.token || frame.generation !== stamp.generation ||
+    frame.sourceSnapshotDigest !== stamp.sourceSnapshotDigest || (lease !== undefined && frame.lease !== lease)) {
+    throw new NativeDecisionServiceError('PROTOCOL', 'Semantic frame belongs to another capture or lease.');
+  }
+  return frame;
 }
 
 function cancelled(cause?: unknown): NativeDecisionServiceError {

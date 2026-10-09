@@ -10,7 +10,7 @@ import { NativeAnalysisDistributionError } from "./model.ts";
 
 export const NATIVE_RELEASE_FORMAT = "astrale.codegraph.native-release" as const;
 
-/** Each target's executables live in this directory of the one published package. */
+/** Historical embedded delivery root, retained for prior package admissions. */
 export const NATIVE_ARTIFACT_DIRECTORY = "native-artifacts" as const;
 
 const NATIVE_ANALYSIS_TARGETS: readonly NativeAnalysisTarget[] = Object.freeze([
@@ -45,6 +45,7 @@ export async function readNativeReleaseManifest(
     value.protocolVersion !== NATIVE_ANALYSIS_PROTOCOL_VERSION ||
     typeof value.sourceRevision !== "string" ||
     !/^[a-f0-9]{40}$/u.test(value.sourceRevision) ||
+    (value.delivery !== undefined && value.delivery !== "github-release") ||
     !validToolchain(value.toolchain) ||
     !recordOrUndefined(value.artifacts)
   ) {
@@ -56,7 +57,8 @@ export async function readNativeReleaseManifest(
   }
   const artifacts = value.artifacts as Readonly<Record<string, unknown>>;
   for (const [key, artifact] of Object.entries(artifacts)) {
-    if (!isTarget(key) || !validArtifact(artifact, key)) {
+    if (!isTarget(key) || !validArtifact(artifact, key) ||
+      (value.delivery === "github-release" && !validRemoteArtifact(artifact, key, value.sourceRevision as string))) {
       throw new NativeAnalysisDistributionError(
         "NATIVE_RELEASE_MANIFEST_INVALID",
         `Codegraph native release manifest contains an invalid ${key} artifact.`,
@@ -149,4 +151,10 @@ function record(value: unknown): Readonly<Record<string, unknown>> {
 
 function isTarget(value: string): value is NativeAnalysisTarget {
   return (NATIVE_ANALYSIS_TARGETS as readonly string[]).includes(value);
+}
+
+function validRemoteArtifact(input: unknown, target: string, sourceRevision: string): boolean {
+  const value = record(input), compression = record(value.compression)
+  if (compression.path !== `native-${target}-${sourceRevision}.gz`) return false
+  return true // Companion metadata is admitted independently only when that capability is requested.
 }

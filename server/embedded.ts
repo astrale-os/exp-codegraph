@@ -7,12 +7,22 @@ import type { DevOptions, RunningDevServer } from './model.ts'
 import { createCatalogRuntime } from './catalog-runtime.ts'
 import { createCatalogChannel } from './catalog-channel.ts'
 import { createViewerWatcher } from './file-watcher.ts'
+import type { ViewerArchive } from './viewer-archive.ts'
 
 /** Installed viewer: coherent catalog authority plus immutable, precompiled browser assets. */
-export async function startEmbeddedViewer(options: DevOptions, assets: string): Promise<RunningDevServer> {
+export async function startEmbeddedViewer(options: DevOptions, assets: string | ViewerArchive): Promise<RunningDevServer> {
+  try { return await start(options, assets) }
+  catch (error) {
+    if (typeof assets !== 'string') await assets.close()
+    throw error
+  }
+}
+
+async function start(options: DevOptions, assets: string | ViewerArchive): Promise<RunningDevServer> {
   const root = await realpath(resolve(options.root))
   if (!(await stat(root)).isDirectory()) throw new Error('Root must be a directory.')
-  const assetRoot = await realpath(assets)
+  const assetRoot = typeof assets === 'string' ? await realpath(assets) : undefined
+  const archive = typeof assets === 'string' ? undefined : assets
   const runtime = createCatalogRuntime({
     root, verify: options.verify ?? false, cache: options.cache ?? true,
     ...(options.native ? { native: options.native } : {}),
@@ -34,15 +44,17 @@ export async function startEmbeddedViewer(options: DevOptions, assets: string): 
   const pending = new Map<string, 'add' | 'change' | 'unlink'>()
   let closing: Promise<void> | undefined
   const close = (): Promise<void> => closing ??= (async () => {
-    channel.close()
-    await watcher.close()
-    server.closeAllConnections()
-    await new Promise<void>((resolveClose, reject) => {
-        if (!server.listening) { resolveClose(); return }
-        server.close((error) => error ? reject(error) : resolveClose())
-      })
-    await Promise.all([...requests])
-    await runtime.dispose()
+    try {
+      channel.close()
+      await watcher.close()
+      server.closeAllConnections()
+      await new Promise<void>((resolveClose, reject) => {
+          if (!server.listening) { resolveClose(); return }
+          server.close((error) => error ? reject(error) : resolveClose())
+        })
+      await Promise.all([...requests])
+      await runtime.dispose()
+    } finally { await archive?.close() }
   })()
   watcher.on('all', (event, path) => {
     if (event !== 'add' && event !== 'change' && event !== 'unlink') return
@@ -95,21 +107,32 @@ export async function startEmbeddedViewer(options: DevOptions, assets: string): 
       response.statusCode = 405; response.setHeader('allow', 'GET, HEAD'); response.end('Method not allowed.'); return
     }
     let target: string
+    let bytes: number
     try {
       const path = decodeURIComponent(pathname)
       if (path.includes('\0') || path.includes('\\')) throw new Error('Invalid path.')
-      target = await realpath(resolve(assetRoot, `.${path === '/' ? '/index.html' : path}`))
-      const pathFromRoot = relative(assetRoot, target)
-      if (isAbsolute(pathFromRoot) || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)) throw new Error('outside assets')
-      if (!(await stat(target)).isFile()) { response.statusCode = 404; response.end('Not found'); return }
+      if (archive) {
+        target = path === '/' ? 'index.html' : path.slice(1)
+        const size = archive.bytes(target)
+        if (size === undefined) throw new Error('Unknown viewer asset.')
+        bytes = size
+      } else {
+        target = await realpath(resolve(assetRoot!, `.${path === '/' ? '/index.html' : path}`))
+        const pathFromRoot = relative(assetRoot!, target)
+        if (isAbsolute(pathFromRoot) || pathFromRoot === '..' || pathFromRoot.startsWith(`..${sep}`)) throw new Error('outside assets')
+        const metadata = await stat(target)
+        if (!metadata.isFile()) throw new Error('Unknown viewer asset.')
+        bytes = metadata.size
+      }
     } catch {
       response.statusCode = 404; response.end('Not found'); return
     }
     response.setHeader('content-type', mimeType(target))
     response.setHeader('x-content-type-options', 'nosniff')
-    response.setHeader('cache-control', target.endsWith('/index.html') || target.endsWith('\\index.html') ? 'no-store' : 'public, max-age=31536000, immutable')
+    response.setHeader('content-length', bytes)
+    response.setHeader('cache-control', target === 'index.html' || target.endsWith('/index.html') || target.endsWith('\\index.html') ? 'no-store' : 'public, max-age=31536000, immutable')
     if (request.method === 'HEAD') { response.end(); return }
-    const stream = createReadStream(target)
+    const stream = archive ? archive.stream(target) : createReadStream(target)
     stream.on('error', () => response.destroy())
     response.once('close', () => stream.destroy())
     stream.pipe(response)

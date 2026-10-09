@@ -129,6 +129,7 @@ const hardware = {
 }
 const services: CliServices = {
   version: readCodegraphVersion,
+  preloadArtifacts: async () => { throw new Error('Check performance runner cannot preload artifacts.') },
   initializeModule: initializeModuleSpecification,
   createApplication: (applicationRoot, cache, portableCheckpoint) =>
     mode === 'canonical'

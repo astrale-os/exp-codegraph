@@ -66,7 +66,7 @@ export function validateBodyView(body: BodyValidationView, identities?: BodyVali
     if (occurrence.owner !== body.function) diagnostics.push('BODY_OCCURRENCE_OWNER_MISMATCH')
     if (!occurrence.syntax) diagnostics.push('BODY_OCCURRENCE_SYNTAX_REQUIRED')
     if (occurrence.propertyNamespace !== undefined && (occurrence.syntax !== 'PropertyAccessExpression' || typeof occurrence.propertyNamespace !== 'string' || !occurrence.propertyNamespace)) diagnostics.push('BODY_PROPERTY_NAMESPACE_INVALID')
-    if (occurrence.propertyName !== undefined && (!['PropertyAccessExpression', 'ShorthandPropertyAssignment'].includes(occurrence.syntax) || typeof occurrence.propertyName !== 'string' || !occurrence.propertyName)) diagnostics.push('BODY_PROPERTY_NAME_INVALID')
+    if (occurrence.propertyName !== undefined && (!['PropertyAccessExpression', 'ShorthandPropertyAssignment', 'PropertyAssignment', 'MethodDeclaration'].includes(occurrence.syntax) || typeof occurrence.propertyName !== 'string' || !occurrence.propertyName)) diagnostics.push('BODY_PROPERTY_NAME_INVALID')
     if (occurrence.symbolKind !== undefined && (!occurrence.symbol || occurrence.symbolKind !== 'module-namespace')) diagnostics.push('BODY_SYMBOL_KIND_INVALID')
     if (occurrence.operator !== undefined && (typeof occurrence.operator !== 'string' || !occurrence.operator))
       diagnostics.push('BODY_OCCURRENCE_OPERATOR_INVALID')

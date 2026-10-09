@@ -7,15 +7,68 @@ import (
 	"testing"
 )
 
-// Project only the additive H17 field out of a product and recompute its
-// content-derived certificate/generation identities. The immutable H12 hashes
-// then assert every legacy fact/field/ID/ordering byte, not new accepted hashes.
-func legacyH12Projection(t *testing.T, transaction *factTransaction) *factTransaction {
+// Project only additive headers and captured static-name witnesses out. The
+// immutable H12 artifact still qualifies every earlier field and content ID.
+func legacyH12Projection(t *testing.T, transaction *factTransaction, logicalBodies map[string]fact) *factTransaction {
 	t.Helper()
 	legacy := *transaction
 	legacy.Manifest = append([]factShardReference{}, transaction.Manifest...)
 	legacy.Upserts = append([]factShard{}, transaction.Upserts...)
+	bodies := map[string]factShard{}
+	factIDs := map[string]string{}
+	for subject, entry := range logicalBodies {
+		payload := entry.Payload.(bodyFactPayload)
+		payload.Body.Occurrences = append([]bodyOccurrence{}, payload.Body.Occurrences...)
+		for index := range payload.Body.Occurrences {
+			row := &payload.Body.Occurrences[index]
+			if row.Syntax == "PropertyAssignment" || row.Syntax == "MethodDeclaration" {
+				row.PropertyName = ""
+			}
+		}
+		previous := entry.ID
+		entry.Payload, entry.Generation = payload, ""
+		prepared, err := prepareFact(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bodies[subject] = finishShard(bodyNamespace, subject, entry.Completeness, []preparedFact{prepared})
+		factIDs[previous] = prepared.ID
+	}
+	updateReference := func(shard factShard) {
+		for index := range legacy.Manifest {
+			if legacy.Manifest[index].Key == shard.Key {
+				legacy.Manifest[index].Digest = shard.Digest
+				legacy.Manifest[index].canonical = nil
+			}
+		}
+	}
+	for _, shard := range bodies {
+		updateReference(shard)
+	}
 	for index, shard := range legacy.Upserts {
+		if shard.Namespace == bodyNamespace && len(shard.Facts) != 0 {
+			entry := shard.Facts[0]
+			logical, ok := logicalBodies[entry.Subject]
+			if !ok || logical.ID != entry.ID {
+				t.Fatal("packed product has no matching independently extracted logical body")
+			}
+			projected := bodies[entry.Subject]
+			if entry.PhysicalPayload != nil {
+				before, err := packBodyPayload(logical.Payload.(bodyFactPayload), entry.Provenance.Evidence[0], entry.PhysicalPayload.Codec)
+				if err != nil || stableJSON(before) != stableJSON(entry.PhysicalPayload) {
+					t.Fatal("physical product differs from its independently extracted logical body", err)
+				}
+				payload := projected.Facts[0].Payload.(bodyFactPayload)
+				packed, err := packBodyPayload(payload, entry.Provenance.Evidence[0], entry.PhysicalPayload.Codec)
+				if err != nil {
+					t.Fatal(err)
+				}
+				projected.Facts[0].Payload = nil
+				projected.Facts[0].PhysicalPayload = &packed
+			}
+			legacy.Upserts[index] = projected
+			continue
+		}
 		if shard.Namespace != bodyDemandNamespace {
 			continue
 		}
@@ -23,7 +76,18 @@ func legacyH12Projection(t *testing.T, transaction *factTransaction) *factTransa
 		payload := entry.Payload.(bodyDemandPayload)
 		payload.Owners = append([]demandOwner{}, payload.Owners...)
 		for owner := range payload.Owners {
-			payload.Owners[owner].Header = nil
+			row := &payload.Owners[owner]
+			row.Header = nil
+			if previous, ok := factIDs[row.Fact]; ok {
+				row.Fact = previous
+			}
+		}
+		payload.Witnesses = append([]bodyOccurrence{}, payload.Witnesses...)
+		for index := range payload.Witnesses {
+			row := &payload.Witnesses[index]
+			if row.Syntax == "PropertyAssignment" || row.Syntax == "MethodDeclaration" {
+				row.PropertyName = ""
+			}
 		}
 		entry.Payload, entry.Generation = payload, ""
 		prepared, err := prepareFact(entry)
@@ -32,12 +96,7 @@ func legacyH12Projection(t *testing.T, transaction *factTransaction) *factTransa
 		}
 		projected := finishShard(bodyDemandNamespace, entry.Subject, shard.Completion, []preparedFact{prepared})
 		legacy.Upserts[index] = projected
-		for reference := range legacy.Manifest {
-			if legacy.Manifest[reference].Key == projected.Key {
-				legacy.Manifest[reference].Digest = projected.Digest
-				legacy.Manifest[reference].canonical = nil
-			}
-		}
+		updateReference(projected)
 	}
 	legacy.Next.ID, _, _ = nativeGenerationIdentity(legacy.Next, legacy.Manifest)
 	for index, shard := range legacy.Upserts {

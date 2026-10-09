@@ -8,9 +8,11 @@ import { gzipSync, gunzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
 
 import {
-  admitQualificationRun, admitRegistryVersion, admitReleasePackage, assertNpmConsumerLock,
+  admitExternalReleaseAssets, admitPublishedReleaseAssets, admitQualificationRun, admitRegistryVersion, admitReleasePackage, assertNpmConsumerLock,
 } from '../scripts/native/admit-packages.mjs'
-import { assertArtifact, assertOxlintArtifact, NATIVE_TARGETS, oxlintExecutable } from '../scripts/native/shared.mjs'
+import { assertArtifact, assertOxlintArtifact, NATIVE_TARGETS, nativeReleaseAssetName, oxlintExecutable, stableJson } from '../scripts/native/shared.mjs'
+
+import { runInstalledNode } from '../qualification/v2/release/installed-node.mjs'
 
 const execFile = promisify(execFileCallback)
 const temporary: string[] = []
@@ -102,6 +104,133 @@ describe('qualified release archive admission', () => {
   })
 })
 
+describe('installed consumer runtime isolation', () => {
+  it('never inherits source-harness Node loaders or NODE_OPTIONS into a real product child', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codegraph-installed-node-'))
+    temporary.push(root)
+    const child = join(root, 'runtime.mjs')
+    await writeFile(child, 'process.stdout.write(JSON.stringify({ arguments: process.execArgv, nodeOptions: process.env.NODE_OPTIONS }))')
+    const previous = process.env.NODE_OPTIONS
+    try {
+      process.env.NODE_OPTIONS = '--experimental-strip-types'
+      const result = await runInstalledNode([child], { cwd: root })
+      expect(JSON.parse(result.stdout)).toEqual({ arguments: [], nodeOptions: '' })
+    } finally {
+      if (previous === undefined) delete process.env.NODE_OPTIONS
+      else process.env.NODE_OPTIONS = previous
+    }
+  })
+})
+
+describe('external release asset admission', () => {
+  it('binds the light package, ten flat assets and anonymous URLs to the same source', async () => {
+    const fixture = await remoteFixture()
+    const admitted = await admitReleasePackage(fixture.directory, revision, version)
+    const local = await admitExternalReleaseAssets({ directory: fixture.assets, sourceRevision: revision,
+      packageVersion: version, native: admitted.native, viewer: admitted.viewer, headers: admitted.headers })
+    expect(local).toHaveLength(10)
+    await expect(admitExternalReleaseAssets({ directory: fixture.assets, sourceRevision: revision,
+      packageVersion: version, native: admitted.native, viewer: admitted.viewer })).resolves.toHaveLength(10)
+    expect(local.map((asset) => asset.name).sort()).toEqual(Object.keys(fixture.payloads).sort())
+    const requested: string[] = []
+    const remote = await admitPublishedReleaseAssets(admitted, { fetcher: async (url, options) => {
+      requested.push(String(url))
+      expect(Object.keys(options)).toEqual(['signal'])
+      return new Response(fixture.payloads[String(url).split('/').at(-1)!])
+    } })
+    expect(remote).toHaveLength(10)
+    expect(requested.every((url) => url.startsWith(`https://github.com/${repository}/releases/download/codegraph-v${version}-${revision}/`))).toBe(true)
+  })
+
+  it('selects filenames from canonical paths rather than unrelated descriptor properties', async () => {
+    const fixture = await remoteFixture()
+    const admitted = await admitReleasePackage(fixture.directory, revision, version)
+    admitted.native.artifacts['darwin-arm64'].compression.name = 'unqualified.gz'
+    const header = Buffer.from(stableJson(admitted.native))
+    await writeFile(join(fixture.assets, 'native-release.json'), header)
+    admitted.headers.native = { bytes: header.length, sha256: digest(header), name: 'unqualified.json' }
+    const assets = await admitExternalReleaseAssets({ directory: fixture.assets, sourceRevision: revision,
+      packageVersion: version, native: admitted.native, viewer: admitted.viewer, headers: admitted.headers })
+    expect(assets.map((asset) => asset.name).sort()).toEqual(Object.keys(fixture.payloads).sort())
+  })
+
+  it.each(['native-artifacts/linux-x64/bin/unqualified', 'dist/viewer/index.html', '.native-release-assets/unqualified.gz', '.viewer-release-assets/unqualified.gz'])('rejects embedded payload %s', async (path) => {
+    const fixture = await remoteFixture({ [path]: Buffer.from('unqualified') })
+    await expect(admitReleasePackage(fixture.directory, revision, version)).rejects.toThrow('must not embed')
+  })
+
+  it.each(['source', 'path', 'viewer-source', 'worker-source'] as const)('rejects torn header %s', async (kind) => {
+    const fixture = await remoteFixture({}, kind)
+    await expect(admitReleasePackage(fixture.directory, revision, version)).rejects.toThrow()
+  })
+
+  it.each(['stray', 'missing', 'symlink', 'directory', 'encoded', 'decoded', 'header'] as const)('rejects external %s corruption before publication', async (kind) => {
+    const fixture = await remoteFixture()
+    const admitted = await admitReleasePackage(fixture.directory, revision, version)
+    const name = Object.keys(fixture.payloads).find((path) => path.startsWith('native-'))!
+    const path = join(fixture.assets, name)
+    if (kind === 'stray') await writeFile(join(fixture.assets, 'stray'), 'unqualified')
+    else if (kind === 'missing') await rm(path)
+    else if (kind === 'symlink') { await rm(path); await symlink(join(fixture.assets, 'native-release.json'), path) }
+    else if (kind === 'directory') { await rm(path); await mkdir(path) }
+    else if (kind === 'header') await writeFile(join(fixture.assets, 'viewer-release.json'), JSON.stringify(admitted.viewer))
+    else {
+      const bytes = kind === 'encoded' ? Buffer.from(fixture.payloads[name]!) : gzipSync(Buffer.from('different decoded bytes'))
+      if (kind === 'encoded') bytes[0] = bytes[0]! ^ 1
+      await writeFile(path, bytes)
+      if (kind === 'decoded') {
+        const artifact = admitted.native.artifacts['darwin-arm64']
+        artifact.compression.bytes = bytes.length
+        artifact.compression.sha256 = digest(bytes)
+        // The header identity changes honestly; original executable identity must still reject.
+        const header = Buffer.from(stableJson(admitted.native))
+        await writeFile(join(fixture.assets, 'native-release.json'), header)
+        admitted.headers.native = { bytes: header.length, sha256: digest(header) }
+      }
+    }
+    await expect(admitExternalReleaseAssets({ directory: fixture.assets, sourceRevision: revision,
+      packageVersion: version, native: admitted.native, viewer: admitted.viewer, headers: admitted.headers })).rejects.toThrow()
+  })
+
+  it.each(['viewer-build', 'viewer-notices'] as const)('rejects an authenticated viewer with torn %s license metadata', async (kind) => {
+    const fixture = await remoteFixture({}, kind)
+    const admitted = await admitReleasePackage(fixture.directory, revision, version)
+    await expect(admitExternalReleaseAssets({ directory: fixture.assets, sourceRevision: revision,
+      packageVersion: version, native: admitted.native, viewer: admitted.viewer, headers: admitted.headers })).rejects.toThrow()
+  })
+
+  it('bounds streamed downloads and rejects non-HTTPS redirects, HTTP failure and a caller abort', async () => {
+    const fixture = await remoteFixture()
+    const admitted = await admitReleasePackage(fixture.directory, revision, version)
+    await expect(admitPublishedReleaseAssets(admitted, { fetcher: async () => new Response('missing', { status: 404 }) })).rejects.toThrow('HTTP 404')
+    await expect(admitPublishedReleaseAssets(admitted, { fetcher: async () => {
+      const response = new Response('unqualified')
+      Object.defineProperty(response, 'url', { value: 'http://insecure.invalid/asset' })
+      return response
+    } })).rejects.toThrow('outside HTTPS')
+    await expect(admitPublishedReleaseAssets(admitted, { fetcher: async () => new Response(Buffer.alloc(1024 * 1024)) })).rejects.toThrow('encoded size')
+    await expect(admitPublishedReleaseAssets(admitted, { signal: AbortSignal.abort(new Error('cancelled')) })).rejects.toThrow('cancelled')
+  })
+
+  it('rejects an authenticated gzip whose decoded viewer tar contains a symlink', async () => {
+    const fixture = await remoteFixture()
+    const admitted = await admitReleasePackage(fixture.directory, revision, version)
+    const tar = gunzipSync(fixture.payloads[admitted.viewer.asset]!)
+    tar[156] = 50
+    tar.fill(32, 148, 156)
+    const checksum = tar.subarray(0, 512).reduce((sum, byte) => sum + byte, 0)
+    tar.write(checksum.toString(8).padStart(6, '0') + '\0 ', 148, 'ascii')
+    const encoded = gzipSync(tar)
+    Object.assign(admitted.viewer, { bytes: tar.length, sha256: digest(tar), compression: { format: 'gzip', bytes: encoded.length, sha256: digest(encoded) } })
+    const header = Buffer.from(JSON.stringify(admitted.viewer, null, 2) + '\n')
+    admitted.headers.viewer = { bytes: header.length, sha256: digest(header) }
+    await writeFile(join(fixture.assets, 'viewer-release.json'), header)
+    await writeFile(join(fixture.assets, admitted.viewer.asset), encoded)
+    await expect(admitExternalReleaseAssets({ directory: fixture.assets, sourceRevision: revision,
+      packageVersion: version, native: admitted.native, viewer: admitted.viewer, headers: admitted.headers })).rejects.toThrow('Unsupported viewer archive entry')
+  })
+})
+
 describe('downloaded native artifact assembly', () => {
   it.skipIf(process.platform === 'win32')('encodes authenticated Go and workers without changing downloads or duplicating originals', async () => {
     const fixture = await assemblyFixture()
@@ -111,11 +240,11 @@ describe('downloaded native artifact assembly', () => {
     for (const file of fixture.files) {
       expect(await readFile(file.source)).toEqual(file.bytes)
       expect((await stat(file.source)).mode & 0o777).toBe(0o644)
-      const delivered = await readFile(`${file.destination}.gz`)
+      const delivered = await readFile(file.destination)
       expect(gunzipSync(delivered)).toEqual(file.bytes)
-      expect((await stat(`${file.destination}.gz`)).mode & 0o777).toBe(0o644)
-      await expect(stat(file.destination)).rejects.toMatchObject({ code: 'ENOENT' })
-      const original = file.destination.includes('codegraph-oxlint') ? release.artifacts[file.target].oxlint : release.artifacts[file.target]
+      expect((await stat(file.destination)).mode & 0o777).toBe(0o644)
+      await expect(stat(join(fixture.root, 'native-artifacts'))).rejects.toMatchObject({ code: 'ENOENT' })
+      const original = file.destination.includes('oxlint-') ? release.artifacts[file.target].oxlint : release.artifacts[file.target]
       expect(original.sha256).toBe(file.sha256)
       expect(original.compression.bytes).toBe(delivered.length)
       expect(original.compression.sha256).toBe(createHash('sha256').update(delivered).digest('hex'))
@@ -170,7 +299,7 @@ async function assemblyFixture() {
       bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), ...(worker ? { oxlint: worker } : {}),
     }
     const source = join(input, target)
-    const destination = join(root, 'native-artifacts', target)
+    const destination = join(root, '.native-release-assets')
     const toolchain = { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture',
       ...(worker ? { oxlint: { rustc: 'fixture', cargo: 'fixture', cargoLockSha256: '5'.repeat(64) } } : {}),
     }
@@ -187,7 +316,7 @@ async function assemblyFixture() {
       await mkdir(join(path, '..'), { recursive: true })
       await writeFile(path, record.bytes)
       await chmod(path, 0o644)
-      files.push({ source: path, destination: join(destination, record.descriptor.executable),
+      files.push({ source: path, destination: join(destination, nativeReleaseAssetName(target, record.descriptor === worker ? 'oxlint' : 'native', revision)),
         bytes: record.bytes, sha256: record.descriptor.sha256, target })
     }
   }
@@ -252,6 +381,48 @@ async function releaseFixture(corruption?: 'binary' | 'dependency' | 'version' |
   }
   return output
 }
+
+async function remoteFixture(extra: Record<string, Buffer> = {}, corruption?: 'source' | 'path' | 'viewer-source' | 'worker-source' | 'viewer-build' | 'viewer-notices') {
+  const root = await mkdtemp(join(tmpdir(), 'codegraph-remote-admission-'))
+  temporary.push(root)
+  const directory = join(root, 'archives'), assets = join(root, 'assets'), viewerRoot = join(root, 'viewer')
+  await Promise.all([mkdir(directory), mkdir(assets), mkdir(viewerRoot)])
+  const artifacts: Record<string, unknown> = {}, payloads: Record<string, Buffer> = {}
+  for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
+    const bytes = Buffer.from(`remote fixture ${target} Go`), workerBytes = Buffer.from(`remote fixture ${target} worker`)
+    const worker = expected.oxlint ? { ...oxlintDescriptor(target, workerBytes), compression: compression(target, 'oxlint', workerBytes) } : undefined
+    if (worker && corruption === 'worker-source' && target === 'linux-x64') worker.source.patchSha256 = '6'.repeat(64)
+    artifacts[target] = { target, executable: expected.executable, bytes: bytes.length, sha256: digest(bytes),
+      compression: compression(target, 'native', bytes), ...(worker ? { oxlint: worker } : {}) }
+  }
+  function compression(target: string, kind: string, bytes: Buffer) {
+    const path = nativeReleaseAssetName(target, kind, corruption === 'path' ? '2'.repeat(40) : revision)
+    const encoded = gzipSync(bytes)
+    payloads[path] = encoded
+    return { format: 'gzip', path, bytes: encoded.length, sha256: digest(encoded) }
+  }
+  for (const [path, bytes] of Object.entries({ 'index.html': '<html>fixture</html>',
+    'THIRD_PARTY_NOTICES.txt': 'fixture licenses', 'viewer-build.json': JSON.stringify({ format: corruption === 'viewer-build' ? 'unqualified' : 'codegraph.viewer-build.v1',
+      packages: corruption === 'viewer-notices' ? [{ name: 'fixture', version: '1.0.0', notices: [] }] : [] }) })) {
+    await writeFile(join(viewerRoot, path), bytes)
+  }
+  const { buildViewerArchive } = await import('../scripts/viewer/archive.mjs')
+  const built = await buildViewerArchive(viewerRoot)
+  const viewer = { format: 'codegraph.viewer-release.v1', packageVersion: version,
+    sourceRevision: corruption === 'viewer-source' ? '2'.repeat(40) : revision, asset: `viewer-${revision}.tar.gz`, ...built.descriptor }
+  payloads[viewer.asset] = built.gzip
+  const native = { format: 'astrale.codegraph.native-release', version: 1, delivery: 'github-release', packageVersion: version,
+    protocolVersion: 1, sourceRevision: corruption === 'source' ? '2'.repeat(40) : revision, artifacts,
+    toolchain: { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture', oxlint: { rustc: 'fixture', cargo: 'fixture', cargoLockSha256: '5'.repeat(64) } } }
+  payloads['native-release.json'] = Buffer.from(stableJson(native))
+  payloads['viewer-release.json'] = Buffer.from(JSON.stringify(viewer, null, 2) + '\n')
+  await Promise.all(Object.entries(payloads).map(([name, bytes]) => writeFile(join(assets, name), bytes)))
+  await packFixture(root, directory, '@astrale-os/codegraph', { 'package.json': publicManifest('@astrale-os/codegraph'),
+    'native-release.json': payloads['native-release.json'], 'viewer-release.json': payloads['viewer-release.json'],
+    LICENSE: Buffer.from('license fixture'), 'THIRD_PARTY_NOTICES.md': Buffer.from('notices fixture'), ...extra })
+  return { directory, assets, payloads }
+}
+function digest(bytes: Buffer) { return createHash('sha256').update(bytes).digest('hex') }
 
 function oxlintDescriptor(target: string, bytes: Buffer) {
   return { executable: oxlintExecutable(target), bytes: bytes.length,

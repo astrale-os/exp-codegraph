@@ -57,6 +57,8 @@ type governancePhaseCounters struct {
 	CompilerPrograms           int                     `json:"compilerPrograms"`
 }
 type governanceSession struct {
+	// Last acknowledged fact metadata only; never retains a captured Program.
+	semanticPublished generationState
 	genericProducer   *governanceOwnedProcess
 	ownedSignals      *governanceOwnedSessionSignals
 	policyLane        *governancePolicyLane
@@ -175,7 +177,7 @@ func runDecisionServe(arguments []string) int {
 	session := governanceSession{root: root, ownedSignals: governanceNewOwnedSessionSignals()}
 	encoder := json.NewEncoder(os.Stdout)
 	defer session.ownedSignals.stop()
-	encoder.Encode(map[string]any{"service": "astrale.lint-decision", "protocol": 1, "contractRevision": 1})
+	encoder.Encode(map[string]any{"service": "astrale.lint-decision", "protocol": 1, "contractRevision": 1, "semanticReaderRevision": 1})
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 64*1024*1024)
 	for scanner.Scan() {
@@ -216,6 +218,10 @@ func runDecisionServe(arguments []string) int {
 			result, err = session.captureOwnedGeneric(request.Params)
 		case "capture-probes":
 			result, err = session.captureProbes(request.Params)
+		case "semantic-open":
+			result, err = session.openSemanticProjection(request.Params)
+		case "semantic-request":
+			result, err = session.requestSemanticProjection(request.Params)
 		case "continue":
 			result, err = session.continueProducts(request.Params)
 		case "seal":
