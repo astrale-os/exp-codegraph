@@ -64,7 +64,7 @@ export interface ValueReadScope {
   readonly signal?: AbortSignal
   check(): void
   fail(): void
-  proof(basis: ValueProofBasis): void
+  proof(basis: ValueProofBasis, checkEvidence?: boolean): void
   selection(revision: ValueIndexRevision | undefined, keys: readonly string[]): void
 }
 
@@ -155,7 +155,7 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   canReuse(proof: EvaluatedValueResult<unknown>): boolean {
     this.#scope?.check()
     const basis = (proof as Proof)[PROOF]?.basis
-    if (basis) this.#scope?.proof(basis)
+    if (basis) this.#scope?.proof(basis, true)
     return this.reusable(proof, this.#limits)
   }
 
@@ -201,10 +201,14 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
     const state: State = { limits,
       signal, dependencies: new Set(), evidence: new Set(), active: new Map(), effects: new Map(), requirements: new Map(), steps: 0 }
     state.signal?.throwIfAborted()
-    this.depend(state, 'effects:inventory')
+    // Global completeness admits the evaluation; the positive proof cites the
+    // cells it actually reads rather than an unrelated materialization catalogue.
+    state.dependencies.add(this.#context.dependency('effects:inventory'))
+    const incompleteInventory = this.#index.effectCompleteness !== undefined && this.#index.effectCompleteness.kind !== 'complete'
+    if (incompleteInventory) this.depend(state, 'effects:inventory')
     let value: RuntimeValue<Atom>
     try {
-      value = this.#index.effectCompleteness !== undefined && this.#index.effectCompleteness.kind !== 'complete'
+      value = incompleteInventory
         ? uncertain('VALUE_EFFECT_INVENTORY_INCOMPLETE', 'The selected projection has no complete global effect authority.')
         : this.evaluatePlan(plan, state)
     } catch (error) {
@@ -604,7 +608,10 @@ class Evaluator<Atom> implements BoundedValueEvaluator<Atom> {
   private depend(state: State, ...keys: readonly string[]): void {
     for (const key of keys) {
       state.dependencies.add(this.#context.dependency(key))
-      for (const fact of this.#index.evidence.get(key) ?? []) state.evidence.add(fact)
+      for (const fact of this.#index.evidence.get(key) ?? []) {
+        state.dependencies.add(this.#context.dependency(`evidence:${fact}`))
+        state.evidence.add(fact)
+      }
     }
   }
 }

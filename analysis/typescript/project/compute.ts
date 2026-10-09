@@ -1,5 +1,6 @@
 import type { AnalysisGeneration } from '../../generation/index.ts'
 import type { AnalysisQuery } from '../../query/index.ts'
+import { admitAnalysisId } from '../../identity/index.ts'
 import type { ValueIndex } from '../value/symbolic/facts.ts'
 import type { StructuralIndex } from '../structure/owner.ts'
 import { createTypeScriptStructuralReader } from '../structure/reader.ts'
@@ -132,8 +133,11 @@ export class SemanticComputationCache {
       construct(valueRevision !== undefined || structuralRevision !== undefined)
       const scope: ValueReadScope = {
         signal, check: checked, fail: abandon,
-        proof: (basis) => {
+        proof: (basis, checkEvidence = false) => {
           if (receipt) for (const dependency of basis.dependencies) {
+            // Value proofs own every cited fact. An aggregate only retains a
+            // physical reference when that identity survives its portable DTO.
+            if (!checkEvidence && dependency.key.startsWith('evidence:')) continue
             if (recordComputationWitness(witnesses!, this.#values.witnessIdentity(dependency))) receipt.add(dependency.key)
           }
         },
@@ -162,7 +166,11 @@ export class SemanticComputationCache {
         return observe(reader!, captured ? captured.value : input)
       }), signal)
       checked()
-      const portable = captured && capturePortable(result)
+      const portable = captured && capturePortable(result, value => {
+        if (!receipt || !value.startsWith('fact:')) return
+        try { admitAnalysisId('fact', value) } catch { return }
+        receipt.add(`evidence:${value}`)
+      })
       if (!portable) return result
       const retained = receipt?.compact()
       releaseConstruction()
