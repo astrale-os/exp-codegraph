@@ -1,4 +1,5 @@
-import type { TypeScriptComputation, TypeScriptProjectSnapshot } from '../../analysis/typescript/index.ts'
+import { openCapturedTypeScriptReader, type TypeScriptComputation, type TypeScriptProjectSnapshot } from '../../analysis/typescript/index.ts'
+import type { NativeDecisionSession } from '../../analysis/native/index.ts'
 
 declare const snapshot: TypeScriptProjectSnapshot
 
@@ -21,3 +22,15 @@ await snapshot.compute(countCalls, { paths: [42] })
 
 const inferred = await snapshot.compute((_read, input) => ({ id: input.id }), { id: 'route' })
 inferred.id satisfies string
+
+declare const capturedSession: NativeDecisionSession
+const captured = await openCapturedTypeScriptReader(capturedSession, {
+  token: 'owned', generation: 'capture', sourceSnapshotDigest: 'a'.repeat(64),
+}, { signal: new AbortController().signal })
+const capturedCount = await captured.compute(countCalls, { paths: ['routes.ts'] })
+capturedCount satisfies number
+// @ts-expect-error The capture exposes tracked observations, not its backing fact query.
+captured.query
+// @ts-expect-error Captured observations preserve the callback input contract.
+await captured.compute(countCalls, { paths: [42] })
+await captured.dispose()

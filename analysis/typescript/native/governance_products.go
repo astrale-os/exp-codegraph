@@ -74,6 +74,8 @@ type governanceProductsSession struct {
 	RuntimeIdentity        *governanceRuntimeIdentity
 	RuntimeReady           map[string]governanceOutcome
 	sourceBody             *governanceSourceBodyOwner
+	semanticReaders        map[string]*governanceSemanticProjection
+	semanticLease          int
 	SourceProducts         []governanceRuleProduct
 	RuleReady              map[string]governanceOutcome
 	GenericEngine          *governanceGenericEngine
@@ -381,6 +383,11 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	runtimeOutcomes := map[string]governanceOutcome{}
 	runtimeEvaluated := false
 	sourceRequired := false
+	if governanceClosedSourceRevision(state.Prepare.Options) == 3 {
+		if _, err := state.runtimeProofLimits(); err != nil {
+			return nil, err
+		}
+	}
 	if len(state.Contracts) != len(governanceRevisions) {
 		residual = append(residual, "Canonical whole implementation contract inventory unavailable.")
 	}
@@ -402,13 +409,14 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		if !governanceDigestValid(contract.RuleRevision) {
 			return nil, fmt.Errorf("canonical implementation revision is malformed for %s", contract.RuleID)
 		}
-		if expectedID == "astrale.sdk.typescript-source" && !state.sourceRevisionMatchesRequest(contract) {
+		closedOwner := expectedID == "astrale.sdk.typescript-source" || governanceClosedSourceRevision(state.Prepare.Options) == 3
+		if closedOwner && !state.sourceRevisionMatchesRequest(contract) {
 			return nil, fmt.Errorf("canonical source implementation revision differs from its request for %s", contract.RuleID)
 		}
 		if disabled[contract.RuleID] {
 			continue
 		}
-		if contract.Implementation.ID == "astrale.sdk.codegraph" && !runtimeEvaluated {
+		if !closedOwner && contract.Implementation.ID == "astrale.sdk.codegraph" && !runtimeEvaluated {
 			runtimeEvaluated = true
 			observed, err := state.resumeRuntimeProducts()
 			if err != nil {
@@ -426,12 +434,12 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 		// Native evaluators own only their three semantic revisions. Source
 		// revisions belong to the SDK interpreter that admitted these contracts;
 		// retaining a second copy prevents an otherwise compatible SDK update.
-		if contract.Implementation.ID == "astrale.sdk.codegraph" && (!ok || revision != contract.RuleRevision) {
+		if !closedOwner && contract.Implementation.ID == "astrale.sdk.codegraph" && (!ok || revision != contract.RuleRevision) {
 			residual = append(residual, "Native source revision authority unavailable: "+contract.RuleID)
 			continue
 		}
 		var out governanceOutcome
-		if contract.Implementation.ID == "astrale.sdk.codegraph" {
+		if !closedOwner && contract.Implementation.ID == "astrale.sdk.codegraph" {
 			var known bool
 			out, known = runtimeOutcomes[contract.RuleID]
 			if !known {

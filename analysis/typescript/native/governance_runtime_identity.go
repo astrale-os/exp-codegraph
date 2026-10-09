@@ -75,14 +75,18 @@ func governancePortableUniversePath(project *governedProject, path string) (stri
 	return "", fmt.Errorf("runtime universe input has no portable coordinate: %s", path)
 }
 func governanceCapturedUniverse(owner *governanceTypeAuthority) (string, error) {
+	universe, _, err := governanceCapturedUniverseConfiguration(owner)
+	return universe, err
+}
+func governanceCapturedUniverseConfiguration(owner *governanceTypeAuthority) (string, []map[string]any, error) {
 	owner.open()
 	if owner.program == nil {
-		return "", fmt.Errorf("native runtime Program authority unavailable")
+		return "", nil, fmt.Errorf("native runtime Program authority unavailable")
 	}
 	project := owner.project
 	configs, err := parsedProjectConfigs(owner.program)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	paths := []string{}
 	projects := []string{}
@@ -91,7 +95,7 @@ func governanceCapturedUniverse(owner *governanceTypeAuthority) (string, error) 
 		paths = append(paths, parsed.ExtendedSourceFiles()...)
 		logical, err := governancePortableUniversePath(project, parsed.ConfigName())
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		projects = append(projects, logical)
 	}
@@ -107,20 +111,20 @@ func governanceCapturedUniverse(owner *governanceTypeAuthority) (string, error) 
 		}
 		content, err := project.capture.read(path)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		logical, err := governancePortableUniversePath(project, path)
 		if err != nil {
-			return "", err
+			return "", nil, err
 		}
 		configuration = append(configuration, map[string]any{"path": logical, "digest": hashText(string(content))})
 	}
 	sort.Slice(configuration, func(i, j int) bool { return configuration[i]["path"].(string) < configuration[j]["path"].(string) })
 	rootConfig, err := governancePortableUniversePath(project, owner.program.ParsedConfig.ConfigName())
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	return deriveID("project-universe", "astrale.analysis.typescript.universe.v2", map[string]any{"configuration": configuration, "project": rootConfig, "projects": sortedUnique(projects), "producer": map[string]any{"name": "ttsc-typescript-go", "version": producerVersion, "ttsc": ttscVersion, "typescriptGo": core.Version(), "protocol": protocolVersion}, "platform": map[string]any{"os": runtime.GOOS, "architecture": runtime.GOARCH}}), nil
+	return deriveID("project-universe", "astrale.analysis.typescript.universe.v2", map[string]any{"configuration": configuration, "project": rootConfig, "projects": sortedUnique(projects), "producer": map[string]any{"name": "ttsc-typescript-go", "version": producerVersion, "ttsc": ttscVersion, "typescriptGo": core.Version(), "protocol": protocolVersion}, "platform": map[string]any{"os": runtime.GOOS, "architecture": runtime.GOARCH}}), configuration, nil
 }
 func governanceRuntimeProgramOwned(root, path string) (string, bool) {
 	relative, err := filepath.Rel(root, path)

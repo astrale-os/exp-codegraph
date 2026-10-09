@@ -247,7 +247,7 @@ describe('TypeSpec V2 generic analysis foundation', () => {
       [resolve(analysisRoot, 'native/index.ts'), resolve(analysisRoot, 'typescript/distribution/index.ts')],
     ])
     const allowed: Record<string, ReadonlySet<string>> = {
-      native: new Set(),
+      native: new Set(['protocol']),
       facade: new Set([
         'binding',
         'facts',

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { NativeDecisionServiceError, type NativeDecisionSession } from "./decision-model.ts";
 import { resolvePackagedNativeAnalysis, resolveOptionalPackagedNativeOxlint } from "../typescript/distribution/resolve.ts";
+import type { NativeCapturedAnalysisStamp, NativeCapturedAnalysisPort, NativeProjectDescriptor } from '../protocol/model.ts';
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -63,6 +64,73 @@ export class DecisionProcess implements NativeDecisionSession {
   readonly #queue: DecisionRequest[] = [];
   #pumpScheduled = false;
   #disposing?: Promise<void>;
+  #semanticReaderRevision?: 1;
+  readonly #lifetime = new AbortController();
+  readonly #ownerDisposers = new Set<() => Promise<void>>();
+  #ownersClosing?: Promise<void>;
+
+  get semanticReaderRevision(): 1 | undefined { return this.#semanticReaderRevision; }
+
+  get openSemanticProjection(): NativeDecisionSession['openSemanticProjection'] {
+    return this.#semanticReaderRevision === 1 ? this.#openSemanticProjection : undefined;
+  }
+
+  readonly #openSemanticProjection = async (
+    input: NativeCapturedAnalysisStamp, options: { readonly signal?: AbortSignal } = {},
+  ): Promise<NativeCapturedAnalysisPort> => {
+    const stamp = Object.freeze({ token: input.token, generation: input.generation, sourceSnapshotDigest: input.sourceSnapshotDigest });
+    if (!stamp.token || !stamp.generation || !/^[a-f0-9]{64}$/.test(stamp.sourceSnapshotDigest)) {
+      throw new TypeError('Invalid captured semantic identity.');
+    }
+    const acquired = await this.#request('semantic-open', stamp, options.signal);
+    const frame = this.#capturedFrame(acquired, stamp);
+    if (typeof frame.lease !== 'string' || !frame.lease) return this.#semanticProtocolFailure('Semantic acquisition omitted its lease.');
+    const descriptor = frame.project as Partial<NativeProjectDescriptor> | undefined;
+    if (!descriptor || typeof descriptor.root !== 'string' || typeof descriptor.config !== 'string' ||
+      !Array.isArray(descriptor.capabilities) || descriptor.capabilities.some((value: unknown) => typeof value !== 'string')) {
+      return this.#semanticProtocolFailure('Semantic acquisition omitted its project descriptor.');
+    }
+    const project = Object.freeze({ root: descriptor.root, config: descriptor.config,
+      capabilities: Object.freeze([...descriptor.capabilities]) });
+    const lease = frame.lease;
+    const lifetime = new AbortController();
+    const signal = AbortSignal.any([lifetime.signal, this.#lifetime.signal]);
+    let lastId = 0;
+    let closing: Promise<void> | undefined;
+    return Object.freeze({
+      signal, project, ownerSignal: this.#lifetime.signal,
+      onOwnerDispose: (dispose) => {
+        if (this.#closed) throw new NativeDecisionServiceError('PROCESS', 'Decision session is unavailable.');
+        this.#ownerDisposers.add(dispose);
+      },
+      request: async (request, options = {}) => {
+        signal.throwIfAborted();
+        lastId = Math.max(lastId, request.id);
+        const response = this.#capturedFrame(await this.#request('semantic-request', { ...stamp, lease, request },
+          options.signal ? AbortSignal.any([options.signal, signal]) : signal), stamp, lease);
+        return response.response;
+      },
+      dispose: () => {
+        if (closing) return closing;
+        lifetime.abort(new Error('Captured projection lease is disposed.'));
+        if (this.#closed) return closing = Promise.resolve();
+        closing = this.#request('semantic-request', { ...stamp, lease, request: { id: ++lastId, kind: 'dispose' } })
+          .then((value) => { this.#capturedFrame(value, stamp, lease); });
+        return closing;
+      },
+    } satisfies NativeCapturedAnalysisPort);
+  };
+
+  #semanticProtocolFailure(message: string): never {
+    const error = new NativeDecisionServiceError('PROTOCOL', message);
+    this.#fail(error);
+    throw error;
+  }
+
+  #capturedFrame(value: unknown, stamp: NativeCapturedAnalysisStamp, lease?: string): Record<string, unknown> {
+    try { return capturedFrame(value, stamp, lease); }
+    catch (error) { this.#fail(error as Error); throw error; }
+  }
 
   constructor(child: ChildProcessWithoutNullStreams, ownedArtifactPath?: () => Promise<string | undefined>) {
     this.#child = child;
@@ -147,7 +215,7 @@ export class DecisionProcess implements NativeDecisionSession {
     if (this.#disposing) return this.#disposing;
     this.#fail(new NativeDecisionServiceError("PROCESS", "Decision session disposed."));
     const timer = setTimeout(() => this.#child.kill("SIGKILL"), 2_000);
-    this.#disposing = this.#exit.finally(() => {
+    this.#disposing = Promise.all([this.#exit, this.#ownersClosing]).then(() => {}).finally(() => {
       clearTimeout(timer);
     });
     return this.#disposing;
@@ -291,7 +359,8 @@ export class DecisionProcess implements NativeDecisionSession {
         if (
           frame.service !== "astrale.lint-decision" ||
           frame.protocol !== 1 ||
-          frame.contractRevision !== 1
+          frame.contractRevision !== 1 ||
+          (frame.semanticReaderRevision !== undefined && frame.semanticReaderRevision !== 1)
         ) {
           this.#fail(
             new NativeDecisionServiceError(
@@ -302,6 +371,7 @@ export class DecisionProcess implements NativeDecisionSession {
           return;
         }
         this.#handshaken = true;
+        this.#semanticReaderRevision = frame.semanticReaderRevision === 1 ? 1 : undefined;
         this.#resolveHello();
         continue;
       }
@@ -353,6 +423,12 @@ export class DecisionProcess implements NativeDecisionSession {
   #fail(error: Error): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#lifetime.abort(error);
+    this.#ownersClosing = Promise.all([...this.#ownerDisposers].map((dispose) => Promise.resolve().then(dispose))).then(() => {});
+    // Cancellation can precede an explicit dispose call. Keep cleanup handled;
+    // dispose still observes its exact result through ownersClosing.
+    void this.#ownersClosing.catch(() => {});
+    this.#ownerDisposers.clear();
     this.#rejectHello(error);
     if (this.#pending) {
       this.#settled(this.#pending);
@@ -367,6 +443,18 @@ export class DecisionProcess implements NativeDecisionSession {
     this.#chunks = [];
     this.#bytes = 0;
   }
+}
+
+function capturedFrame(value: unknown, stamp: NativeCapturedAnalysisStamp, lease?: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new NativeDecisionServiceError('PROTOCOL', 'Malformed semantic capture frame.');
+  }
+  const frame = value as Record<string, unknown>;
+  if (frame.token !== stamp.token || frame.generation !== stamp.generation ||
+    frame.sourceSnapshotDigest !== stamp.sourceSnapshotDigest || (lease !== undefined && frame.lease !== lease)) {
+    throw new NativeDecisionServiceError('PROTOCOL', 'Semantic frame belongs to another capture or lease.');
+  }
+  return frame;
 }
 
 function cancelled(cause?: unknown): NativeDecisionServiceError {
