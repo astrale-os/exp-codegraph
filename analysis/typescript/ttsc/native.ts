@@ -22,6 +22,8 @@ export interface TtscNativeAnalysisOptions {
   readonly environment?: NodeJS.ProcessEnv
   /** Build-time identity of the companion just built and hashed by the release builder. */
   readonly ownedOxlint?: NativeOxlintArtifact
+  /** Release-only removal of Go debug tables; does not change executable behavior. */
+  readonly stripDebugInfo?: boolean
 }
 
 export interface ResolvedTtscNativeAnalysis {
@@ -125,23 +127,26 @@ function canonicalEnvironment(
 
 function nativeBuildEnvironment(options: TtscNativeAnalysisOptions): NodeJS.ProcessEnv | undefined {
   const worker = options.ownedOxlint
-  if (!worker) return options.environment
-  if (options.binary) throw new Error('A companion identity cannot be linked into an explicit native binary.')
-  if (!/^[a-f0-9]{64}$/u.test(worker.sha256) || !Number.isSafeInteger(worker.bytes) ||
-    worker.bytes <= 0 || worker.engineVersion !== '1.81.0' || worker.protocolVersion !== 1) {
+  if (!worker && !options.stripDebugInfo) return options.environment
+  if (options.binary) throw new Error('Build linker options cannot be applied to an explicit native binary.')
+  if (worker && (!/^[a-f0-9]{64}$/u.test(worker.sha256) || !Number.isSafeInteger(worker.bytes) ||
+    worker.bytes <= 0 || worker.engineVersion !== '1.81.0' || worker.protocolVersion !== 1)) {
     throw new Error('The companion worker has no qualified build identity.')
   }
   const inheritedFlags = options.environment?.GOFLAGS ?? process.env.GOFLAGS ?? ''
-  // One linker invocation owns the companion identity; a second -ldflags flag
-  // would silently replace its values. Other ordinary Go flags are retained.
+  // One linker invocation owns stripping and companion identity. A second flag
+  // would silently replace its values; ordinary Go flags remain in the cache key.
   if (/(?:^|\s|["'])-ldflags(?:=|\s|["']|$)/u.test(inheritedFlags)) {
-    throw new Error('The companion release builder must own Go linker flags.')
+    throw new Error('The native release builder must own Go linker flags.')
   }
   const linker = [
-    `-X=main.governanceOwnedArtifactSHA=${worker.sha256}`,
-    `-X=main.governanceOwnedArtifactBytes=${worker.bytes}`,
-    `-X=main.governanceOwnedEngineVersion=${worker.engineVersion}`,
-    `-X=main.governanceOwnedProtocolVersion=${worker.protocolVersion}`,
+    ...(options.stripDebugInfo ? ['-s', '-w'] : []),
+    ...(worker ? [
+      `-X=main.governanceOwnedArtifactSHA=${worker.sha256}`,
+      `-X=main.governanceOwnedArtifactBytes=${worker.bytes}`,
+      `-X=main.governanceOwnedEngineVersion=${worker.engineVersion}`,
+      `-X=main.governanceOwnedProtocolVersion=${worker.protocolVersion}`,
+    ] : []),
   ].join(' ')
   return { ...options.environment, GOFLAGS: `${inheritedFlags} "-ldflags=${linker}"`.trim() }
 }

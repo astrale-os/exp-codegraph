@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
 import { basename, dirname, isAbsolute, relative, sep } from 'node:path'
 
 export const NATIVE_RELEASE_FORMAT = 'astrale.codegraph.native-release'
@@ -30,11 +31,10 @@ export async function readJson(path) {
 }
 
 export async function digestFile(path) {
-  const bytes = await readFile(path)
-  return {
-    bytes: bytes.byteLength,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
-  }
+  let bytes = 0
+  const hash = createHash('sha256')
+  for await (const chunk of createReadStream(path)) { bytes += chunk.length; hash.update(chunk) }
+  return { bytes, sha256: hash.digest('hex') }
 }
 
 export async function assertRegularExecutable(path, target) {
@@ -61,6 +61,7 @@ export function assertArtifact(value, target, packageVersion, { requireOxlint = 
   ) {
     throw new Error(`${target} has an invalid native artifact record for ${packageVersion}.`)
   }
+  assertCompression(value, target)
   if (value.oxlint !== undefined) assertOxlintArtifact(value.oxlint, target)
   else if (requireOxlint) throw new Error(`${target} has no qualified codegraph-oxlint artifact.`)
   return value
@@ -78,7 +79,19 @@ export function assertOxlintArtifact(value, target) {
     typeof value.source.revision !== 'string' || !/^[a-f0-9]{40}$/u.test(value.source.revision) ||
     typeof value.source.patchSha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.source.patchSha256)
   ) throw new Error(`${target} has an invalid codegraph-oxlint artifact record.`)
+  assertCompression(value, target)
   return value
+}
+
+function assertCompression(artifact, target) {
+  const value = artifact.compression
+  if (value === undefined) return
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+    value.format !== 'gzip' || value.path !== `${artifact.executable}.gz` ||
+    !Number.isSafeInteger(value.bytes) || value.bytes < 1 ||
+    typeof value.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(value.sha256)) {
+    throw new Error(`${target} has an invalid compressed artifact descriptor.`)
+  }
 }
 
 export function assertArtifactManifest(value, target, packageVersion, options) {

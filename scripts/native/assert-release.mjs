@@ -1,5 +1,7 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
+
+import { assertDeliveredArtifact } from './compression.mjs'
 
 import {
   NATIVE_ARTIFACT_DIRECTORY,
@@ -10,7 +12,6 @@ import {
   assertOxlintSources,
   assertRegularExecutable,
   assertToolchain,
-  digestFile,
   readJson,
   stableJson,
 } from './shared.mjs'
@@ -60,17 +61,17 @@ for (const target of targets) {
   const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: NATIVE_TARGETS[target].oxlint })
   const artifactRoot = resolve(root, NATIVE_ARTIFACT_DIRECTORY, target)
   for (const delivered of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
-    // pnpm pack marks only bin entries and these declared files as executable.
-    const packed = `./${NATIVE_ARTIFACT_DIRECTORY}/${target}/${delivered.executable}`
-    if (!packageManifest.publishConfig.executableFiles?.includes(packed)) {
-      throw new Error(`${packed} is not declared in publishConfig.executableFiles.`)
+    const member = delivered.compression?.path ?? delivered.executable
+    if (!delivered.compression) {
+      const packed = `./${NATIVE_ARTIFACT_DIRECTORY}/${target}/${member}`
+      if (!packageManifest.publishConfig.executableFiles?.includes(packed)) {
+        throw new Error(`${packed} is not declared in publishConfig.executableFiles.`)
+      }
+      await assertRegularExecutable(resolve(artifactRoot, member), target)
+    } else if (!(await stat(resolve(artifactRoot, member))).isFile()) {
+      throw new Error(`${target} compressed artifact is not a regular file.`)
     }
-    const executable = resolve(artifactRoot, delivered.executable)
-    await assertRegularExecutable(executable, target)
-    const digest = await digestFile(executable)
-    if (digest.bytes !== delivered.bytes || digest.sha256 !== delivered.sha256) {
-      throw new Error(`${target} ${delivered.executable} does not match the release manifest.`)
-    }
+    await assertDeliveredArtifact(resolve(artifactRoot, member), delivered)
   }
 }
 

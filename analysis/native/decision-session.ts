@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { NativeDecisionServiceError, type NativeDecisionSession } from "./decision-model.ts";
-import { resolvePackagedNativeAnalysis } from "../typescript/distribution/resolve.ts";
+import { resolvePackagedNativeAnalysis, resolveOptionalPackagedNativeOxlint } from "../typescript/distribution/resolve.ts";
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -36,7 +36,11 @@ export async function openNativeDecisionSession(
     // still needs configuration/coverage admission before source discovery.
     cwd: process.cwd(),
   });
-  const transport = new DecisionProcess(child);
+  // Storage selects the addressing strategy, not a protocol revision. Qualified
+  // gzip builds accept the optional explicit path; old raw binaries strictly
+  // reject unknown request fields and must retain their original adjacency.
+  const transport = new DecisionProcess(child, artifact.compression ? async () =>
+    (await resolveOptionalPackagedNativeOxlint())?.command : undefined);
   await transport.ready(options.signal, options.handshakeTimeoutMs ?? 30_000);
   return transport;
 }
@@ -44,6 +48,7 @@ export async function openNativeDecisionSession(
 /** Exported for source-level transport qualification; production uses the asset resolver above. */
 export class DecisionProcess implements NativeDecisionSession {
   readonly #child: ChildProcessWithoutNullStreams;
+  readonly #ownedArtifactPath?: () => Promise<string | undefined>;
   readonly #hello: Promise<void>;
   readonly #exit: Promise<void>;
   #resolveHello!: () => void;
@@ -59,8 +64,9 @@ export class DecisionProcess implements NativeDecisionSession {
   #pumpScheduled = false;
   #disposing?: Promise<void>;
 
-  constructor(child: ChildProcessWithoutNullStreams) {
+  constructor(child: ChildProcessWithoutNullStreams, ownedArtifactPath?: () => Promise<string | undefined>) {
     this.#child = child;
+    this.#ownedArtifactPath = ownedArtifactPath;
     this.#exit = new Promise((resolve) => child.once("close", () => resolve()));
     this.#hello = new Promise((resolve, reject) => {
       this.#resolveHello = resolve;
@@ -127,7 +133,7 @@ export class DecisionProcess implements NativeDecisionSession {
   }
 
   captureOwnedGeneric(request: Parameters<NonNullable<NativeDecisionSession["captureOwnedGeneric"]>>[0], signal?: AbortSignal): Promise<unknown> {
-    return this.#request("capture-owned-generic", request, signal);
+    return this.#request("capture-owned-generic", request, signal, this.#ownedArtifactPath);
   }
 
   seal(
@@ -147,7 +153,7 @@ export class DecisionProcess implements NativeDecisionSession {
     return this.#disposing;
   }
 
-  #request(method: string, params: unknown, signal?: AbortSignal): Promise<unknown> {
+  #request(method: string, params: unknown, signal?: AbortSignal, ownedArtifactPath?: () => Promise<string | undefined>): Promise<unknown> {
     if (this.#closed || !this.#handshaken)
       return Promise.reject(
         new NativeDecisionServiceError("PROCESS", "Decision session is unavailable."),
@@ -176,7 +182,18 @@ export class DecisionProcess implements NativeDecisionSession {
           throw new NativeDecisionServiceError(
             "PROTOCOL", "Decision request exceeds its byte limit.",
           );
-        if (request.state === "queued") request.line = line;
+        if (ownedArtifactPath) {
+          // Reserve FIFO and own serialized caller bytes before lazy extraction.
+          // A later request cannot overtake this request while storage is prepared.
+          const captured = JSON.parse(line) as { id: number; method: string; params: Record<string, unknown> };
+          void ownedArtifactPath().then((artifactPath) => {
+            if (request.state !== "queued") return;
+            const ready = artifactPath ? JSON.stringify({ ...captured, params: { ...captured.params, artifactPath } }) + "\n" : line;
+            if (Buffer.byteLength(ready) > MAX_FRAME_BYTES) throw new NativeDecisionServiceError("PROTOCOL", "Decision request exceeds its byte limit.");
+            request.line = ready;
+            this.#pump();
+          }).catch((cause: unknown) => { if (request.state === "queued") this.#rejectQueued(request, cause); });
+        } else if (request.state === "queued") request.line = line;
       } catch (cause) {
         if (request.state === "queued") this.#rejectQueued(request, cause);
       }

@@ -16,7 +16,7 @@ func TestOwnedGenericClientCannotConstructActualJournal(t *testing.T) {
 		{"token": "forged", "cachePath": "/client/cache"},
 		{"token": "forged", "runtimeArtifactStore": "/client/cache"},
 		{"token": "forged", "observations": []any{}},
-		{"token": "forged", "artifactPath": "/client/worker"},
+		{"token": "forged", "artifactPath": "/client/worker", "artifactDigest": "forged"},
 		{"token": "forged", "owner": map[string]any{"instance": "client", "epoch": 1}},
 		{"token": "forged", "journalRetained": true},
 		{"token": "forged", "journalCount": 1},
@@ -29,6 +29,13 @@ func TestOwnedGenericClientCannotConstructActualJournal(t *testing.T) {
 		if session.genericProducer != nil {
 			t.Fatal("forged proposal launched a producer")
 		}
+	}
+	// Explicit storage location is now admitted, but cannot create a capture,
+	// a producer, an engine selection or the build-linked identity by itself.
+	raw, _ := json.Marshal(map[string]any{"token": "forged", "artifactPath": "/client/worker"})
+	actual, err := session.captureOwnedGeneric(raw)
+	if err != nil || actual.(map[string]any)["status"] != "retry" || session.genericProducer != nil {
+		t.Fatalf("location became client authority: %#v %v", actual, err)
 	}
 }
 

@@ -38,6 +38,7 @@ const native = await resolveTtscNativeAnalysis({
   root,
   config: 'tsconfig.json',
   cacheDirectory,
+  stripDebugInfo: true,
   ...(oxlint ? { ownedOxlint: oxlint.artifact } : {}),
   ...(process.platform === 'linux' ? { environment: { CGO_ENABLED: '0' } } : {}),
 })

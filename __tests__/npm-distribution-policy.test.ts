@@ -14,7 +14,18 @@ describe('qualified npm distribution policy', () => {
     const build = await manifest('tsconfig.build.json')
     expect(build.compilerOptions.sourceMap).toBe(false)
     expect(build.compilerOptions.declarationMap).toBe(false)
-    expect((await manifest('package.json')).files).toContain('!analysis/oxlint/**')
+    const owner = await manifest('package.json')
+    expect(owner.scripts.precheck).toBe('pnpm run build')
+    expect(owner.scripts.prepack).toBe('pnpm run build')
+    expect(owner.scripts.prebuild).toBe('node scripts/clean-dist.mjs')
+    expect(owner.files).toEqual(['dist', 'LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'native-release.json', 'native-artifacts', '!dist/**/*.map'])
+    for (const dependency of ['vite', 'mermaid', 'katex', 'preact']) {
+      expect(owner.dependencies[dependency]).toBeUndefined()
+      expect(owner.devDependencies[dependency]).toBeDefined()
+    }
+    for (const dependency of ['@codemirror/lang-javascript', '@codemirror/lang-yaml', '@lezer/highlight', 'chokidar']) {
+      expect(owner.dependencies[dependency]).toBeDefined()
+    }
   })
 
   it('delivers every native target inside exactly one public npm package', async () => {
@@ -26,11 +37,8 @@ describe('qualified npm distribution policy', () => {
     })
     expect(owner.optionalDependencies).toBeUndefined()
     expect(owner.files).toContain('native-artifacts')
-    // pnpm pack marks only bin entries and these declared files as executable.
-    expect(owner.publishConfig.executableFiles).toEqual(Object.entries(NATIVE_TARGETS).flatMap(([target, artifact]) => [
-      `./native-artifacts/${target}/${artifact.executable}`,
-      ...(artifact.oxlint ? [`./native-artifacts/${target}/bin/codegraph-oxlint`] : []),
-    ]))
+    // Encoded payloads are not executable. Materialization restores admitted modes.
+    expect(owner.publishConfig.executableFiles).toEqual([])
     // The checked-in historical manifest retains genuine released bytes. The
     // assembly/admission gates require the complete current matrix before pack.
     const released = Object.keys((await manifest('native-release.json')).artifacts).sort()
@@ -80,6 +88,9 @@ describe('qualified npm distribution policy', () => {
     for (const trigger of ['push', 'pull_request']) {
       expect(native.on[trigger].paths).toContain('LICENSE')
       expect(native.on[trigger].paths).toContain('THIRD_PARTY_NOTICES.md')
+      for (const path of ['server/**', 'viewer/**', 'viewer-host/**', 'scripts/build-viewer.mjs', 'tsconfig.build.json', 'scripts/clean-dist.mjs', 'native-release.json', '__tests__/embedded-viewer.test.ts', '__tests__/native-materialization.test.ts']) {
+        expect(native.on[trigger].paths).toContain(path)
+      }
     }
     expect(native.jobs.build.strategy.matrix.include.map((entry: { target: string }) => entry.target).sort())
       .toEqual([...targets].sort())

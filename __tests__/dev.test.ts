@@ -15,6 +15,9 @@ import {
   SPEC_REVEAL_PROTOCOL,
 } from '../application/interaction/reveal.ts'
 import { startDev, type RunningDevServer } from '../server/index.ts'
+import { createLiveSpecsPlugin } from '../server/live-plugin.ts'
+import type { HmrContext } from 'vite'
+import { startSourceDev } from '../server/source-start.ts'
 import { DEV_SERVER_WATCH_IGNORES } from '../server/watch.ts'
 import { resolveTtscNativeAnalysis } from '../analysis/typescript/ttsc/index.ts'
 import {
@@ -38,6 +41,16 @@ afterEach(async () => {
 })
 
 describe('universal specification dev server', () => {
+  it('preserves Vite HMR for viewer sources outside the inspected project', async () => {
+    const current = await fixture(conventionFiles('alpha', 'Alpha'))
+    fixtures.push(current)
+    const plugin = createLiveSpecsPlugin({ root: current.root, allowedRoots: [current.root], verify: false, cache: false })
+    try {
+      const update = plugin.handleHotUpdate
+      if (typeof update !== 'function') throw new Error('Expected the source HMR adapter.')
+      expect(await update.call({} as never, { file: resolve(import.meta.dirname, '../viewer/main.tsx') } as HmrContext)).toBeUndefined()
+    } finally { await plugin.api.dispose() }
+  })
   it('serves Mermaid through its browser-native ESM graph', async () => {
     const current = await fixture(conventionFiles('alpha', 'Alpha'))
     fixtures.push(current)
@@ -95,7 +108,7 @@ describe('universal specification dev server', () => {
     })
     fixtures.push(current)
 
-    const running = await startDev({ root: current.root, port: 0, cache: false })
+    const running = await startSourceDev({ root: current.root, port: 0, cache: false })
     const cache = running.server.config.cacheDir
     expect(cache).toContain('astrale-spec-vite-')
     expect(running.server.config.server.watch.ignored).toEqual(
@@ -116,7 +129,7 @@ describe('universal specification dev server', () => {
     const running = await startDev({ root: current.root, port: 0, cache: false })
     servers.push(running)
 
-    const live = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const live = await running.catalog()
     expect(live.adapterManifest).toEqual({
       editing: {
         transport: 'http',
@@ -134,7 +147,6 @@ describe('universal specification dev server', () => {
         endpoint: expect.stringMatching(/^\/__astrale\/spec-verification\?snapshot=application%3A[a-f\d]{64}$/u),
       },
     })
-    expect(live.renderers).toBeUndefined()
 
     const revealWithoutHeader = await fetch(
       `${running.url}${SPEC_REVEAL_ENDPOINT}?source=${encodeURIComponent('alpha/.spec/api.d.ts')}`,
@@ -158,7 +170,7 @@ describe('universal specification dev server', () => {
     const running = await startDev({ root: current.root, port: 0, cache: false })
     servers.push(running)
 
-    const live = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const live = await running.catalog()
     const entry = live.index.specs[0] as CatalogSpecEntry
     const specResponse = await fetch(specPayloadUrl(running.url, entry))
     expect(specResponse.status).toBe(200)
@@ -194,7 +206,7 @@ describe('universal specification dev server', () => {
     const running = await startDev({ root: current.root, port: 0, cache: false })
     servers.push(running)
 
-    const live = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const live = await running.catalog()
     const initial = await loadSpec(running.url, live.index.specs[0])
     const api = initial.modules[0]!.api!
     const next = api.text.replace('Alpha', 'Beta')
@@ -252,7 +264,7 @@ describe('universal specification dev server', () => {
     })
     servers.push(running)
 
-    const initial = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const initial = await running.catalog()
     const spec = await loadSpec(running.url, initial.index.specs[0])
     expect(spec.verification).toBeUndefined()
     expect(spec.modules[0]?.contract).toBeDefined()
@@ -282,17 +294,16 @@ describe('universal specification dev server', () => {
       ]),
     )
 
-    const retainedIndex = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const retainedIndex = await running.catalog()
     const retained = await loadSpec(running.url, retainedIndex.index.specs[0])
     expect(retained.verification).toMatchObject({ status: 'pass' })
 
     const implementation = join(current.root, 'module/index.ts')
     await writeFile(implementation, 'export const drift = true\n')
-    running.server.watcher.emit('change', implementation)
     await expect
       .poll(
         async () => {
-          const live = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+          const live = await running.catalog()
           return live.index.specs[0].metrics.status
         },
         { timeout: 5_000 },
@@ -317,11 +328,10 @@ describe('universal specification dev server', () => {
     })
 
     await writeFile(implementation, "export type { Thing } from './.spec/api.js'\n")
-    running.server.watcher.emit('change', implementation)
     await expect
       .poll(
         async () => {
-          const live = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+          const live = await running.catalog()
           return live.index.specs[0].metrics.status
         },
         { timeout: 5_000 },
@@ -341,25 +351,24 @@ describe('universal specification dev server', () => {
     const running = await startDev({ root: current.root, port: 0, cache: false })
     servers.push(running)
 
-    const initial = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const initial = await running.catalog()
     const before = new Map(
       (initial.index.specs as CatalogSpecEntry[]).map((entry) => [entry.source, entry]),
     )
     const shared = join(current.root, 'shared/.spec/shared.d.ts')
     await writeFile(shared, 'export interface Shared { readonly value: number }\n')
-    running.server.watcher.emit('change', shared)
 
     await expect
       .poll(
         async () => {
-          const live = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+          const live = await running.catalog()
           return live.index.generation
         },
         { timeout: 10_000 },
       )
       .not.toBe(initial.index.generation)
 
-    const updated = await running.server.ssrLoadModule('virtual:spec-catalog-index')
+    const updated = await running.catalog()
     for (const entry of updated.index.specs as CatalogSpecEntry[]) {
       expect(entry.revision).not.toBe(before.get(entry.source)?.revision)
     }

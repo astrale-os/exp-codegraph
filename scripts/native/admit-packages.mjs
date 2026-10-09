@@ -5,6 +5,7 @@ import { appendFile, readFile, readdir, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { gunzipSync } from 'node:zlib'
 
 import {
   NATIVE_ARTIFACT_DIRECTORY, NATIVE_RELEASE_FORMAT, NATIVE_TARGETS, PROTOCOL_VERSION,
@@ -57,15 +58,19 @@ export async function admitReleasePackage(directory, sourceRevision, version) {
   for (const target of Object.keys(NATIVE_TARGETS)) {
     const artifact = assertArtifact(release.artifacts[target], target, version, { requireOxlint: NATIVE_TARGETS[target].oxlint })
     for (const executable of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
-      const member = `${NATIVE_ARTIFACT_DIRECTORY}/${target}/${executable.executable}`
-      const bytes = await archiveMember(archive, member)
+      const member = `${NATIVE_ARTIFACT_DIRECTORY}/${target}/${executable.compression?.path ?? executable.executable}`
+      const deliveredBytes = await archiveMember(archive, member)
+      const encoded = executable.compression ?? executable
+      assert.equal(deliveredBytes.length, encoded.bytes, `${member} encoded size differs.`)
+      assert.equal(hash(deliveredBytes, 'sha256'), encoded.sha256, `${member} encoded digest differs.`)
+      const bytes = executable.compression ? gunzipSync(deliveredBytes, { maxOutputLength: executable.bytes }) : deliveredBytes
       assert.equal(bytes.length, executable.bytes, `${member} size differs.`)
       assert.equal(hash(bytes, 'sha256'), executable.sha256, `${member} digest differs.`)
       delivered.push(member)
     }
   }
   assert.deepEqual(await archiveMembers(archive, NATIVE_ARTIFACT_DIRECTORY), delivered.sort(),
-    'Archive must deliver exactly the qualified native executables.')
+    'Archive must deliver exactly the qualified native payloads.')
   const bytes = await readFile(archive)
   return { sourceRevision, version, tarballs: { '.': archive }, package: {
     name: packageName, version, archive, bytes: bytes.length, sha256: hash(bytes, 'sha256'),

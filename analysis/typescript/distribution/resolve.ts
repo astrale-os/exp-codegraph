@@ -1,5 +1,4 @@
-import { createHash } from 'node:crypto'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { readFile, realpath } from 'node:fs/promises'
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 
 import {
@@ -11,10 +10,13 @@ import {
 import type {
   PackagedNativeAnalysisOptions,
   NativeAnalysisTarget,
+  NativeAnalysisArtifact,
+  NativeOxlintArtifact,
   ResolvedPackagedNativeAnalysis,
   ResolvedPackagedNativeOxlint,
 } from './model.ts'
 import { NativeAnalysisDistributionError } from './model.ts'
+import { admitExecutable, materializeNativeArtifact } from './materialize.ts'
 
 /** Resolve and validate one explicit or package-delivered native analyzer without building it. */
 export async function resolvePackagedNativeAnalysis(
@@ -30,7 +32,7 @@ export async function resolvePackagedNativeAnalysis(
   }
   const authority = await resolveArtifact(root, packageVersion, target)
   const native = await admitPackagedExecutable(authority.artifactRoot, authority.artifact, target)
-  return { ...native, target, packageVersion, origin: 'package' }
+  return { ...native, ...(authority.artifact.compression ? { compression: authority.artifact.compression } : {}), target, packageVersion, origin: 'package' }
 }
 
 /** Resolve the generic worker independently so the original analyzer can recover without it. */
@@ -42,6 +44,14 @@ export async function resolvePackagedNativeOxlint(): Promise<ResolvedPackagedNat
   const worker = admitNativeOxlintArtifact(authority.artifact)
   const admitted = await admitPackagedExecutable(authority.artifactRoot, worker, target)
   return { ...worker, ...admitted, target, packageVersion, origin: 'package' }
+}
+
+/** Internal optional capability: unavailable is distinct from corrupt or unreadable artifacts. */
+export async function resolveOptionalPackagedNativeOxlint(): Promise<ResolvedPackagedNativeOxlint | undefined> {
+  try { return await resolvePackagedNativeOxlint() } catch (cause) {
+    if (cause instanceof NativeAnalysisDistributionError && cause.code === 'NATIVE_OXLINT_UNAVAILABLE') return undefined
+    throw cause
+  }
 }
 
 async function resolveArtifact(root: string, packageVersion: string, target: string) {
@@ -59,14 +69,25 @@ async function resolveArtifact(root: string, packageVersion: string, target: str
     )
   }
   const artifactRoot = resolve(await realpath(root), NATIVE_ARTIFACT_DIRECTORY, artifact.target)
-  return { artifactRoot, artifact }
+  try {
+    const canonical = await realpath(artifactRoot)
+    if (!within(artifactRoot, canonical)) throw new Error('Artifact directory escapes the package authority.')
+    return { artifactRoot: canonical, artifact }
+  } catch (cause) {
+    throw new NativeAnalysisDistributionError('NATIVE_ARTIFACT_INVALID',
+      `Packaged ${target} artifact directory is missing or outside its package authority.`, target, { cause })
+  }
 }
 
 async function admitPackagedExecutable(
   artifactRoot: string,
-  artifact: { readonly executable: string; readonly bytes: number; readonly sha256: string },
+  artifact: Pick<NativeAnalysisArtifact | NativeOxlintArtifact, 'executable' | 'bytes' | 'sha256' | 'compression'>,
   target: string,
 ): Promise<{ readonly command: string; readonly bytes: number; readonly sha256: string }> {
+  if (artifact.compression) {
+    const command = await materializeNativeArtifact(artifactRoot, artifact, target)
+    return { command, bytes: artifact.bytes, sha256: artifact.sha256 }
+  }
   let command: string
   try {
     command = await realpath(resolve(artifactRoot, artifact.executable))
@@ -94,42 +115,6 @@ async function admitPackagedExecutable(
     )
   }
   return { ...admitted, command }
-}
-
-async function admitExecutable(path: string, target: string): Promise<{
-  readonly bytes: number
-  readonly sha256: string
-}> {
-  let metadata
-  try {
-    metadata = await stat(path)
-  } catch (cause) {
-    throw new NativeAnalysisDistributionError(
-      'NATIVE_ARTIFACT_INVALID',
-      `Native analyzer is not a readable regular file: ${path}`,
-      target,
-      { cause },
-    )
-  }
-  if (!metadata.isFile()) {
-    throw new NativeAnalysisDistributionError(
-      'NATIVE_ARTIFACT_INVALID',
-      `Native analyzer is not a regular file: ${path}`,
-      target,
-    )
-  }
-  if (process.platform !== 'win32' && (metadata.mode & 0o111) === 0) {
-    throw new NativeAnalysisDistributionError(
-      'NATIVE_ARTIFACT_NOT_EXECUTABLE',
-      `Native analyzer is not executable: ${path}`,
-      target,
-    )
-  }
-  const bytes = await readFile(path)
-  return {
-    bytes: bytes.byteLength,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
-  }
 }
 
 async function installedPackageVersion(path: string): Promise<string> {

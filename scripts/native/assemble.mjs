@@ -1,5 +1,7 @@
-import { chmod, copyFile, lstat, mkdir, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { lstat, rm, writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
+
+import { encodeNativeExecutable } from './compression.mjs'
 
 import {
   NATIVE_ARTIFACT_DIRECTORY,
@@ -9,7 +11,6 @@ import {
   PROTOCOL_VERSION,
   assertArtifactManifest,
   assertOxlintSources,
-  assertRegularExecutable,
   assertToolchain,
   digestFile,
   readJson,
@@ -65,19 +66,11 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     throw new Error(`${target} build and artifact manifests disagree.`)
   }
   const artifactRoot = resolve(root, NATIVE_ARTIFACT_DIRECTORY, target)
-  await stageExecutable(
-    resolve(sourceRoot, artifact.executable),
-    resolve(artifactRoot, expected.executable),
-    artifact,
-    target,
-  )
-  if (artifact.oxlint) await stageExecutable(
-    resolve(sourceRoot, artifact.oxlint.executable),
-    resolve(artifactRoot, artifact.oxlint.executable),
-    artifact.oxlint,
-    target,
-  )
-  artifacts[target] = artifact
+  const delivered = await stageExecutable(sourceRoot, artifactRoot, artifact, target)
+  artifacts[target] = {
+    ...delivered,
+    ...(artifact.oxlint ? { oxlint: await stageExecutable(sourceRoot, artifactRoot, artifact.oxlint, target) } : {}),
+  }
 }
 
 assertOxlintSources(artifacts)
@@ -105,9 +98,10 @@ function argument(name) {
   return value
 }
 
-// GitHub artifact transport keeps content, but not executable mode. Authenticate
-// downloaded bytes first and normalize only the owned package staging copy.
-async function stageExecutable(source, destination, artifact, target) {
+// Downloads retain original bytes and their provenance; only package copies are encoded.
+async function stageExecutable(sourceRoot, artifactRoot, artifact, target) {
+  if (artifact.compression) throw new Error(`${target} build output must contain original executable bytes.`)
+  const source = resolve(sourceRoot, artifact.executable)
   if (!(await lstat(source)).isFile()) {
     throw new Error(`${target} downloaded artifact is not a regular file: ${source}`)
   }
@@ -115,12 +109,9 @@ async function stageExecutable(source, destination, artifact, target) {
   if (digest.bytes !== artifact.bytes || digest.sha256 !== artifact.sha256) {
     throw new Error(`${target} ${artifact.executable} bytes differ from its build manifest.`)
   }
-  await mkdir(dirname(destination), { recursive: true })
-  await copyFile(source, destination)
-  await chmod(destination, 0o755)
-  await assertRegularExecutable(destination, target)
-  const staged = await digestFile(destination)
-  if (staged.bytes !== artifact.bytes || staged.sha256 !== artifact.sha256) {
-    throw new Error(`${target} staged ${artifact.executable} bytes differ from its build manifest.`)
-  }
+  const destination = resolve(artifactRoot, `${artifact.executable}.gz`)
+  const delivered = await encodeNativeExecutable(source, destination, artifact)
+  // An earlier raw assembly must not leave a second copy in the one npm payload.
+  await rm(resolve(artifactRoot, artifact.executable), { force: true })
+  return delivered
 }
