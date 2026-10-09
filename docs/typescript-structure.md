@@ -70,6 +70,8 @@ scope: paths[] · declarationFiles: false · externalSources: false
 
 `evidence` contains contributing compiler fact IDs, including the file used to resolve an export selector. `completeness` certifies coverage for the selected scope; the evidence array is not an exhaustive archive of every file checked. A complete empty query establishes no matching authored uses in that scope. An incomplete empty query does not establish absence. For an export selector, `target: missing` distinguishes an absent export from an unused export.
 
+A resolved binding describes the compiler's selection in this snapshot; it does not certify that the TypeScript program is valid. During recovery from conflicting `export *` declarations, the compiler can retain the first binding while reporting a semantic error. Consumers must interpret binding evidence separately from program validity and inventory coverage.
+
 A selected path outside the loaded source inventory reports `unavailable`, even if its result is empty. A loaded file with no matching uses can report `complete`. Both selections are tracked, so creating a previously missing source can invalidate a cached answer.
 
 Dependency inventories preserve unresolved literal requests and computed requests. A literal request has a `specifier`, even when it is `''`; a computed request has no known specifier. Missing resolution, computed imports, compiler recovery and unregistered external coordinates carry explicit reasons instead of fabricated targets.

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	scanner "github.com/microsoft/typescript-go/shim/scanner"
+	"sort"
 )
 
 // Experimental private source phase; the original capture owns each scalar.
@@ -30,9 +31,17 @@ type governanceClosedSourceAnswer struct {
 	Symbol               *governanceClosedSourceSymbol     `json:"symbol,omitempty"`
 }
 type governanceClosedSourceSymbol struct {
-	Name   jsstring.JSONText `json:"name"`
-	Origin *callTargetOrigin `json:"origin,omitempty"`
-	Local  bool              `json:"local,omitempty"`
+	Name         jsstring.JSONText                   `json:"name"`
+	Origin       *callTargetOrigin                   `json:"origin,omitempty"`
+	Local        bool                                `json:"local,omitempty"`
+	Declarations []governanceClosedSourceDeclaration `json:"declarations,omitempty"`
+}
+type governanceClosedSourceDeclaration struct {
+	Path string `json:"path"`
+	Span struct {
+		Start int `json:"start"`
+		End   int `json:"end"`
+	} `json:"span"`
 }
 type governanceClosedSourceResolution struct {
 	ResolvedPath jsstring.JSONText `json:"resolvedPath"`
@@ -124,6 +133,7 @@ func (session *governanceSession) observeClosedSource(request governanceClosedSo
 			return governanceClosedSourceAnswer{Status: "unavailable", Reason: reason}, nil
 		}
 		local := true
+		declarations := make([]governanceClosedSourceDeclaration, 0, len(symbol.Declarations))
 		for _, declaration := range symbol.Declarations {
 			source := ast.GetSourceFileOfNode(declaration)
 			if source == nil {
@@ -136,6 +146,30 @@ func (session *governanceSession) observeClosedSource(request governanceClosedSo
 				local = false
 				break
 			}
+			start := scanner.SkipTrivia(source.Text(), declaration.Pos())
+			end := declaration.End()
+			if start < 0 || end <= start || end > len(captured.Text) {
+				local = false
+				break
+			}
+			location := governanceClosedSourceDeclaration{Path: logical}
+			location.Span.Start = captured.coordinates.utf16(start)
+			location.Span.End = captured.coordinates.utf16(end)
+			declarations = append(declarations, location)
+		}
+		if !local {
+			declarations = nil
+		} else {
+			sort.Slice(declarations, func(i, j int) bool {
+				left, right := declarations[i], declarations[j]
+				if left.Path != right.Path {
+					return left.Path < right.Path
+				}
+				if left.Span.Start != right.Span.Start {
+					return left.Span.Start < right.Span.Start
+				}
+				return left.Span.End < right.Span.End
+			})
 		}
 		name := stableSymbolName(symbol)
 		if isModuleNamespaceSymbol(symbol) {
@@ -150,7 +184,7 @@ func (session *governanceSession) observeClosedSource(request governanceClosedSo
 		if origin != nil {
 			portableOrigin = &callTargetOrigin{Package: origin.Package, File: origin.File, Path: append([]string{}, origin.Path...)}
 		}
-		answer.Symbol = &governanceClosedSourceSymbol{Name: jsstring.JSONText(name), Origin: portableOrigin, Local: local}
+		answer.Symbol = &governanceClosedSourceSymbol{Name: jsstring.JSONText(name), Origin: portableOrigin, Local: local, Declarations: declarations}
 		return answer, nil
 	}
 	if request.Operation == "collection" {
