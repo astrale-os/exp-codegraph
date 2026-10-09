@@ -411,11 +411,17 @@ func (owner *governanceTypeAuthority) collectionKind(file *sourcepolicy.File, ex
 	return sourcepolicy.KindObservation{Known: true}
 }
 func governanceInstallTypeAuthority(project *governedProject, shared *sourcepolicy.Project) {
-	owner := &governanceTypeAuthority{project: project}
-	project.typeOwner = owner
+	owner := governanceCapturedTypeAuthority(project)
 	shared.ClosedLiteralPropertyNames = owner.closed
 	shared.ExpressionPropertyNames = owner.names
 	shared.QueryCollectionKind = owner.collectionKind
+}
+
+func governanceCapturedTypeAuthority(project *governedProject) *governanceTypeAuthority {
+	if project.typeOwner == nil {
+		project.typeOwner = &governanceTypeAuthority{project: project}
+	}
+	return project.typeOwner
 }
 
 func (owner *governanceTypeAuthority) typeRequest(operation string, file *sourcepolicy.File, node *ast.Node, known bool, names []string, kind string, started time.Time, programBefore int64) {

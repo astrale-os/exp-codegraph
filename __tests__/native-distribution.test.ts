@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { gzipSync } from 'node:zlib'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   NativeAnalysisDistributionError,
@@ -119,6 +119,61 @@ describe('native analysis distribution', () => {
     }, 30_000)
   }
 
+  it('fetches only the source-bound current-host Go capability from a binary-free package and preloads offline', async () => {
+    await withPackagedFixture({ compressed: true, remote: true, oxlint: workerSupported }, async (fixture) => {
+      const first = await fixture.preload() as { analysis: { command: string }; generic?: unknown }
+      try {
+        expect(first).toMatchObject({ analysis: { origin: 'package', target, packageVersion } })
+        expect(first.generic).toBeUndefined()
+        expect(fixture.downloads).toEqual([`native-${target}-${'1'.repeat(40)}.gz`])
+        await expect(readFile(fixture.binary)).rejects.toMatchObject({ code: 'ENOENT' })
+        fixture.offline()
+        expect(await fixture.preload()).toEqual(first)
+        expect(fixture.downloads).toHaveLength(1)
+      } finally { await rm(first.analysis.command, { force: true }) }
+    })
+  }, 30_000)
+
+  it.runIf(workerSupported)('preloads the independent remote worker only when requested and preserves healthy offline recovery', async () => {
+    await withPackagedFixture({ compressed: true, remote: true, oxlint: true }, async (fixture) => {
+      const first = await fixture.preload({ generic: true }) as { analysis: { command: string }; generic: { command: string } }
+      try {
+        expect(first.generic).toMatchObject({ origin: 'package', engineVersion: '1.81.0', protocolVersion: 1 })
+        expect(fixture.downloads).toEqual([`native-${target}-${'1'.repeat(40)}.gz`, `oxlint-${target}-${'1'.repeat(40)}.gz`])
+        fixture.offline()
+        expect(await fixture.preload({ generic: true })).toEqual(first)
+        expect(fixture.downloads).toHaveLength(2)
+      } finally { await Promise.all([first.analysis.command, first.generic.command].map((path) => rm(path, { force: true }))) }
+    })
+  }, 30_000)
+
+  it.runIf(workerSupported)('does not invalidate remote Go when a companion refers to a different source', async () => {
+    await withPackagedFixture({ compressed: true, remote: true, oxlint: true, remoteWorkerMismatch: true }, async (fixture) => {
+      const go = await fixture.resolve() as { command: string }
+      try {
+        await expect(fixture.resolveOxlint()).rejects.toMatchObject({ code: 'NATIVE_ARTIFACT_INVALID' })
+        expect(fixture.downloads).toEqual([`native-${target}-${'1'.repeat(40)}.gz`])
+      } finally { await rm(go.command, { force: true }) }
+    })
+  }, 30_000)
+
+  it('rejects a remote Go descriptor from a different source before touching the network', async () => {
+    await withPackagedFixture({ compressed: true, remote: true, remoteGoMismatch: true }, async (fixture) => {
+      await expect(fixture.resolve()).rejects.toMatchObject({ code: 'NATIVE_RELEASE_MANIFEST_INVALID' })
+      expect(fixture.downloads).toEqual([])
+    })
+  }, 30_000)
+
+  it('keeps absent remote generic capability honestly unavailable when explicitly preloading it', async () => {
+    await withPackagedFixture({ compressed: true, remote: true }, async (fixture) => {
+      const go = await fixture.resolve() as { command: string }
+      try {
+        await expect(fixture.preload({ generic: true })).rejects.toMatchObject({ code: 'NATIVE_OXLINT_UNAVAILABLE' })
+        expect(fixture.downloads).toEqual([`native-${target}-${'1'.repeat(40)}.gz`])
+      } finally { await rm(go.command, { force: true }) }
+    })
+  }, 30_000)
+
   it('keeps historical Go-only releases usable without admitting a worker', async () => {
     await withPackagedFixture({}, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({ origin: 'package' })
@@ -175,6 +230,9 @@ interface PackagedFixture {
   resolve(): Promise<unknown>
   resolveOxlint(): Promise<unknown>
   resolveOptionalOxlint(): Promise<unknown>
+  preload(options?: { generic?: boolean }): Promise<unknown>
+  readonly downloads: string[]
+  offline(): void
 }
 
 // Copying and importing a complete distribution is qualification setup, not a
@@ -182,6 +240,9 @@ interface PackagedFixture {
 // lifetime: a runner timeout cannot remove files while cp is still creating them.
 async function withPackagedFixture(options: {
   readonly compressed?: boolean
+  readonly remote?: boolean
+  readonly remoteWorkerMismatch?: boolean
+  readonly remoteGoMismatch?: boolean
   readonly released?: boolean
   readonly install?: boolean
   readonly corruptDigest?: boolean
@@ -192,7 +253,7 @@ async function withPackagedFixture(options: {
 }, check: (fixture: PackagedFixture) => Promise<void>): Promise<void> {
   await withDirectory('codegraph-packaged-native-', async (root) => {
     try { await check(await packagedFixture(root, options)) }
-    finally { if (options.escapingDirectory) await rm(`${root}-foreign`, { recursive: true, force: true }) }
+    finally { vi.unstubAllGlobals(); if (options.escapingDirectory) await rm(`${root}-foreign`, { recursive: true, force: true }) }
   })
 }
 
@@ -242,15 +303,33 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
       source: { revision: '3'.repeat(40), patchSha256: '4'.repeat(64) },
     } } : {}),
   }
+  const downloads: string[] = [], remoteAssets = new Map<string, Buffer>()
+  let offline = false
   if (options.compressed) {
     for (const delivered of [artifact, ...(options.oxlint ? [artifact.oxlint!] : [])]) {
       const original = join(artifactDirectory, delivered.executable)
       const encoded = gzipSync(await readFile(original))
-      Object.assign(delivered, { compression: { format: 'gzip', path: `${delivered.executable}.gz`,
+      const source = options.remoteGoMismatch && delivered === artifact || options.remoteWorkerMismatch && delivered !== artifact ? '2' : '1'
+      const asset = options.remote ? `${delivered === artifact ? 'native' : 'oxlint'}-${target}-${source.repeat(40)}.gz` : `${delivered.executable}.gz`
+      Object.assign(delivered, { compression: { format: 'gzip', path: asset,
         bytes: encoded.length, sha256: createHash('sha256').update(encoded).digest('hex') } })
-      await writeFile(`${original}.gz`, encoded)
+      if (options.remote) remoteAssets.set(asset, encoded)
+      else await writeFile(`${original}.gz`, encoded)
       await rm(original)
     }
+  }
+  if (options.remote) {
+    await rm(join(root, 'native-artifacts'), { recursive: true })
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (offline) throw new Error('offline remote fixture')
+      const expected = `https://github.com/astrale-os/exp-codegraph/releases/download/codegraph-v${packageVersion}-${'1'.repeat(40)}/`
+      expect(url.startsWith(expected)).toBe(true)
+      const asset = url.slice(expected.length), bytes = remoteAssets.get(asset)
+      downloads.push(asset)
+      const response = new Response(bytes ?? '', { status: bytes ? 200 : 404 })
+      Object.defineProperty(response, 'url', { value: url })
+      return response
+    }))
   }
   await writeFile(
     join(root, 'native-release.json'),
@@ -260,6 +339,7 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
       packageVersion,
       protocolVersion: 1,
       sourceRevision: '1'.repeat(40),
+      ...(options.remote ? { delivery: 'github-release' } : {}),
       toolchain: { ttsc: 'fixture', typescriptGo: 'fixture', go: 'fixture' },
       artifacts: options.released === false ? {} : { [target]: artifact },
     }),
@@ -272,7 +352,7 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
   }
   const module = await import(
     `${pathToFileURL(join(root, 'dist/analysis/typescript/distribution/index.js')).href}?fixture=${Date.now()}-${Math.random()}`
-  ) as { resolvePackagedNativeAnalysis(): Promise<unknown>; resolvePackagedNativeOxlint(): Promise<unknown> }
+  ) as { resolvePackagedNativeAnalysis(): Promise<unknown>; resolvePackagedNativeOxlint(): Promise<unknown>; preloadNativeArtifacts(options?: { generic?: boolean }): Promise<unknown> }
   const internal = await import(
     pathToFileURL(join(root, 'dist/analysis/typescript/distribution/resolve.js')).href
   ) as { resolveOptionalPackagedNativeOxlint(): Promise<unknown> }
@@ -281,7 +361,7 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
   return { binary: options.install === false || options.compressed ? binary : await canonical.realpath(binary),
     worker: options.oxlint && !options.compressed && options.workerFailure !== 'missing' ? await canonical.realpath(worker) : worker,
     resolve: module.resolvePackagedNativeAnalysis, resolveOxlint: module.resolvePackagedNativeOxlint,
-    resolveOptionalOxlint: internal.resolveOptionalPackagedNativeOxlint }
+    resolveOptionalOxlint: internal.resolveOptionalPackagedNativeOxlint, preload: module.preloadNativeArtifacts, downloads, offline: () => { offline = true } }
 }
 
 async function withDirectory(prefix: string, use: (root: string) => Promise<void>): Promise<void> {

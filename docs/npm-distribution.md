@@ -1,96 +1,74 @@
 # npm distribution
 
-Codegraph is distributed as one public npm package, `@astrale-os/codegraph`. This replaces the
-GitHub-only policy introduced by [d51572d](https://github.com/astrale-os/exp-codegraph/commit/d51572dae7b110e9c3293751655731499a01d2c0),
-whose contract said the packages “are not published to npm or GitHub Packages”, and the earlier
-proposal of one root package plus five platform packages. Version 0.1.0 was published on
-2026-10-08. Opening a PR or running qualification does not publish anything; `publish.yml` has
-only a manual trigger.
+```sh
+pnpm add @astrale-os/codegraph
+```
 
-The reason for npm distribution is the SDK's npm-only dependency closure. A public SDK package
-cannot resolve a private GitHub Actions artifact using an ordinary exact npm dependency. Workspace
-links, local archives and rewritten registry URLs cannot establish that public dependency closure.
+One public package contains JavaScript, declarations, the local server and small release manifests.
+It contains no native executables or prebuilt viewer assets. Installation and ordinary imports do
+not download them, run an installation script or require Go/Rust toolchains.
 
-## One package, five qualified native targets
+## Download only what you use
 
-The package carries its native executables in `native-artifacts/<target>/bin/`:
+| First use | Download |
+| --- | --- |
+| Native TypeScript analysis | Go analyzer for the current host |
+| Captured generic linting | Rust worker, when that host supports it |
+| `cg dev . --open` | Viewer archive |
 
-- `darwin-arm64`: macOS on Apple silicon
-- `darwin-x64`: macOS on Intel
-- `linux-arm64`: Linux on ARM64
-- `linux-x64`: Linux on x64
-- `win32-x64`: Windows on x64 (`codegraph-native.exe`)
+Downloads come from this repository's GitHub Releases, under
+`codegraph-v<package-version>-<source-revision>`. Each npm manifest pins the exact source revision,
+encoded and original byte lengths and SHA-256 digests. Both forms are verified before an atomic
+cache publication. A valid cache works offline; a corrupt entry is repaired on the next use.
+The package directory can stay read-only. No mutable `latest` URL or platform npm package is used.
 
-npm selects by platform only between packages, so one package delivers every target to every
-install. Version 0.1.0 carried only macOS arm64 and Linux x64: 37 MB packed and 85 MB installed,
-against about 19 MB and 45 MB for one target. Restoring the other three hosts adds their Go
-executables to the next release; actual archive and installed sizes must be measured on that
-assembled release. That cost buys one name to publish, one Trusted Publisher and one exact
-dependency for consumers. Other hosts fail with `NATIVE_TARGET_UNSUPPORTED`.
+The Go analyzer supports macOS arm64/x64, Linux arm64/x64 and Windows x64. The Rust worker is a
+separate capability on macOS arm64 and Linux x64, using GNU libc on Linux. Other hosts return
+`NATIVE_OXLINT_UNAVAILABLE` for that capability; their Go analyzer remains available. The worker
+pins Oxlint 1.81.0 and its protocol/source identity. A consumer's own engine, presets and domain
+rule implementations are separate admission inputs.
 
-Consumers install only `@astrale-os/codegraph@VERSION` and never build Go or Rust. Runtime
-admission checks the selected executable against the release manifest of the installed package.
+The viewer is served from its verified archive. Headless analysis does not fetch or open it.
+Running from the source checkout continues to use the local Vite viewer.
 
-Every target delivers the Go analyzer. macOS arm64 and Linux x64 additionally deliver
-`bin/codegraph-oxlint`, built from the pinned Oxlint 1.81.0 source recipe and maintained patch.
-The other three targets build and qualify Go without a Rust toolchain or worker. Rust is a build input; consumers do not
-install a Rust toolchain. The worker descriptor records its actual bytes, SHA-256, engine/protocol
-versions and source pins, and the Go executable binds that same identity at build time. Both
-executables are qualified after installation with lifecycle, capture, stale-publication and repair
-controls.
+## Prepare an offline environment
 
-The worker is a separate capability admitted by `resolvePackagedNativeOxlint`. Its absence or
-corruption does not invalidate `resolvePackagedNativeAnalysis`. Go-only hosts return
-`NATIVE_OXLINT_UNAVAILABLE`, allowing consumers to use the resident semantic analyzer together
-with their installed Oxlint engine. Linux worker builds target GNU libc; worker distribution does not
-admit a consumer's original Oxlint bindings, presets or domain rule implementations.
+```sh
+pnpm exec cg preload                     # Current host's Go analyzer
+pnpm exec cg preload --generic           # Also its supported Rust worker
+pnpm exec cg preload --viewer            # Also the viewer
+pnpm exec cg preload --generic --viewer  # Go + Rust + viewer on a host supporting the worker
+```
 
-`pnpm pack` marks only `bin` entries and the files declared in `publishConfig.executableFiles` as
-executable, so all seven native executables are declared there and the release validator rejects an
-undeclared one.
+Run preload with the same user/cache as the later process. Preserve that cache in an offline image
+or CI cache; no network is needed for already admitted components. An empty cache needs network
+access to the pinned release. A failed or cancelled download never becomes a valid cache entry.
 
-## One qualified release
+```ts
+import { preloadNativeArtifacts } from '@astrale-os/codegraph/analysis/native'
 
-The existing native workflow builds on all five targets and qualifies the installed archive on
-Node 22.13, 22, 24 and 26. Its `codegraph-release` artifact contains the one tarball. The manual
-publisher requires a successful main run of that exact workflow at the exact selected source SHA.
-It checks the archive manifest, each native executable's SHA-256, that the archive delivers no
-other native file, and the tarball's SHA-512. An existing npm version must already have identical
-archive integrity before publication can resume.
+await preloadNativeArtifacts({ generic: true, signal })
+```
 
-Config's existing pinned `publish/packages` action receives the admitted `tarballs-json` mapping.
-It derives the npm channel from the version and verifies visibility. It never repacks or
-recompiles this release. No GitHub Packages mirror, release automation framework, release tag
-creation or token fallback is introduced.
+## Qualify and publish
 
-After publication, the immutable npm archive integrity is checked again. The existing consumer
-then installs only the exact version from npm, rejects local/GitHub/alternate-registry lock
-sources, checks the source revision, executes the native analyzer, and exercises resident facts,
-bounded values, edits, no-ops and an old pinned reader.
+`native-release.yml` builds and qualifies the complete native matrix from one exact commit.
+Assembly emits two separate GitHub Actions artifacts:
 
-## First publication and later versions
+- `codegraph-release`: the lightweight npm archive.
+- `codegraph-assets`: the authenticated native/viewer payloads and their two manifests.
 
-npm attaches a Trusted Publisher only to a package that already exists, so the first version was
-an owner operation. On 2026-10-08 a package owner published `0.1.0` from the qualified archive of
-main revision `58d0d03` (native workflow run 37849119930), then configured Trusted Publishing for
-organization `astrale-os`, repository `exp-codegraph`, workflow filename `publish.yml`, with direct
-`npm publish` allowed because Config uses it. `publish.yml` run 37854179694 then admitted the
-published version with identical archive integrity, published nothing, and qualified the npm
-consumer. That version carries no provenance attestation.
+After admission, the workflow publishes a source-bound GitHub prerelease so isolated packed
+consumers can exercise the actual public download URLs. It resumes identical files after an
+interrupted draft; published bytes are never overwritten. Forks do not receive publication
+permissions. A source commit that changes workflows may require an owner to publish these assets
+with GitHub's Workflows permission before this first qualification can proceed.
 
-Later versions are published by the workflow: once the complete main qualification is green, an
-authorized owner manually selects the exact main SHA and native workflow run. A push or merge
-alone never triggers publication. The workflow runs on a GitHub-hosted runner, requests OIDC
-permission only in its publication job, and does not fall back to credentials when trust is
-unavailable. Its OIDC publication path has not run yet, because `0.1.0` was admitted as already
-published. See the official [npm Trusted Publishing documentation](https://docs.npmjs.com/trusted-publishers/).
-The workflow's outputs and npm consumer must pass before downstream manifests are switched to the
-exact registry version.
+npm publication remains manual: `publish.yml` requires an already successful native qualification
+on `main`, the exact source SHA and the same admitted archive. It verifies public assets before
+publishing through npm Trusted Publishing, then verifies the immutable npm archive and an actual
+npm consumer. An existing version must have identical integrity; the publisher never rebuilds it.
 
-## Integrating an unpublished revision
-
-Consumers depend on an exact published version. To try a revision that is not published, a
-temporary checkout can install the genuine qualified `.tgz` file of its main run and run its own
-loop. Its local `file:` lock is artifact evidence and stays local. Do not replace archive lock
-entries with invented npm URLs or integrities; a release manifest and npm-only lock must be
-generated against an actually published Codegraph version.
+Consumers, including the SDK, pin an actually published npm version. A local `file:` archive can
+prove an unpublished revision in an isolated experiment; it does not establish npm distribution.
+[Download a qualified unpublished archive](github-artifacts.md).

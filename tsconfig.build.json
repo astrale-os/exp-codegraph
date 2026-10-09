@@ -17,7 +17,6 @@
     "conformance",
     "cli",
     "compiler",
-    "json-schema",
     "markdown",
     "reference",
     "repository",
@@ -27,7 +26,8 @@
     "specification",
     "typescript",
     "viewer-host",
-    "workspace"
+    "workspace",
+    "distribution"
   ],
   "exclude": [
     "__tests__",

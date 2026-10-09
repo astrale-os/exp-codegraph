@@ -278,6 +278,17 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 	b.occurrences = append(b.occurrences, bodyOccurrence{
 		ID: id, Kind: kind, Span: span, Owner: b.owner, Syntax: strings.TrimPrefix(node.KindString(), "Kind"),
 	})
+	if node.Kind == shimast.KindPropertyAssignment || node.Kind == shimast.KindMethodDeclaration {
+		name := node.Name()
+		// A selected body owns its property spelling. Do not require a project-
+		// wide declaration inventory merely to recover this compiler-owned name.
+		// Methods arrive here as nested function values without walking names.
+		if name != nil && capturedPropertyName(name) {
+			symbol := unalias(b.x.checker, b.x.checker.GetSymbolAtLocation(name))
+			b.x.observeProjectionSymbol(symbol)
+			b.occurrences[len(b.occurrences)-1].PropertyName = stableSymbolName(symbol)
+		}
+	}
 	if node.Kind == shimast.KindShorthandPropertyAssignment && node.Name() != nil {
 		b.occurrences[len(b.occurrences)-1].PropertyName = node.Name().Text()
 	}
@@ -300,6 +311,27 @@ func (b *bodyBuilder) addOccurrence(node *shimast.Node, kind string) string {
 		}
 	}
 	return id
+}
+
+func capturedPropertyName(name *shimast.Node) bool {
+	if name.Kind == shimast.KindComputedPropertyName {
+		name = name.AsComputedPropertyName().Expression
+		if name == nil {
+			return false
+		}
+		// Declared types and synthesized symbol names cannot prove an opaque
+		// runtime key. Only a literal computed spelling is admitted here.
+		switch name.Kind {
+		case shimast.KindStringLiteral, shimast.KindNoSubstitutionTemplateLiteral, shimast.KindNumericLiteral:
+			return true
+		}
+		return false
+	}
+	switch name.Kind {
+	case shimast.KindIdentifier, shimast.KindPrivateIdentifier, shimast.KindStringLiteral, shimast.KindNoSubstitutionTemplateLiteral, shimast.KindNumericLiteral:
+		return true
+	}
+	return false
 }
 
 func (b *bodyBuilder) identifier(node *shimast.Node) {

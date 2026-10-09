@@ -166,7 +166,7 @@ func TestClosedSourceCapabilityPreservesOlderProductsAndFallback(t *testing.T) {
 	}{
 		{`{"sourcePolicyOwnerRevision":2}`, true}, {`{}`, false},
 		{`{"sourcePolicyOwnerRevision":null}`, false}, {`{"sourcePolicyOwnerRevision":"2"}`, false},
-		{`{"sourcePolicyOwnerRevision":2.0}`, false}, {`{"sourcePolicyOwnerRevision":1}`, false}, {`{"sourcePolicyOwnerRevision":3}`, false},
+		{`{"sourcePolicyOwnerRevision":2.0}`, false}, {`{"sourcePolicyOwnerRevision":1}`, false}, {`{"sourcePolicyOwnerRevision":3}`, true}, {`{"sourcePolicyOwnerRevision":4}`, false},
 	} {
 		if governanceClosedSourceOffered(json.RawMessage(sample.raw)) != sample.offered {
 			t.Fatalf("offer admission differs: %s", sample.raw)

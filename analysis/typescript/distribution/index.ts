@@ -1,2 +1,2 @@
 export * from './model.ts'
-export { resolvePackagedNativeAnalysis, resolvePackagedNativeOxlint } from './resolve.ts'
+export { resolvePackagedNativeAnalysis, resolvePackagedNativeOxlint, preloadNativeArtifacts } from './resolve.ts'

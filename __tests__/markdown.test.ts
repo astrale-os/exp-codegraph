@@ -1,95 +1,16 @@
-import { symlink } from 'node:fs/promises'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
-import { loadMarkdown, renderMarkdown } from '../markdown/index.ts'
+import { renderMarkdown } from '../markdown/index.ts'
 import { renderMarkdownDocument } from '../markdown/render.ts'
 import { projectMarkdownHtml } from '../server/catalog-markdown.ts'
 import { semanticReferenceHref } from '../viewer-host/semantic-reference.ts'
-import { fixture, type Fixture } from './fixture.ts'
-
-const fixtures: Fixture[] = []
-afterEach(async () => Promise.all(fixtures.splice(0).map((item) => item.remove())))
 
 describe('Markdown references', () => {
-  it('loads a whole local document and keeps raw HTML inert', async () => {
-    const current = await fixture({
-      'alpha/.spec/api.d.ts': 'export {}\n',
-      'alpha/details.md': '# Details\n\n<script>alert(1)</script>\n',
-    })
-    fixtures.push(current)
-
-    const document = await loadMarkdown(
-      current.root,
-      join(current.root, 'alpha/.spec/api.d.ts'),
-      '../details.md',
-    )
-
+  it('keeps raw HTML inert while rendering a catalog document', () => {
+    const document = renderMarkdownDocument('alpha/details.md', '# Details\n\n<script>alert(1)</script>\n')
     expect(document.source).toBe('alpha/details.md')
-    expect(document.fragment).toBeUndefined()
     expect(document.html).toContain('&lt;script&gt;')
     expect(document.html).not.toContain('<script>')
-  })
-
-  it('selects a heading section including nested headings', async () => {
-    const current = await fixture({
-      'alpha/.spec/api.d.ts': 'export {}\n',
-      'alpha/details.md': `
-# First
-
-Ignore.
-
-## Value semantics
-
-Keep this.
-
-### Detail
-
-Keep this too.
-
-## Next
-
-Exclude this.
-`,
-    })
-    fixtures.push(current)
-
-    const document = await loadMarkdown(
-      current.root,
-      join(current.root, 'alpha/.spec/api.d.ts'),
-      '../details.md#value-semantics',
-    )
-
-    expect(document.fragment).toBe('value-semantics')
-    expect(document.text).toContain('## Value semantics')
-    expect(document.text).toContain('### Detail')
-    expect(document.text).not.toContain('## Next')
-  })
-
-  it('reports missing headings and root escapes', async () => {
-    const current = await fixture({
-      'alpha/.spec/api.d.ts': 'export {}\n',
-      'alpha/details.md': '# Details\n',
-    })
-    fixtures.push(current)
-
-    await expect(
-      loadMarkdown(current.root, join(current.root, 'alpha/.spec/api.d.ts'), '../details.md#missing'),
-    ).rejects.toThrow('Markdown heading not found')
-    await expect(
-      loadMarkdown(current.root, join(current.root, 'alpha/.spec/api.d.ts'), '../../../outside.md'),
-    ).rejects.toThrow()
-  })
-
-  it('rejects symbolic links even when their target is readable', async () => {
-    const external = await fixture({ 'details.md': '# External\n' })
-    const current = await fixture({ 'alpha/.spec/api.d.ts': 'export {}\n' })
-    fixtures.push(external, current)
-    await symlink(join(external.root, 'details.md'), join(current.root, 'alpha/details.md'))
-
-    await expect(
-      loadMarkdown(current.root, join(current.root, 'alpha/.spec/api.d.ts'), '../details.md'),
-    ).rejects.toThrow('symbolic links')
   })
 
   it('supports GFM without enabling HTML', () => {

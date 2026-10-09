@@ -1,4 +1,7 @@
-/** Compact final products; no generic analysis facts cross this boundary. */
+import type { NativeCapturedAnalysisSource } from '../protocol/model.ts';
+export type { NativeCapturedAnalysisStamp as NativeCapturedSemanticStamp } from '../protocol/model.ts';
+
+/** Compact decisions and optional revision-owned generic semantic observations. */
 export const NATIVE_DECISION_PROTOCOL_VERSION = 1 as const;
 export const NATIVE_DECISION_CONTRACT_REVISION = 1 as const;
 
@@ -37,7 +40,7 @@ export interface NativeDecisionPrepareRequest {
   readonly ruleRevisions: readonly { readonly id: string; readonly revision: string }[];
   readonly options: {
     /** Offered private SDK source owner; absence preserves older products/fallback. */
-    readonly sourcePolicyOwnerRevision?: 2;
+    readonly sourcePolicyOwnerRevision?: 2 | 3;
     readonly requiredRuleIds?: readonly string[];
     readonly generic?: boolean;
     readonly fix?: boolean;
@@ -213,7 +216,7 @@ export type NativeDecisionSeal =
     }
   | { readonly status: "retry" };
 
-export interface NativeDecisionSession {
+export interface NativeDecisionSession extends NativeCapturedAnalysisSource {
   prepare(request: NativeDecisionPrepareRequest, signal?: AbortSignal): Promise<unknown>;
   /** Continue the same private capture with canonical policy/intrinsic observations. */
   continue?(request: NativeDecisionContinuation, signal?: AbortSignal): Promise<unknown>;

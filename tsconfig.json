@@ -25,7 +25,6 @@
     "conformance",
     "cli",
     "compiler",
-    "json-schema",
     "markdown",
     "reference",
     "repository",
@@ -35,7 +34,8 @@
     "specification",
     "typescript",
     "viewer",
-    "viewer-host"
+    "viewer-host",
+    "distribution"
   ],
   "exclude": [
     "analysis/typescript/native"

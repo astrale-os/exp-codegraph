@@ -209,9 +209,15 @@ createRepositoryPathOwnershipGrouping · createRepositorySourceService
 
 @astrale-os/codegraph/analysis/native
 openNativeDecisionSession · resolvePackagedNativeAnalysis · resolvePackagedNativeOxlint
+preloadNativeArtifacts({ generic?, signal? })
+
+@astrale-os/codegraph/analysis/typescript
+openCapturedTypeScriptReader(source, capture, { capabilities?, signal? })
 ```
 
 Use memory by default; supply a caller-owned store for custom retention or persistence. Repository tools inventory, classify, group and measure files. Native decision sessions support specialized tool integrations. [All exports, including types](docs/public-api.md).
+
+Captured readers reuse a native session's compiler and fact owner. Their default capabilities are source and body demand; structural reads require an explicit capability. [Capture stamps and leased readers](docs/typescript-values.md#read-an-existing-native-capture).
 
 </details>
 
@@ -288,6 +294,7 @@ Keep both files in the owning TypeScript project. `verify` also checks the publi
 
 ```sh
 cg --version
+cg preload --viewer             # Prepare native analysis + viewer for offline use
 cg check . --select modules/payments --exclude generated --format json
 cg check . --require-complete-layout --require-exact-layout --require-law-evidence
 cg changed . origin/main
@@ -357,4 +364,4 @@ encodeWorkspaceCheckpointJson · decodeWorkspaceCheckpointJson
 
 </details>
 
-Node 22 (≥22.13), 24 or 26. Version 0.1.0 delivers native analysis on macOS arm64 and Linux x64; the next release also qualifies macOS x64, Linux arm64 and Windows x64. [Installation and artifacts](docs/github-artifacts.md) · [Distribution](docs/npm-distribution.md).
+Node 22 (≥22.13), 24 or 26. One npm package; native binaries and the viewer download at first use, with a verified offline cache. [Preload and distribution](docs/npm-distribution.md) · [Qualified artifacts](docs/github-artifacts.md).

@@ -1,16 +1,15 @@
-import { readFile, stat } from 'node:fs/promises'
+import { lstat, readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
 import { assertDeliveredArtifact } from './compression.mjs'
 
 import {
-  NATIVE_ARTIFACT_DIRECTORY,
+  nativeReleaseAssetName,
   NATIVE_RELEASE_FORMAT,
   NATIVE_TARGETS,
   PROTOCOL_VERSION,
   assertArtifact,
   assertOxlintSources,
-  assertRegularExecutable,
   assertToolchain,
   readJson,
   stableJson,
@@ -21,9 +20,11 @@ const packageManifest = await readJson(resolve(root, 'package.json'))
 const packageVersion = packageManifest.version
 const expectedSourceRevision = argument('--source-revision')
 const release = await readJson(resolve(root, 'native-release.json'))
+const assets = resolve(argument('--assets-dir') ?? resolve(root, '.native-release-assets'))
 if (
   release.format !== NATIVE_RELEASE_FORMAT ||
   release.version !== 1 ||
+  release.delivery !== 'github-release' ||
   release.packageVersion !== packageVersion ||
   release.protocolVersion !== PROTOCOL_VERSION ||
   typeof release.sourceRevision !== 'string' ||
@@ -46,9 +47,9 @@ if (
 }
 if (
   packageManifest.optionalDependencies !== undefined ||
-  !packageManifest.files?.includes(NATIVE_ARTIFACT_DIRECTORY)
+  packageManifest.files?.includes('native-artifacts')
 ) {
-  throw new Error('Codegraph must deliver its native artifacts inside its one package.')
+  throw new Error('Codegraph must carry only native release metadata in its one npm package.')
 }
 assertToolchain(release.toolchain, { requireOxlint: true })
 
@@ -57,23 +58,22 @@ if (Object.keys(release.artifacts ?? {}).sort().join('\0') !== [...targets].sort
   throw new Error(`Native release must contain exactly: ${targets.join(', ')}.`)
 }
 assertOxlintSources(release.artifacts)
+const expectedAssets = ['native-release.json']
 for (const target of targets) {
-  const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: NATIVE_TARGETS[target].oxlint })
-  const artifactRoot = resolve(root, NATIVE_ARTIFACT_DIRECTORY, target)
+  const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: NATIVE_TARGETS[target].oxlint, delivery: release.delivery, sourceRevision: release.sourceRevision })
   for (const delivered of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
-    const member = delivered.compression?.path ?? delivered.executable
-    if (!delivered.compression) {
-      const packed = `./${NATIVE_ARTIFACT_DIRECTORY}/${target}/${member}`
-      if (!packageManifest.publishConfig.executableFiles?.includes(packed)) {
-        throw new Error(`${packed} is not declared in publishConfig.executableFiles.`)
-      }
-      await assertRegularExecutable(resolve(artifactRoot, member), target)
-    } else if (!(await stat(resolve(artifactRoot, member))).isFile()) {
-      throw new Error(`${target} compressed artifact is not a regular file.`)
+    const name = nativeReleaseAssetName(target, delivered.executable === 'bin/codegraph-oxlint' ? 'oxlint' : 'native', release.sourceRevision)
+    if (!delivered.compression || delivered.compression.path !== name) {
+      throw new Error(`${target} native asset is not bound to the exact release source.`)
     }
-    await assertDeliveredArtifact(resolve(artifactRoot, member), delivered)
+    if (!(await lstat(resolve(assets, name))).isFile()) throw new Error(`${target} release asset is not a regular file.`)
+    expectedAssets.push(name)
+    await assertDeliveredArtifact(resolve(assets, name), delivered)
   }
 }
+
+if (stableJson(await readJson(resolve(assets, 'native-release.json'))) !== stableJson(release)) throw new Error('External native header differs from npm metadata.')
+if ((await readdir(assets)).sort().join('\0') !== expectedAssets.sort().join('\0')) throw new Error('External native assets contain unexpected or missing files.')
 
 const notices = await readFile(resolve(root, 'THIRD_PARTY_NOTICES.md'), 'utf8')
 for (const required of ['ttsc', 'TypeScript-Go', 'Go toolchain', 'Oxlint']) {
@@ -86,6 +86,6 @@ function argument(name) {
   if (index < 0) return undefined
   const value = process.argv[index + 1]
   if (!value || value.startsWith('--')) throw new Error(`${name} requires a value.`)
-  if (!/^[a-f0-9]{40}$/u.test(value)) throw new Error(`${name} must be an exact Git revision.`)
+  if (name === '--source-revision' && !/^[a-f0-9]{40}$/u.test(value)) throw new Error(`${name} must be an exact Git revision.`)
   return value
 }

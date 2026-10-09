@@ -1,7 +1,7 @@
 /// <reference lib="esnext.disposable" preserve="true" />
 import type { AnalysisGeneration, FactTransaction } from '../../../generation/.spec/api.js'
 import type { AnalysisQuery, AnalysisStore } from '../../../query/.spec/api.js'
-import type { NativeAnalysisSessionFactory, NativeProjectDescriptor, NativeSourceChange } from '../../../protocol/.spec/api.js'
+import type { NativeAnalysisSessionFactory, NativeProjectDescriptor, NativeSourceChange, NativeCapturedAnalysisSource, NativeCapturedAnalysisStamp } from '../../../protocol/.spec/api.js'
 import type { SourceId } from '../../../identity/.spec/api.js'
 import type { TypeScriptFactReader } from '../../facts/.spec/api.js'
 import type { TypeScriptCallInventory, TypeScriptCallQuery } from '../../body/.spec/api.js'
@@ -87,3 +87,18 @@ export interface TypeScriptProjectUpdate {
 }
 
 export function openTypeScriptProject(options: TypeScriptProjectOptions): Promise<TypeScriptProject>
+
+export type CapturedTypeScriptSemanticReader = Pick<TypeScriptProjectSnapshot, 'compute' | 'dispose'>
+
+/**
+ * Reuse one compiler session's fact store and tracked computations. Each reader
+ * pins its captured epoch. Deferred demand on a retired epoch cannot read CURRENT.
+ * Disposing this reader releases only its lease; session disposal releases facts.
+ * Defaults to source and observed body facts. Request typescript.structure
+ * explicitly for static references or dependencies.
+ */
+export function openCapturedTypeScriptReader(
+  source: NativeCapturedAnalysisSource,
+  capture: NativeCapturedAnalysisStamp,
+  options?: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] },
+): Promise<CapturedTypeScriptSemanticReader>

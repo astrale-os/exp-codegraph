@@ -36,7 +36,8 @@ func (session *governanceSession) completeClosedSource(raw json.RawMessage) (any
 	}
 	contracts := []governanceImplementationContract{}
 	for _, contract := range state.Contracts {
-		if contract.Implementation.ID == "astrale.sdk.typescript-source" {
+		if contract.Implementation.ID == "astrale.sdk.typescript-source" ||
+			(governanceClosedSourceRevision(state.Prepare.Options) == 3 && contract.Implementation.ID == "astrale.sdk.codegraph") {
 			if _, disabled := state.Project.Disabled[contract.RuleID]; !disabled {
 				contracts = append(contracts, contract)
 			}

@@ -13,7 +13,7 @@ const request: NativeDecisionPrepareRequest = {
   options: {},
 };
 const transports: DecisionProcess[] = [];
-function service(code: string, worker?: () => Promise<string | undefined>): DecisionProcess {
+function service(code: string, worker?: (signal?: AbortSignal) => Promise<string | undefined>): DecisionProcess {
   const child = spawn(node, ["--input-type=module", "-e", code], { stdio: "pipe" });
   const transport = new DecisionProcess(child, worker);
   transports.push(transport);
@@ -24,6 +24,85 @@ afterEach(async () => {
 });
 
 describe("native decision transport source qualification", () => {
+  it('offers captured observations only when the selected binary negotiates revision one', async () => {
+    const old = service(`console.log(JSON.stringify(${JSON.stringify(hello)}));setInterval(()=>{},10000);`);
+    await old.ready();
+    expect(old.semanticReaderRevision).toBeUndefined();
+    expect(old.openSemanticProjection).toBeUndefined();
+    const next = service(`console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));setInterval(()=>{},10000);`);
+    await next.ready();
+    expect(next.semanticReaderRevision).toBe(1);
+    expect(typeof next.openSemanticProjection).toBe('function');
+    const incompatible = service(`console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 2 })}));setInterval(()=>{},10000);`);
+    await expect(incompatible.ready()).rejects.toMatchObject({ code: 'PROTOCOL' });
+  });
+
+  it('owns the queued capture tuple and closes a lease without closing its session', async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));let leases=0;
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;let result=p;
+      if(r.method==='semantic-open')result={...p,lease:'lease-'+(++leases),project:{root:'/owned',config:'tsconfig.json',capabilities:p.capabilities}};
+      if(r.method==='semantic-request')result={token:p.token,generation:p.generation,sourceSnapshotDigest:p.sourceSnapshotDigest,lease:p.lease,...(p.request.kind==='dispose'?{}:{response:{id:p.request.id,kind:'unchanged',generation:p.generation}})};
+      setTimeout(()=>console.log(JSON.stringify({id:r.id,result})),10);});`);
+    await transport.ready();
+    const before = transport.prepare(request);
+    const stamp = { token: 'first', generation: 'g1', sourceSnapshotDigest: 'a'.repeat(64) };
+    const opening = transport.openSemanticProjection!(stamp);
+    stamp.token = 'changed'; stamp.generation = 'changed'; stamp.sourceSnapshotDigest = 'b'.repeat(64);
+    await before;
+    const port = await opening;
+    expect(await port.request({ id: 7, kind: 'refresh' })).toMatchObject({ generation: 'g1' });
+    const closing = port.dispose();
+    expect(port.dispose()).toBe(closing);
+    await closing;
+    expect(port.signal.aborted).toBe(true);
+    expect(port.ownerSignal.aborted).toBe(false);
+    await expect(port.request({ id: 8, kind: 'refresh' })).rejects.toThrow('disposed');
+    const next = await transport.openSemanticProjection!({ token: 'next', generation: 'g2', sourceSnapshotDigest: 'c'.repeat(64) });
+    expect(await next.request({ id: 1, kind: 'refresh' })).toMatchObject({ generation: 'g2' });
+    await next.dispose();
+  });
+
+  it.each(['token', 'generation', 'sourceSnapshotDigest', 'lease', 'project'])('rejects an unowned semantic %s and invalidates its actor', async (field) => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;const result={...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:p.capabilities}};result[${JSON.stringify(field)}]=null;console.log(JSON.stringify({id:r.id,result}));});`);
+    await transport.ready();
+    await expect(transport.openSemanticProjection!({ token: 'owned', generation: 'g', sourceSnapshotDigest: 'a'.repeat(64) })).rejects.toMatchObject({ code: 'PROTOCOL' });
+    await expect(transport.prepare(request)).rejects.toMatchObject({ code: 'PROCESS' });
+  });
+
+  it('waits for the fact owner exactly once when the native session is disposed', async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;console.log(JSON.stringify({id:r.id,result:{...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:p.capabilities}}}));});`);
+    await transport.ready();
+    const port = await transport.openSemanticProjection!({ token: 'owned', generation: 'g', sourceSnapshotDigest: 'a'.repeat(64) });
+    let release!: () => void, calls = 0, settled = false;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    port.onOwnerDispose(async () => { calls++; await held; });
+    const closing = transport.dispose().then(() => { settled = true; });
+    await Promise.resolve();
+    expect(port.ownerSignal.aborted).toBe(true);
+    expect(port.signal.aborted).toBe(true);
+    expect(settled).toBe(false);
+    expect(calls).toBe(1);
+    await port.dispose();
+    release(); await closing; await transport.dispose();
+    expect(calls).toBe(1);
+    expect(() => port.onOwnerDispose(async () => {})).toThrow('unavailable');
+  });
+
+  it('captures the requested projection before yielding and rejects substituted capabilities', async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;const result={...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:p.token==='forged'?['typescript.symbol']:p.capabilities}};console.log(JSON.stringify({id:r.id,result}));});`);
+    await transport.ready();
+    const capabilities = ['typescript.source', 'typescript.body-demand'];
+    const opening = transport.openSemanticProjection!({ token: 'owned', generation: 'g', sourceSnapshotDigest: 'a'.repeat(64) }, { capabilities });
+    capabilities.splice(0, capabilities.length, 'typescript.structure');
+    const port = await opening;
+    expect(port.project.capabilities).toEqual(['typescript.body-demand', 'typescript.source']);
+    await expect(transport.openSemanticProjection!({ token: 'forged', generation: 'g2', sourceSnapshotDigest: 'b'.repeat(64) })).rejects.toMatchObject({ code: 'PROTOCOL' });
+    expect(port.ownerSignal.aborted).toBe(true);
+  });
+
   it("admits split UTF8 frames and routes only the current request identity", async () => {
     const transport = service(
       `import {createInterface} from 'node:readline'; const line=Buffer.from(JSON.stringify(${JSON.stringify(hello)})+'\\n'); process.stdout.write(line.subarray(0,9)); process.stdout.write(line.subarray(9)); createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line); const bytes=Buffer.from(JSON.stringify({id:r.id,result:{status:'partial',residual:['é🌱']}})+'\\n'); for(let i=0;i<bytes.length;i++)process.stdout.write(bytes.subarray(i,i+1));});`,
@@ -113,6 +192,52 @@ describe("native decision transport source qualification", () => {
     expect(await pending).toEqual({ token: 'original', configPath: '/cache/.oxlintrc.json', config: { rules: {} }, commandIgnorePatterns: [], artifactPath: '/cache/worker-sha' });
     expect(await later).toEqual({ token: 'later', reportDigest: 'digest' });
     expect(calls).toBe(1);
+  });
+
+  it("rejects pre-cancelled generic work without starting its transfer", async () => {
+    let calls = 0;
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:r.params}));});`, async () => { calls++; return '/worker'; });
+    await transport.ready();
+    const abort = new AbortController(); abort.abort('before transfer');
+    await expect(transport.captureOwnedGeneric({ token: 'cancelled', configPath: '/config', config: {}, commandIgnorePatterns: [] }, abort.signal)).rejects.toMatchObject({ code: 'CANCELLED' });
+    expect(calls).toBe(0);
+    expect(await transport.seal({ token: 'live', reportDigest: 'digest' })).toEqual({ token: 'live', reportDigest: 'digest' });
+  });
+
+  it("cancels only a queued worker transfer and permits the following request and normal recovery", async () => {
+    let aborted = false, calls = 0;
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);console.log(JSON.stringify({id:r.id,result:r.params}));});`, (signal) => {
+      calls++;
+      if (calls !== 1) return Promise.resolve('/worker');
+      return new Promise((_resolve, reject) => signal!.addEventListener('abort', () => { aborted = true; reject(signal!.reason); }, { once: true }));
+    });
+    await transport.ready();
+    const abort = new AbortController();
+    const input = { token: 'cancelled', configPath: '/config', config: {}, commandIgnorePatterns: [] };
+    const transfer = transport.captureOwnedGeneric(input, abort.signal);
+    const failure = expect(transfer).rejects.toMatchObject({ code: 'CANCELLED' });
+    const following = transport.seal({ token: 'live', reportDigest: 'digest' });
+    abort.abort('during transfer');
+    await failure;
+    expect(aborted).toBe(true);
+    expect(await following).toEqual({ token: 'live', reportDigest: 'digest' });
+    expect(await transport.captureOwnedGeneric(input)).toEqual({ ...input, artifactPath: '/worker' });
+  });
+
+  it("disposes the owned worker transfer before closing and never sends its late native request", async () => {
+    let aborted = false, cleaned = false;
+    const transport = service(`import {createInterface} from 'node:readline'; console.log(JSON.stringify(${JSON.stringify(hello)}));
+      createInterface({input:process.stdin}).on('line',()=>process.exit(99));`, (signal) => new Promise((_resolve, reject) => {
+      signal!.addEventListener('abort', () => { aborted = true; setTimeout(() => { cleaned = true; reject(signal!.reason); }, 10); }, { once: true });
+    }));
+    await transport.ready();
+    const transfer = transport.captureOwnedGeneric({ token: 'closing', configPath: '/config', config: {}, commandIgnorePatterns: [] });
+    const failure = expect(transfer).rejects.toMatchObject({ code: 'PROCESS' });
+    await transport.dispose(); await failure;
+    expect(aborted).toBe(true); expect(cleaned).toBe(true);
+    await expect(transport.prepare(request)).rejects.toMatchObject({ code: 'PROCESS' });
   });
 
   it("keeps the unavailable Go-only worker's request shape unchanged", async () => {

@@ -3,12 +3,14 @@ import { execFile as execFileCallback } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
-import { assertNpmConsumerLock } from '../../../scripts/native/admit-packages.mjs'
-import { NATIVE_ARTIFACT_DIRECTORY, NATIVE_TARGETS, assertOxlintArtifact } from '../../../scripts/native/shared.mjs'
+import { admitPublishedReleaseAssets, assertNpmConsumerLock } from '../../../scripts/native/admit-packages.mjs'
+import { NATIVE_TARGETS, assertOxlintArtifact } from '../../../scripts/native/shared.mjs'
+import { runInstalledNode } from './installed-node.mjs'
 import { qualifyOwnedGeneric } from './owned-generic.mjs'
 import { qualifyResidentProject } from './resident.mjs'
 
@@ -81,6 +83,7 @@ try {
   const forbidden = rootFiles.filter(
     (path) =>
       path.endsWith('.map') ||
+      /\/(?:native-artifacts|dist\/viewer|\.native-release-assets|\.viewer-release-assets)(?:\/|$)/u.test(path) ||
       path.includes('/analysis/typescript/native/') ||
       path.includes('/analysis/typescript/ttsc/') || path.includes('/analysis/oxlint/') ||
       /(?:^|\/)(?:Cargo\.toml|Cargo\.lock|rust-toolchain\.toml)$/u.test(path) || path.endsWith('.rs') ||
@@ -89,10 +92,35 @@ try {
   )
   assert.deepEqual(forbidden, [], `Production package leaked compiler inputs: ${forbidden.join(', ')}`)
   const cli = join(installed, 'dist/cli.js')
-  const version = await execFile(process.execPath, [cli, '--version'], { cwd: consumer })
+  const offlineGuard = pathToFileURL(join(consumer, 'offline-guard.mjs'))
+  await writeFile(offlineGuard, "globalThis.fetch = () => { throw new Error('Qualification forbids network access here.') }\n")
+  const version = await runInstalledNode(['--import', offlineGuard.href, cli, '--version'], { cwd: consumer })
   assert.equal(version.stderr, '')
   assert.equal(version.stdout.trim(), rootManifest.version)
-
+  const importProbe = join(consumer, 'import-probe.mjs')
+  const exports = Object.entries(rootManifest.exports).filter(([name, value]) => name !== './package.json' && value.import)
+    .map(([name]) => name === '.' ? '@astrale-os/codegraph' : `@astrale-os/codegraph${name.slice(1)}`)
+  for (const name of ['@astrale-os/codegraph', '@astrale-os/codegraph/analysis/typescript', '@astrale-os/codegraph/analysis/native']) {
+    assert(exports.includes(name), `Required public export ${name} is missing.`)
+  }
+  await writeFile(importProbe, `for (const name of ${JSON.stringify(exports)}) await import(name)\n`)
+  await runInstalledNode(['--import', offlineGuard.href, importProbe], { cwd: consumer })
+  const release = JSON.parse(await readFile(join(installed, 'native-release.json'), 'utf8'))
+  const viewer = JSON.parse(await readFile(join(installed, 'viewer-release.json'), 'utf8'))
+  assert.equal(release.delivery, 'github-release', 'Installed consumer must qualify the light package.')
+  const headers = Object.fromEntries(await Promise.all([
+    ['native', 'native-release.json'], ['viewer', 'viewer-release.json'],
+  ].map(async ([key, name]) => {
+    const bytes = await readFile(join(installed, name))
+    return [key, { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }]
+  })))
+  await qualifyPublicPreloadTypes(consumer)
+  const publicAssets = await admitPublishedReleaseAssets({ sourceRevision: release.sourceRevision,
+    version: rootManifest.version, native: release, viewer, headers })
+  // Every first-use entrypoint follows the manifest-selected public delivery, with no local override.
+  await runInstalledNode([cli, 'preload'], { cwd: consumer })
+  await runInstalledNode([cli, 'preload', '--viewer'], { cwd: consumer })
+  if (NATIVE_TARGETS[target].oxlint) await runInstalledNode([cli, 'preload', '--generic'], { cwd: consumer })
   const typescript = await import(
     pathToFileURL(join(installed, 'dist/analysis/typescript/index.js')).href
   )
@@ -100,17 +128,19 @@ try {
   const native = await typescript.resolvePackagedNativeAnalysis()
   assert.equal(native.origin, 'package')
   assert.equal(native.target, target)
-  const installedNative = await realpath(join(installed, NATIVE_ARTIFACT_DIRECTORY))
+  const installedNativeRoot = await realpath(installed)
+  const cacheRelative = relative(installedNativeRoot, native.command)
+  assert(isAbsolute(cacheRelative) || cacheRelative === '..' || cacheRelative.startsWith(`..${sep}`),
+    'Native cache must not rewrite the installed package.')
   assert(isAbsolute(native.command))
   assert.equal((await typescript.resolvePackagedNativeAnalysis()).command, native.command,
     'Repeated resolution must reuse the admitted content cache.')
-  const release = JSON.parse(await readFile(join(installed, 'native-release.json'), 'utf8'))
   assert.deepEqual(Object.keys(release.artifacts).sort(), Object.keys(NATIVE_TARGETS).sort())
   const analyzer = release.artifacts[target]
   const originalNative = await readFile(native.command)
   assert.equal(originalNative.length, analyzer.bytes)
   assert.equal(createHash('sha256').update(originalNative).digest('hex'), analyzer.sha256)
-  if (analyzer.compression) await assertMissing(join(installedNative, target, analyzer.executable))
+  assert(analyzer.compression, 'Remote analysis must retain both encoded and decoded identities.')
   const oxlint = analyzer.oxlint
   let ownedGeneric = { status: 'unavailable', reason: 'NATIVE_OXLINT_UNAVAILABLE' }
   if (process.argv.includes('--require-oxlint')) {
@@ -138,14 +168,20 @@ try {
   } else {
     await assert.rejects(typescript.resolvePackagedNativeOxlint(), { code: 'NATIVE_OXLINT_UNAVAILABLE', target })
   }
-  // The one package delivers every released target and nothing else beside them.
-  const nativeFiles = (await filesUnder(installedNative)).map((path) => path.slice(installedNative.length + 1))
-  assert.deepEqual(nativeFiles.sort(), Object.entries(release.artifacts).flatMap(([name, artifact]) => [
-    `${name}/${artifact.compression?.path ?? artifact.executable}`,
-    ...(artifact.oxlint ? [`${name}/${artifact.oxlint.compression?.path ?? artifact.oxlint.executable}`] : []),
-  ]).sort())
-
-
+  // The same admitted files serve warm and offline use; no second download or package rewrite.
+  const decisions = await import(pathToFileURL(join(installed, 'dist/analysis/native/index.js')).href)
+  const server = await import(pathToFileURL(join(installed, 'dist/server/index.js')).href)
+  const onlineFetch = globalThis.fetch
+  try {
+    globalThis.fetch = () => { throw new Error('Warm resolution attempted network access.') }
+    assert.equal((await decisions.preloadNativeArtifacts({ generic: Boolean(oxlint) })).analysis.command, native.command)
+    await server.preloadViewer()
+    assert.equal((await typescript.resolvePackagedNativeAnalysis()).command, native.command)
+    if (oxlint) await typescript.resolvePackagedNativeOxlint()
+    await runInstalledNode(['--import', offlineGuard.href, cli, 'preload', '--viewer', ...(oxlint ? ['--generic'] : [])], { cwd: consumer })
+  } finally { globalThis.fetch = onlineFetch }
+  await assertMissing(join(installed, 'native-artifacts'))
+  await assertMissing(join(installed, 'dist/viewer'))
 
   const project = join(temporary, 'project')
   await cp(resolve(repositoryRoot, 'qualification/v2/ttsc/fixtures/adversarial'), project, {
@@ -220,10 +256,34 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: npmVersion ? 'npmjs' : 'packed-artifact', resident, ownedGeneric })}\n`,
+    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, sourceRevision: release.sourceRevision, publicAssets, offline: { imports: exports.length, preload: true }, publicPreloadTypes: { strict: true, skipLibCheck: true }, source: npmVersion ? 'npmjs' : 'packed-artifact', resident, ownedGeneric })}\n`,
   )
 } finally {
   await rm(temporary, { recursive: true, force: true })
+}
+
+async function qualifyPublicPreloadTypes(consumer) {
+  const config = join(consumer, 'preload-tsconfig.json')
+  await writeFile(config, JSON.stringify({ compilerOptions: {
+    strict: true, noEmit: true, skipLibCheck: true, target: 'ES2022',
+    module: 'NodeNext', moduleResolution: 'NodeNext', lib: ['ES2022', 'DOM'],
+  }, files: ['preload-contract.ts'] }))
+  await writeFile(join(consumer, 'preload-contract.ts'), [
+    "import { preloadNativeArtifacts, type PreloadedNativeArtifacts } from '@astrale-os/codegraph/analysis/native'",
+    'const result: Promise<PreloadedNativeArtifacts> = preloadNativeArtifacts({ generic: true, signal: new AbortController().signal })',
+    'const admitted = await result',
+    'admitted.analysis.command satisfies string',
+    "admitted.generic?.engineVersion satisfies '1.81.0' | undefined",
+    '// @ts-expect-error Release identities are package-owned; callers cannot select arbitrary URLs.',
+    "preloadNativeArtifacts({ url: 'https://another.host/artifact' })",
+    '// @ts-expect-error Generic preload selects a capability, never a binary path.',
+    "preloadNativeArtifacts({ generic: '/binary' })",
+  ].join('\n'))
+  // The compiler is tooling from this pinned checkout; all API imports resolve only in the installed consumer.
+  // Dependency declarations are skipped so this runtime-only consumer needs no adjacent @types peers.
+  const require = createRequire(import.meta.url)
+  const compiler = join(dirname(require.resolve('@typescript/native-preview/package.json')), 'bin/tsgo')
+  await runInstalledNode([compiler, '--noEmit', '-p', config], { cwd: consumer })
 }
 
 function argument(name) {

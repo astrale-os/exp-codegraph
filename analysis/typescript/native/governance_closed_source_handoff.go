@@ -12,12 +12,19 @@ import (
 // An offered private owner extends the original products protocol. Unknown offers
 // are unsupported, not malformed user options; older callers retain fallback.
 func governanceClosedSourceOffered(raw json.RawMessage) bool {
+	revision := governanceClosedSourceRevision(raw)
+	return revision == 2 || revision == 3
+}
+
+func governanceClosedSourceRevision(raw json.RawMessage) int {
 	var options struct {
 		Revision json.RawMessage `json:"sourcePolicyOwnerRevision"`
 	}
 	var revision int
-	return json.Unmarshal(raw, &options) == nil &&
-		json.Unmarshal(options.Revision, &revision) == nil && revision == 2
+	if json.Unmarshal(raw, &options) == nil && json.Unmarshal(options.Revision, &revision) == nil {
+		return revision
+	}
+	return 0
 }
 
 const governanceClosedSourceLimit = 32 * 1024 * 1024
@@ -128,6 +135,9 @@ func (session *governanceSession) closedSourceHandoff(withResolutionInputs bool)
 		frame := map[string]any{"status": "source-projection", "token": state.Token,
 			"generation": state.Generation, "sourceSnapshotDigest": project.GovernanceDigest,
 			"root": project.Root, "resolutionInputs": inputs}
+		if governanceClosedSourceRevision(state.Prepare.Options) == 3 {
+			frame["semanticAuthorityRevision"] = 1
+		}
 		// Removed mandatory body fields exceed the 11-byte status-name increase.
 		// Thus the thin physical frame is smaller than the already bounded old frame.
 		state.sourceBody.projected = true
@@ -147,6 +157,9 @@ func (session *governanceSession) closedSourceHandoff(withResolutionInputs bool)
 		"rootEntries":             append([]string{}, project.RootEntries...), "files": rows,
 		"compilerValid": project.compilerValid, "verbatimModuleSyntax": project.verbatim,
 		"rootMetadata": metadata,
+	}
+	if governanceClosedSourceRevision(state.Prepare.Options) == 3 {
+		frame["semanticAuthorityRevision"] = 1
 	}
 	// Convert after every original metadata/projection guard, at the marshal frontier.
 	var legacyExtra uint64

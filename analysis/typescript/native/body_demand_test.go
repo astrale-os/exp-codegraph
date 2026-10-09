@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,45 @@ func TestBodyDemandKeepsFullClientsAndEmptySelectionHonest(t *testing.T) {
 	for _, shard := range empty.Upserts {
 		if shard.Namespace == bodyNamespace && (len(shard.Facts) != 0 || shard.Completion.Kind != "partial") {
 			t.Fatal("empty selection pretended to own complete full body coverage")
+		}
+	}
+}
+
+func TestSelectedBodiesOwnExactStaticPropertyNamesWithoutGlobalSymbolFacts(t *testing.T) {
+	root := t.TempDir()
+	writeBodyDemandFixture(t, root)
+	if err := os.WriteFile(filepath.Join(root, "entry.ts"), []byte(`declare const opaque:string;const short=1;export function shape(){return {plain:1,'quoted-key':2,42:3,['literal-key']:4,short,method(){return 5},'quoted-method'(){return 6},['literal-method'](){return 7},[opaque](){return 8}}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := newAnalyzer(root, "tsconfig.json", "", []string{sourceNamespace, bodyDemandNamespace}, nil, nil, 0, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.close()
+	transaction, _, err := a.refresh(request{ID: 1, Discover: true, BodyDemand: &bodyDemandRecipe{Paths: []string{"entry.ts"}}})
+	if err != nil || transaction == nil {
+		t.Fatalf("body projection: %v", err)
+	}
+	names := map[string]bool{}
+	for _, shard := range transaction.Upserts {
+		if shard.Namespace == symbolNamespace || shard.Namespace == occurrenceNamespace {
+			t.Fatal("selected names required a global declaration inventory")
+		}
+		if shard.Namespace != bodyNamespace || len(shard.Facts) == 0 {
+			continue
+		}
+		for _, occurrence := range shard.Facts[0].Payload.(bodyFactPayload).Body.Occurrences {
+			if occurrence.PropertyName != "" {
+				names[occurrence.PropertyName] = true
+				if strings.HasPrefix(occurrence.PropertyName, "__computed") {
+					t.Fatal("an opaque computed key became a synthesized property name")
+				}
+			}
+		}
+	}
+	for _, name := range []string{"plain", "quoted-key", "42", "literal-key", "short", "method", "quoted-method", "literal-method"} {
+		if !names[name] {
+			t.Errorf("selected body omitted compiler-owned property name %q", name)
 		}
 	}
 }

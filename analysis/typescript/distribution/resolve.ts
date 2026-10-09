@@ -14,6 +14,8 @@ import type {
   NativeOxlintArtifact,
   ResolvedPackagedNativeAnalysis,
   ResolvedPackagedNativeOxlint,
+  NativeArtifactPreloadOptions,
+  PreloadedNativeArtifacts,
 } from './model.ts'
 import { NativeAnalysisDistributionError } from './model.ts'
 import { admitExecutable, materializeNativeArtifact } from './materialize.ts'
@@ -22,6 +24,7 @@ import { admitExecutable, materializeNativeArtifact } from './materialize.ts'
 export async function resolvePackagedNativeAnalysis(
   options: PackagedNativeAnalysisOptions = {},
 ): Promise<ResolvedPackagedNativeAnalysis> {
+  options.signal?.throwIfAborted()
   const root = packageRoot()
   const packageVersion = await installedPackageVersion(resolve(root, 'package.json'))
   const target = currentNativeAnalysisTarget()
@@ -31,24 +34,28 @@ export async function resolvePackagedNativeAnalysis(
     return { ...admitted, command, target, packageVersion, origin: 'explicit' }
   }
   const authority = await resolveArtifact(root, packageVersion, target)
-  const native = await admitPackagedExecutable(authority.artifactRoot, authority.artifact, target)
+  const native = await admitPackagedExecutable(authority.artifactRoot, authority.artifact, target, options.signal)
   return { ...native, ...(authority.artifact.compression ? { compression: authority.artifact.compression } : {}), target, packageVersion, origin: 'package' }
 }
 
 /** Resolve the generic worker independently so the original analyzer can recover without it. */
-export async function resolvePackagedNativeOxlint(): Promise<ResolvedPackagedNativeOxlint> {
+export async function resolvePackagedNativeOxlint(options: { readonly signal?: AbortSignal } = {}): Promise<ResolvedPackagedNativeOxlint> {
+  options.signal?.throwIfAborted()
   const root = packageRoot()
   const packageVersion = await installedPackageVersion(resolve(root, 'package.json'))
   const target = currentNativeAnalysisTarget()
   const authority = await resolveArtifact(root, packageVersion, target)
   const worker = admitNativeOxlintArtifact(authority.artifact)
-  const admitted = await admitPackagedExecutable(authority.artifactRoot, worker, target)
+  if (typeof authority.artifactRoot !== 'string' && worker.compression?.path !== `oxlint-${target}-${authority.artifactRoot.sourceRevision}.gz`) {
+    throw new NativeAnalysisDistributionError('NATIVE_ARTIFACT_INVALID', `Oxlint artifact is not bound to the ${target} release source.`, target)
+  }
+  const admitted = await admitPackagedExecutable(authority.artifactRoot, worker, target, options.signal)
   return { ...worker, ...admitted, target, packageVersion, origin: 'package' }
 }
 
 /** Internal optional capability: unavailable is distinct from corrupt or unreadable artifacts. */
-export async function resolveOptionalPackagedNativeOxlint(): Promise<ResolvedPackagedNativeOxlint | undefined> {
-  try { return await resolvePackagedNativeOxlint() } catch (cause) {
+export async function resolveOptionalPackagedNativeOxlint(options: { readonly signal?: AbortSignal } = {}): Promise<ResolvedPackagedNativeOxlint | undefined> {
+  try { return await resolvePackagedNativeOxlint(options) } catch (cause) {
     if (cause instanceof NativeAnalysisDistributionError && cause.code === 'NATIVE_OXLINT_UNAVAILABLE') return undefined
     throw cause
   }
@@ -68,6 +75,7 @@ async function resolveArtifact(root: string, packageVersion: string, target: str
       target,
     )
   }
+  if (release.delivery === 'github-release') return { artifactRoot: { packageVersion, sourceRevision: release.sourceRevision }, artifact }
   const artifactRoot = resolve(await realpath(root), NATIVE_ARTIFACT_DIRECTORY, artifact.target)
   try {
     const canonical = await realpath(artifactRoot)
@@ -80,14 +88,16 @@ async function resolveArtifact(root: string, packageVersion: string, target: str
 }
 
 async function admitPackagedExecutable(
-  artifactRoot: string,
+  artifactRoot: string | { readonly packageVersion: string; readonly sourceRevision: string },
   artifact: Pick<NativeAnalysisArtifact | NativeOxlintArtifact, 'executable' | 'bytes' | 'sha256' | 'compression'>,
   target: string,
+  signal?: AbortSignal,
 ): Promise<{ readonly command: string; readonly bytes: number; readonly sha256: string }> {
   if (artifact.compression) {
-    const command = await materializeNativeArtifact(artifactRoot, artifact, target)
+    const command = await materializeNativeArtifact(artifactRoot, artifact, target, undefined, signal)
     return { command, bytes: artifact.bytes, sha256: artifact.sha256 }
   }
+  if (typeof artifactRoot !== 'string') throw new NativeAnalysisDistributionError('NATIVE_ARTIFACT_INVALID', 'Remote native artifacts must be encoded.', target)
   let command: string
   try {
     command = await realpath(resolve(artifactRoot, artifact.executable))
@@ -144,4 +154,10 @@ function packageRoot(): string {
 function within(root: string, target: string): boolean {
   const path = relative(root, target)
   return path === '' || (!isAbsolute(path) && path !== '..' && !path.startsWith(`..${sep}`))
+}
+
+/** Prepare only this host's requested capabilities before entering an offline environment. */
+export async function preloadNativeArtifacts(options: NativeArtifactPreloadOptions = {}): Promise<PreloadedNativeArtifacts> {
+  const analysis = await resolvePackagedNativeAnalysis({ signal: options.signal })
+  return { analysis, ...(options.generic ? { generic: await resolvePackagedNativeOxlint({ signal: options.signal }) } : {}) }
 }

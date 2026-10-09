@@ -54,6 +54,35 @@ authored UTF-8 BOM; cold loads and incremental edits preserve the same source te
 Each span belongs to its recorded source revision, so use the corresponding text
 when displaying evidence from an older pinned snapshot.
 
+## Read an existing native capture
+
+```text
+@astrale-os/codegraph/analysis/typescript
+openCapturedTypeScriptReader(source, capture, { capabilities?, signal? })
+capture: { token, generation, sourceSnapshotDigest }
+source: NativeCapturedAnalysisSource with negotiated semanticReaderRevision: 1
+reader.compute(observe, input, { signal? }) · reader.dispose()
+
+default capabilities: typescript.source · typescript.body-demand
+structural reads: capabilities: ['typescript.source', 'typescript.body-demand', 'typescript.structure']
+```
+
+This advanced entrypoint joins the existing capture's compiler and session-owned fact store;
+it opens no second compiler. Calls and values demand bodies from that same capture.
+Capabilities are copied before acquisition and stay immutable for the lease. Unlike a
+standalone project's defaults, the captured reader omits standalone symbols, occurrences
+and structure unless requested explicitly. `structure()` requires `typescript.structure`.
+The decision transport admits one response frame up to 64 MiB; an oversized capability
+and body selection is rejected before publication. Use the standalone resident project's
+streamed transport for larger explicit fact sets.
+
+Keep the native session open across captures to reuse tracked computations. Each reader
+pins one captured epoch: materialized earlier facts stay coherent, while unresolved demand
+against a retired capture fails explicitly. Disposing a reader releases its lease; disposing
+the session releases the shared owner and all remaining readers. Abort signals close the
+affected acquisition or computation. Capture validity and final publication remain the
+native session's responsibility.
+
 ## Reuse a semantic computation
 
 For repeated lint runs, put the semantic observation in a stable callback and pass every
