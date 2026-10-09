@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, opendir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, relative, resolve } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { brotliCompressSync } from 'node:zlib'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -242,9 +242,13 @@ describe('TypeSpec V2 generic analysis foundation', () => {
   it('enforces the extraction-ready production import DAG and headless boundary', async () => {
     const analysisRoot = resolve(import.meta.dirname, '../analysis')
     const files = await typescriptFiles(analysisRoot)
-    const nativeDistributionEdges = new Map([
-      [resolve(analysisRoot, 'native/decision-session.ts'), resolve(analysisRoot, 'typescript/distribution/resolve.ts')],
-      [resolve(analysisRoot, 'native/index.ts'), resolve(analysisRoot, 'typescript/distribution/index.ts')],
+    const artifactBoundaryEdges = new Map([
+      [resolve(analysisRoot, 'native/decision-session.ts'), new Set([resolve(analysisRoot, 'typescript/distribution/resolve.ts')])],
+      [resolve(analysisRoot, 'native/index.ts'), new Set([resolve(analysisRoot, 'typescript/distribution/index.ts')])],
+      [resolve(analysisRoot, 'typescript/distribution/materialize.ts'), new Set([
+        resolve(analysisRoot, '../distribution/materialize.ts'),
+        resolve(analysisRoot, '../distribution/model.ts'),
+      ])],
     ])
     const allowed: Record<string, ReadonlySet<string>> = {
       native: new Set(['protocol']),
@@ -297,7 +301,7 @@ describe('TypeSpec V2 generic analysis foundation', () => {
           targetOwner !== sourceOwner &&
           targetOwner !== 'facade' &&
           !allowed[sourceOwner]?.has(targetOwner) &&
-          nativeDistributionEdges.get(file) !== target
+          !artifactBoundaryEdges.get(file)?.has(target)
         ) {
           violations.push(`${sourceOwner}:${file} -> ${targetOwner}:${specifier}`)
         }
@@ -3802,8 +3806,9 @@ async function typescriptFiles(root: string): Promise<string[]> {
 }
 
 function analysisOwner(root: string, file: string): string {
-  const relative = file.slice(root.length + 1).replaceAll('\\', '/')
-  const first = relative.split('/')[0]!
+  const path = relative(root, file).replaceAll('\\', '/')
+  if (path === '..' || path.startsWith('../') || isAbsolute(path)) return 'external'
+  const first = path.split('/')[0]!
   return first.includes('.') ? 'facade' : first
 }
 
