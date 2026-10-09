@@ -89,7 +89,8 @@ jobs:
         if: matrix.target == 'darwin-arm64'
         run: pnpm native:test
       - name: Qualify captured-source compiler paths on this host
-        run: pnpm native:test -- --files-json '["."]' --options-json '["-run=TestGovernanceCompilerPaths"]'
+        shell: bash
+        run: node scripts/native/test.mjs --files-json '["."]' --options-json '["-run=TestGovernanceCompilerPaths"]'
       - name: Qualify the actual built Oxlint worker lifetime and captured I/O
         if: matrix.oxlint
         run: pnpm native:test -- --files-json '["."]' --options-json '["-run=TestOwned|TestPolicyLaneOwned"]' --owned-artifact .native-output/${{ matrix.target }}/bin/codegraph-oxlint
