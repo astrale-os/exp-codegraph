@@ -89,6 +89,9 @@ jobs:
         if: matrix.target == 'darwin-arm64'
         run: pnpm native:test
       - name: Qualify captured-source compiler paths on this host
+        # The source Go-workspace test driver is qualified on POSIX. Windows
+        # still runs the built-artifact semantics and transport checks below.
+        if: runner.os != 'Windows'
         shell: bash
         run: node scripts/native/test.mjs --files-json '["."]' --options-json '["-run=TestGovernanceCompilerPaths"]'
       - name: Qualify the actual built Oxlint worker lifetime and captured I/O
