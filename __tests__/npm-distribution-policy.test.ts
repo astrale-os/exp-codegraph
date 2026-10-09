@@ -14,7 +14,15 @@ describe('qualified npm distribution policy', () => {
     const build = await manifest('tsconfig.build.json')
     expect(build.compilerOptions.sourceMap).toBe(false)
     expect(build.compilerOptions.declarationMap).toBe(false)
-    expect((await manifest('package.json')).files).toContain('!analysis/oxlint/**')
+    const owner = await manifest('package.json')
+    expect(owner.files).toEqual(['dist', 'LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'native-release.json', 'native-artifacts', '!dist/**/*.map'])
+    for (const dependency of ['vite', 'mermaid', 'katex', 'preact']) {
+      expect(owner.dependencies[dependency]).toBeUndefined()
+      expect(owner.devDependencies[dependency]).toBeDefined()
+    }
+    for (const dependency of ['@codemirror/lang-javascript', '@codemirror/lang-yaml', '@lezer/highlight', 'chokidar']) {
+      expect(owner.dependencies[dependency]).toBeDefined()
+    }
   })
 
   it('delivers every native target inside exactly one public npm package', async () => {

@@ -61,6 +61,8 @@ describe('packed release artifact', () => {
       "import { createMemoryAnalysisStore, runAnalysisPolicies } from '@astrale-os/codegraph/analysis'",
       "import { createTypeScriptAnalysisService, createBoundedValueEvaluator } from '@astrale-os/codegraph/analysis/typescript'",
       "import { createSQLiteAnalysisStore } from '@astrale-os/codegraph/analysis/sqlite'",
+      ...['', '/authoring', '/analysis/native', '/conformance', '/repository', '/schema', '/specification', '/workspace'].map((subpath, index) => `import * as surface${index} from '@astrale-os/codegraph${subpath}'`),
+      'export const surfaces = { surface0, surface1, surface2, surface3, surface4, surface5, surface6, surface7 }',
       'export const api = { createMemoryAnalysisStore, runAnalysisPolicies, createTypeScriptAnalysisService, createBoundedValueEvaluator, createSQLiteAnalysisStore }',
     ].join('\n'))
     const compiler = join(packageRoot, 'node_modules/.bin/tsgo')
@@ -144,7 +146,7 @@ describe('packed release artifact', () => {
         if (!(await isFile(output.slice(0, -4)))) stale.push(relative(dist, output))
         continue
       }
-      if (!output.endsWith('.js')) continue
+      if (!output.endsWith('.js') || relative(dist, output).startsWith('viewer/')) continue
       const source = join(packageRoot, relative(dist, output).slice(0, -3))
       const backed = await Promise.all(
         ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx'].map((extension) =>
@@ -221,13 +223,12 @@ describe('packed release artifact', () => {
       }
       const running = await startDev({ root: current.root, port: 0, cache: false })
       try {
-        expect(running.server.config.cacheDir.startsWith(installed)).toBe(false)
+        expect(running.mode).toBe('embedded')
         const page = await fetch(running.url)
         expect(page.status).toBe(200)
         await page.text()
 
-        const live = await running.server.ssrLoadModule('virtual:spec-catalog-index')
-        expect(live.renderers).toBeUndefined()
+        const live = await running.catalog()
         expect(live.index.specs[0]).toMatchObject({
           title: 'alpha',
           source: 'alpha/.spec/api.d.ts',

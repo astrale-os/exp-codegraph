@@ -13209,3 +13209,11 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
+
+## Embedded viewer
+
+The precompiled browser assets include their original third-party license texts and vendor
+notices in `dist/viewer/THIRD_PARTY_NOTICES.txt`. The generated `viewer-build.json` records
+resolved component versions and the SHA-256 of each supplied notice text from the frozen build.
+The component set conservatively includes normal dependencies of rendered browser modules,
+including libraries already bundled into the Mermaid ESM distribution.

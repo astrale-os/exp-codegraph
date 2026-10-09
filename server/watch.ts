@@ -52,9 +52,11 @@ function deepestSpecifications(
   return values.filter((specification) => specification.root.length === depth)
 }
 
-/** Generated/local trees Vite can prune before they reach semantic change filtering. */
+/** Generated/local trees the watcher can prune before they reach semantic change filtering. */
 export const DEV_SERVER_WATCH_IGNORES = [
   '**/.git/**',
+  '**/.codegraph-cache/**',
+  '**/.astrale-spec-cache/**',
   '**/.next/**',
   '**/.pnpm-store/**',
   '**/.turbo/**',
@@ -206,11 +208,11 @@ function potentialSpecificationSource(source: string): boolean {
   )
 }
 
-function ignoredWorkspaceOutput(source: string): boolean {
+export function ignoredWorkspaceOutput(source: string): boolean {
   const segments = normalize(source).split('/')
   if (
     segments.some((segment) =>
-      ['.git', '.next', '.pnpm-store', '.turbo', '.wrangler', 'coverage', 'dist', 'node_modules'].includes(
+      ['.git', '.codegraph-cache', '.astrale-spec-cache', '.next', '.pnpm-store', '.turbo', '.wrangler', 'coverage', 'dist', 'node_modules'].includes(
         segment,
       ),
     )

@@ -7,6 +7,7 @@ export interface CatalogRebuildResult {
 
 export interface RebuildScheduler {
   request(): Promise<CatalogRebuildResult>
+  settle(): Promise<void>
 }
 
 export interface SourceChangeFilter {
@@ -23,6 +24,7 @@ export function createRebuildScheduler(
   let running: Promise<CatalogRebuildResult> | undefined
 
   return {
+    async settle() { await running },
     request() {
       requested++
       if (running) return running
