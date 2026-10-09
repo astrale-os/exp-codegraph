@@ -113,7 +113,9 @@ describe('native TypeScript source coordinates', () => {
       const pins: AnalysisQuery[] = []
       try {
         for (const [index, text] of versions.entries()) {
-          await writeFile(join(root, 'index.ts'), text)
+          // The initial bytes already belong to the compiler being opened.
+          // Later fixture edits are paired with an explicit change notification.
+          if (index !== 0) await writeFile(join(root, 'index.ts'), text)
           await service.refresh(index === 0 ? {} : { changed: ['index.ts'] })
           const pin = await store.open(service.universe!)
           pins.push(pin)

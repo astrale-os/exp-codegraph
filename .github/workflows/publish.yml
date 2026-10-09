@@ -66,6 +66,26 @@ jobs:
           build-command: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --npm-preflight
           tarballs-json: ${{ steps.packages.outputs.tarballs-json }}
           prerelease-tag: auto
+      - name: Prepare isolated declaration qualification tools
+        run: |
+          toolroot="$RUNNER_TEMP/codegraph-qualification-tooling"
+          mkdir -p "$toolroot"
+          cat > "$toolroot/package.json" <<'JSON'
+          {
+            "private": true,
+            "dependencies": {
+              "@typescript/native-preview": "7.0.0-dev.20260707.2",
+              "@types/node": "24.13.3"
+            },
+            "overrides": { "undici-types": "7.18.2" }
+          }
+          JSON
+          npm install --prefix "$toolroot" --ignore-scripts --no-audit --no-fund
+          # The pinned source qualifier resolves only its tools through this checkout.
+          # Its npm consumer still installs Codegraph alone and uses the admitted archive.
+          mkdir -p node_modules/@typescript node_modules/@types
+          ln -s "$toolroot/node_modules/@typescript/native-preview" node_modules/@typescript/native-preview
+          ln -s "$toolroot/node_modules/@types/node" node_modules/@types/node
       - name: Verify the immutable npm archive
         run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --npm-published
       - name: Qualify a root-only npm consumer
