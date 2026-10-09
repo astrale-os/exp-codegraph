@@ -2,8 +2,6 @@ package main
 
 import (
 	module "github.com/microsoft/typescript-go/astrale-codegraph-modulebridge"
-	options "github.com/microsoft/typescript-go/shim/tsoptions"
-	tspath "github.com/microsoft/typescript-go/shim/tspath"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -36,7 +34,7 @@ func (project *governedProject) packageImportMappingKind(file *governedFile, spe
 	if !ok {
 		return "absent"
 	}
-	value, _ := options.ParseConfigFileTextToJson(manifest, tspath.Path(manifest), text)
+	value, _ := governanceParseConfigText(manifest, text)
 	object, ok := value.(*module.JSONMap)
 	if !ok {
 		return "absent"

@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	tspath "github.com/microsoft/typescript-go/shim/tspath"
 )
 
 func governanceCatalogCapture(session *governanceSession, root string, canonical bool) (*governedProject, error) {
@@ -62,7 +64,7 @@ func TestGovernanceParseCatalogSuccessfulReplacement(t *testing.T) {
 				t.Fatalf("removed catalog rows remained session roots: %v", err)
 			}
 			current := renamed.FilesByPath["mutations/renamed.ts"]
-			if current == nil || renamed.stats.Parses != 1 || current.Source == heldB.Source || current.Source.FileName() != current.AbsolutePath {
+			if current == nil || renamed.stats.Parses != 1 || current.Source == heldB.Source || current.Source.FileName() != tspath.NormalizePath(current.AbsolutePath) {
 				t.Fatal("renamed source reused a foreign absolute AST owner")
 			}
 			if len(held) != 2 || held["mutations/a.ts"] != heldA || heldA.Source.Text() != `require('a');` || heldB.Source.Text() != `require('b');` {
@@ -103,7 +105,7 @@ func TestGovernanceParseCatalogCrossRootCannotReuseSameRelativeText(t *testing.T
 			t.Fatal(err)
 		}
 		a, b := first.FilesByPath["mutations/a.ts"], second.FilesByPath["mutations/a.ts"]
-		if second.stats.Parses != 1 || second.stats.ParseReuses != 0 || a.Source == b.Source || a.AbsolutePath == b.AbsolutePath || b.Source.FileName() != b.AbsolutePath {
+		if second.stats.Parses != 1 || second.stats.ParseReuses != 0 || a.Source == b.Source || a.AbsolutePath == b.AbsolutePath || b.Source.FileName() != tspath.NormalizePath(b.AbsolutePath) {
 			t.Fatal("equal relative path/text crossed the actual source-root identity")
 		}
 	}

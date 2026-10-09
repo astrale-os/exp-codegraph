@@ -7,13 +7,23 @@ import (
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	core "github.com/microsoft/typescript-go/shim/core"
 	parser "github.com/microsoft/typescript-go/shim/parser"
+	options "github.com/microsoft/typescript-go/shim/tsoptions"
+	tspath "github.com/microsoft/typescript-go/shim/tspath"
 )
+
+// The compiler requires normalized absolute filenames, including for JSON.
+// Keep the original OS path in captured reads and certificates; normalize only
+// the parser operand, without changing filesystem identity or adding IO.
+func governanceParseConfigText(path, text string) (any, []*ast.Diagnostic) {
+	path = tspath.NormalizePath(path)
+	return options.ParseConfigFileTextToJson(path, tspath.Path(path), text)
+}
 
 // Configuration/package strings affect keys, paths and resolution even when no
 // resulting symbol contains U+FFFD. Recover code units with the existing pinned
 // parser/jsstring authority; do not infer fidelity from output values or a name.
 func governanceJSONLiteralFidelity(path, text string) bool {
-	source := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: path}, text, core.ScriptKindJSON)
+	source := parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: tspath.NormalizePath(path)}, text, core.ScriptKindJSON)
 	return governanceTypeLiteralFidelity(source)
 }
 
