@@ -1,6 +1,6 @@
 {
   "name": "@astrale-os/codegraph",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
   "license": "Apache-2.0",
@@ -89,9 +89,10 @@
     "typecheck": "tsgo --noEmit && tsgo --noEmit -p __tests__/typecheck/tsconfig.json && tsgo --noEmit -p qualification/v2/application/tsconfig.json && tsgo --noEmit -p qualification/v2/extension/tsconfig.json && tsgo --noEmit -p qualification/v2/experiments/tsconfig.json && tsgo --noEmit -p qualification/v2/maintainability/tsconfig.json && tsgo --noEmit -p qualification/v2/performance/tsconfig.json && tsgo --noEmit -p qualification/v2/self-host/tsconfig.json && tsgo --noEmit -p qualification/v2/structural/tsconfig.json",
     "test": "pnpm run build && vitest run --testTimeout 60000 --maxWorkers 1",
     "test:file": "pnpm run build && vitest run --testTimeout 15000 --maxWorkers 2",
-    "test:watch": "vitest --testTimeout 15000 --maxWorkers 2",
+    "test:watch": "pnpm run build && vitest --testTimeout 15000 --maxWorkers 2",
     "qualify:cli-restart": "node qualification/v2/application/cli-restart.ts",
-    "native:admit-packages": "node scripts/native/admit-packages.mjs"
+    "native:admit-packages": "node scripts/native/admit-packages.mjs",
+    "prepack": "pnpm run build"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.4",

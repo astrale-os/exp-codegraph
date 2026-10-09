@@ -85,6 +85,9 @@ describe('qualified npm distribution policy', () => {
     for (const trigger of ['push', 'pull_request']) {
       expect(native.on[trigger].paths).toContain('LICENSE')
       expect(native.on[trigger].paths).toContain('THIRD_PARTY_NOTICES.md')
+      for (const path of ['server/**', 'viewer/**', 'viewer-host/**', 'scripts/build-viewer.mjs', '__tests__/embedded-viewer.test.ts', '__tests__/native-materialization.test.ts']) {
+        expect(native.on[trigger].paths).toContain(path)
+      }
     }
     expect(native.jobs.build.strategy.matrix.include.map((entry: { target: string }) => entry.target).sort())
       .toEqual([...targets].sort())
