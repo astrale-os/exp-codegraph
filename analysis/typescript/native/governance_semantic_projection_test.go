@@ -7,6 +7,23 @@ import (
 	"testing"
 )
 
+func TestCapturedSemanticFrameLimitIncludesTheOwnedEnvelopeAndNewline(t *testing.T) {
+	input := governanceSemanticRequest{Token: "capture", Generation: "epoch", SourceSnapshotDigest: strings.Repeat("a", 64), Lease: "lease"}
+	response := map[string]any{"kind": "transaction", "payload": strings.Repeat("<\n😀", 100)}
+	encoded, err := json.Marshal(map[string]any{"id": int64(1<<63 - 1), "result": map[string]any{
+		"token": input.Token, "generation": input.Generation, "sourceSnapshotDigest": input.SourceSnapshotDigest,
+		"lease": input.Lease, "response": response}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCapturedSemanticFrame(input, response, len(encoded)+1); err != nil {
+		t.Fatal("the complete bounded frame was rejected", err)
+	}
+	if err := validateCapturedSemanticFrame(input, response, len(encoded)); err == nil || !strings.Contains(err.Error(), "resident streamed reader") {
+		t.Fatal("oversized capability publication omitted the explicit bound", err)
+	}
+}
+
 func semanticProjectionRecapture(t *testing.T, session *governanceSession, root string, revision int) governanceSemanticRequest {
 	t.Helper()
 	session.discardProducts()
@@ -120,6 +137,64 @@ func TestCapturedSemanticProjectionBorrowsExactlyOneProgramAndDemandCache(t *tes
 	after, _ := json.Marshal(thin)
 	if string(before) != string(after) {
 		t.Fatal("body expansion mutated an earlier published transaction")
+	}
+}
+
+func TestCapturedSemanticProjectionCapabilitiesAreExplicitAndLeaseOwned(t *testing.T) {
+	session, _, input := semanticProjectionFixture(t)
+	thin := semanticProjectionRefresh(t, session, input, []string{}, []string{})
+	for _, shard := range thin.Upserts {
+		if shard.Namespace == occurrenceNamespace || shard.Namespace == symbolNamespace || shard.Namespace == structureNamespace {
+			t.Fatal("default value reader projected an unrelated inventory")
+		}
+	}
+	capabilities := []string{sourceNamespace, structureNamespace, bodyDemandNamespace}
+	opening := input
+	opening.Lease = ""
+	opening.Capabilities = &capabilities
+	raw, _ := json.Marshal(opening)
+	result, err := session.openSemanticProjection(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explicit := input
+	explicit.Lease = result.(map[string]any)["lease"].(string)
+	structured := semanticProjectionRefresh(t, session, explicit, []string{}, []string{})
+	seen := false
+	for _, shard := range structured.Upserts {
+		seen = seen || shard.Namespace == structureNamespace
+		if shard.Namespace == occurrenceNamespace || shard.Namespace == symbolNamespace {
+			t.Fatal("explicit structure demanded an unrelated inventory")
+		}
+	}
+	if !seen || session.productsSession.Project.stats.CompilerPrograms != 1 ||
+		session.productsSession.semanticReaders[input.Lease].plan.structure ||
+		!session.productsSession.semanticReaders[explicit.Lease].plan.structure {
+		t.Fatal("capability acquisition retargeted the compiler or another lease")
+	}
+	explicit.Capabilities = &capabilities
+	if _, err := semanticProjectionRequest(t, session, explicit, request{ID: 3, Kind: "refresh"}); err == nil {
+		t.Fatal("a request changed its lease's admitted capabilities")
+	}
+	unsupported := []string{"unsupported.namespace"}
+	opening.Capabilities = &unsupported
+	raw, _ = json.Marshal(opening)
+	if _, err := session.openSemanticProjection(raw); err == nil {
+		t.Fatal("an unknown capability entered the descriptor")
+	}
+}
+
+func TestProjectionCapabilityChangePublishesEvenWhenFactsAreIdentical(t *testing.T) {
+	base := projectionPublication{universe: "universe", configuration: []map[string]any{}, capabilities: []string{sourceNamespace}, sources: []sourceRecord{}, shards: []factShard{}, full: true}
+	first, state, err := assembleProjectionTransaction(base)
+	if err != nil || first == nil {
+		t.Fatalf("initial publication: %v", err)
+	}
+	base.base, base.baseID = state, state.generation.ID
+	base.capabilities = []string{sourceNamespace, symbolNamespace}
+	next, _, err := assembleProjectionTransaction(base)
+	if err != nil || next == nil || next.Next.ID == first.Next.ID || next.Next.Sequence != first.Next.Sequence+1 {
+		t.Fatalf("capability authority was hidden behind an unchanged manifest: %v", err)
 	}
 }
 

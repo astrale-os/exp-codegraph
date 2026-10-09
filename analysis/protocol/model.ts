@@ -140,7 +140,7 @@ export interface NativeCapturedAnalysisSource {
   /** Negotiated with the actual producer, never inferred from JS method presence. */
   readonly semanticReaderRevision?: 1
   readonly openSemanticProjection?: (
-    stamp: NativeCapturedAnalysisStamp, options?: { readonly signal?: AbortSignal },
+    stamp: NativeCapturedAnalysisStamp, options?: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] },
   ) => Promise<NativeCapturedAnalysisPort>
 }
 

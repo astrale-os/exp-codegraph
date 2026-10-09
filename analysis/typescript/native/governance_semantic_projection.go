@@ -3,22 +3,27 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 )
+
+const capturedSemanticFrameBytes = 64 * 1024 * 1024
 
 // A lease owns only projection membership and publication state. The captured
 // type authority remains the sole compiler owner and is never reopened here.
 type governanceSemanticProjection struct {
 	cache        *bodyDemandCache
+	plan         projectionPlan
 	acknowledged generationState
 	pending      *pendingGeneration
 }
 
 type governanceSemanticRequest struct {
-	Token                string  `json:"token"`
-	Generation           string  `json:"generation"`
-	SourceSnapshotDigest string  `json:"sourceSnapshotDigest"`
-	Lease                string  `json:"lease,omitempty"`
-	Request              request `json:"request"`
+	Token                string    `json:"token"`
+	Generation           string    `json:"generation"`
+	SourceSnapshotDigest string    `json:"sourceSnapshotDigest"`
+	Lease                string    `json:"lease,omitempty"`
+	Request              request   `json:"request"`
+	Capabilities         *[]string `json:"capabilities,omitempty"`
 }
 
 func (session *governanceSession) semanticOwner(input governanceSemanticRequest) (*governanceProductsSession, error) {
@@ -44,16 +49,26 @@ func (session *governanceSession) openSemanticProjection(raw json.RawMessage) (a
 	if input.Lease != "" {
 		return nil, fmt.Errorf("semantic acquisition must not supply a lease")
 	}
+	capabilities := []string{sourceNamespace, bodyDemandNamespace}
+	if input.Capabilities != nil {
+		capabilities = sortedUnique(*input.Capabilities)
+	}
+	plan := planProjections(capabilities)
+	for _, capability := range capabilities {
+		if !plan.enables(capability) {
+			return nil, fmt.Errorf("unsupported captured projection capability %q", capability)
+		}
+	}
 	if state.semanticReaders == nil {
 		state.semanticReaders = map[string]*governanceSemanticProjection{}
 	}
 	state.semanticLease++
 	lease := fmt.Sprintf("%s:%d", state.Token, state.semanticLease)
-	state.semanticReaders[lease] = &governanceSemanticProjection{cache: &bodyDemandCache{fullBodies: map[string]factShard{}}}
+	state.semanticReaders[lease] = &governanceSemanticProjection{cache: &bodyDemandCache{fullBodies: map[string]factShard{}}, plan: plan}
 	return map[string]any{"token": input.Token, "generation": input.Generation,
 		"sourceSnapshotDigest": input.SourceSnapshotDigest, "lease": lease,
 		"project": map[string]any{"root": state.Project.Root, "config": "tsconfig.json",
-			"capabilities": []string{"typescript.source", "typescript.symbol", "typescript.occurrence", "typescript.structure", bodyDemandNamespace}}}, nil
+			"capabilities": plan.capabilities()}}, nil
 }
 
 func (session *governanceSession) requestSemanticProjection(raw json.RawMessage) (any, error) {
@@ -75,6 +90,9 @@ func (session *governanceSession) requestSemanticProjection(raw json.RawMessage)
 	state, err := session.semanticOwner(input)
 	if err != nil {
 		return nil, err
+	}
+	if input.Capabilities != nil {
+		return nil, fmt.Errorf("captured projection capabilities are immutable within a lease")
 	}
 	projection := state.semanticReaders[input.Lease]
 	if input.Lease == "" || projection == nil {
@@ -151,7 +169,7 @@ func (session *governanceSession) requestSemanticProjection(raw json.RawMessage)
 		if !state.Project.capture.metadataFidelity() {
 			return nil, fmt.Errorf("semantic compiler metadata is not faithful to its capture")
 		}
-		plan := planProjections([]string{"typescript.source", "typescript.symbol", "typescript.occurrence", "typescript.structure", bodyDemandNamespace})
+		plan := projection.plan
 		plan.demand, plan.demandCache = demand, projection.cache
 		const maximumSemanticBytes = 384 * 1024 * 1024
 		var shards []factShard
@@ -202,14 +220,30 @@ func (session *governanceSession) requestSemanticProjection(raw json.RawMessage)
 			session.semanticPublished = publication
 			response = map[string]any{"id": request.ID, "protocolVersion": protocolVersion, "kind": "unchanged", "generation": publication.generation.ID}
 		} else {
-			projection.pending = &pendingGeneration{state: publication, transaction: transaction}
 			response = map[string]any{"id": request.ID, "protocolVersion": protocolVersion, "kind": "transaction", "transaction": transaction}
+			if err := validateCapturedSemanticFrame(input, response, capturedSemanticFrameBytes); err != nil {
+				return nil, err
+			}
+			projection.pending = &pendingGeneration{state: publication, transaction: transaction}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported captured semantic operation %s", request.Kind)
 	}
 	return map[string]any{"token": input.Token, "generation": input.Generation,
 		"sourceSnapshotDigest": input.SourceSnapshotDigest, "lease": input.Lease, "response": response}, nil
+}
+
+// The decision actor owns a single bounded response frame. Explicit larger
+// capability sets must fail before publishing a candidate or writing its bytes;
+// their caller can use the resident project's existing streamed transport.
+func validateCapturedSemanticFrame(input governanceSemanticRequest, response any, limit int) error {
+	frame := map[string]any{"id": int64(1<<63 - 1), "result": map[string]any{
+		"token": input.Token, "generation": input.Generation, "sourceSnapshotDigest": input.SourceSnapshotDigest,
+		"lease": input.Lease, "response": response}}
+	if err := writeFrame(io.Discard, frame, limit-1); err != nil {
+		return fmt.Errorf("captured semantic projection requires a smaller capability/selection set or the resident streamed reader: %w", err)
+	}
+	return nil
 }
 
 func governanceSelectionContains(current, previous []string) bool {

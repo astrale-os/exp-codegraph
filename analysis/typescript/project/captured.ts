@@ -1,4 +1,4 @@
-import type { NativeAnalysisSession, NativeCapturedAnalysisPort, NativeCapturedAnalysisSource, NativeCapturedAnalysisStamp } from '../../protocol/model.ts'
+import type { NativeAnalysisSession, NativeCapturedAnalysisPort, NativeCapturedAnalysisSource, NativeCapturedAnalysisStamp, NativeProjectDescriptor } from '../../protocol/model.ts'
 import { admitNativeAnalysisResponse } from '../../protocol/process-session.ts'
 import { TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../physical/index.ts'
 import { BodyDemandExpansionRequired, type BoundedValueEvaluatorOptions } from '../value/model.ts'
@@ -34,17 +34,20 @@ const owners = new WeakMap<NativeCapturedAnalysisSource, CapturedProjectionOwner
  * The session owns facts, indexes and tracked computations; each reader owns an
  * immutable capture lease. No compiler or native process opens here. Callbacks
  * may replay for selected bodies: keep them stable and return plain observations.
+ * Defaults to source and observed body facts. Request typescript.structure
+ * explicitly when the computation needs static references or dependencies.
  */
 export async function openCapturedTypeScriptReader(
   source: NativeCapturedAnalysisSource, capture: NativeCapturedAnalysisStamp,
-  options: { readonly signal?: AbortSignal } = {},
+  options: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] } = {},
 ): Promise<CapturedTypeScriptSemanticReader> {
   if (source.semanticReaderRevision !== 1 || !source.openSemanticProjection) {
     throw new Error('The native producer does not support captured semantic readers.')
   }
   const stamp = Object.freeze({ token: capture.token, generation: capture.generation,
     sourceSnapshotDigest: capture.sourceSnapshotDigest })
-  const port = await source.openSemanticProjection(stamp, options)
+  const capabilities = Object.freeze([...new Set(options.capabilities ?? ['typescript.source', 'typescript.body-demand'])].sort())
+  const port = await source.openSemanticProjection(stamp, { ...options, capabilities })
   try {
     port.ownerSignal.throwIfAborted()
     let owner = owners.get(source)
@@ -73,7 +76,9 @@ function factSession(port: NativeCapturedAnalysisPort): NativeAnalysisSession {
         throw new Error('Captured fact acknowledgement belongs to another publication.')
       }
     },
-    dispose: () => port.dispose(),
+    // The epoch owns the lease. Replacing or rejecting a fact provider must not
+    // retire its previous epoch before the replacement has been admitted.
+    dispose: async () => {},
   }
 }
 
@@ -110,12 +115,14 @@ class CapturedProjectionOwner {
       if (port.ownerSignal !== this.#signal) throw new Error('Captured fact port belongs to another session lifetime.')
       const signal = AbortSignal.any([port.signal, this.#signal, ...(openingSignal ? [openingSignal] : [])])
       signal.throwIfAborted()
+      const previous = this.#current
+      let snapshot: TypeScriptProjectSnapshot | undefined
       // Replace only the fact provider. The existing store, index deltas and
       // computation receipts survive capture changes and failed policy seals.
-      await this.#project.replaceSession(port.project, { open: async () => factSession(port) })
-      await this.#project.refresh({ bodyDemand: { paths: [...this.#roots].sort(), owners: [...this.#owners].sort() }, signal })
-      const snapshot = await this.#project.open()
       try {
+        await this.#project.replaceSession(port.project, { open: async () => factSession(port) })
+        await this.#project.refresh({ bodyDemand: { paths: [...this.#roots].sort(), owners: [...this.#owners].sort() }, signal })
+        snapshot = await this.#project.open()
         signal.throwIfAborted()
         const sources: { path: string; source: SourceId }[] = []
         for await (const { payload } of snapshot.facts.export('source')) {
@@ -130,6 +137,10 @@ class CapturedProjectionOwner {
         signal.throwIfAborted()
         const epoch: CapturedEpoch = { port, lifetime: new AbortController(), sources: Object.freeze(sources),
           roots, owners: materialized, snapshot }
+        // A successful replacement retires deferred demand on the earlier
+        // lease; its materialized snapshot remains independently pinned.
+        await previous?.port.dispose().catch(() => {})
+        signal.throwIfAborted()
         this.#current = epoch
         this.#epochs.add(epoch)
         this.#owners.clear()
@@ -137,7 +148,13 @@ class CapturedProjectionOwner {
         for (const path of roots) this.#roots.add(path)
         for (const owner of materialized) this.#owners.add(owner)
         return this.reader(epoch)
-      } catch (error) { await snapshot.dispose(); throw error }
+      } catch (error) {
+        await snapshot?.dispose()
+        if (previous && !previous.port.signal.aborted) {
+          await this.#project.replaceSession(previous.port.project, { open: async () => factSession(previous.port) })
+        }
+        throw error
+      }
     })
   }
 

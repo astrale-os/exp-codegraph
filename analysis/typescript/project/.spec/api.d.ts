@@ -94,9 +94,11 @@ export type CapturedTypeScriptSemanticReader = Pick<TypeScriptProjectSnapshot, '
  * Reuse one compiler session's fact store and tracked computations. Each reader
  * pins its captured epoch. Deferred demand on a retired epoch cannot read CURRENT.
  * Disposing this reader releases only its lease; session disposal releases facts.
+ * Defaults to source and observed body facts. Request typescript.structure
+ * explicitly for static references or dependencies.
  */
 export function openCapturedTypeScriptReader(
   source: NativeCapturedAnalysisSource,
   capture: NativeCapturedAnalysisStamp,
-  options?: { readonly signal?: AbortSignal },
+  options?: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] },
 ): Promise<CapturedTypeScriptSemanticReader>

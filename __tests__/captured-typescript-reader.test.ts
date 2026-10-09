@@ -6,7 +6,7 @@ import { createProcessNativeAnalysisSessionFactory } from '../analysis/protocol/
 import type { NativeCapturedAnalysisSource, NativeCapturedAnalysisPort, NativeCapturedAnalysisStamp, NativeAnalysisRequest } from '../analysis/protocol/model.ts'
 import type { AnalysisGeneration } from '../analysis/generation/model.ts'
 import type { AnalysisStore } from '../analysis/query/model.ts'
-import { openCapturedTypeScriptReader, resolvePackagedNativeAnalysis, TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/index.ts'
+import { openCapturedTypeScriptReader, openTypeScriptProject, resolvePackagedNativeAnalysis, TYPESCRIPT_FACT_PAYLOAD_CODECS } from '../analysis/typescript/index.ts'
 import type { TypeScriptSemanticReader } from '../analysis/typescript/project/model.ts'
 import * as projectionFactory from '../analysis/typescript/project/project.ts'
 import * as memoryFactory from '../analysis/memory/store.ts'
@@ -34,13 +34,14 @@ async function fixture() {
   let current: NativeCapturedAnalysisStamp
   let ownerRegistrations = 0
   let malformedAck = false
+  let rejectStructure = false
   const capture = () => current = { token: `capture-${++revision}`, generation: `epoch-${revision}`, sourceSnapshotDigest: String(revision).padStart(64, '0') }
   const source: NativeCapturedAnalysisSource = {
     semanticReaderRevision: 1,
-    async openSemanticProjection(stamp) {
+    async openSemanticProjection(stamp, options) {
       expect(stamp).toEqual(current)
       const controller = new AbortController()
-      const project = { root, config: 'tsconfig.json', capabilities: ['typescript.source', 'typescript.symbol', 'typescript.occurrence', 'typescript.structure', 'typescript.body-demand'] }
+      const project = { root, config: 'tsconfig.json', capabilities: [...(options?.capabilities ?? ['typescript.source', 'typescript.body-demand'])] }
       const native = await factory.open(project)
       let closing: Promise<void> | undefined
       const port: NativeCapturedAnalysisPort = {
@@ -50,6 +51,9 @@ async function fixture() {
           controller.signal.throwIfAborted()
           if (stamp.token !== current.token) throw new Error('Retired capture must not select current compiler.')
           requests.push(structuredClone(request))
+          if (rejectStructure && request.kind === 'refresh' && project.capabilities.includes('typescript.structure')) {
+            throw new Error('Captured semantic projection exceeds its frame bound; use the resident streamed reader.')
+          }
           const response = await native.request(request, options)
           if (malformedAck && request.kind === 'acknowledge') return { ...response, id: request.id + 1 }
           return response
@@ -74,7 +78,8 @@ async function fixture() {
   }
   cleanup.push(close)
   return { root, source, capture, close, requests, leases,
-    registrations: () => ownerRegistrations, corruptAck: (value: boolean) => { malformedAck = value } }
+    registrations: () => ownerRegistrations, corruptAck: (value: boolean) => { malformedAck = value },
+    rejectStructure: (value: boolean) => { rejectStructure = value } }
 }
 
 async function inspect(read: TypeScriptSemanticReader, input: { paths: string[] }) {
@@ -85,7 +90,135 @@ async function inspect(read: TypeScriptSemanticReader, input: { paths: string[] 
   return { completeness: inventory.completeness.kind, values: result.map((value) => value.kind === 'known' && value.value.kind === 'literal' ? value.value.value : value.kind) }
 }
 
+interface PropertyInput {
+  readonly start: number
+  readonly properties: readonly { readonly name: string; readonly invoke?: boolean }[]
+}
+
+async function inspectProperties(read: TypeScriptSemanticReader, input: PropertyInput) {
+  const inventory = await read.calls({ paths: ['index.ts'] })
+  const values = await read.values()
+  const site = inventory.sites.find(({ occurrence }) => occurrence.span.start === input.start)
+  if (!site) throw new Error('The selected call has no owned occurrence.')
+  const value = values.value(site.occurrence.id)
+  const describe = async (plan: typeof value) => {
+    const result = await plan.resolve()
+    if (result.kind !== 'known') return { kind: result.kind }
+    if (result.value.kind === 'literal') return { kind: 'literal', value: result.value.value === undefined ? '<undefined>' : result.value.value }
+    if (result.value.kind === 'object') return { kind: 'object', properties: [...result.value.properties].sort(), complete: result.value.complete }
+    return { kind: result.value.kind }
+  }
+  const result = []
+  for (const property of input.properties) {
+    const selected = value.property(property.name)
+    result.push({ name: property.name, proof: await describe(property.invoke ? selected.invoke() : selected) })
+  }
+  return { completeness: inventory.completeness.kind, value: await describe(value), properties: result }
+}
+
 describe('captured TypeScript session fact ownership', () => {
+  it('restores the current default provider after rejected structure acquisition and can still demand a new body', async () => {
+    const f = await fixture()
+    await writeFile(join(f.root, 'other.ts'), `export function extra(){return 'additional'} extra();`)
+    const capture = f.capture()
+    const reader = await openCapturedTypeScriptReader(f.source, capture)
+    const before = await reader.compute(inspect, { paths: ['index.ts'] })
+    f.rejectStructure(true)
+    await expect(openCapturedTypeScriptReader(f.source, capture, {
+      capabilities: ['typescript.source', 'typescript.body-demand', 'typescript.structure'],
+    })).rejects.toThrow('frame bound')
+    expect(f.leases.size).toBe(1)
+    expect(await reader.compute(inspect, { paths: ['index.ts'] })).toEqual(before)
+    const requested = f.requests.length
+    expect(await reader.compute(inspect, { paths: ['other.ts'] })).toEqual({ completeness: 'complete', values: ['additional'] })
+    expect(f.requests.length).toBeGreaterThan(requested)
+    expect(await reader.compute(inspect, { paths: ['index.ts'] })).toEqual(before)
+    await reader.dispose()
+    expect(f.leases.size).toBe(0)
+  })
+
+  it.each([
+    { name: 'identifier, quoted, numeric, literal-computed and shorthand keys', expression: `{plain:'plain','quoted-key':'quoted',12:'numeric',['literal-key']:'computed',short}`, properties: ['plain', 'quoted-key', '12', 'literal-key', 'short'].map((name) => ({ name })) },
+    { name: 'direct, quoted and literal-computed nested methods', expression: `{method(){return 'method'},'quoted-method'(){return 'quoted'},['literal-method'](){return 'computed'}}`, properties: ['method', 'quoted-method', 'literal-method'].map((name) => ({ name, invoke: true })) },
+    { name: 'authored literal spelling equal to a synthesized legacy marker', expression: `{'�computed'(){return 'authored'}}`, properties: [{ name: '�computed', invoke: true }] },
+    { name: 'opaque computed keys', expression: `{[opaque]:'unproven'}`, properties: [{ name: 'opaque' }, { name: '__computed' }] },
+    { name: 'well-known symbol keys', expression: `{[Symbol.iterator](){return 'symbol'}}`, properties: [{ name: 'iterator', invoke: true }, { name: '__computed', invoke: true }] },
+    { name: 'member values', expression: `({value:'member'}).value`, properties: [] },
+    { name: 'private member uncertainty', expression: `new (class {#value='private';read(){return this.#value}})().read()`, properties: [] },
+    { name: 'last write and shorthand shadowing', expression: `{plain:'first',...{plain:'last'},short}`, properties: [{ name: 'plain' }, { name: 'short' }] },
+  ])('matches full and fresh projections for $name without a global declaration index', async ({ expression, properties }) => {
+    const f = await fixture()
+    const text = `declare const opaque:string;declare const Symbol:{readonly iterator:unique symbol};function shape(){const short='short';return ${expression}}shape();`
+    await writeFile(join(f.root, 'index.ts'), text)
+    const input = { start: text.lastIndexOf('shape()'), properties }
+    const compact = await openCapturedTypeScriptReader(f.source, f.capture())
+    const proof = await compact.compute(inspectProperties, input)
+    const full = await openTypeScriptProject({ root: f.root, binary: candidate })
+    try {
+      await full.refresh()
+      const snapshot = await full.open()
+      try { expect(proof).toEqual(await snapshot.compute(inspectProperties, input)) }
+      finally { await snapshot.dispose() }
+    } finally { await full.dispose() }
+    const fresh = await fixture()
+    await writeFile(join(fresh.root, 'index.ts'), text)
+    const oracle = await openCapturedTypeScriptReader(fresh.source, fresh.capture())
+    expect(proof).toEqual(await oracle.compute(inspectProperties, input))
+    if (expression.includes('[opaque]') || expression.includes('[Symbol.iterator]')) {
+      expect(proof.value).toEqual({ kind: 'object', properties: [], complete: false })
+      expect(proof.properties.every(({ proof }) => proof.kind === 'unknown')).toBe(true)
+    }
+    await compact.dispose(); await oracle.dispose()
+  })
+
+  it('invalidates a same-length property rename, keeps its old pin, and repairs to a fresh proof', async () => {
+    const f = await fixture()
+    const original = `function shape(){return {alpha:'value'}}shape();`
+    await writeFile(join(f.root, 'index.ts'), original)
+    const input = { start: original.lastIndexOf('shape()'), properties: [{ name: 'alpha' }, { name: 'bravo' }] }
+    let executions = 0
+    const observe = (read: TypeScriptSemanticReader, input: PropertyInput) => { executions++; return inspectProperties(read, input) }
+    const old = await openCapturedTypeScriptReader(f.source, f.capture())
+    const before = await old.compute(observe, input)
+    const initialExecutions = executions
+    const edited = original.replace('alpha', 'bravo')
+    await writeFile(join(f.root, 'index.ts'), edited)
+    const current = await openCapturedTypeScriptReader(f.source, f.capture())
+    const after = await current.compute(observe, input)
+    expect(executions).toBeGreaterThan(initialExecutions)
+    expect(after.properties).toEqual([{ name: 'alpha', proof: { kind: 'literal', value: '<undefined>' } }, { name: 'bravo', proof: { kind: 'literal', value: 'value' } }])
+    expect(await old.compute(observe, input)).toEqual(before)
+    const fresh = await fixture()
+    await writeFile(join(fresh.root, 'index.ts'), edited)
+    const oracle = await openCapturedTypeScriptReader(fresh.source, fresh.capture())
+    expect(after).toEqual(await oracle.compute(observe, input))
+    await writeFile(join(f.root, 'index.ts'), original)
+    const repaired = await openCapturedTypeScriptReader(f.source, f.capture())
+    expect(await repaired.compute(observe, input)).toEqual(before)
+    await Promise.all([old.dispose(), current.dispose(), oracle.dispose(), repaired.dispose()])
+  })
+
+  it('publishes explicit structure only to its lease and invalidates capability receipts while old pins remain coherent', async () => {
+    const f = await fixture()
+    const exports = async (read: TypeScriptSemanticReader, _input: null) => {
+      const result = await (await read.structure()).exports({ path: 'helper.ts' })
+      return { completeness: result.completeness.kind, names: result.exports.map((entry) => entry.name) }
+    }
+    const stamp = f.capture()
+    const omitted = await openCapturedTypeScriptReader(f.source, stamp)
+    expect(await omitted.compute(exports, null)).toEqual({ completeness: 'unavailable', names: [] })
+    const complete = await openCapturedTypeScriptReader(f.source, stamp, {
+      capabilities: ['typescript.source', 'typescript.body-demand', 'typescript.structure'],
+    })
+    expect(await complete.compute(exports, null)).toEqual({ completeness: 'complete', names: ['helper'] })
+    const excluded = await openCapturedTypeScriptReader(f.source, stamp)
+    expect(await excluded.compute(exports, null)).toEqual({ completeness: 'unavailable', names: [] })
+    expect(await complete.compute(exports, null)).toEqual({ completeness: 'complete', names: ['helper'] })
+    expect(await complete.compute(exports, null)).toEqual({ completeness: 'complete', names: ['helper'] })
+    expect(f.registrations()).toBe(1)
+    await Promise.all([omitted.dispose(), complete.dispose(), excluded.dispose()])
+  })
+
   it('joins an in-flight newly opened pin before reader disposal resolves', async () => {
     const original = projectionFactory.createResidentTypeScriptProject
     let entered!: () => void, release!: () => void, opened = 0

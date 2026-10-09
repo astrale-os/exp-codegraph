@@ -95,6 +95,23 @@ function errorOf(action: () => unknown) {
 }
 
 describe('compact body admission', () => {
+  it.each(['PropertyAssignment', 'MethodDeclaration'])('admits the exact property-name witness on %s in both representations', (syntax) => {
+    const data = fixture()
+    data.o[1]![3] = data.t.push(syntax) - 1
+    data.o[1]![6] = -1
+    data.o[1]![8] = -1
+    const logical = TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(data) as TypeScriptBodyFacts
+    expect(logical.body.occurrences[0]).toMatchObject({ syntax, propertyName: 'update' })
+    expect(rendered(data)).toEqual({ canonical: stableJson(logical), bytes: Buffer.byteLength(JSON.stringify(logical)) })
+    const wrongSyntax = clone(data), emptyName = clone(data)
+    wrongSyntax.o[1]![3] = wrongSyntax.t.push('NumericLiteral') - 1
+    emptyName.o[1]![7] = emptyName.t.push('') - 1
+    for (const invalid of [wrongSyntax, emptyName]) {
+      expect(() => TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(invalid)).toThrow('BODY_PROPERTY_NAME_INVALID')
+      expect(() => rendered(invalid)).toThrow('BODY_PROPERTY_NAME_INVALID')
+    }
+  })
+
   it('preserves the full decoder preimage, logical bytes, optional fields and safe integers', () => {
     const data = fixture(), before = JSON.stringify(data)
     const logical = TYPESCRIPT_BODY_PAYLOAD_CODEC.decode(data) as TypeScriptBodyFacts

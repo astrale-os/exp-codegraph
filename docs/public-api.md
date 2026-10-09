@@ -70,6 +70,7 @@ createTypeScriptAnalysisPipeline
 createTypeScriptAnalysisService
 createTypeScriptFactReader
 mapValueResult
+openCapturedTypeScriptReader
 openTypeScriptProject
 resolveBoundedValueLimits
 resolvePackagedNativeAnalysis
@@ -112,6 +113,7 @@ BodyRelation
 BoundedValueEvaluator
 BoundedValueEvaluatorOptions
 BoundedValueLimits
+CapturedTypeScriptSemanticReader
 ControlFlowBlock
 ControlFlowEdge
 ControlFlowEdgeKind
@@ -317,6 +319,9 @@ NativeAnalysisRequest
 NativeAnalysisResponse
 NativeAnalysisSession
 NativeAnalysisSessionFactory
+NativeCapturedAnalysisPort
+NativeCapturedAnalysisSource
+NativeCapturedAnalysisStamp
 NativeBodyDemand
 NativeFactDelta
 NativeModuleBoundary

@@ -40,7 +40,7 @@ describe("native decision transport source qualification", () => {
   it('owns the queued capture tuple and closes a lease without closing its session', async () => {
     const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));let leases=0;
       createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;let result=p;
-      if(r.method==='semantic-open')result={...p,lease:'lease-'+(++leases),project:{root:'/owned',config:'tsconfig.json',capabilities:['typescript.body-demand']}};
+      if(r.method==='semantic-open')result={...p,lease:'lease-'+(++leases),project:{root:'/owned',config:'tsconfig.json',capabilities:p.capabilities}};
       if(r.method==='semantic-request')result={token:p.token,generation:p.generation,sourceSnapshotDigest:p.sourceSnapshotDigest,lease:p.lease,...(p.request.kind==='dispose'?{}:{response:{id:p.request.id,kind:'unchanged',generation:p.generation}})};
       setTimeout(()=>console.log(JSON.stringify({id:r.id,result})),10);});`);
     await transport.ready();
@@ -64,7 +64,7 @@ describe("native decision transport source qualification", () => {
 
   it.each(['token', 'generation', 'sourceSnapshotDigest', 'lease', 'project'])('rejects an unowned semantic %s and invalidates its actor', async (field) => {
     const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));
-      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;const result={...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:[]}};result[${JSON.stringify(field)}]=null;console.log(JSON.stringify({id:r.id,result}));});`);
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;const result={...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:p.capabilities}};result[${JSON.stringify(field)}]=null;console.log(JSON.stringify({id:r.id,result}));});`);
     await transport.ready();
     await expect(transport.openSemanticProjection!({ token: 'owned', generation: 'g', sourceSnapshotDigest: 'a'.repeat(64) })).rejects.toMatchObject({ code: 'PROTOCOL' });
     await expect(transport.prepare(request)).rejects.toMatchObject({ code: 'PROCESS' });
@@ -72,7 +72,7 @@ describe("native decision transport source qualification", () => {
 
   it('waits for the fact owner exactly once when the native session is disposed', async () => {
     const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));
-      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;console.log(JSON.stringify({id:r.id,result:{...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:[]}}}));});`);
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;console.log(JSON.stringify({id:r.id,result:{...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:p.capabilities}}}));});`);
     await transport.ready();
     const port = await transport.openSemanticProjection!({ token: 'owned', generation: 'g', sourceSnapshotDigest: 'a'.repeat(64) });
     let release!: () => void, calls = 0, settled = false;
@@ -88,6 +88,19 @@ describe("native decision transport source qualification", () => {
     release(); await closing; await transport.dispose();
     expect(calls).toBe(1);
     expect(() => port.onOwnerDispose(async () => {})).toThrow('unavailable');
+  });
+
+  it('captures the requested projection before yielding and rejects substituted capabilities', async () => {
+    const transport = service(`import {createInterface} from 'node:readline';console.log(JSON.stringify(${JSON.stringify({ ...hello, semanticReaderRevision: 1 })}));
+      createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line),p=r.params;const result={...p,lease:'owned',project:{root:'/owned',config:'tsconfig.json',capabilities:p.token==='forged'?['typescript.symbol']:p.capabilities}};console.log(JSON.stringify({id:r.id,result}));});`);
+    await transport.ready();
+    const capabilities = ['typescript.source', 'typescript.body-demand'];
+    const opening = transport.openSemanticProjection!({ token: 'owned', generation: 'g', sourceSnapshotDigest: 'a'.repeat(64) }, { capabilities });
+    capabilities.splice(0, capabilities.length, 'typescript.structure');
+    const port = await opening;
+    expect(port.project.capabilities).toEqual(['typescript.body-demand', 'typescript.source']);
+    await expect(transport.openSemanticProjection!({ token: 'forged', generation: 'g2', sourceSnapshotDigest: 'b'.repeat(64) })).rejects.toMatchObject({ code: 'PROTOCOL' });
+    expect(port.ownerSignal.aborted).toBe(true);
   });
 
   it("admits split UTF8 frames and routes only the current request identity", async () => {

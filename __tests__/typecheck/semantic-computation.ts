@@ -26,7 +26,7 @@ inferred.id satisfies string
 declare const capturedSession: NativeDecisionSession
 const captured = await openCapturedTypeScriptReader(capturedSession, {
   token: 'owned', generation: 'capture', sourceSnapshotDigest: 'a'.repeat(64),
-}, { signal: new AbortController().signal })
+}, { signal: new AbortController().signal, capabilities: ['typescript.source', 'typescript.body-demand', 'typescript.structure'] })
 const capturedCount = await captured.compute(countCalls, { paths: ['routes.ts'] })
 capturedCount satisfies number
 // @ts-expect-error The capture exposes tracked observations, not its backing fact query.

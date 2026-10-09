@@ -134,7 +134,7 @@ export interface NativeCapturedAnalysisSource {
   readonly semanticReaderRevision?: 1
   openSemanticProjection?(
     capture: NativeCapturedAnalysisStamp,
-    options?: { readonly signal?: AbortSignal },
+    options?: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] },
   ): Promise<NativeCapturedAnalysisPort>
 }
 

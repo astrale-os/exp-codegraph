@@ -76,13 +76,15 @@ export class DecisionProcess implements NativeDecisionSession {
   }
 
   readonly #openSemanticProjection = async (
-    input: NativeCapturedAnalysisStamp, options: { readonly signal?: AbortSignal } = {},
+    input: NativeCapturedAnalysisStamp, options: { readonly signal?: AbortSignal; readonly capabilities?: NativeProjectDescriptor['capabilities'] } = {},
   ): Promise<NativeCapturedAnalysisPort> => {
     const stamp = Object.freeze({ token: input.token, generation: input.generation, sourceSnapshotDigest: input.sourceSnapshotDigest });
     if (!stamp.token || !stamp.generation || !/^[a-f0-9]{64}$/.test(stamp.sourceSnapshotDigest)) {
       throw new TypeError('Invalid captured semantic identity.');
     }
-    const acquired = await this.#request('semantic-open', stamp, options.signal);
+    const capabilities = Object.freeze([...new Set(options.capabilities ?? ['typescript.source', 'typescript.body-demand'])].sort());
+    if (capabilities.some((capability) => typeof capability !== 'string')) throw new TypeError('Invalid captured projection capabilities.');
+    const acquired = await this.#request('semantic-open', { ...stamp, capabilities }, options.signal);
     const frame = this.#capturedFrame(acquired, stamp);
     if (typeof frame.lease !== 'string' || !frame.lease) return this.#semanticProtocolFailure('Semantic acquisition omitted its lease.');
     const descriptor = frame.project as Partial<NativeProjectDescriptor> | undefined;
@@ -92,6 +94,9 @@ export class DecisionProcess implements NativeDecisionSession {
     }
     const project = Object.freeze({ root: descriptor.root, config: descriptor.config,
       capabilities: Object.freeze([...descriptor.capabilities]) });
+    if (project.capabilities.length !== capabilities.length || [...project.capabilities].sort().some((capability, index) => capability !== capabilities[index])) {
+      return this.#semanticProtocolFailure('Semantic acquisition changed its requested capabilities.');
+    }
     const lease = frame.lease;
     const lifetime = new AbortController();
     const signal = AbortSignal.any([lifetime.signal, this.#lifetime.signal]);

@@ -58,7 +58,8 @@ func assembleProjectionTransaction(publication projectionPublication) (*factTran
 	}
 	sort.Slice(manifest, func(i, j int) bool { return manifest[i].Key < manifest[j].Key })
 	publication.telemetry.record(publication.requestID, "transaction.manifest", phase, map[string]any{"baseShards": len(base.manifest), "candidateShards": len(manifest), "projectedShards": len(shards)})
-	if hasBase && base.sourceManifest == sourceManifest && stableJSON(base.manifest) == stableJSON(manifest) {
+	if hasBase && base.sourceManifest == sourceManifest && stableJSON(base.manifest) == stableJSON(manifest) &&
+		stableJSON(base.generation.Capabilities) == stableJSON(publication.capabilities) {
 		return nil, base, nil
 	}
 

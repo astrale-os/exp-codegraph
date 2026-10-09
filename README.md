@@ -209,9 +209,14 @@ createRepositoryPathOwnershipGrouping · createRepositorySourceService
 
 @astrale-os/codegraph/analysis/native
 openNativeDecisionSession · resolvePackagedNativeAnalysis · resolvePackagedNativeOxlint
+
+@astrale-os/codegraph/analysis/typescript
+openCapturedTypeScriptReader(source, capture, { capabilities?, signal? })
 ```
 
 Use memory by default; supply a caller-owned store for custom retention or persistence. Repository tools inventory, classify, group and measure files. Native decision sessions support specialized tool integrations. [All exports, including types](docs/public-api.md).
+
+Captured readers reuse a native session's compiler and fact owner. Their default capabilities are source and body demand; structural reads require an explicit capability. [Capture stamps and leased readers](docs/typescript-values.md#read-an-existing-native-capture).
 
 </details>
 
