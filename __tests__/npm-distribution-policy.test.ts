@@ -2,9 +2,10 @@ import { readFile, readdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import { NATIVE_TARGETS } from '../scripts/native/shared.mjs'
 
 const root = resolve(import.meta.dirname, '..')
-const targets = ['darwin-arm64', 'linux-x64']
+const targets = Object.keys(NATIVE_TARGETS)
 const manifest = async (path: string) => JSON.parse(await readFile(resolve(root, path), 'utf8'))
 const workflow = async (name: string) => parse(await readFile(resolve(root, '.github/workflows', name), 'utf8'))
 
@@ -26,12 +27,15 @@ describe('qualified npm distribution policy', () => {
     expect(owner.optionalDependencies).toBeUndefined()
     expect(owner.files).toContain('native-artifacts')
     // pnpm pack marks only bin entries and these declared files as executable.
-    expect(owner.publishConfig.executableFiles).toEqual(targets.flatMap((target) => [
-      `./native-artifacts/${target}/bin/codegraph-native`,
-      `./native-artifacts/${target}/bin/codegraph-oxlint`,
+    expect(owner.publishConfig.executableFiles).toEqual(Object.entries(NATIVE_TARGETS).flatMap(([target, artifact]) => [
+      `./native-artifacts/${target}/${artifact.executable}`,
+      ...(artifact.oxlint ? [`./native-artifacts/${target}/bin/codegraph-oxlint`] : []),
     ]))
-    expect((await readdir(resolve(root, 'native-artifacts'))).sort()).toEqual(targets)
-    expect(Object.keys((await manifest('native-release.json')).artifacts).sort()).toEqual(targets)
+    // The checked-in historical manifest retains genuine released bytes. The
+    // assembly/admission gates require the complete current matrix before pack.
+    const released = Object.keys((await manifest('native-release.json')).artifacts).sort()
+    expect((await readdir(resolve(root, 'native-artifacts'))).sort()).toEqual(released)
+    for (const target of released) expect(targets).toContain(target)
     expect(parse(await readFile(resolve(root, 'pnpm-workspace.yaml'), 'utf8')).packages).toBeUndefined()
   })
 
@@ -80,7 +84,11 @@ describe('qualified npm distribution policy', () => {
     expect(native.jobs.build.strategy.matrix.include.map((entry: { target: string }) => entry.target).sort())
       .toEqual([...targets].sort())
     expect(native.jobs['packed-consumer'].needs).toBe('assemble')
-    expect(native.jobs.build.steps.some((step: { run?: string }) => step.run?.includes('build-oxlint.mjs --prepare-toolchain'))).toBe(true)
+    const rust = native.jobs.build.steps.find((step: { run?: string }) => step.run?.includes('build-oxlint.mjs --prepare-toolchain'))
+    expect(rust?.if).toBe('matrix.oxlint')
+    for (const entry of native.jobs.build.strategy.matrix.include) {
+      expect(entry.oxlint).toBe(NATIVE_TARGETS[entry.target]!.oxlint)
+    }
     // Upload must pass through the builder whose worker delivery includes
     // mandatory source-owner tests; preparing Rust alone is not qualification.
     const builder = native.jobs.build.steps.findIndex((step: { run?: string }) => step.run?.includes('pnpm native:build'))
@@ -90,9 +98,9 @@ describe('qualified npm distribution policy', () => {
     expect(upload).toBeGreaterThan(builder)
     const owned = native.jobs.build.steps.find((step: { run?: string }) => step.run?.includes('--owned-artifact'))
     expect(owned).toBeDefined()
-    expect(owned?.if).toBeUndefined()
+    expect(owned?.if).toBe('matrix.oxlint')
     expect(native.jobs['packed-consumer'].strategy.matrix.include.map((entry: { target: string }) => entry.target).sort())
-      .toEqual(['darwin-arm64', 'linux-x64', 'linux-x64', 'linux-x64', 'linux-x64'])
+      .toEqual(['darwin-arm64', 'darwin-x64', 'linux-arm64', 'linux-x64', 'linux-x64', 'linux-x64', 'linux-x64', 'win32-x64'])
     const pack = native.jobs.assemble.steps.find((step: { name?: string }) => step.name === 'Pack GitHub consumer artifact')
     expect(pack?.run).toContain('pnpm pack --pack-destination release')
     expect(pack?.run).not.toContain('native-packages')

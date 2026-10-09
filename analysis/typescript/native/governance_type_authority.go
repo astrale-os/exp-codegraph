@@ -194,6 +194,16 @@ func (owner *governanceTypeAuthority) open() {
 	owner.project.typeRelease = release
 }
 func (owner *governanceTypeAuthority) compilerNode(file *sourcepolicy.File, expression *ast.Node) (*ast.Node, bool) {
+	match, known := owner.capturedNode(file, expression)
+	if match != nil && !ast.IsExpressionNode(match) {
+		return nil, known
+	}
+	return match, known
+}
+
+// Binding observations admit declaration tokens too; value observations keep
+// their expression-only admission through compilerNode.
+func (owner *governanceTypeAuthority) capturedNode(file *sourcepolicy.File, anchor *ast.Node) (*ast.Node, bool) {
 	owner.open()
 	if owner.program == nil {
 		return nil, true
@@ -207,8 +217,8 @@ func (owner *governanceTypeAuthority) compilerNode(file *sourcepolicy.File, expr
 		owner.project.familyResidual = append(owner.project.familyResidual, "Native demanded type source bytes disagree with captured authored source")
 		return nil, false
 	}
-	start := scanner.GetTokenPosOfNode(expression, file.Source, false)
-	end := expression.End()
+	start := scanner.GetTokenPosOfNode(anchor, file.Source, false)
+	end := anchor.End()
 	var match *ast.Node
 	var visit func(*ast.Node)
 	visit = func(node *ast.Node) {
@@ -222,9 +232,6 @@ func (owner *governanceTypeAuthority) compilerNode(file *sourcepolicy.File, expr
 		node.ForEachChild(func(child *ast.Node) bool { visit(child); return false })
 	}
 	visit(source.AsNode())
-	if match == nil || !ast.IsExpressionNode(match) {
-		return nil, true
-	}
 	return match, true
 }
 func (owner *governanceTypeAuthority) expression(file *sourcepolicy.File, expression *ast.Node) (*ast.Node, *checker.Type, bool) {

@@ -6,7 +6,10 @@ export const NATIVE_RELEASE_FORMAT = "astrale.codegraph.native-release";
 export const NATIVE_ARTIFACT_DIRECTORY = "native-artifacts";
 const NATIVE_ANALYSIS_TARGETS = Object.freeze([
     "darwin-arm64",
+    "darwin-x64",
+    "linux-arm64",
     "linux-x64",
+    "win32-x64",
 ]);
 export async function readNativeReleaseManifest(path, packageVersion, target) {
     let input;
@@ -50,7 +53,7 @@ function validArtifact(input, target) {
 }
 /** Admit only the companion capability; Go consumers do not consume its metadata. */
 export function admitNativeOxlintArtifact(expected) {
-    if (!expected.oxlint) {
+    if (!expected.oxlint || !["darwin-arm64", "linux-x64"].includes(expected.target)) {
         throw new NativeAnalysisDistributionError("NATIVE_OXLINT_UNAVAILABLE", `Codegraph has no packaged Oxlint worker for ${expected.target}.`, expected.target);
     }
     if (!validOxlint(expected.oxlint)) {

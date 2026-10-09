@@ -1,11 +1,11 @@
-export type NativeAnalysisTarget = 'darwin-arm64' | 'linux-x64';
+export type NativeAnalysisTarget = 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-x64';
 export interface NativeAnalysisArtifact {
     readonly target: NativeAnalysisTarget;
     /** Relative to this target's directory under the package's `native-artifacts`. */
     readonly executable: string;
     readonly bytes: number;
     readonly sha256: string;
-    /** Absent in historical releases built before the captured generic worker was distributed. */
+    /** Separate capability; absent on Go-only hosts and historical releases. */
     readonly oxlint?: NativeOxlintArtifact;
 }
 export interface NativeOxlintArtifact {

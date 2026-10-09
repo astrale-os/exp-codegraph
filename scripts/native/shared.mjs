@@ -10,7 +10,7 @@ export const OXLINT_ENGINE_VERSION = '1.81.0'
 export const OXLINT_PROTOCOL_VERSION = 1
 
 export function oxlintExecutable(target) {
-  if (!NATIVE_TARGETS[target]) throw new Error(`Unsupported native target ${target}.`)
+  if (!NATIVE_TARGETS[target]?.oxlint) throw new Error(`No qualified Oxlint worker for ${target}.`)
   return 'bin/codegraph-oxlint'
 }
 
@@ -18,8 +18,11 @@ export function oxlintExecutable(target) {
 export const NATIVE_ARTIFACT_DIRECTORY = 'native-artifacts'
 
 export const NATIVE_TARGETS = Object.freeze({
-  'darwin-arm64': Object.freeze({ executable: 'bin/codegraph-native' }),
-  'linux-x64': Object.freeze({ executable: 'bin/codegraph-native' }),
+  'darwin-arm64': Object.freeze({ executable: 'bin/codegraph-native', oxlint: true }),
+  'darwin-x64': Object.freeze({ executable: 'bin/codegraph-native', oxlint: false }),
+  'linux-arm64': Object.freeze({ executable: 'bin/codegraph-native', oxlint: false }),
+  'linux-x64': Object.freeze({ executable: 'bin/codegraph-native', oxlint: true }),
+  'win32-x64': Object.freeze({ executable: 'bin/codegraph-native.exe', oxlint: false }),
 })
 
 export async function readJson(path) {
@@ -37,7 +40,7 @@ export async function digestFile(path) {
 export async function assertRegularExecutable(path, target) {
   const metadata = await stat(path)
   if (!metadata.isFile()) throw new Error(`${target} artifact is not a regular file: ${path}`)
-  if ((metadata.mode & 0o111) === 0) {
+  if (process.platform !== 'win32' && (metadata.mode & 0o111) === 0) {
     throw new Error(`${target} artifact is not executable: ${path}`)
   }
 }
@@ -96,6 +99,7 @@ export function assertArtifactManifest(value, target, packageVersion, options) {
 export function assertOxlintSources(artifacts) {
   let source
   for (const [target, artifact] of Object.entries(artifacts)) {
+    if (!artifact.oxlint) continue
     const worker = assertOxlintArtifact(artifact.oxlint, target)
     const current = stableJson(worker.source)
     if (source !== undefined && source !== current) {

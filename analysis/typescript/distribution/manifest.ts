@@ -15,7 +15,10 @@ export const NATIVE_ARTIFACT_DIRECTORY = "native-artifacts" as const;
 
 const NATIVE_ANALYSIS_TARGETS: readonly NativeAnalysisTarget[] = Object.freeze([
   "darwin-arm64",
+  "darwin-x64",
+  "linux-arm64",
   "linux-x64",
+  "win32-x64",
 ]);
 
 export async function readNativeReleaseManifest(
@@ -85,7 +88,7 @@ function validArtifact(input: unknown, target: string): boolean {
 export function admitNativeOxlintArtifact(
   expected: NativeAnalysisArtifact,
 ): NonNullable<NativeAnalysisArtifact["oxlint"]> {
-  if (!expected.oxlint) {
+  if (!expected.oxlint || !["darwin-arm64", "linux-x64"].includes(expected.target)) {
     throw new NativeAnalysisDistributionError("NATIVE_OXLINT_UNAVAILABLE",
       `Codegraph has no packaged Oxlint worker for ${expected.target}.`, expected.target);
   }

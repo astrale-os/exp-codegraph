@@ -56,8 +56,19 @@ jobs:
         include:
           - target: linux-x64
             runner: ubuntu-24.04
+            oxlint: true
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            oxlint: false
+          - target: darwin-x64
+            runner: macos-15-intel
+            oxlint: false
           - target: darwin-arm64
             runner: macos-15
+            oxlint: true
+          - target: win32-x64
+            runner: windows-latest
+            oxlint: false
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -68,6 +79,7 @@ jobs:
         with:
           frozen-lockfile: 'true'
       - name: Prepare the pinned Rust toolchain
+        if: matrix.oxlint
         run: node scripts/native/build-oxlint.mjs --prepare-toolchain
       - name: Build exact native artifact
         run: pnpm native:build -- --target ${{ matrix.target }} --output .native-output/${{ matrix.target }}
@@ -77,13 +89,14 @@ jobs:
         if: matrix.target == 'darwin-arm64'
         run: pnpm native:test
       - name: Qualify the actual built Oxlint worker lifetime and captured I/O
+        if: matrix.oxlint
         run: pnpm native:test -- --files-json '["."]' --options-json '["-run=TestOwned|TestPolicyLaneOwned"]' --owned-artifact .native-output/${{ matrix.target }}/bin/codegraph-oxlint
       - name: Qualify native semantics and extension boundary
-        run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native
+        run: node qualification/v2/extension/qualify.ts --native-binary .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Qualify native regression and diagnostic transport
-        run: pnpm exec vitest run __tests__/native-identity.test.ts __tests__/native-semantic-body.test.ts __tests__/typescript-normalized-facts.test.ts __tests__/typescript-value-semantics.test.ts __tests__/typescript-symbolic-values.test.ts __tests__/typescript-project.test.ts __tests__/native-distribution.test.ts --maxWorkers 1
+        run: pnpm exec vitest run __tests__/native-identity.test.ts __tests__/native-semantic-body.test.ts __tests__/typescript-normalized-facts.test.ts __tests__/typescript-value-semantics.test.ts __tests__/typescript-symbolic-values.test.ts __tests__/typescript-project.test.ts __tests__/typescript-structural-inspection.test.ts __tests__/typescript-structural-navigation.test.ts __tests__/typescript-structural-compute.test.ts __tests__/native-distribution.test.ts --maxWorkers 1
         env:
-          CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native
+          CODEGRAPH_TEST_NATIVE_BINARY: .native-output/${{ matrix.target }}/bin/codegraph-native${{ matrix.target == 'win32-x64' && '.exe' || '' }}
       - name: Upload qualified native artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -133,8 +146,17 @@ jobs:
           - target: linux-x64
             runner: ubuntu-24.04
             node-version: '26'
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            node-version: '26'
+          - target: darwin-x64
+            runner: macos-15-intel
+            node-version: '26'
           - target: darwin-arm64
             runner: macos-15
+            node-version: '26'
+          - target: win32-x64
+            runner: windows-latest
             node-version: '26'
           - target: linux-x64
             runner: ubuntu-24.04
@@ -166,7 +188,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           package-manager-cache: false
       - name: Prove GitHub artifact installation and native execution
-        run: node qualification/v2/release/packed-consumer.mjs --release-directory release --require-oxlint
+        run: node qualification/v2/release/packed-consumer.mjs --release-directory release ${{ (matrix.target == 'darwin-arm64' || matrix.target == 'linux-x64') && '--require-oxlint' || '' }}
       - name: Qualify SQLite on the minimum supported Node release
         if: matrix.node-version == '22.13.0'
         run: node node_modules/vitest/vitest.mjs run __tests__/analysis-v2.test.ts -t 'SQLite|memory and SQLite|telemetry' --maxWorkers 1

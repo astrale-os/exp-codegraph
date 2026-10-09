@@ -55,8 +55,8 @@ export async function admitReleasePackage(directory, sourceRevision, version) {
   }
   const delivered = []
   for (const target of Object.keys(NATIVE_TARGETS)) {
-    const artifact = assertArtifact(release.artifacts[target], target, version, { requireOxlint: true })
-    for (const executable of [artifact, artifact.oxlint]) {
+    const artifact = assertArtifact(release.artifacts[target], target, version, { requireOxlint: NATIVE_TARGETS[target].oxlint })
+    for (const executable of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
       const member = `${NATIVE_ARTIFACT_DIRECTORY}/${target}/${executable.executable}`
       const bytes = await archiveMember(archive, member)
       assert.equal(bytes.length, executable.bytes, `${member} size differs.`)
