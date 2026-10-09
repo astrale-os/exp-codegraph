@@ -328,6 +328,10 @@ export class IndexedValues implements ValueIndex {
   }
 
   private fingerprint(key: string): string | undefined {
+    if (key.startsWith('evidence:')) {
+      const id = key.slice(9) as FactId
+      return this.#facts.has(id) ? 'present' : undefined
+    }
     if (key.startsWith('header:')) return this.#columns.headers.fingerprint(key.slice(7) as SymbolId, this.#hashes)
     if (key.startsWith('function:')) return this.#columns.bodies.fingerprint(key.slice(9) as SymbolId, this.#hashes)
     if (key.startsWith('occurrence:')) return this.#columns.occurrences.fingerprint(key.slice(11) as OccurrenceId, this.#hashes) ?? this.#columns.witnesses.fingerprint(key.slice(11) as OccurrenceId, this.#hashes)
@@ -435,6 +439,11 @@ export class IndexedValues implements ValueIndex {
     const occurrenceEvidence = (ids: readonly OccurrenceId[]) => [...new Set(ids.flatMap((id) =>
       nextColumns.occurrences.evidence(id, nextEvidence) ?? nextColumns.witnesses.evidence(id, nextEvidence) ?? []))]
     const changedKeys = new Set<string>()
+    // Semantic cells may remain identical while their enclosing certificate is
+    // replaced. Both proof caches must still retire references to removed facts.
+    if (!initial) for (const [id, next] of changed) {
+      if (this.#facts.has(id) !== !!next) changedKeys.add(`evidence:${id}`)
+    }
     for (const key of touched) {
       let fingerprint = directFingerprint(key)
       const separator = key.indexOf(':')
