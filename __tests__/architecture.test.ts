@@ -146,7 +146,6 @@ describe('module architecture', () => {
       ]),
       compiler: new Set(['analysis', 'api', 'cache', 'source', 'typescript']),
       conformance: new Set(['analysis', 'source', 'specification']),
-      'json-schema': new Set(['api']),
       markdown: new Set(['source']),
       qualification: new Set([
         'analysis',

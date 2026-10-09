@@ -15,7 +15,6 @@ import {
   parseApiCompilerWorkerResourceReport,
 } from '../compiler/isolation-work.optimization.ts'
 import { planDeclarationCompilerUniverses } from '../api/project.ts'
-import { emitJsonSchema } from '../json-schema/index.ts'
 import { apiOutline } from '../viewer/specification/api.tsx'
 
 const temporary: string[] = []
@@ -1334,67 +1333,7 @@ export interface Second { readonly shared: Shared }
     })
   })
 
-  it('emits a sealed recursive JSON Schema bundle from explicit roots', async () => {
-    const current = await declarationFixture(`
-export interface Leaf {
-  readonly op: 'leaf'
-  /** @minLength 1 */
-  readonly value: string
-}
-export interface Group {
-  readonly op: 'group'
-  /** @minItems 1 */
-  readonly children: readonly Expression[]
-}
-export type Expression = Leaf | Group
-export interface Document { readonly root: Expression }
-`)
-    const result = await emitJsonSchema({
-      mainFile: current.api,
-      projectRoot: current.root,
-      roots: ['Document'],
-      bundleId: 'https://schemas.astrale.ai/fixture/document.json',
-    })
 
-    expect(result).toMatchObject({
-      ok: true,
-      diagnostics: [],
-      schema: {
-        $schema: 'https://json-schema.org/draft/2020-12/schema',
-        $id: 'https://schemas.astrale.ai/fixture/document.json',
-        $defs: {
-          Document: { type: 'object', additionalProperties: false, required: ['root'] },
-          Leaf: { type: 'object', additionalProperties: false },
-          Group: { type: 'object', additionalProperties: false },
-        },
-      },
-    })
-    const serialized = JSON.stringify(result.schema)
-    expect(serialized).not.toContain('#/definitions/')
-    expect(serialized).toContain('#/$defs/')
-  })
-
-  it('rejects missing, duplicated, and function-valued JSON Schema roots', async () => {
-    const current = await declarationFixture(`
-export interface Safe { readonly value: string }
-export type Unsafe = (value: string) => string
-`)
-    const base = {
-      mainFile: current.api,
-      projectRoot: current.root,
-      bundleId: 'https://schemas.astrale.ai/fixture/root.json',
-    }
-    expect((await emitJsonSchema({ ...base, roots: [] })).diagnostics[0]?.code).toBe(
-      'JSON_SCHEMA_ROOTS',
-    )
-    expect((await emitJsonSchema({ ...base, roots: ['Safe', 'Safe'] })).diagnostics[0]?.code).toBe(
-      'JSON_SCHEMA_ROOTS',
-    )
-    expect((await emitJsonSchema({ ...base, roots: ['Missing'] })).ok).toBe(false)
-    const unsafe = await emitJsonSchema({ ...base, roots: ['Unsafe'] })
-    expect(unsafe.ok).toBe(false)
-    expect(unsafe.diagnostics[0]?.code).toBe('JSON_SCHEMA_GENERATION_FAILED')
-  })
 })
 
 async function largeDeclarationFixture(count: number): Promise<{ root: string; api: string }> {
