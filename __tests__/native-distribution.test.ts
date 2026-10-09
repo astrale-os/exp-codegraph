@@ -101,6 +101,7 @@ describe('native analysis distribution', () => {
         engineVersion: '1.81.0', protocolVersion: 1,
         source: { revision: '3'.repeat(40), patchSha256: '4'.repeat(64) },
       })
+      await expect(fixture.resolveOptionalOxlint()).resolves.toMatchObject({ command: fixture.worker })
     })
   }, 30_000)
 
@@ -111,6 +112,9 @@ describe('native analysis distribution', () => {
         await expect(fixture.resolveOxlint()).rejects.toMatchObject({
           code: workerFailure === 'bytes' ? 'NATIVE_ARTIFACT_DIGEST_MISMATCH' : 'NATIVE_ARTIFACT_INVALID',
         })
+        await expect(fixture.resolveOptionalOxlint()).rejects.toMatchObject({
+          code: workerFailure === 'bytes' ? 'NATIVE_ARTIFACT_DIGEST_MISMATCH' : 'NATIVE_ARTIFACT_INVALID',
+        })
       })
     }, 30_000)
   }
@@ -119,6 +123,7 @@ describe('native analysis distribution', () => {
     await withPackagedFixture({}, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({ origin: 'package' })
       await expect(fixture.resolveOxlint()).rejects.toMatchObject({ code: 'NATIVE_OXLINT_UNAVAILABLE' })
+      await expect(fixture.resolveOptionalOxlint()).resolves.toBeUndefined()
     })
   }, 30_000)
 
@@ -126,6 +131,7 @@ describe('native analysis distribution', () => {
     await withPackagedFixture({ oxlint: true }, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({ origin: 'package' })
       await expect(fixture.resolveOxlint()).rejects.toMatchObject({ code: 'NATIVE_OXLINT_UNAVAILABLE', target })
+      await expect(fixture.resolveOptionalOxlint()).resolves.toBeUndefined()
     })
   }, 30_000)
 
@@ -168,6 +174,7 @@ interface PackagedFixture {
   readonly worker: string
   resolve(): Promise<unknown>
   resolveOxlint(): Promise<unknown>
+  resolveOptionalOxlint(): Promise<unknown>
 }
 
 // Copying and importing a complete distribution is qualification setup, not a
@@ -266,10 +273,15 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
   const module = await import(
     `${pathToFileURL(join(root, 'dist/analysis/typescript/distribution/index.js')).href}?fixture=${Date.now()}-${Math.random()}`
   ) as { resolvePackagedNativeAnalysis(): Promise<unknown>; resolvePackagedNativeOxlint(): Promise<unknown> }
+  const internal = await import(
+    pathToFileURL(join(root, 'dist/analysis/typescript/distribution/resolve.js')).href
+  ) as { resolveOptionalPackagedNativeOxlint(): Promise<unknown> }
+  expect('resolveOptionalPackagedNativeOxlint' in module).toBe(false)
   const canonical = await import('node:fs/promises')
   return { binary: options.install === false || options.compressed ? binary : await canonical.realpath(binary),
     worker: options.oxlint && !options.compressed && options.workerFailure !== 'missing' ? await canonical.realpath(worker) : worker,
-    resolve: module.resolvePackagedNativeAnalysis, resolveOxlint: module.resolvePackagedNativeOxlint }
+    resolve: module.resolvePackagedNativeAnalysis, resolveOxlint: module.resolvePackagedNativeOxlint,
+    resolveOptionalOxlint: internal.resolveOptionalPackagedNativeOxlint }
 }
 
 async function withDirectory(prefix: string, use: (root: string) => Promise<void>): Promise<void> {

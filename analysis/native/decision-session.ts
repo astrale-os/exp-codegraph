@@ -1,7 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { NativeAnalysisDistributionError } from '../typescript/distribution/model.ts';
 import { NativeDecisionServiceError, type NativeDecisionSession } from "./decision-model.ts";
-import { resolvePackagedNativeAnalysis, resolvePackagedNativeOxlint } from "../typescript/distribution/resolve.ts";
+import { resolvePackagedNativeAnalysis, resolveOptionalPackagedNativeOxlint } from "../typescript/distribution/resolve.ts";
 
 const MAX_FRAME_BYTES = 64 * 1024 * 1024;
 const MAX_STDERR_BYTES = 64 * 1024;
@@ -40,12 +39,8 @@ export async function openNativeDecisionSession(
   // Storage selects the addressing strategy, not a protocol revision. Qualified
   // gzip builds accept the optional explicit path; old raw binaries strictly
   // reject unknown request fields and must retain their original adjacency.
-  const transport = new DecisionProcess(child, artifact.compression ? async () => {
-    try { return (await resolvePackagedNativeOxlint()).command; } catch (cause) {
-      if (cause instanceof NativeAnalysisDistributionError && cause.code === 'NATIVE_OXLINT_UNAVAILABLE') return undefined;
-      throw cause;
-    }
-  } : undefined);
+  const transport = new DecisionProcess(child, artifact.compression ? async () =>
+    (await resolveOptionalPackagedNativeOxlint())?.command : undefined);
   await transport.ready(options.signal, options.handshakeTimeoutMs ?? 30_000);
   return transport;
 }

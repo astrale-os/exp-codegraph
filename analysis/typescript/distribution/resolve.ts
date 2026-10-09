@@ -46,6 +46,14 @@ export async function resolvePackagedNativeOxlint(): Promise<ResolvedPackagedNat
   return { ...worker, ...admitted, target, packageVersion, origin: 'package' }
 }
 
+/** Internal optional capability: unavailable is distinct from corrupt or unreadable artifacts. */
+export async function resolveOptionalPackagedNativeOxlint(): Promise<ResolvedPackagedNativeOxlint | undefined> {
+  try { return await resolvePackagedNativeOxlint() } catch (cause) {
+    if (cause instanceof NativeAnalysisDistributionError && cause.code === 'NATIVE_OXLINT_UNAVAILABLE') return undefined
+    throw cause
+  }
+}
+
 async function resolveArtifact(root: string, packageVersion: string, target: string) {
   const release = await readNativeReleaseManifest(
     resolve(root, 'native-release.json'),

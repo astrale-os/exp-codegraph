@@ -11,7 +11,7 @@ import {
 } from 'vite'
 
 import { createLiveSpecsPlugin, type LiveSpecsOptions } from './live-plugin.ts'
-import type { DevOptions, RunningDevServer } from './start.ts'
+import type { DevOptions, RunningDevServer } from './model.ts'
 import { DEV_SERVER_WATCH_IGNORES } from './watch.ts'
 
 export interface SourceDevServer extends RunningDevServer { server: ViteDevServer }

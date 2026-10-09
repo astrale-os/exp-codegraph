@@ -15,6 +15,9 @@ describe('qualified npm distribution policy', () => {
     expect(build.compilerOptions.sourceMap).toBe(false)
     expect(build.compilerOptions.declarationMap).toBe(false)
     const owner = await manifest('package.json')
+    expect(owner.scripts.precheck).toBe('pnpm run build')
+    expect(owner.scripts.prepack).toBe('pnpm run build')
+    expect(owner.scripts.prebuild).toBe('node scripts/clean-dist.mjs')
     expect(owner.files).toEqual(['dist', 'LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'native-release.json', 'native-artifacts', '!dist/**/*.map'])
     for (const dependency of ['vite', 'mermaid', 'katex', 'preact']) {
       expect(owner.dependencies[dependency]).toBeUndefined()
@@ -85,7 +88,7 @@ describe('qualified npm distribution policy', () => {
     for (const trigger of ['push', 'pull_request']) {
       expect(native.on[trigger].paths).toContain('LICENSE')
       expect(native.on[trigger].paths).toContain('THIRD_PARTY_NOTICES.md')
-      for (const path of ['server/**', 'viewer/**', 'viewer-host/**', 'scripts/build-viewer.mjs', '__tests__/embedded-viewer.test.ts', '__tests__/native-materialization.test.ts']) {
+      for (const path of ['server/**', 'viewer/**', 'viewer-host/**', 'scripts/build-viewer.mjs', 'tsconfig.build.json', 'scripts/clean-dist.mjs', 'native-release.json', '__tests__/embedded-viewer.test.ts', '__tests__/native-materialization.test.ts']) {
         expect(native.on[trigger].paths).toContain(path)
       }
     }
