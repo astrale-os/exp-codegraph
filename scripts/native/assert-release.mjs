@@ -57,9 +57,9 @@ if (Object.keys(release.artifacts ?? {}).sort().join('\0') !== [...targets].sort
 }
 assertOxlintSources(release.artifacts)
 for (const target of targets) {
-  const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: true })
+  const artifact = assertArtifact(release.artifacts[target], target, packageVersion, { requireOxlint: NATIVE_TARGETS[target].oxlint })
   const artifactRoot = resolve(root, NATIVE_ARTIFACT_DIRECTORY, target)
-  for (const delivered of [artifact, artifact.oxlint]) {
+  for (const delivered of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
     // pnpm pack marks only bin entries and these declared files as executable.
     const packed = `./${NATIVE_ARTIFACT_DIRECTORY}/${target}/${delivered.executable}`
     if (!packageManifest.publishConfig.executableFiles?.includes(packed)) {

@@ -10,6 +10,7 @@ import { promisify } from 'node:util'
 import { assertNpmConsumerLock } from '../../../scripts/native/admit-packages.mjs'
 import { NATIVE_ARTIFACT_DIRECTORY, NATIVE_TARGETS, assertOxlintArtifact } from '../../../scripts/native/shared.mjs'
 import { qualifyOwnedGeneric } from './owned-generic.mjs'
+import { qualifyResidentProject } from './resident.mjs'
 
 const execFile = promisify(execFileCallback)
 const repositoryRoot = resolve(import.meta.dirname, '../../..')
@@ -57,7 +58,7 @@ try {
     '--save-exact',
     releaseDirectory ? resolve(releaseDirectory, archive) : `@astrale-os/codegraph@${npmVersion}`,
   ]
-  await execFile('pnpm', pnpmArguments, { cwd: repositoryRoot, env: dependencyEnvironment })
+  await runPnpm(pnpmArguments, dependencyEnvironment)
   const lock = await readFile(join(consumer, 'pnpm-lock.yaml'), 'utf8')
   if (releaseDirectory) await assertPackedConsumerLock(lock, consumer, resolve(releaseDirectory, archive))
   else assertNpmConsumerLock(lock)
@@ -104,8 +105,11 @@ try {
   const release = JSON.parse(await readFile(join(installed, 'native-release.json'), 'utf8'))
   assert.deepEqual(Object.keys(release.artifacts).sort(), Object.keys(NATIVE_TARGETS).sort())
   const oxlint = release.artifacts[target].oxlint
-  let ownedGeneric
-  if (process.argv.includes('--require-oxlint')) assert(oxlint, 'New native releases require codegraph-oxlint.')
+  let ownedGeneric = { status: 'unavailable', reason: 'NATIVE_OXLINT_UNAVAILABLE' }
+  if (process.argv.includes('--require-oxlint')) {
+    assert.equal(Boolean(oxlint), NATIVE_TARGETS[target].oxlint,
+      'Release worker delivery must match the qualified host capability.')
+  }
   if (oxlint) {
     assertOxlintArtifact(oxlint, target)
     const nativeWorker = await typescript.resolvePackagedNativeOxlint()
@@ -124,6 +128,8 @@ try {
     assert.equal(createHash('sha256').update(bytes).digest('hex'), oxlint.sha256)
     assert((await stat(worker)).isFile())
     assert((await stat(worker)).mode & 0o111)
+  } else {
+    await assert.rejects(typescript.resolvePackagedNativeOxlint(), { code: 'NATIVE_OXLINT_UNAVAILABLE', target })
   }
   // The one package delivers every released target and nothing else beside them.
   const nativeFiles = (await filesUnder(installedNative)).map((path) => path.slice(installedNative.length + 1))
@@ -199,7 +205,7 @@ try {
     await store.dispose()
   }
 
-  await qualifyResidentProject(typescript, join(temporary, 'resident'))
+  const resident = await qualifyResidentProject(typescript, join(temporary, 'resident'))
   if (oxlint) {
     const decisions = await import(pathToFileURL(join(installed, 'dist/analysis/native/index.js')).href)
     ownedGeneric = await qualifyOwnedGeneric({ decisions, worker: oxlint,
@@ -207,7 +213,7 @@ try {
   }
 
   process.stdout.write(
-    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: npmVersion ? 'npmjs' : 'packed-artifact', ownedGeneric })}\n`,
+    `${JSON.stringify({ packageVersion: rootManifest.version, target, node: process.version, nativeSha256: native.sha256, source: npmVersion ? 'npmjs' : 'packed-artifact', resident, ownedGeneric })}\n`,
   )
 } finally {
   await rm(temporary, { recursive: true, force: true })
@@ -219,6 +225,27 @@ function argument(name) {
   const value = process.argv[index + 1]
   if (!value || value.startsWith('--')) throw new Error(`${name} requires a value.`)
   return value
+}
+
+// A Windows package-manager shim is a .cmd file, not a process executable.
+// Resolve its installed Node entry rather than adding a shell to package install.
+async function runPnpm(args, env) {
+  if (process.platform !== 'win32') return execFile('pnpm', args, { cwd: repositoryRoot, env })
+  const { stdout } = await execFile('where.exe', ['pnpm'], { env })
+  for (const shim of stdout.split(/\r?\n/u).filter(Boolean)) {
+    if (shim.toLowerCase().endsWith('.exe')) return execFile(shim, args, { cwd: repositoryRoot, env })
+    for (const entry of [
+      resolve(shim, '../node_modules/pnpm/bin/pnpm.cjs'),
+      resolve(shim, '../../pnpm/bin/pnpm.cjs'),
+    ]) {
+      try {
+        if ((await stat(entry)).isFile()) return execFile(process.execPath, [entry, ...args], { cwd: repositoryRoot, env })
+      } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+      }
+    }
+  }
+  throw new Error('Cannot resolve the installed pnpm Node entry from its Windows shim.')
 }
 
 async function prepareConsumerPolicy(consumer) {
@@ -306,34 +333,6 @@ async function filesUnder(directory) {
 
 async function assertMissing(path) {
   await assert.rejects(stat(path), { code: 'ENOENT' })
-}
-
-async function qualifyResidentProject(typescript, root) {
-  await mkdir(root)
-  await writeFile(join(root, 'tsconfig.json'), JSON.stringify({
-    compilerOptions: { noLib: true, target: 'ES2022' }, include: ['*.ts'],
-  }))
-  await writeFile(join(root, 'index.ts'), "export const helper = () => 'first'; export function value() { return helper() }\n")
-  const project = await typescript.openTypeScriptProject({ root })
-  try {
-    const initial = await project.refresh()
-    assert.equal(initial.transactions.length, 1)
-    const before = await project.open(initial.generation)
-    try {
-      const original = await before.facts.facts('source')
-      const bodies = await before.facts.facts('body')
-      assert.equal(bodies.facts.length, 3)
-      assert.equal(bodies.facts.filter((fact) => fact.payload.body.scope === 'module').length, 1)
-      const values = await before.values()
-      assert.equal(await before.values(), values)
-      await writeFile(join(root, 'index.ts'), "export const helper = () => 'second'; export function value() { return helper() }\n")
-      const edited = await project.refresh({ changed: ['index.ts'] })
-      assert.notEqual(edited.generation.id, initial.generation.id)
-      assert.equal((await project.refresh()).generation.id, edited.generation.id)
-      assert.deepEqual((await project.refresh()).transactions, [])
-      assert.deepEqual(await before.facts.facts('source'), original)
-    } finally { await before.dispose() }
-  } finally { await project.dispose() }
 }
 
 async function releaseArchive(directory) {

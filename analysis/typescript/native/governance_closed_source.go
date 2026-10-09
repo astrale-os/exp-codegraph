@@ -27,6 +27,12 @@ type governanceClosedSourceAnswer struct {
 	Kind                 *string                           `json:"kind"`
 	Mapping              string                            `json:"mapping,omitempty"`
 	Resolution           *governanceClosedSourceResolution `json:"resolution"`
+	Symbol               *governanceClosedSourceSymbol     `json:"symbol,omitempty"`
+}
+type governanceClosedSourceSymbol struct {
+	Name   jsstring.JSONText `json:"name"`
+	Origin *callTargetOrigin `json:"origin,omitempty"`
+	Local  bool              `json:"local,omitempty"`
 }
 type governanceClosedSourceResolution struct {
 	ResolvedPath jsstring.JSONText `json:"resolvedPath"`
@@ -79,7 +85,7 @@ func (session *governanceSession) observeClosedSource(request governanceClosedSo
 	case "package-mapping":
 		answer.Mapping = project.packageImportMappingKind(file, specifier.WTF8())
 		return answer, nil
-	case "closed", "names", "collection":
+	case "closed", "names", "collection", "symbol":
 	default:
 		return governanceClosedSourceAnswer{}, fmt.Errorf("unknown closed source operation")
 	}
@@ -99,6 +105,54 @@ func (session *governanceSession) observeClosedSource(request governanceClosedSo
 	}
 	shared := governanceSharedProject(project)
 	captured := shared.FilesByPath[file.Path]
+	if request.Operation == "symbol" {
+		matched, known := project.typeOwner.capturedNode(captured, expression)
+		if !known || project.typeOwner.program == nil || matched == nil {
+			return governanceClosedSourceAnswer{Status: "unavailable", Reason: "Captured compiler binding authority unavailable."}, nil
+		}
+		check := project.typeOwner.program.Checker
+		symbol := check.GetSymbolAtLocation(matched)
+		if matched.Parent != nil && matched.Parent.Kind == ast.KindShorthandPropertyAssignment && matched.Parent.Name() == matched {
+			symbol = check.GetShorthandAssignmentValueSymbol(matched.Parent)
+		}
+		symbol = unalias(check, symbol)
+		if symbol == nil || len(symbol.Declarations) == 0 {
+			return answer, nil // No represented binding; consumers retain uncertainty.
+		}
+		origin, reason := governanceSymbolOrigin(project, check, symbol)
+		if reason != "" {
+			return governanceClosedSourceAnswer{Status: "unavailable", Reason: reason}, nil
+		}
+		local := true
+		for _, declaration := range symbol.Declarations {
+			source := ast.GetSourceFileOfNode(declaration)
+			if source == nil {
+				local = false
+				break
+			}
+			logical, owned := governanceRuntimeProgramOwned(project.Root, source.FileName())
+			captured := project.FilesByPath[logical]
+			if !owned || captured == nil || captured.Text != source.Text() {
+				local = false
+				break
+			}
+		}
+		name := stableSymbolName(symbol)
+		if isModuleNamespaceSymbol(symbol) {
+			// Module display names contain physical paths, not declaration names.
+			origin = nil
+			name, err = governancePortableUniversePath(project, ast.GetSourceFileOfNode(symbol.Declarations[0]).FileName())
+			if err != nil {
+				return governanceClosedSourceAnswer{Status: "unavailable", Reason: err.Error()}, nil
+			}
+		}
+		var portableOrigin *callTargetOrigin
+		if origin != nil {
+			portableOrigin = &callTargetOrigin{Package: origin.Package, File: origin.File, Path: append([]string{}, origin.Path...)}
+		}
+		answer.Symbol = &governanceClosedSourceSymbol{Name: jsstring.JSONText(name), Origin: portableOrigin, Local: local}
+		return answer, nil
+	}
 	if request.Operation == "collection" {
 		observed := project.typeOwner.collectionKind(captured, expression)
 		if !observed.Known {

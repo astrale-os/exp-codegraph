@@ -1,6 +1,6 @@
 {
   "name": "@astrale-os/codegraph",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
   "license": "Apache-2.0",
@@ -97,8 +97,11 @@
     "executableFiles": [
       "./native-artifacts/darwin-arm64/bin/codegraph-native",
       "./native-artifacts/darwin-arm64/bin/codegraph-oxlint",
+      "./native-artifacts/darwin-x64/bin/codegraph-native",
+      "./native-artifacts/linux-arm64/bin/codegraph-native",
       "./native-artifacts/linux-x64/bin/codegraph-native",
-      "./native-artifacts/linux-x64/bin/codegraph-oxlint"
+      "./native-artifacts/linux-x64/bin/codegraph-oxlint",
+      "./native-artifacts/win32-x64/bin/codegraph-native.exe"
     ]
   },
   "preferUnplugged": true,

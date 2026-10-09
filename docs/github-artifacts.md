@@ -4,9 +4,12 @@ GitHub Actions remains the build and qualification transport for Codegraph's exa
 Published versions are installed from npm, as documented in [npm distribution](npm-distribution.md).
 This page covers the qualification transport and how to install a revision that is not published.
 
-`native-release.yml` builds macOS arm64 and Linux x64 from one source revision, qualifies their
+`native-release.yml` builds macOS arm64/x64, Linux arm64/x64 and Windows x64 from one source revision, qualifies their
 semantics, assembles the immutable release manifest and uploads one tarball as
 `codegraph-release`. It retains read-only permissions and never publishes to a registry.
+
+The captured Oxlint worker is an additional capability on macOS arm64 and Linux x64. The other
+hosts qualify the Go analyzer and explicit worker unavailability after package installation.
 
 The packed consumer installs that tarball in an isolated project, with no workspace links or
 source compiler installation. This proves the artifact independently of the source tree.

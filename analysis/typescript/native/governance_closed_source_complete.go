@@ -48,8 +48,7 @@ func (session *governanceSession) completeClosedSource(raw json.RawMessage) (any
 	products := []governanceRuleProduct{}
 	for i, row := range input.Decisions {
 		contract := contracts[i]
-		if row.ID != contract.RuleID || contract.RuleRevision != governanceRevisions[row.ID] ||
-			contract.Implementation.Version != "1" {
+		if row.ID != contract.RuleID || !state.sourceRevisionMatchesRequest(contract) || contract.Implementation.Version != "1" {
 			return nil, fmt.Errorf("closed source rule contract differs")
 		}
 		decision := governanceRuleDecision{Status: row.Decision.Status}

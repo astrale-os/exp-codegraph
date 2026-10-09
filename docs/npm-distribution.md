@@ -11,45 +11,47 @@ The reason for npm distribution is the SDK's npm-only dependency closure. A publ
 cannot resolve a private GitHub Actions artifact using an ordinary exact npm dependency. Workspace
 links, local archives and rewritten registry URLs cannot establish that public dependency closure.
 
-## One package, two native targets
+## One package, five qualified native targets
 
 The package carries its native executables in `native-artifacts/<target>/bin/`:
 
 - `darwin-arm64`: macOS on Apple silicon
+- `darwin-x64`: macOS on Intel
+- `linux-arm64`: Linux on ARM64
 - `linux-x64`: Linux on x64
+- `win32-x64`: Windows on x64 (`codegraph-native.exe`)
 
-npm selects by platform only between packages, so one package delivers both targets to every
-install: 37 MB packed and 85 MB installed, measured on the artifacts of main revision `1db5927`,
-against about 19 MB and 45 MB for one target. That cost buys one name to publish, one Trusted
-Publisher and one exact dependency for consumers.
-
-macOS x64, Linux arm64 and Windows are not delivered. The package still installs there; packaged
-native analysis fails closed with `NATIVE_TARGET_UNSUPPORTED`. Adding a POSIX target means adding
-it to the target tables, the declared executable files and both workflow matrices. Windows also
-needs its `.exe` names and its worker ineligibility restored.
+npm selects by platform only between packages, so one package delivers every target to every
+install. Version 0.1.0 carried only macOS arm64 and Linux x64: 37 MB packed and 85 MB installed,
+against about 19 MB and 45 MB for one target. Restoring the other three hosts adds their Go
+executables to the next release; actual archive and installed sizes must be measured on that
+assembled release. That cost buys one name to publish, one Trusted Publisher and one exact
+dependency for consumers. Other hosts fail with `NATIVE_TARGET_UNSUPPORTED`.
 
 Consumers install only `@astrale-os/codegraph@VERSION` and never build Go or Rust. Runtime
 admission checks the selected executable against the release manifest of the installed package.
 
-Each target delivers `bin/codegraph-native` and `bin/codegraph-oxlint`, the latter built from the
-pinned Oxlint 1.81.0 source recipe and maintained patch. Rust is a build input; consumers do not
+Every target delivers the Go analyzer. macOS arm64 and Linux x64 additionally deliver
+`bin/codegraph-oxlint`, built from the pinned Oxlint 1.81.0 source recipe and maintained patch.
+The other three targets build and qualify Go without a Rust toolchain or worker. Rust is a build input; consumers do not
 install a Rust toolchain. The worker descriptor records its actual bytes, SHA-256, engine/protocol
 versions and source pins, and the Go executable binds that same identity at build time. Both
 executables are qualified after installation with lifecycle, capture, stale-publication and repair
 controls.
 
 The worker is a separate capability admitted by `resolvePackagedNativeOxlint`. Its absence or
-corruption does not invalidate `resolvePackagedNativeAnalysis`, which allows consumers to recover
-through their original analyzer. Linux worker builds target GNU libc; worker distribution does not
+corruption does not invalidate `resolvePackagedNativeAnalysis`. Go-only hosts return
+`NATIVE_OXLINT_UNAVAILABLE`, allowing consumers to use the resident semantic analyzer together
+with their installed Oxlint engine. Linux worker builds target GNU libc; worker distribution does not
 admit a consumer's original Oxlint bindings, presets or domain rule implementations.
 
 `pnpm pack` marks only `bin` entries and the files declared in `publishConfig.executableFiles` as
-executable, so the four native executables are declared there and the release validator rejects an
+executable, so all seven native executables are declared there and the release validator rejects an
 undeclared one.
 
 ## One qualified release
 
-The existing native workflow builds on both targets and qualifies the installed archive on
+The existing native workflow builds on all five targets and qualifies the installed archive on
 Node 22.13, 22, 24 and 26. Its `codegraph-release` artifact contains the one tarball. The manual
 publisher requires a successful main run of that exact workflow at the exact selected source SHA.
 It checks the archive manifest, each native executable's SHA-256, that the archive delivers no

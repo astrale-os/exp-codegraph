@@ -30,13 +30,15 @@ if (requestedTarget && requestedTarget !== target) {
 const cacheDirectory = resolve(argument('--cache-directory') ?? resolve(root, '.cache/ttsc'))
 const packageManifest = await readJson(resolve(root, 'package.json'))
 const packageVersion = requiredString(packageManifest.version, 'package version')
-const oxlint = await buildOxlint({ root, target, output })
+// The analyzer is independently useful on every supported host. Only targets
+// with a qualified worker build Rust and bind its identity into Go.
+const oxlint = expected.oxlint ? await buildOxlint({ root, target, output }) : undefined
 
 const native = await resolveTtscNativeAnalysis({
   root,
   config: 'tsconfig.json',
   cacheDirectory,
-  ownedOxlint: oxlint.artifact,
+  ...(oxlint ? { ownedOxlint: oxlint.artifact } : {}),
   ...(process.platform === 'linux' ? { environment: { CGO_ENABLED: '0' } } : {}),
 })
 const executable = resolve(output, expected.executable)
@@ -48,9 +50,9 @@ const artifact = {
   target,
   executable: expected.executable,
   ...digest,
-  oxlint: oxlint.artifact,
+  ...(oxlint ? { oxlint: oxlint.artifact } : {}),
 }
-const toolchain = { ...await readToolchain(), oxlint: oxlint.toolchain }
+const toolchain = { ...await readToolchain(), ...(oxlint ? { oxlint: oxlint.toolchain } : {}) }
 const source = await sourceIdentity()
 const manifest = {
   format: NATIVE_ARTIFACT_FORMAT,

@@ -143,7 +143,8 @@ func (session *governanceSession) closedSourceHandoff(withResolutionInputs bool)
 	frame := map[string]any{
 		"status": "source", "token": state.Token, "generation": state.Generation,
 		"sourceSnapshotDigest": project.GovernanceDigest, "root": project.Root,
-		"rootEntries": append([]string{}, project.RootEntries...), "files": rows,
+		"symbolAuthorityRevision": 1,
+		"rootEntries":             append([]string{}, project.RootEntries...), "files": rows,
 		"compilerValid": project.compilerValid, "verbatimModuleSyntax": project.verbatim,
 		"rootMetadata": metadata,
 	}

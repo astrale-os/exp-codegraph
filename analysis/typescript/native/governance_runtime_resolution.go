@@ -13,7 +13,13 @@ import (
 // Declaration provenance follows the actual compiler export/alias value chain.
 // Portable package coordinates are read through the retained input capture.
 func (owner *governanceRuntimeAuthority) origin(symbol *ast.Symbol) (*observabledecision.Origin, string) {
-	check := owner.Identity.TypeOwner.program.Checker
+	return governanceSymbolOrigin(owner.Identity.Project, owner.Identity.TypeOwner.program.Checker, symbol)
+}
+
+// Structural and value readers borrow the same captured declaration provenance.
+// A source observation must not open an independent compiler or read package
+// metadata outside the original input capture.
+func governanceSymbolOrigin(project *governedProject, check *checker.Checker, symbol *ast.Symbol) (*observabledecision.Origin, string) {
 	symbol = unalias(check, symbol)
 	if symbol == nil {
 		return nil, "runtime export symbol unavailable"
@@ -25,7 +31,7 @@ func (owner *governanceRuntimeAuthority) origin(symbol *ast.Symbol) (*observable
 			return nil, "runtime declaration source unavailable"
 		}
 
-		coordinate, err := governanceRuntimeDeclarationCoordinate(owner.Identity.Project, source.FileName())
+		coordinate, err := governanceRuntimeDeclarationCoordinate(project, source.FileName())
 		if err != nil {
 			return nil, err.Error()
 		}

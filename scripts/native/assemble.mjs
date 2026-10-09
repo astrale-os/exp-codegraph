@@ -45,7 +45,7 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
   ) {
     throw new Error(`${target} build provenance is invalid or dirty.`)
   }
-  const { oxlint: workerToolchain, ...toolchain } = assertToolchain(build.toolchain, { requireOxlint: true })
+  const { oxlint: workerToolchain, ...toolchain } = assertToolchain(build.toolchain, { requireOxlint: expected.oxlint })
   if (releaseToolchain && stableJson(releaseToolchain) !== stableJson(toolchain)) {
     throw new Error(`${target} compiler toolchain differs from the release matrix.`)
   }
@@ -53,14 +53,14 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     throw new Error(`${target} was built from ${build.source.revision}, expected ${sourceRevision}.`)
   }
   releaseToolchain ??= toolchain
-  if (releaseOxlintToolchain && stableJson(releaseOxlintToolchain) !== stableJson(workerToolchain)) {
+  if (workerToolchain && releaseOxlintToolchain && stableJson(releaseOxlintToolchain) !== stableJson(workerToolchain)) {
     throw new Error(`${target} Oxlint toolchain differs from the release matrix.`)
   }
-  releaseOxlintToolchain ??= workerToolchain
+  if (workerToolchain) releaseOxlintToolchain ??= workerToolchain
   sourceRevision ??= build.source.revision
 
   const sourceManifest = await readJson(resolve(sourceRoot, 'manifest.json'))
-  const artifact = assertArtifactManifest(sourceManifest, target, packageVersion, { requireOxlint: true })
+  const artifact = assertArtifactManifest(sourceManifest, target, packageVersion, { requireOxlint: expected.oxlint })
   if (stableJson(artifact) !== stableJson(build.artifact)) {
     throw new Error(`${target} build and artifact manifests disagree.`)
   }
@@ -71,7 +71,7 @@ for (const [target, expected] of Object.entries(NATIVE_TARGETS)) {
     artifact,
     target,
   )
-  await stageExecutable(
+  if (artifact.oxlint) await stageExecutable(
     resolve(sourceRoot, artifact.oxlint.executable),
     resolve(artifactRoot, artifact.oxlint.executable),
     artifact.oxlint,

@@ -9,12 +9,14 @@ import {
   NativeAnalysisDistributionError,
   resolvePackagedNativeAnalysis,
 } from '../analysis/typescript/distribution/index.ts'
+import { NATIVE_TARGETS } from '../scripts/native/shared.mjs'
 
 const packageRoot = resolve(import.meta.dirname, '..')
 const packageVersion = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'))
   .version as string
 const target = `${process.platform}-${process.arch}`
-const targets = ['darwin-arm64', 'linux-x64']
+const targets = Object.keys(NATIVE_TARGETS)
+const workerSupported = NATIVE_TARGETS[target]?.oxlint === true
 
 describe('native analysis distribution', () => {
   it('admits an explicit application-controlled executable without ttsc or a release artifact', async () => {
@@ -64,7 +66,7 @@ describe('native analysis distribution', () => {
     })
   }, 30_000)
 
-  it('admits the package-bound worker independently of the Go analyzer', async () => {
+  it.runIf(workerSupported)('admits the package-bound worker independently of the Go analyzer', async () => {
     await withPackagedFixture({ oxlint: true }, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({ command: fixture.binary, origin: 'package' })
       await expect(fixture.resolveOxlint()).resolves.toMatchObject({
@@ -76,7 +78,7 @@ describe('native analysis distribution', () => {
   }, 30_000)
 
   for (const workerFailure of ['missing', 'bytes', 'descriptor'] as const) {
-    it(`keeps Go usable while independently rejecting ${workerFailure} worker authority`, async () => {
+    it.runIf(workerSupported)(`keeps Go usable while independently rejecting ${workerFailure} worker authority`, async () => {
       await withPackagedFixture({ oxlint: true, workerFailure }, async (fixture) => {
         await expect(fixture.resolve()).resolves.toMatchObject({ command: fixture.binary, origin: 'package' })
         await expect(fixture.resolveOxlint()).rejects.toMatchObject({
@@ -90,6 +92,13 @@ describe('native analysis distribution', () => {
     await withPackagedFixture({}, async (fixture) => {
       await expect(fixture.resolve()).resolves.toMatchObject({ origin: 'package' })
       await expect(fixture.resolveOxlint()).rejects.toMatchObject({ code: 'NATIVE_OXLINT_UNAVAILABLE' })
+    })
+  }, 30_000)
+
+  it.runIf(!workerSupported)('keeps a Go-only host usable and rejects even an unexpected worker descriptor', async () => {
+    await withPackagedFixture({ oxlint: true }, async (fixture) => {
+      await expect(fixture.resolve()).resolves.toMatchObject({ origin: 'package' })
+      await expect(fixture.resolveOxlint()).rejects.toMatchObject({ code: 'NATIVE_OXLINT_UNAVAILABLE', target })
     })
   }, 30_000)
 
@@ -155,7 +164,7 @@ async function packagedFixture(root: string, options: Parameters<typeof withPack
     JSON.stringify({ name: '@astrale-os/codegraph', version: packageVersion, type: 'module' }),
   )
   if (!targets.includes(target)) throw new Error(`Unsupported native distribution test target ${target}.`)
-  const executable = 'bin/codegraph-native'
+  const executable = NATIVE_TARGETS[target]!.executable
   const artifactDirectory = join(root, 'native-artifacts', target)
   const binary = join(artifactDirectory, executable)
   const outside = join(root, 'outside')
