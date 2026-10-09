@@ -26,7 +26,7 @@ func (x *extractor) callTargetOrigin(symbol *shimast.Symbol) *callTargetOrigin {
 		if file == nil {
 			return nil
 		}
-		coordinate := x.packageCoordinate(file.FileName())
+		coordinate := x.declarationSourcePackageCoordinate(file)
 		if !strings.HasPrefix(coordinate, "package:") {
 			return nil
 		}

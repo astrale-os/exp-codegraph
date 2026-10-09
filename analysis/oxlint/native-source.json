@@ -6,7 +6,7 @@
   "revision": "0b4e2e67f4193e7ebfcc64982275eb583ae82c83",
   "patch": {
     "path": "patches/codegraph-oxlint.patch",
-    "sha256": "d85e07723f7705ffd0ac89bf20c3c24ba45ef666d562dca6eb3f4dafc2bc25e3"
+    "sha256": "ceb0d1c4c92bab6cfee0c11729fce40e0a12a56c1733e3a07b53ae73379d0562"
   },
   "cargoLockSha256": "ab8bcaf81198a83fc5584a5c7cc922d7ca3769fb4e886b66174a6a55b41a9a54",
   "rustToolchain": "1.98.0",

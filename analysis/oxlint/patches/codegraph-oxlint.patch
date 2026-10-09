@@ -549,7 +549,7 @@ diff --git a/crates/oxc_linter/examples/captured/authority.rs b/crates/oxc_linte
 new file mode 100644
 --- /dev/null
 +++ b/crates/oxc_linter/examples/captured/authority.rs
-@@ -0,0 +1,1468 @@
+@@ -0,0 +1,1475 @@
 +//! Same-token captured I/O adapter for the original generic membership owner.
 +use base64::{Engine, engine::general_purpose::STANDARD};
 +use oxc_linter::{LINTABLE_EXTENSIONS, LintIgnoreMatcher};
@@ -1944,13 +1944,20 @@ new file mode 100644
 +mod typed_owned_tests {
 +    use super::*;
 +    fn root() -> PathBuf {
-+        let path = std::env::temp_dir().join(format!(
-+            "astrale-typed-owned-{}-{}",
-+            std::process::id(),
-+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
-+        ));
-+        std::fs::create_dir(&path).unwrap();
-+        path
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        static NEXT: AtomicUsize = AtomicUsize::new(0);
++        loop {
++            let path = std::env::temp_dir().join(format!(
++                "astrale-typed-owned-{}-{}",
++                std::process::id(),
++                NEXT.fetch_add(1, Ordering::Relaxed)
++            ));
++            match std::fs::create_dir(&path) {
++                Ok(()) => return path,
++                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
++                Err(error) => panic!("cannot create test root {}: {error}", path.display()),
++            }
++        }
 +    }
 +    #[test]
 +    fn raw_cell_owns_bytes_and_borrow_cannot_replace_capture() {

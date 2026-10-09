@@ -685,13 +685,20 @@ func typescriptLibraryFile(path string) string {
 }
 
 func (x *extractor) declarationPackageCoordinate(file *shimast.SourceFile) string {
+	return canonicalTypeProviderCoordinate(x.declarationSourcePackageCoordinate(file))
+}
+
+// Library sources are compiler-owned virtual paths, not filesystem paths
+// relative to the process cwd. Value and type provenance share that authority;
+// only the type provider applies its separate @types package normalization.
+func (x *extractor) declarationSourcePackageCoordinate(file *shimast.SourceFile) string {
 	if file == nil {
 		return ""
 	}
 	if filename := typescriptLibraryFile(file.FileName()); filename != "" {
 		return "package:typescript/lib/" + filename
 	}
-	return canonicalTypeProviderCoordinate(x.packageCoordinate(file.FileName()))
+	return x.packageCoordinate(file.FileName())
 }
 
 func canonicalTypeProviderCoordinate(coordinate string) string {
