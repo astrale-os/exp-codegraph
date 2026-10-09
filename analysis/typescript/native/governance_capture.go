@@ -278,7 +278,7 @@ func (h governanceConfigHost) FS() vfs.FS {
 	}
 	return h.fs
 }
-func (h governanceConfigHost) GetCurrentDirectory() string { return h.root }
+func (h governanceConfigHost) GetCurrentDirectory() string { return tspath.NormalizePath(h.root) }
 
 var governanceIgnored = map[string]bool{".astrale": true, ".dist": true, ".domain-studio": true, ".git": true, ".history": true, ".output": true, ".turbo": true, ".wrangler": true, "coverage": true, "dist": true, "dist-client": true, "node_modules": true}
 var governanceExtensions = map[string]bool{".cjs": true, ".cts": true, ".js": true, ".jsx": true, ".mjs": true, ".mts": true, ".ts": true, ".tsx": true}
@@ -408,12 +408,12 @@ func captureGovernedProjectAuthority(requestedRoot string, policy governancePoli
 		return nil, err
 	}
 	if configBytes != nil {
-		_, errors := options.ParseConfigFileTextToJson(configPath, tspath.Path(configPath), strings.TrimPrefix(strings.ToValidUTF8(string(configBytes), "�"), "\ufeff"))
+		_, errors := governanceParseConfigText(configPath, strings.TrimPrefix(strings.ToValidUTF8(string(configBytes), "�"), "\ufeff"))
 		if len(errors) > 0 {
 			return nil, fmt.Errorf("Cannot parse Domain TypeScript configuration %s: %s", configPath, governanceDiagnosticText(errors[0]))
 		}
 		capture.compilerInputs()
-		parsed, _ := options.GetParsedCommandLineOfConfigFile(configPath, nil, nil, governanceConfigHost{root, capture.compiler}, nil)
+		parsed, _ := options.GetParsedCommandLineOfConfigFile(tspath.NormalizePath(configPath), nil, nil, governanceConfigHost{root, capture.compiler}, nil)
 		if parsed != nil {
 			project.compilerOptions = parsed.CompilerOptions()
 			project.verbatim = parsed.CompilerOptions().VerbatimModuleSyntax == core.TSTrue
@@ -590,7 +590,7 @@ func captureGovernedProjectAuthority(requestedRoot string, policy governancePoli
 			project.stats.ParseReuses++
 		} else {
 			parseStarted := time.Now()
-			file.Source = parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: absolute}, file.Text, kind)
+			file.Source = parser.ParseSourceFile(ast.SourceFileParseOptions{FileName: tspath.NormalizePath(absolute)}, file.Text, kind)
 			ast.SetParentInChildren(file.Source.AsNode())
 			file.coordinates = indexSourceCoordinates(file.Text)
 			project.stats.phase("governed-parse", parseStarted)

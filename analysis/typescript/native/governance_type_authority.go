@@ -51,11 +51,11 @@ func (owner *governanceTypeAuthority) configuration() {
 			if !ok {
 				return
 			}
-			_, errors := options.ParseConfigFileTextToJson(path, tspath.Path(path), strings.TrimPrefix(text, "\ufeff"))
+			_, errors := governanceParseConfigText(path, strings.TrimPrefix(text, "\ufeff"))
 			if len(errors) > 0 {
 				return
 			}
-			parsed, _ := options.GetParsedCommandLineOfConfigFile(path, &core.CompilerOptions{NoEmit: core.TSTrue}, nil, governanceConfigHost{project.Root, fs}, nil)
+			parsed, _ := options.GetParsedCommandLineOfConfigFile(tspath.NormalizePath(path), &core.CompilerOptions{NoEmit: core.TSTrue}, nil, governanceConfigHost{project.Root, fs}, nil)
 			owner.parsed = parsed
 			if parsed != nil {
 				for _, name := range parsed.FileNames() {

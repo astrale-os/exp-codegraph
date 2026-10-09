@@ -4,6 +4,7 @@ import (
 	module "github.com/microsoft/typescript-go/astrale-codegraph-modulebridge"
 	ast "github.com/microsoft/typescript-go/shim/ast"
 	core "github.com/microsoft/typescript-go/shim/core"
+	tspath "github.com/microsoft/typescript-go/shim/tspath"
 	vfs "github.com/microsoft/typescript-go/shim/vfs"
 	"strings"
 	"time"
@@ -47,7 +48,8 @@ func (project *governedProject) resolveImport(file *governedFile, specifier stri
 		return cached
 	}
 	modes, ok := owner.modes[file.Path]
-	metadata := module.SourceMetadata(owner.resolver, file.AbsolutePath, owner.options)
+	compilerPath := tspath.NormalizePath(file.AbsolutePath)
+	metadata := module.SourceMetadata(owner.resolver, compilerPath, owner.options)
 	if !ok {
 		modes = map[string]map[core.ResolutionMode]bool{}
 		var visit func(*ast.Node)
@@ -56,7 +58,7 @@ func (project *governedProject) resolveImport(file *governedFile, specifier stri
 				parent := node.Parent
 				usage := parent.Kind == ast.KindImportDeclaration || parent.Kind == ast.KindExportDeclaration || (parent.Kind == ast.KindCallExpression && parent.AsCallExpression().Expression.Kind == ast.KindImportKeyword) || (parent.Kind == ast.KindLiteralType && parent.Parent != nil && parent.Parent.Kind == ast.KindImportType)
 				if usage {
-					mode := module.UsageMode(file.AbsolutePath, metadata, node, owner.options)
+					mode := module.UsageMode(compilerPath, metadata, node, owner.options)
 					if modes[node.Text()] == nil {
 						modes[node.Text()] = map[core.ResolutionMode]bool{}
 					}
@@ -78,7 +80,7 @@ func (project *governedProject) resolveImport(file *governedFile, specifier stri
 	for m := range usages {
 		mode = m
 	}
-	resolved, _ := owner.resolver.ResolveModuleName(specifier, file.AbsolutePath, mode, nil)
+	resolved, _ := owner.resolver.ResolveModuleName(specifier, compilerPath, mode, nil)
 	owner.results[key] = resolved
 	return resolved
 }
@@ -91,7 +93,7 @@ func (project *governedProject) resolveProjectImport(file *governedFile, specifi
 		return nil
 	}
 	for _, target := range project.Files {
-		if target.AbsolutePath == resolved.ResolvedFileName {
+		if tspath.NormalizePath(target.AbsolutePath) == resolved.ResolvedFileName {
 			return target
 		}
 	}
