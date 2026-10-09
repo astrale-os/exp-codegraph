@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { execFile as execFileCallback } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { appendFile, readFile, readdir, stat } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { appendFile, lstat, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { gunzipSync } from 'node:zlib'
@@ -40,43 +41,178 @@ export async function admitReleasePackage(directory, sourceRevision, version) {
   assert((await stat(archive)).size <= maximumArchiveBytes, 'Archive exceeds the release admission bound.')
   const manifest = await archiveJson(archive, 'package.json')
   assertPublicManifest(manifest, packageName, version)
-  assert.equal(manifest.optionalDependencies, undefined, 'Native artifacts must travel inside the package.')
+  assert.equal(manifest.optionalDependencies, undefined, 'Release must remain one package.')
   assert.equal(manifest.dependencies?.ttsc, undefined)
   const release = await archiveJson(archive, 'native-release.json')
+  assertNativeRelease(release, sourceRevision, version)
+  for (const member of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
+    assert((await archiveMember(archive, member)).length > 0, 'Release license notices are empty.')
+  }
+  let viewer, headers
+  if (release.delivery === 'github-release') {
+    viewer = await archiveJson(archive, 'viewer-release.json')
+    await assertViewerRelease(viewer, version, sourceRevision)
+    const members = await archiveMembers(archive, '')
+    assert.deepEqual(members.filter((name) => /^(?:native-artifacts|dist\/viewer|\.native-release-assets|\.viewer-release-assets)(?:\/|$)/u.test(name)), [],
+      'Light package must not embed release payloads.')
+    headers = Object.fromEntries(await Promise.all([
+      ['native', 'native-release.json'], ['viewer', 'viewer-release.json'],
+    ].map(async ([key, member]) => [key, identity(await archiveMember(archive, member))])))
+  } else {
+    const delivered = []
+    for (const target of Object.keys(NATIVE_TARGETS)) {
+      const artifact = release.artifacts[target]
+      for (const executable of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
+        const member = `${NATIVE_ARTIFACT_DIRECTORY}/${target}/${executable.compression?.path ?? executable.executable}`
+        admitEncoded(await archiveMember(archive, member), executable, member)
+        delivered.push(member)
+      }
+    }
+    assert.deepEqual(await archiveMembers(archive, NATIVE_ARTIFACT_DIRECTORY), delivered.sort(),
+      'Archive must deliver exactly the qualified native payloads.')
+  }
+  const bytes = await readFile(archive)
+  return { sourceRevision, version, native: release, ...(viewer ? { viewer, headers } : {}), tarballs: { '.': archive }, package: {
+    name: packageName, version, archive, bytes: bytes.length, sha256: hash(bytes, 'sha256'),
+    integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
+  } }
+}
+
+/** Admit precisely the external assets selected by the already admitted package. */
+export async function admitExternalReleaseAssets({ directory, sourceRevision, packageVersion, native, viewer, headers }) {
+  const assets = await releaseAssets({ sourceRevision, packageVersion, native, viewer, headers })
+  assert.deepEqual((await readdir(directory)).sort(), assets.map((asset) => asset.name).sort(),
+    'External release must contain exactly its ten qualified files.')
+  const admitted = []
+  for (const asset of assets) {
+    const path = resolve(directory, asset.name)
+    const metadata = await lstat(path)
+    assert(metadata.isFile(), `${asset.name} is not a regular file.`)
+    assert.equal(metadata.size, asset.bytes, `${asset.name} encoded size differs.`)
+    await admitAsset(await readFile(path), asset)
+    admitted.push({ name: asset.name, path, bytes: asset.bytes, sha256: asset.sha256 })
+  }
+  return admitted
+}
+
+/** Anonymous public delivery is qualified separately from npm and GitHub API credentials. */
+export async function admitPublishedReleaseAssets(admitted, { fetcher = fetch, signal } = {}) {
+  const assets = await releaseAssets({ sourceRevision: admitted.sourceRevision,
+    packageVersion: admitted.version, native: admitted.native, viewer: admitted.viewer, headers: admitted.headers })
+  const receipt = []
+  for (const asset of assets) {
+    signal?.throwIfAborted()
+    const url = `https://github.com/astrale-os/exp-codegraph/releases/download/codegraph-v${admitted.version}-${admitted.sourceRevision}/${asset.name}`
+    const deadline = AbortSignal.timeout(120_000)
+    const response = await fetcher(url, { signal: signal ? AbortSignal.any([signal, deadline]) : deadline })
+    assert(response.ok && response.body, `Cannot verify public release ${asset.name}: HTTP ${response.status}.`)
+    if (response.url) assert.equal(new URL(response.url).protocol, 'https:', 'Release download redirected outside HTTPS.')
+    const chunks = []
+    let bytes = 0
+    for await (const chunk of response.body) {
+      signal?.throwIfAborted()
+      bytes += chunk.byteLength
+      assert(bytes <= asset.bytes, `${asset.name} exceeds its encoded size.`)
+      chunks.push(Buffer.from(chunk))
+    }
+    await admitAsset(Buffer.concat(chunks, bytes), asset)
+    receipt.push({ name: asset.name, url, bytes: asset.bytes, sha256: asset.sha256 })
+  }
+  return receipt
+}
+
+async function releaseAssets({ sourceRevision, packageVersion, native, viewer, headers }) {
+  assertNativeRelease(native, sourceRevision, packageVersion)
+  assert.equal(native.delivery, 'github-release', 'External delivery requires a light package.')
+  await assertViewerRelease(viewer, packageVersion, sourceRevision)
+  const assets = Object.values(native.artifacts).flatMap((artifact) => [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])])
+    .map((artifact) => ({ name: artifact.compression.path, bytes: artifact.compression.bytes, sha256: artifact.compression.sha256, original: artifact }))
+  assets.push({ name: viewer.asset, bytes: viewer.compression.bytes, sha256: viewer.compression.sha256, original: viewer, viewer: true })
+  for (const [name, value, key, serialized] of [
+    ['native-release.json', native, 'native', stableJson(native)],
+    ['viewer-release.json', viewer, 'viewer', JSON.stringify(viewer, null, 2) + '\n'],
+  ]) {
+    const expected = headers?.[key] ?? identity(Buffer.from(serialized))
+    assets.push({ name, bytes: expected.bytes, sha256: expected.sha256, header: value })
+  }
+  assert.equal(assets.length, 10)
+  assert.equal(new Set(assets.map((asset) => asset.name)).size, 10)
+  for (const asset of assets) {
+    assert.match(asset.name, /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/u)
+    assert(Number.isSafeInteger(asset.bytes) && asset.bytes > 0 && asset.bytes <= maximumArchiveBytes, 'Asset exceeds the release admission bound.')
+    assert.match(asset.sha256, /^[a-f0-9]{64}$/u)
+  }
+  return assets.sort((left, right) => left.name.localeCompare(right.name))
+}
+
+function assertNativeRelease(release, sourceRevision, version) {
+  assert.match(sourceRevision, /^[a-f0-9]{40}$/u)
+  assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u)
   assert.equal(release.format, NATIVE_RELEASE_FORMAT)
   assert.equal(release.version, 1)
   assert.equal(release.packageVersion, version)
   assert.equal(release.protocolVersion, PROTOCOL_VERSION)
   assert.equal(release.sourceRevision, sourceRevision, 'Archive source revision differs.')
+  assert(release.delivery === undefined || release.delivery === 'github-release', 'Unsupported release delivery.')
   assertToolchain(release.toolchain, { requireOxlint: true })
   assert.deepEqual(Object.keys(release.artifacts).sort(), Object.keys(NATIVE_TARGETS).sort())
   assertOxlintSources(release.artifacts)
-  for (const member of ['LICENSE', 'THIRD_PARTY_NOTICES.md']) {
-    assert((await archiveMember(archive, member)).length > 0, 'Release license notices are empty.')
-  }
-  const delivered = []
-  for (const target of Object.keys(NATIVE_TARGETS)) {
-    const artifact = assertArtifact(release.artifacts[target], target, version, { requireOxlint: NATIVE_TARGETS[target].oxlint })
-    for (const executable of [artifact, ...(artifact.oxlint ? [artifact.oxlint] : [])]) {
-      const member = `${NATIVE_ARTIFACT_DIRECTORY}/${target}/${executable.compression?.path ?? executable.executable}`
-      const deliveredBytes = await archiveMember(archive, member)
-      const encoded = executable.compression ?? executable
-      assert.equal(deliveredBytes.length, encoded.bytes, `${member} encoded size differs.`)
-      assert.equal(hash(deliveredBytes, 'sha256'), encoded.sha256, `${member} encoded digest differs.`)
-      const bytes = executable.compression ? gunzipSync(deliveredBytes, { maxOutputLength: executable.bytes }) : deliveredBytes
-      assert.equal(bytes.length, executable.bytes, `${member} size differs.`)
-      assert.equal(hash(bytes, 'sha256'), executable.sha256, `${member} digest differs.`)
-      delivered.push(member)
+  for (const target of Object.keys(NATIVE_TARGETS)) assertArtifact(release.artifacts[target], target, version, {
+    requireOxlint: NATIVE_TARGETS[target].oxlint, delivery: release.delivery, sourceRevision,
+  })
+}
+
+async function assertViewerRelease(viewer, version, sourceRevision) {
+  const { admitViewerRelease } = await import('../../server/viewer-release.ts')
+  admitViewerRelease(viewer, version, sourceRevision)
+}
+
+function admitEncoded(encoded, original, name) {
+  const expected = original.compression ?? original
+  assert.equal(encoded.length, expected.bytes, `${name} encoded size differs.`)
+  assert.equal(hash(encoded, 'sha256'), expected.sha256, `${name} encoded digest differs.`)
+  assert(original.bytes <= maximumArchiveBytes, `${name} exceeds its decoded bound.`)
+  const decoded = original.compression ? gunzipSync(encoded, { maxOutputLength: original.bytes }) : encoded
+  assert.equal(decoded.length, original.bytes, `${name} decoded size differs.`)
+  assert.equal(hash(decoded, 'sha256'), original.sha256, `${name} decoded digest differs.`)
+  return decoded
+}
+
+async function admitAsset(bytes, asset) {
+  if (asset.header) {
+    assert.deepEqual(identity(bytes), { bytes: asset.bytes, sha256: asset.sha256 }, `${asset.name} encoded identity differs.`)
+    assert.deepEqual(JSON.parse(bytes.toString('utf8')), asset.header, `${asset.name} differs from its package header.`)
+  } else {
+    const decoded = admitEncoded(bytes, asset.original, asset.name)
+    if (asset.viewer) {
+      const { openViewerArchive } = await import('../../server/viewer-archive.ts')
+      const temporary = await mkdtemp(join(tmpdir(), 'codegraph-viewer-admission-'))
+      try {
+        const path = join(temporary, 'viewer.tar')
+        await writeFile(path, decoded, { flag: 'wx' })
+        const archive = await openViewerArchive(path, asset.original)
+        try {
+          const chunks = []
+          for await (const chunk of archive.stream('viewer-build.json')) chunks.push(Buffer.from(chunk))
+          const build = JSON.parse(Buffer.concat(chunks).toString('utf8'))
+          assert.equal(build.format, 'codegraph.viewer-build.v1', 'Viewer build license inventory format differs.')
+          assert(Array.isArray(build.packages), 'Viewer build license inventory is missing.')
+          for (const dependency of build.packages) {
+            assert(typeof dependency.name === 'string' && dependency.name.length > 0)
+            assert(typeof dependency.version === 'string' && dependency.version.length > 0)
+            assert(Array.isArray(dependency.notices) && dependency.notices.length > 0, 'Bundled dependency has no license notices.')
+            for (const notice of dependency.notices) {
+              assert(typeof notice.file === 'string' && notice.file.length > 0)
+              assert.match(notice.sha256, /^[a-f0-9]{64}$/u)
+            }
+          }
+        } finally { await archive.close() }
+      } finally { await rm(temporary, { recursive: true, force: true }) }
     }
   }
-  assert.deepEqual(await archiveMembers(archive, NATIVE_ARTIFACT_DIRECTORY), delivered.sort(),
-    'Archive must deliver exactly the qualified native payloads.')
-  const bytes = await readFile(archive)
-  return { sourceRevision, version, tarballs: { '.': archive }, package: {
-    name: packageName, version, archive, bytes: bytes.length, sha256: hash(bytes, 'sha256'),
-    integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}`,
-  } }
 }
+
+function identity(bytes) { return { bytes: bytes.length, sha256: hash(bytes, 'sha256') } }
 
 /** An existing immutable version must match before the publisher can resume. */
 export async function admitRegistryVersion(unit, { allowMissing, fetcher = fetch }) {
@@ -111,8 +247,8 @@ async function archiveMember(archive, member) {
 }
 async function archiveMembers(archive, directory) {
   const { stdout } = await execFile('tar', ['-tf', archive], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
-  const prefix = `package/${directory}/`
-  return stdout.split('\n').filter((member) => member.startsWith(prefix) && !member.endsWith('/'))
+  const prefix = directory ? `package/${directory}/` : 'package/'
+  return stdout.split('\n').filter((member) => member.startsWith(prefix) && (!directory || !member.endsWith('/')))
     .map((member) => member.slice('package/'.length)).sort()
 }
 
@@ -134,6 +270,10 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     JSON.parse(await readFile(runPath, 'utf8')), sourceRevision, process.env.GITHUB_REPOSITORY,
   )
   const admitted = await admitReleasePackage(resolve(directory), sourceRevision, version)
+  const assetsDirectory = argument('--assets-directory')
+  if (assetsDirectory) admitted.assets = await admitExternalReleaseAssets({ directory: resolve(assetsDirectory),
+    sourceRevision, packageVersion: version, native: admitted.native, viewer: admitted.viewer, headers: admitted.headers })
+  if (process.argv.includes('--remote-assets')) admitted.remoteAssets = await admitPublishedReleaseAssets(admitted)
   if (process.argv.includes('--npm-preflight')) await admitRegistryVersion(admitted.package, { allowMissing: true })
   if (process.argv.includes('--npm-published')) await admitRegistryVersion(admitted.package, { allowMissing: false })
   const output = argument('--github-output')
