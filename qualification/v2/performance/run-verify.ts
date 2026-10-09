@@ -66,6 +66,7 @@ const refreshes: TypeSpecApplicationRefresh[] = []
 let application: TypeSpecApplicationService | undefined
 const services: CliServices = {
   version: readCodegraphVersion,
+  preloadArtifacts: async () => { throw new Error('Verify performance runner cannot preload artifacts.') },
   initializeModule: initializeModuleSpecification,
   async createApplication(applicationRoot) {
     if (application || (await resolveApplicationRoot(applicationRoot)) !== root) {

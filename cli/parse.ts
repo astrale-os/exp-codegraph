@@ -4,6 +4,7 @@ import type { CliCheckOutputFormat } from './check-report.ts'
 
 export const USAGE = `Usage:
   cg --version
+  cg preload [--generic] [--viewer]
   cg init [module-directory]
   cg check [root] [--select <relative-path>]... [--exclude <relative-path>]... [--require-complete-layout] [--require-exact-layout] [--require-law-evidence] [--format <text|json>] [--quiet] [--no-cache]
   cg changed [root] [base] [--exclude <relative-path>]... [--require-complete-layout] [--require-law-evidence] [--scope-only] [--quiet] [--no-cache]
@@ -15,6 +16,7 @@ export const USAGE = `Usage:
 export type CliCommand =
   | { name: 'help'; successful: boolean }
   | { name: 'version' }
+  | { name: 'preload'; generic: boolean; viewer: boolean }
   | { name: 'init'; root: string }
   | {
       name: 'check'
@@ -75,6 +77,16 @@ export function parseCommand(
   }
   if (command === 'check') {
     return { name: 'check', ...parseCheck(args, cache) }
+  }
+  if (command === 'preload') {
+    let generic = false
+    let viewer = false
+    for (const argument of args) {
+      if (argument === '--generic' && !generic) generic = true
+      else if (argument === '--viewer' && !viewer) viewer = true
+      else return usageError()
+    }
+    return { name: 'preload', generic, viewer }
   }
   if (command === 'changed') return { name: 'changed', ...parseChanged(args, cache) }
   if (command === 'init') return { name: 'init', root: parseSingleRoot(args) }

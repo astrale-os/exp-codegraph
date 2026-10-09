@@ -56,6 +56,7 @@ export type {
 
 export interface CliServices {
   version(): Promise<string>
+  preloadArtifacts(options: { readonly generic: boolean; readonly viewer: boolean }): Promise<void>
   initializeModule(root: string): Promise<string>
   createApplication(
     root: string,
@@ -115,6 +116,11 @@ export async function runCommand(
   }
   if (command.name === 'version') {
     output.out(await services.version())
+    return { exitCode: 0 }
+  }
+  if (command.name === 'preload') {
+    await services.preloadArtifacts(command)
+    output.out(`Codegraph artifacts ready: native${command.generic ? ', generic' : ''}${command.viewer ? ', viewer' : ''}.`)
     return { exitCode: 0 }
   }
   if (command.name === 'init') {
@@ -397,7 +403,7 @@ function mebibytes(value: unknown): string {
 }
 
 function refreshOptions(
-  command: Exclude<CliCommand, { name: 'help' | 'version' | 'init' | 'dev' }>,
+  command: Exclude<CliCommand, { name: 'help' | 'version' | 'preload' | 'init' | 'dev' }>,
   changed: ChangedSpecificationScope | undefined,
 ): TypeSpecApplicationRefreshOptions {
   if (command.name === 'check' || command.name === 'changed') {

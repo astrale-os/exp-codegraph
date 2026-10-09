@@ -1,6 +1,6 @@
 {
   "name": "@astrale-os/codegraph",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": false,
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
   "license": "Apache-2.0",
@@ -18,7 +18,6 @@
     "THIRD_PARTY_NOTICES.md",
     "native-release.json",
     "viewer-release.json",
-    "native-artifacts",
     "!dist/**/*.map",
     "!dist/viewer/**"
   ],

@@ -18,7 +18,7 @@ describe('qualified npm distribution policy', () => {
     expect(owner.scripts.precheck).toBe('pnpm run build')
     expect(owner.scripts.prepack).toBe('pnpm run build')
     expect(owner.scripts.prebuild).toBe('node scripts/clean-dist.mjs')
-    expect(owner.files).toEqual(['dist', 'LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'native-release.json', 'native-artifacts', '!dist/**/*.map'])
+    expect(owner.files).toEqual(['dist', 'LICENSE', 'README.md', 'THIRD_PARTY_NOTICES.md', 'native-release.json', 'viewer-release.json', '!dist/**/*.map', '!dist/viewer/**'])
     for (const dependency of ['vite', 'mermaid', 'katex', 'preact']) {
       expect(owner.dependencies[dependency]).toBeUndefined()
       expect(owner.devDependencies[dependency]).toBeDefined()
@@ -28,7 +28,7 @@ describe('qualified npm distribution policy', () => {
     }
   })
 
-  it('delivers every native target inside exactly one public npm package', async () => {
+  it('keeps one public npm package with metadata and downloads optional payloads at use time', async () => {
     const owner = await manifest('package.json')
     expect(owner).toMatchObject({
       name: '@astrale-os/codegraph', private: false, preferUnplugged: true,
@@ -36,13 +36,16 @@ describe('qualified npm distribution policy', () => {
       repository: { url: 'git+https://github.com/astrale-os/exp-codegraph.git' },
     })
     expect(owner.optionalDependencies).toBeUndefined()
-    expect(owner.files).toContain('native-artifacts')
+    expect(owner.files).not.toContain('native-artifacts')
+    expect(owner.files).toContain('viewer-release.json')
+    expect(owner.files).toContain('!dist/viewer/**')
+    expect(owner.scripts.postinstall).toBeUndefined()
+    expect(owner.scripts.install).toBeUndefined()
     // Encoded payloads are not executable. Materialization restores admitted modes.
     expect(owner.publishConfig.executableFiles).toEqual([])
-    // The checked-in historical manifest retains genuine released bytes. The
-    // assembly/admission gates require the complete current matrix before pack.
+    // Historical metadata remains parseable; release admission requires the
+    // complete matrix at exact version/source and authenticates the external files.
     const released = Object.keys((await manifest('native-release.json')).artifacts).sort()
-    expect((await readdir(resolve(root, 'native-artifacts'))).sort()).toEqual(released)
     for (const target of released) expect(targets).toContain(target)
     expect(parse(await readFile(resolve(root, 'pnpm-workspace.yaml'), 'utf8')).packages).toBeUndefined()
   })
@@ -61,6 +64,7 @@ describe('qualified npm distribution policy', () => {
     expect(publisher).toBeGreaterThan(admission)
     expect(steps[admission].run).toContain('--qualification-run')
     expect(steps[admission].run).toContain('--npm-preflight')
+    expect(steps[admission].run).toContain('--remote-assets')
     expect(steps[publisher]).toMatchObject({
       uses: 'astrale-os/config/.github/actions/publish/packages@8e2e2abd0320be0c2f64033916519ab3b66c7dd7',
       with: {
@@ -80,7 +84,7 @@ describe('qualified npm distribution policy', () => {
     expect(source).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|npm publish|pnpm publish/u)
   })
 
-  it('keeps native qualification read-only and independent from publication', async () => {
+  it('publishes only qualified source-bound assets before executing actual remote consumers', async () => {
     expect((await readdir(resolve(root, '.github/workflows'))).sort()).toEqual(['ci.yml', 'native-release.yml', 'publish.yml'])
     const native = await workflow('native-release.yml')
     expect(native.permissions).toEqual({ contents: 'read' })
@@ -88,13 +92,22 @@ describe('qualified npm distribution policy', () => {
     for (const trigger of ['push', 'pull_request']) {
       expect(native.on[trigger].paths).toContain('LICENSE')
       expect(native.on[trigger].paths).toContain('THIRD_PARTY_NOTICES.md')
-      for (const path of ['server/**', 'viewer/**', 'viewer-host/**', 'scripts/build-viewer.mjs', 'tsconfig.build.json', 'scripts/clean-dist.mjs', 'native-release.json', '__tests__/embedded-viewer.test.ts', '__tests__/native-materialization.test.ts']) {
+      for (const path of ['server/**', 'viewer/**', 'viewer-host/**', 'distribution/**', 'scripts/viewer/**', 'viewer-release.json', 'scripts/build-viewer.mjs', 'tsconfig.build.json', 'scripts/clean-dist.mjs', 'native-release.json', '__tests__/embedded-viewer.test.ts', '__tests__/native-materialization.test.ts']) {
         expect(native.on[trigger].paths).toContain(path)
       }
     }
     expect(native.jobs.build.strategy.matrix.include.map((entry: { target: string }) => entry.target).sort())
       .toEqual([...targets].sort())
-    expect(native.jobs['packed-consumer'].needs).toBe('assemble')
+    expect(native.jobs['packed-consumer'].needs).toEqual(['assemble', 'release-assets'])
+    expect(native.jobs['release-assets'].needs).toBe('assemble')
+    expect(native.jobs['release-assets'].permissions).toEqual({ contents: 'write', actions: 'read' })
+    expect(native.jobs['release-assets'].if).toContain('github.event.pull_request.head.repo.full_name == github.repository')
+    const assetPublisher = native.jobs['release-assets'].steps.find((step: { run?: string }) => step.run?.includes('publish-assets.mjs'))
+    expect(assetPublisher.run).toContain('--source-revision "${{ github.sha }}"')
+    const assetArtifact = native.jobs.assemble.steps.find((step: { with?: { name?: string } }) => step.with?.name === 'codegraph-assets')
+    expect(assetArtifact.with.path).toBe('release-assets/*')
+    const npmArtifact = native.jobs.assemble.steps.find((step: { with?: { name?: string } }) => step.with?.name === 'codegraph-release')
+    expect(npmArtifact.with.path).toBe('release/*.tgz')
     const rust = native.jobs.build.steps.find((step: { run?: string }) => step.run?.includes('build-oxlint.mjs --prepare-toolchain'))
     expect(rust?.if).toBe('matrix.oxlint')
     for (const entry of native.jobs.build.strategy.matrix.include) {

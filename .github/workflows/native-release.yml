@@ -11,6 +11,9 @@ on:
       - '__tests__/npm-distribution-policy.test.ts'
       - '__tests__/typescript-project.test.ts'
       - 'analysis/**'
+      - 'distribution/**'
+      - 'cli/**'
+      - 'cli.ts'
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
       - 'native-artifacts/**'
@@ -20,6 +23,13 @@ on:
       - 'tsconfig.build.json'
       - 'scripts/clean-dist.mjs'
       - 'native-release.json'
+      - 'viewer-release.json'
+      - 'scripts/viewer/**'
+      - '__tests__/external-release-publication.test.ts'
+      - '__tests__/remote-artifact.test.ts'
+      - '__tests__/remote-viewer.test.ts'
+      - '__tests__/native-release-assets.test.ts'
+      - '__tests__/typecheck/native-artifact-preload.ts'
       - 'qualification/v2/extension/**'
       - 'qualification/v2/release/**'
       - 'qualification/v2/ttsc/fixtures/**'
@@ -43,6 +53,9 @@ on:
       - '__tests__/npm-distribution-policy.test.ts'
       - '__tests__/typescript-project.test.ts'
       - 'analysis/**'
+      - 'distribution/**'
+      - 'cli/**'
+      - 'cli.ts'
       - 'LICENSE'
       - 'THIRD_PARTY_NOTICES.md'
       - 'native-artifacts/**'
@@ -52,6 +65,13 @@ on:
       - 'tsconfig.build.json'
       - 'scripts/clean-dist.mjs'
       - 'native-release.json'
+      - 'viewer-release.json'
+      - 'scripts/viewer/**'
+      - '__tests__/external-release-publication.test.ts'
+      - '__tests__/remote-artifact.test.ts'
+      - '__tests__/remote-viewer.test.ts'
+      - '__tests__/native-release-assets.test.ts'
+      - '__tests__/typecheck/native-artifact-preload.ts'
       - 'qualification/v2/extension/**'
       - 'qualification/v2/release/**'
       - 'qualification/v2/ttsc/fixtures/**'
@@ -158,21 +178,61 @@ jobs:
       - name: Assemble and validate distributable artifacts
         env:
           SOURCE_REVISION: ${{ github.sha }}
-        run: pnpm native:assemble -- --input .native-input && pnpm native:assert-release -- --source-revision "$SOURCE_REVISION" && pnpm build
+        run: |
+          pnpm native:assemble -- --input .native-input
+          pnpm native:assert-release -- --source-revision "$SOURCE_REVISION"
+          pnpm build
+          pnpm viewer:assemble
+          mkdir -p release-assets
+          cp .native-release-assets/* .viewer-release-assets/* release-assets/
       - name: Pack GitHub consumer artifact
         run: |
           mkdir -p release
           pnpm pack --pack-destination release
+      - name: Admit the exact npm archive and its separately delivered assets
+        run: node scripts/native/admit-packages.mjs --directory release --assets-directory release-assets --source-revision "${{ github.sha }}"
       - name: Upload assembled GitHub artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codegraph-release
           path: release/*.tgz
           if-no-files-found: error
+      - name: Upload separately qualified native and viewer assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codegraph-assets
+          path: release-assets/*
+          if-no-files-found: error
+
+  release-assets:
+    name: Publish source-bound download assets
+    needs: assemble
+    # A fork never receives a write token. npm publication remains a separate manual main action.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: 'false'
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '26'
+          package-manager-cache: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codegraph-assets
+          path: release-assets
+      - name: Admit and publish immutable version/source assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/native/publish-assets.mjs --directory release-assets --source-revision "${{ github.sha }}"
 
   packed-consumer:
     name: Install and execute the ${{ matrix.target }} package (Node ${{ matrix.node-version }})
-    needs: assemble
+    needs: [assemble, release-assets]
     strategy:
       fail-fast: false
       matrix:
@@ -222,7 +282,8 @@ jobs:
           node-version: ${{ matrix.node-version }}
           package-manager-cache: false
       - name: Prove GitHub artifact installation and native execution
-        run: node qualification/v2/release/packed-consumer.mjs --release-directory release ${{ (matrix.target == 'darwin-arm64' || matrix.target == 'linux-x64') && '--require-oxlint' || '' }}
+        # Only the checkout's admission helper reads TS; installed consumer children run plain Node.
+        run: node ${{ matrix.node-version == '22.13.0' && '--experimental-strip-types' || '' }} qualification/v2/release/packed-consumer.mjs --release-directory release ${{ (matrix.target == 'darwin-arm64' || matrix.target == 'linux-x64') && '--require-oxlint' || '' }}
       - name: Qualify SQLite on the minimum supported Node release
         if: matrix.node-version == '22.13.0'
         run: node node_modules/vitest/vitest.mjs run __tests__/analysis-v2.test.ts -t 'SQLite|memory and SQLite|telemetry' --maxWorkers 1

@@ -72,6 +72,7 @@ createTypeScriptFactReader
 mapValueResult
 openCapturedTypeScriptReader
 openTypeScriptProject
+preloadNativeArtifacts
 resolveBoundedValueLimits
 resolvePackagedNativeAnalysis
 resolvePackagedNativeOxlint
@@ -125,6 +126,8 @@ NativeAnalysisArtifact
 NativeAnalysisDistributionErrorCode
 NativeAnalysisReleaseManifest
 NativeAnalysisTarget
+NativeArtifactCompression
+NativeArtifactPreloadOptions
 NativeOxlintArtifact
 NormalizedTypeScriptModuleFact
 ObservationIssue
@@ -142,6 +145,7 @@ ObservedType
 ObservedTypeFacet
 ObservedTypeParameter
 PackagedNativeAnalysisOptions
+PreloadedNativeArtifacts
 ParameterBinding
 ResolvedCall
 ResolvedPackagedNativeAnalysis
@@ -407,6 +411,7 @@ Integrate native decision sessions and resolve the packaged analysis or lint exe
 
 ```text
 openNativeDecisionSession
+preloadNativeArtifacts
 resolvePackagedNativeAnalysis
 resolvePackagedNativeOxlint
 ```
@@ -433,6 +438,7 @@ NativeAnalysisArtifact
 NativeAnalysisDistributionErrorCode
 NativeAnalysisReleaseManifest
 NativeAnalysisTarget
+NativeArtifactCompression
 NativeDecisionCandidate
 NativeDecisionCaptureObservation
 NativeDecisionCaptureRequirement
@@ -450,7 +456,9 @@ NativeDecisionSeal
 NativeDecisionSealRequest
 NativeDecisionSession
 NativeOxlintArtifact
+NativeArtifactPreloadOptions
 PackagedNativeAnalysisOptions
+PreloadedNativeArtifacts
 ResolvedPackagedNativeAnalysis
 ResolvedPackagedNativeOxlint
 ```

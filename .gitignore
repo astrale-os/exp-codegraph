@@ -6,3 +6,5 @@ coverage/
 .astrale-spec-cache/
 .codegraph-cache/
 .cache/
+.native-release-assets/
+.viewer-release-assets/

@@ -27,6 +27,14 @@ try {
     parseCommand(process.argv.slice(2)),
     {
       version: readCodegraphVersion,
+      preloadArtifacts: async (options) => {
+        const native = await import('./analysis/native/index.ts')
+        await native.preloadNativeArtifacts({ generic: options.generic })
+        if (options.viewer) {
+          const server = await import('./server/index.ts')
+          await server.preloadViewer()
+        }
+      },
       initializeModule: initializeModuleSpecification,
       createApplication: createCliApplicationService,
       startDev,

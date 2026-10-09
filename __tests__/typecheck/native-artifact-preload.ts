@@ -3,7 +3,7 @@ import {
   resolvePackagedNativeAnalysis,
   resolvePackagedNativeOxlint,
   type PreloadedNativeArtifacts,
-} from '@astrale-os/codegraph/analysis/native'
+} from '../../analysis/native/index.ts'
 
 const signal = new AbortController().signal
 const preload: Promise<PreloadedNativeArtifacts> = preloadNativeArtifacts({ generic: true, signal })
