@@ -2,12 +2,13 @@ import { types } from 'node:util'
 import { serialize, deserialize } from 'node:v8'
 
 /** No getters, proxies, classes or hidden references enter retained computations. */
-export function capturePortable<Value>(input: Value): { value: Value; encoded: Buffer } | undefined {
+export function capturePortable<Value>(input: Value, visitString?: (value: string) => void): { value: Value; encoded: Buffer } | undefined {
   const seen = new Map<object, object>()
   let entries = 0
   const copy = (value: unknown, depth: number): unknown => {
     if (++entries > 500_000 || depth > 128) throw undefined
-    if (value === null || value === undefined || ['boolean', 'number', 'string', 'bigint'].includes(typeof value)) return value
+    if (typeof value === 'string') { visitString?.(value); return value }
+    if (value === null || value === undefined || ['boolean', 'number', 'bigint'].includes(typeof value)) return value
     if (typeof value !== 'object' || types.isProxy(value)) throw undefined
     const prototype = Object.getPrototypeOf(value)
     if (prototype !== Object.prototype && prototype !== Array.prototype) throw undefined
@@ -25,6 +26,7 @@ export function capturePortable<Value>(input: Value): { value: Value; encoded: B
       const property = Object.getOwnPropertyDescriptor(value, key)!
       if (!('value' in property) || !property.enumerable) throw undefined
       if (array && (!/^(0|[1-9][0-9]*)$/.test(key) || Number(key) >= value.length)) throw undefined
+      visitString?.(key)
       Object.defineProperty(target, key, { value: copy(property.value, depth + 1), enumerable: true, configurable: true, writable: true })
     }
     return Object.freeze(target)
