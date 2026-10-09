@@ -13,8 +13,10 @@ import (
 // reemission; these fingerprints include every legacy fact byte and ID on the
 // captured platform. The compiler universe binds OS/architecture before fact
 // IDs are derived. Every platform independently checks fresh correspondence.
-// H17 headers are independently checked against full bodies, then projected out
-// with their derived identities to preserve this immutable pre-H17 oracle.
+// Additive headers and captured static-name witnesses are checked independently
+// against full bodies, then projected out with their derived identities to
+// preserve this immutable earlier oracle. Packed bodies also match the complete
+// independently extracted logical preimage before this compatibility projection.
 func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 	encoded, err := os.ReadFile("testdata/source_projection_h12_oracle.json")
 	if err != nil {
@@ -37,13 +39,13 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 		t.Fatal("oracle lost its qualified Darwin ARM64 platform")
 	}
 	onOraclePlatform := runtime.GOOS == oracle.Provenance.Platform.OS && runtime.GOARCH == oracle.Provenance.Platform.Architecture
-	assertProduct := func(t *testing.T, name string, transaction *factTransaction) {
+	assertProduct := func(t *testing.T, name string, transaction *factTransaction, bodies map[string]fact) {
 		t.Helper()
 		if !onOraclePlatform {
 			t.Log("frozen H12 byte oracle is Darwin ARM64 only; fresh correspondence remains checked")
 			return
 		}
-		transaction = legacyH12Projection(t, transaction)
+		transaction = legacyH12Projection(t, transaction, bodies)
 		got := map[string]string{
 			"generation": transaction.Next.ID,
 			"manifest":   hashText(stableJSON(transaction.Manifest)),
@@ -62,6 +64,23 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			writeBodyDemandFixture(t, root)
+			logicalAnalyzer, err := newAnalyzer(root, "tsconfig.json", "projection-oracle-v1", []string{projectNamespace, sourceNamespace, symbolNamespace, bodyNamespace}, nil, nil, 0, 0, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer logicalAnalyzer.close()
+			logicalTransaction, _, err := logicalAnalyzer.refresh(request{ID: 1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			logicalBodies := map[string]fact{}
+			for _, shard := range logicalTransaction.Upserts {
+				if shard.Namespace == bodyNamespace {
+					for _, entry := range shard.Facts {
+						logicalBodies[entry.Subject] = entry
+					}
+				}
+			}
 			codecs := map[string]bool{}
 			if name == "packed-roots" || name == "packed-full" {
 				codecs[typescriptBodyPayloadCodec] = true
@@ -118,7 +137,7 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			assertProduct(t, name, current)
+			assertProduct(t, name, current, logicalBodies)
 			assertFresh(current, recipe)
 			if name != "roots" {
 				return
@@ -145,7 +164,7 @@ func TestSourceProjectionMatchesFrozenH12Products(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				assertProduct(t, phase, current)
+				assertProduct(t, phase, current, logicalBodies)
 				assertFresh(current, recipe)
 			}
 		})
