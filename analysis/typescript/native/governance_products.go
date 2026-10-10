@@ -4,6 +4,7 @@ import (
 	"astrale-typespec-v2-native-analysis/jsstring"
 	"astrale-typespec-v2-native-analysis/observabledecision"
 	"astrale-typespec-v2-native-analysis/sourcepolicy"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	ast "github.com/microsoft/typescript-go/shim/ast"
@@ -24,6 +25,59 @@ type governanceImplementationContract struct {
 	RuleRevision   string                   `json:"ruleRevision"`
 	RequiredFacts  json.RawMessage          `json:"requiredFacts"`
 	Implementation governanceImplementation `json:"implementation"`
+}
+
+// The initial offer owns the complete implementation inventory. RuleRevisions
+// is the larger catalog, not a list of implementations or a native registry.
+func governanceCallerContracts(prepare governancePrepare) ([]governanceImplementationContract, error) {
+	if len(prepare.ImplementationContracts) == 0 {
+		return nil, nil
+	}
+	if governanceClosedSourceRevision(prepare.Options) != 3 {
+		return nil, fmt.Errorf("caller implementation contracts require source owner revision 3")
+	}
+	var contracts []governanceImplementationContract
+	decoder := json.NewDecoder(bytes.NewReader(prepare.ImplementationContracts))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&contracts); err != nil {
+		return nil, err
+	}
+	if contracts == nil {
+		return nil, fmt.Errorf("caller implementation inventory must be an array")
+	}
+	catalog := map[string]string{}
+	for _, rule := range prepare.RuleRevisions {
+		if strings.TrimSpace(rule.ID) == "" || !governanceDigestValid(rule.Revision) || catalog[rule.ID] != "" {
+			return nil, fmt.Errorf("caller implementation catalog is malformed or duplicated")
+		}
+		catalog[rule.ID] = rule.Revision
+	}
+	seen := map[string]bool{}
+	for i := range contracts {
+		contract := &contracts[i]
+		if seen[contract.RuleID] || !governanceDigestValid(contract.RuleRevision) || catalog[contract.RuleID] != contract.RuleRevision {
+			return nil, fmt.Errorf("caller implementation contract differs from its unique catalog revision")
+		}
+		seen[contract.RuleID] = true
+		if strings.TrimSpace(contract.Implementation.ID) == "" || strings.TrimSpace(contract.Implementation.Version) == "" {
+			return nil, fmt.Errorf("caller implementation identity is empty")
+		}
+		var facts []string
+		if !bytes.HasPrefix(bytes.TrimSpace(contract.RequiredFacts), []byte("[")) || json.Unmarshal(contract.RequiredFacts, &facts) != nil {
+			return nil, fmt.Errorf("caller implementation required facts must be an array of strings")
+		}
+		for _, fact := range facts {
+			if strings.TrimSpace(fact) == "" {
+				return nil, fmt.Errorf("caller implementation required fact is empty")
+			}
+		}
+		contract.RequiredFacts, _ = json.Marshal(facts)
+	}
+	return contracts, nil
+}
+
+func (state *governanceProductsSession) callerContractsOffered() bool {
+	return len(state.Prepare.ImplementationContracts) != 0
 }
 
 // The SDK's catalog and source interpreter share one request. Bind its source
@@ -222,6 +276,25 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 		if state.Project != nil || session.policySuspension == nil || params.Token != session.policySuspension.Token {
 			return map[string]any{"status": "retry"}, nil
 		}
+		if state.callerContractsOffered() {
+			var repeated struct {
+				Contracts json.RawMessage `json:"implementationContracts"`
+			}
+			if err := json.Unmarshal(raw, &repeated); err != nil {
+				return nil, err
+			}
+			if len(repeated.Contracts) != 0 {
+				prepare := state.Prepare
+				prepare.ImplementationContracts = repeated.Contracts
+				contracts, err := governanceCallerContracts(prepare)
+				if err != nil {
+					return nil, err
+				}
+				if stableJSON(contracts) != stableJSON(state.Contracts) {
+					return nil, fmt.Errorf("continuation implementation inventory differs from its initial offer")
+				}
+			}
+		}
 		if forkGeneric && governanceGenericEnabled(state.Prepare.Options) {
 			return session.startPolicyLane(raw)
 		}
@@ -234,7 +307,9 @@ func (session *governanceSession) continueProductsOwned(raw json.RawMessage, for
 		project.sourceProofState = state
 		state.Token = params.Token
 		state.Generation = strconv.Itoa(session.generation)
-		state.Contracts = params.ImplementationContracts
+		if !state.callerContractsOffered() {
+			state.Contracts = params.ImplementationContracts
+		}
 		state.Answers = map[string]governanceIntrinsicAnswer{}
 		state.installLeaves(params.LeafAuthority.NeutralClassIconSVG)
 		if session.proposeSealedDecisions(state) {
@@ -388,7 +463,8 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 			return nil, err
 		}
 	}
-	if len(state.Contracts) != len(governanceRevisions) {
+	callerOwned := state.callerContractsOffered()
+	if !callerOwned && len(state.Contracts) != len(governanceRevisions) {
 		residual = append(residual, "Canonical whole implementation contract inventory unavailable.")
 	}
 	for _, contract := range state.Contracts {
@@ -396,20 +472,20 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 			return nil, fmt.Errorf("duplicate canonical implementation contract")
 		}
 		seen[contract.RuleID] = true
-		if _, known := governanceRevisions[contract.RuleID]; !known {
+		if _, known := governanceRevisions[contract.RuleID]; !callerOwned && !known {
 			return nil, fmt.Errorf("unknown canonical implementation contract")
 		}
 		expectedID := "astrale.sdk.typescript-source"
 		if contract.RuleID == "QRY-CANON" || contract.RuleID == "QRY-SINGLE" || contract.RuleID == "QLT-DEF-IDS" {
 			expectedID = "astrale.sdk.codegraph"
 		}
-		if contract.Implementation.ID != expectedID || contract.Implementation.Version != "1" {
+		if !callerOwned && (contract.Implementation.ID != expectedID || contract.Implementation.Version != "1") {
 			return nil, fmt.Errorf("canonical implementation identity differs for %s", contract.RuleID)
 		}
 		if !governanceDigestValid(contract.RuleRevision) {
 			return nil, fmt.Errorf("canonical implementation revision is malformed for %s", contract.RuleID)
 		}
-		closedOwner := expectedID == "astrale.sdk.typescript-source" || governanceClosedSourceRevision(state.Prepare.Options) == 3
+		closedOwner := callerOwned || expectedID == "astrale.sdk.typescript-source" || governanceClosedSourceRevision(state.Prepare.Options) == 3
 		if closedOwner && !state.sourceRevisionMatchesRequest(contract) {
 			return nil, fmt.Errorf("canonical source implementation revision differs from its request for %s", contract.RuleID)
 		}
