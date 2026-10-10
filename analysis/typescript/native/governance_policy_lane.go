@@ -57,7 +57,7 @@ func (session *governanceSession) startPolicyLane(raw json.RawMessage) (any, err
 	// Move all reusable mutable authority. The actor retains no aliases to it.
 	private := &governanceSession{
 		root: session.root, generation: session.generation, policySuspension: suspension,
-		productsSession: &governanceProductsSession{Prepare: prepare},
+		productsSession: &governanceProductsSession{Prepare: prepare, Contracts: session.productsSession.Contracts},
 		parseCache:      session.parseCache, typeDemandCache: session.typeDemandCache,
 		programGeneration: session.programGeneration, sealedDecisions: session.sealedDecisions,
 	}

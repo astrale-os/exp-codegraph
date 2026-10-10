@@ -36,7 +36,7 @@ func (session *governanceSession) completeClosedSource(raw json.RawMessage) (any
 	}
 	contracts := []governanceImplementationContract{}
 	for _, contract := range state.Contracts {
-		if contract.Implementation.ID == "astrale.sdk.typescript-source" ||
+		if state.callerContractsOffered() || contract.Implementation.ID == "astrale.sdk.typescript-source" ||
 			(governanceClosedSourceRevision(state.Prepare.Options) == 3 && contract.Implementation.ID == "astrale.sdk.codegraph") {
 			if _, disabled := state.Project.Disabled[contract.RuleID]; !disabled {
 				contracts = append(contracts, contract)
@@ -49,7 +49,7 @@ func (session *governanceSession) completeClosedSource(raw json.RawMessage) (any
 	products := []governanceRuleProduct{}
 	for i, row := range input.Decisions {
 		contract := contracts[i]
-		if row.ID != contract.RuleID || !state.sourceRevisionMatchesRequest(contract) || contract.Implementation.Version != "1" {
+		if row.ID != contract.RuleID || !state.sourceRevisionMatchesRequest(contract) || (!state.callerContractsOffered() && contract.Implementation.Version != "1") {
 			return nil, fmt.Errorf("closed source rule contract differs")
 		}
 		decision := governanceRuleDecision{Status: row.Decision.Status}

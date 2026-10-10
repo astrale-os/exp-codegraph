@@ -14,13 +14,14 @@ type governanceRevision struct {
 	Revision string `json:"revision"`
 }
 type governancePrepare struct {
-	ProjectionMode   string               `json:"projectionMode,omitempty"`
-	Root             string               `json:"root"`
-	BasePolicyDigest string               `json:"basePolicyDigest"`
-	RuleRevisions    []governanceRevision `json:"ruleRevisions"`
-	PolicySource     *governancePolicy    `json:"policySource"`
-	Options          json.RawMessage      `json:"options"`
-	Changed          []string             `json:"changed,omitempty"`
+	ProjectionMode          string               `json:"projectionMode,omitempty"`
+	Root                    string               `json:"root"`
+	BasePolicyDigest        string               `json:"basePolicyDigest"`
+	RuleRevisions           []governanceRevision `json:"ruleRevisions"`
+	ImplementationContracts json.RawMessage      `json:"implementationContracts,omitempty"`
+	PolicySource            *governancePolicy    `json:"policySource"`
+	Options                 json.RawMessage      `json:"options"`
+	Changed                 []string             `json:"changed,omitempty"`
 }
 type governanceProduct struct {
 	Requirements     []governanceIntrinsic   `json:"requirements,omitempty"`
@@ -198,7 +199,12 @@ func runDecisionServe(arguments []string) int {
 			err = json.Unmarshal(request.Params, &params)
 			if err == nil {
 				if params.ProjectionMode == "sdk-rule-products" {
-					session.productsSession = &governanceProductsSession{Prepare: params}
+					var contracts []governanceImplementationContract
+					contracts, err = governanceCallerContracts(params)
+					if err != nil {
+						break
+					}
+					session.productsSession = &governanceProductsSession{Prepare: params, Contracts: contracts}
 					requestedRoot := params.Root
 					if requestedRoot == "" {
 						requestedRoot = session.root
