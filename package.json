@@ -1,6 +1,6 @@
 {
   "name": "@astrale-os/codegraph",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": false,
   "description": "Headless TypeScript code graph, specification conformance engine, and developer tooling",
   "license": "Apache-2.0",

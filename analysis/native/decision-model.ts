@@ -5,6 +5,13 @@ export type { NativeCapturedAnalysisStamp as NativeCapturedSemanticStamp } from 
 export const NATIVE_DECISION_PROTOCOL_VERSION = 1 as const;
 export const NATIVE_DECISION_CONTRACT_REVISION = 1 as const;
 
+export type NativeDecisionImplementationContract = Readonly<{
+  ruleId: string;
+  ruleRevision: string;
+  requiredFacts: readonly string[];
+  implementation: Readonly<{ id: string; version: string }>;
+}>;
+
 export interface NativeDecisionPrepareRequest {
   readonly projectionMode?: "sdk-rule-products";
   readonly root: string;
@@ -38,6 +45,9 @@ export interface NativeDecisionPrepareRequest {
     }[];
   };
   readonly ruleRevisions: readonly { readonly id: string; readonly revision: string }[];
+  /** Source-owner revision 3: announce the complete immutable caller inventory once.
+   * An empty array explicitly offers zero implementations; absence preserves legacy admission. */
+  readonly implementationContracts?: readonly NativeDecisionImplementationContract[];
   readonly options: {
     /** Offered private SDK source owner; absence preserves older products/fallback. */
     readonly sourcePolicyOwnerRevision?: 2 | 3;
@@ -133,12 +143,8 @@ export type NativeDecisionContinuation =
         ignorePatterns: readonly string[];
         ignorePatternUnits: readonly (readonly number[])[];
       };
-      implementationContracts: readonly {
-        ruleId: string;
-        ruleRevision: string;
-        requiredFacts: readonly string[];
-        implementation: { id: string; version: string };
-      }[];
+      /** Required for legacy preparation; an initial offer can be omitted or repeated exactly. */
+      implementationContracts?: readonly NativeDecisionImplementationContract[];
       leafAuthority: { neutralClassIconSVG: string };
     }>
   | Readonly<{
