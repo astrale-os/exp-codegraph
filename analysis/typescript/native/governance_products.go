@@ -567,7 +567,9 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	// No partial source decisions enter the final envelope.
 	if sourceRequired {
 		if governanceClosedSourceOffered(state.Prepare.Options) {
-			return session.closedSourceHandoff(true)
+			// A rejected sealed proposal has never lent its current source body.
+			// Recover through the original open handshake before projection.
+			return session.closedSourceHandoff(state.sourceBody != nil && state.sourceBody.opened)
 		}
 		session.discardProducts()
 		return map[string]any{"status": "partial", "residual": []string{"Captured Source49 owner capability unavailable."}}, nil
@@ -575,6 +577,12 @@ func (session *governanceSession) evaluateProducts() (any, error) {
 	if genericEnabled && state.GenericProduct == nil {
 		state.GenericSuspended = true
 		return state.genericSuspension(), nil
+	}
+	// With no active contracts, no source-complete round trip is needed. Record
+	// the completed empty authority only after all pending/residual/generic gates.
+	// Nil remains the marker for an unfinished source owner.
+	if state.SourceProducts == nil && (callerOwned || governanceClosedSourceRevision(state.Prepare.Options) == 3) {
+		state.SourceProducts = []governanceRuleProduct{}
 	}
 	files := []governanceCapturedAuthority{}
 	for _, file := range project.Files {

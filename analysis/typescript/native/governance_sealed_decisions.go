@@ -70,7 +70,14 @@ func governanceExpectedCapture(source *governanceCapture) *governanceCapture {
 func (session *governanceSession) retainSealedDecisions(state *governanceProductsSession) {
 	// Only completed cells are eligible. Missing canonical leaves and public
 	// ambiguity are different: an authoritative ambiguity is a complete value.
-	if len(state.Requirements) != 0 || len(state.SourceProducts) == 0 || len(state.RuntimeReady) != 3 {
+	if state.ProductsDigest == "" || len(state.Requirements) != 0 || state.SourceProducts == nil {
+		return
+	}
+	// Whole source owners complete every active contract through the admitted
+	// source products, including semantic contracts and the valid empty inventory.
+	// Owner2 still requires the original native evaluator's three ready outcomes.
+	wholeSourceOwner := state.callerContractsOffered() || governanceClosedSourceRevision(state.Prepare.Options) == 3
+	if !wholeSourceOwner && (len(state.SourceProducts) == 0 || len(state.RuntimeReady) != 3) {
 		return
 	}
 	rules := governanceOwnedOutcomes(state.RuleReady)
