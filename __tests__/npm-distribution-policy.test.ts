@@ -66,7 +66,7 @@ describe('qualified npm distribution policy', () => {
     expect(steps[admission].run).toContain('--npm-preflight')
     expect(steps[admission].run).toContain('--remote-assets')
     expect(steps[publisher]).toMatchObject({
-      uses: 'astrale-os/config/.github/actions/publish/packages@8e2e2abd0320be0c2f64033916519ab3b66c7dd7',
+      uses: 'astrale-os/config/.github/actions/publish/packages@bdc68eca669ad2905920492249985f251389a946',
       with: {
         dirs: '.',
         'mirror-public-packages': 'false',

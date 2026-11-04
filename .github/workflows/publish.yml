@@ -58,7 +58,7 @@ jobs:
         id: packages
         run: node scripts/native/admit-packages.mjs --directory release --source-revision "$EXPECTED_SHA" --qualification-run "$RUNNER_TEMP/qualification.json" --remote-assets --npm-preflight --github-output "$GITHUB_OUTPUT"
       - name: Publish the exact prepared archive using Trusted Publishing
-        uses: astrale-os/config/.github/actions/publish/packages@8e2e2abd0320be0c2f64033916519ab3b66c7dd7
+        uses: astrale-os/config/.github/actions/publish/packages@bdc68eca669ad2905920492249985f251389a946
         with:
           dirs: .
           mirror-public-packages: 'false'
